@@ -136,7 +136,7 @@ Pipeline-side variables (set in the external `<data_folder>/config/.env_develop_
 | `ieasyhydroforecast_organization` | Required | all | Deployment identifier (`demo`, `kghm`, `tjhm`, `uzhm`) | — |
 | `ieasyhydroforecast_connect_to_iEH` | Required | all | `True`/`False` — toggles iEH HF SDK fetch | — |
 | `ieasyhydroforecast_run_ML_models` | Required | dashboard, pipeline | `true`/`false` — gates ML forecast container | — |
-| `ieasyhydroforecast_run_CM_models` | Required | dashboard, pipeline | `true`/`false` — gates conceptual-model container | — |
+| `ieasyhydroforecast_run_CM_models` | Required | dashboard, pipeline | `true`/`false` — gates conceptual-model container. Also one of the two inputs to the gateway's ensemble consumption gate — see [Ensemble consumption gate](#ensemble-consumption-gate). | — |
 | `ieasyforecast_configuration_path` | Required | all | Path to station/output config JSON files | — |
 | `ieasyforecast_config_file_all_stations` | Required | all | Station library filename | `config_all_stations_library.json` |
 | `ieasyforecast_config_file_station_selection` | Required | all | Selected-stations filename | `config_station_selection.json` |
@@ -179,10 +179,11 @@ Pipeline-side variables (set in the external `<data_folder>/config/.env_develop_
 | `SAPPHIRE_DG_HOST` | Required-if: gateway used | preprocessing_gateway, dashboard | Gateway base URL | — |
 | `SAPPHIRE_DG_API_KEY` | Required-if: gateway used | preprocessing_gateway | Gateway API key (alternative name) | — |
 | `ieasyhydroforecast_HRU_CONTROL_MEMBER` | Required-if: gateway used | preprocessing_gateway | HRU shapefile identifier for control member | — |
-| `ieasyhydroforecast_HRU_ENSEMBLE` | Required-if: gateway used | preprocessing_gateway | Comma-separated HRUs needing ensemble forecasts | — |
+| `ieasyhydroforecast_ensemble_forcing_required` | Optional | preprocessing_gateway | `true`/`false`, case-insensitive — declares that a consumer other than the conceptual model (or the conceptual model run outside Luigi) needs ensemble forcing. Ensembles are downloaded and processed when this **or** `ieasyhydroforecast_run_CM_models` is `true`; unset/anything else is off. See [Ensemble consumption gate](#ensemble-consumption-gate) below. | `false` |
+| `ieasyhydroforecast_HRU_ENSEMBLE` | Required-if: ensemble consumption gate open (`run_CM_models=true` or `ensemble_forcing_required=true`) | preprocessing_gateway | Comma-separated HRUs needing ensemble forecasts. Must name at least one HRU when the gate is open — an open gate with no HRUs configured is a fatal configuration error, not a skip. | — |
 | `ieasyhydroforecast_OUTPUT_PATH_DG` | Required-if: gateway used | preprocessing_gateway | Subdir under intermediate for gateway output | `data_gateway` |
 | `ieasyhydroforecast_OUTPUT_PATH_CM` | Required-if: gateway used | preprocessing_gateway | Subdir for control-member forcing | `control_member_forcing` |
-| `ieasyhydroforecast_OUTPUT_PATH_ENS` | Required-if: gateway used | preprocessing_gateway | Subdir for ensemble forcing | `ensemble_forcing` |
+| `ieasyhydroforecast_OUTPUT_PATH_ENS` | Required-if: ensemble consumption gate open | preprocessing_gateway | Subdir for ensemble forcing. Only created, and only written to, when the gate is open. | `ensemble_forcing` |
 | `ieasyhydroforecast_OUTPUT_PATH_REANALYSIS` | Required-if: gateway used | preprocessing_gateway | Subdir for ERA5 reanalysis output | — |
 | `ieasyhydroforecast_OUTPUT_PATH_SNOW` | Required-if: gateway used | preprocessing_gateway | Subdir for snow data output | — |
 | `ieasyhydroforecast_OUTPUT_PATH_DISCHARGE` | Required-if: ML used | ML | Subdir for ML prediction output | `predictions` |
@@ -315,7 +316,8 @@ Internal / Docker-only variables injected by the dashboard or Luigi at runtime (
 - **SAPPHIRE Data Gateway.** Set `ieasyhydroforecast_API_KEY_GATEAWAY`, `SAPPHIRE_DG_HOST`, `ieasyhydroforecast_HRU_CONTROL_MEMBER`, `ieasyhydroforecast_models_and_scalers_path`. Required before enabling ML or conceptual models.
 - **ML models.** Set `ieasyhydroforecast_run_ML_models=true`. Also set the gateway block above, plus `ieasyhydroforecast_available_ML_models`, `ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts`, `ieasyhydroforecast_ml_hru_models`, `ieasyhydroforecast_ECMWF_IFS_lead_time`.
 - **Long-term monthly forecasts.** Set `ieasyhydroforecast_ml_long_term_configuration`, `ieasyhydroforecast_ml_long_term_output_path`, `ieasyhydroforecast_ml_long_term_path_to_static`, `ieasyhydroforecast_ml_long_term_supported_modes`. Gateway block is also required if the models consume weather forcing.
-- **Conceptual rainfall-runoff.** Set `ieasyhydroforecast_run_CM_models=true`. Also set the gateway block plus the conceptual-model paths documented in [Configuration of the conceptual rainfall-runoff module](#configuration-of-the-conceptual-rainfall-runoff-module) below.
+- **Conceptual rainfall-runoff.** Set `ieasyhydroforecast_run_CM_models=true`. Also set the gateway block plus the conceptual-model paths documented in [Configuration of the conceptual rainfall-runoff module](#configuration-of-the-conceptual-rainfall-runoff-module) below. This also opens the gateway's ensemble consumption gate (see [Ensemble consumption gate](#ensemble-consumption-gate)) — the conceptual model always gets its ensemble forcing when enabled.
+- **Ensemble forcing for a consumer other than the conceptual model.** Set `ieasyhydroforecast_ensemble_forcing_required=true` (default off) and `ieasyhydroforecast_HRU_ENSEMBLE`. Use this to open the gateway's [ensemble consumption gate](#ensemble-consumption-gate) — e.g. running the conceptual model directly outside Luigi — without enabling `ieasyhydroforecast_run_CM_models`.
 - **Manual-site ingestion from Google Sheets.** Set `GOOGLE_SHEETS_ENABLED=true`. Also set `GOOGLE_SHEETS_DISCHARGE_ID`, `GOOGLE_SHEETS_CREDENTIALS_PATH`, `GOOGLE_SHEETS_SITE_CODES`. Sites must be marked `"data_source": ["manual"]` in `config_all_stations_library.json` (list form is the canonical convention used by `setup_library.py`; a plain string `"manual"` is also accepted).
 - **Email alerts on pipeline failure.** Set `SAPPHIRE_PIPELINE_SMTP_SERVER`, `SAPPHIRE_PIPELINE_SMTP_PORT`, `SAPPHIRE_PIPELINE_SMTP_USERNAME`, `SAPPHIRE_PIPELINE_SMTP_PASSWORD`, `SAPPHIRE_PIPELINE_SENDER_EMAIL`, `SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS`.
 - **Spot-check validation of iEH HF data.** Set `IEASYHYDRO_SPOTCHECK_SITES` to a comma-separated list of site codes (e.g. `19999,19998`).
@@ -646,7 +648,7 @@ The outputs of the downscaling step are stored in the following paths:
 ieasyhydroforecast_PATH_TO_QMAPPED_ERA5=control_member_forcing
 ```
 
-In the following environment variables we configer which HRU file (uploaded to the SAPPHIRE Data Gateway) we download data for (variable ieasyhydroforecast_HRU_CONTROL_MEMBER). The control member is processed for each gauge defined in the HRU file. We further define which HRUs need an ensemble forecast (variable ieasyhydroforecast_HRU_ENSEMBLE). The ensemble forecast is processed for each gauge code defined in the HRU file.
+In the following environment variables we configer which HRU file (uploaded to the SAPPHIRE Data Gateway) we download data for (variable ieasyhydroforecast_HRU_CONTROL_MEMBER). The control member is processed for each gauge defined in the HRU file. We further define which HRUs need an ensemble forecast (variable ieasyhydroforecast_HRU_ENSEMBLE) — but the ensemble forecast is processed for those gauge codes only when the [ensemble consumption gate](#ensemble-consumption-gate) below is open; otherwise this variable is not read at all.
 ```
 # HRU FOR QUANTILE MAPPING AND FORECASTING
 # Shapefile identifier to download data from the data gateway from
@@ -655,6 +657,63 @@ ieasyhydroforecast_HRU_CONTROL_MEMBER=00003
 ieasyhydroforecast_HRU_ENSEMBLE=151940,16936
 ```
 
+#### Ensemble consumption gate
+
+The control member (above) always downloads and processes. The **ensemble** forecast — the
+50-member ECMWF IFS ensemble, quantile-mapped into `{code}_P_ensemble_forecast.csv` and
+`{code}_T_ensemble_forecast.csv` per HRU — is downloaded and processed only when a consumer has
+declared it needs it:
+
+```
+ieasyhydroforecast_run_CM_models=false
+ieasyhydroforecast_ensemble_forcing_required=false
+```
+
+The gate is **open** when *either* `ieasyhydroforecast_run_CM_models` or
+`ieasyhydroforecast_ensemble_forcing_required` is `true` (case-insensitive; unset or any other
+value is off). The conceptual model — the known consumer — always gets its ensemble forcing when
+it is enabled, regardless of the new variable. `ieasyhydroforecast_ensemble_forcing_required`
+exists for the cases the conceptual-model flag cannot see: a deployment running the conceptual
+model directly outside Luigi, or any other future consumer of the ensemble CSVs. Its default is
+**off**, so a deployment that does not set it behaves exactly as before.
+
+- **Gate closed** (both variables off, the common case for a deployment with the conceptual model
+  disabled): no ensemble download is attempted, no ensemble CSVs are written, and the module logs
+  one INFO line naming both variables and the values that closed the gate, then exits `0`.
+- **Gate open with no HRUs configured is a fatal configuration error, not a quiet skip.**
+  `ieasyhydroforecast_HRU_ENSEMBLE` must name at least one HRU whenever either gate input is `true`.
+  If it is unset, empty, or the literal string `None` while the gate is open, the module logs an
+  error naming the gate input that opened the gate and exits non-zero instead of continuing.
+- **Gate open, HRUs configured:** each HRU is attempted independently — download, merge, quantile
+  mapping, and CSV write. A failure on one HRU (a missing precipitation or temperature file, a
+  download error, a parsing error) is logged and recorded against that HRU only; the module moves
+  on to the next HRU rather than stopping. After all configured HRUs have been attempted, the
+  module logs a summary of how many were attempted/written/failed and exits non-zero if any HRU
+  failed — the control member's output and any ensemble HRUs that *did* succeed are still written.
+  The exception is a process-wide fault (the filesystem is full or read-only, the disk quota is
+  exhausted, or the process is out of memory): those stop the run immediately rather than being
+  treated as specific to the HRU being processed at the time.
+
+> **Behaviour change — the old `HRU_ENSEMBLE=None` workaround no longer disables ensembles when the
+> gate is open.** Before this gate existed, setting `ieasyhydroforecast_HRU_ENSEMBLE=None` was the
+> way to skip ensemble processing on a deployment that did not need it. That is no longer true: with
+> the gate open (`run_CM_models=true` or `ensemble_forcing_required=true`), `HRU_ENSEMBLE=None` now
+> hits the fatal configuration error described above instead of skipping quietly. The supported way
+> to disable ensemble processing is to leave **both** gate variables off — do not rely on
+> `HRU_ENSEMBLE=None` as a substitute. Any env file that combines an enabled conceptual model with
+> the old `HRU_ENSEMBLE=None` workaround will fail on the first run after this change; check for
+> that combination when upgrading.
+
+**Side effects to expect on a successful, or partially successful, ensemble run:**
+
+- a written HRU overwrites `{code}_P_ensemble_forecast.csv` and `{code}_T_ensemble_forecast.csv` in
+  `ieasyhydroforecast_OUTPUT_PATH_ENS`;
+- the raw per-model downloads land in `ieasyhydroforecast_OUTPUT_PATH_DG`, which the module clears
+  at the start of every run whenever it is not running at `DEBUG` log level — this happens
+  regardless of whether the ensemble gate is open;
+- for each HRU, the precipitation and temperature CSVs are written **non-atomically**, precipitation
+  first. A failure between the two writes (e.g. the process-wide faults above) can leave a freshly
+  written precipitation file next to an older, or entirely absent, temperature file for that HRU.
 
 ### Configuration of the machine learning module
 TODO: Sandro, please add if you have time

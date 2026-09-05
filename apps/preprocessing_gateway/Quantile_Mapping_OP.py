@@ -57,6 +57,7 @@
 # --------------------------------------------------------------------
 # Import Libraries
 # --------------------------------------------------------------------
+import errno
 import json
 import logging
 import os
@@ -257,18 +258,30 @@ def transform_data_file_ensemble_member(data_file: pd.DataFrame, HRU_CODE: str) 
 # --------------------------------------------------------------------
 # MERGE ENSEMBLE FORECAST
 # --------------------------------------------------------------------
-def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
+def merge_ensemble_forecast(files_downloaded: list) -> tuple[pd.DataFrame | None, set[str]]:
     """
     Merges the ensemble forecast files into one DataFrame.
+
+    PREPG-023 C2: this used to `sys.exit(1)` the whole module when a
+    variable was missing, which aborted every remaining HRU. It now
+    reports the outcome to its caller instead, so the per-HRU loop in
+    main() can record this HRU as failed and move on to the next one.
+
     Inputs:
         files_downloaded: list of strings with the paths to the files downloaded.
     Outputs:
-        merged_data: pd.DataFrame with the merged data.
+        A tuple ``(merged_data, missing_variables)``:
+          - ``merged_data``: the merged DataFrame, or ``None`` if any
+            required variable ("P" and/or "T") is missing.
+          - ``missing_variables``: a subset of ``{"P", "T"}`` naming
+            which variables were missing. Empty when ``merged_data`` is
+            not ``None``. An empty ``files_downloaded`` list is treated
+            as both variables missing: ``{"P", "T"}``.
     """
     # Check if files_downloaded is empty
     if not files_downloaded:
-        logger.error("No files downloaded. Exiting program.")
-        sys.exit(1)
+        logger.error("No files downloaded for this HRU.")
+        return None, {"P", "T"}
 
     # combine the data
     P_ensemble = pd.DataFrame()
@@ -295,12 +308,15 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
             continue
 
     # Test if P_ensemble and T_ensemble are empty
+    missing: set[str] = set()
     if P_ensemble.empty:
         logger.error("No precipitation data found in the ensemble forecast files.")
-        sys.exit(1)
+        missing.add("P")
     if T_ensemble.empty:
         logger.error("No temperature data found in the ensemble forecast files.")
-        sys.exit(1)
+        missing.add("T")
+    if missing:
+        return None, missing
 
     # combine the P and T data, on code, than name, than ensemble_member than date
     P_ensemble = P_ensemble.sort_values(["code", "name", "ensemble_member", "date"])
@@ -314,7 +330,7 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
     del P_ensemble
     del T_ensemble
 
-    return combined_df
+    return combined_df, missing
 
 
 def _write_meteo_to_api(
@@ -657,6 +673,65 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: 
 
 
 # --------------------------------------------------------------------
+# ENSEMBLE CONSUMPTION GATE (PREPG-023)
+# --------------------------------------------------------------------
+def _env_flag_is_true(raw_value: str | None) -> bool:
+    """
+    Parse an environment variable as a boolean flag, case-insensitively.
+
+    Only the literal string "true" (in any case, with surrounding
+    whitespace ignored) is truthy. Unset (None) and every other value are
+    False. This is the single shared reader for the ensemble consumption
+    gate's two inputs (ieasyhydroforecast_run_CM_models and
+    ieasyhydroforecast_ensemble_forcing_required) so this module does not
+    add another spelling of a boolean on top of the four incompatible ones
+    already in the repo (INFRA-038).
+
+    Args:
+        raw_value: The raw environment variable value, or None if unset.
+
+    Returns:
+        True if raw_value case-insensitively equals "true", else False.
+    """
+    if raw_value is None:
+        return False
+    return raw_value.strip().lower() == "true"
+
+
+def _parse_ensemble_hru_list(raw_value: str | None) -> list[str]:
+    """
+    Parse ieasyhydroforecast_HRU_ENSEMBLE into a list of HRU codes.
+
+    Unset (None), an empty or whitespace-only string, and the literal
+    sentinel "None" (matching the pre-existing convention for "no
+    ensemble HRUs configured") all resolve to an empty list. Entries are
+    split on commas, stripped of surrounding whitespace, empty entries
+    are dropped, and duplicates are removed while preserving the first
+    occurrence's order.
+
+    Args:
+        raw_value: The raw ieasyhydroforecast_HRU_ENSEMBLE value, or None.
+
+    Returns:
+        A list of unique, non-empty, stripped HRU codes (possibly empty).
+    """
+    if raw_value is None:
+        return []
+    stripped = raw_value.strip()
+    if not stripped or stripped == "None":
+        return []
+    seen: set[str] = set()
+    hrus: list[str] = []
+    for entry in stripped.split(","):
+        code = entry.strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        hrus.append(code)
+    return hrus
+
+
+# --------------------------------------------------------------------
 # MAIN
 # --------------------------------------------------------------------
 def main():
@@ -685,13 +760,10 @@ def main():
     if not os.path.exists(OUTPUT_PATH_CM):
         os.makedirs(OUTPUT_PATH_CM, exist_ok=True)
 
-    OUTPUT_PATH_ENS = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyhydroforecast_OUTPUT_PATH_ENS"),
-    )
-    # Test if the output path exists and create it if it doesn't
-    if not os.path.exists(OUTPUT_PATH_ENS):
-        os.makedirs(OUTPUT_PATH_ENS, exist_ok=True)
+    # OUTPUT_PATH_ENS (ieasyhydroforecast_OUTPUT_PATH_ENS) is only created
+    # lazily, once we know ensemble processing is actually required (see
+    # the ensemble consumption gate ahead of the "ENSEMBLE MAPPING" section
+    # below) — PREPG-023 C1.
 
     # output_path for the data from the data gateaway
     OUTPUT_PATH_DG = os.path.join(
@@ -718,7 +790,6 @@ def main():
             logger.error(f"Failed to remove files from {OUTPUT_PATH_DG}: {e}")
 
     logger.debug(f"OUTPUT_PATH_CM: {OUTPUT_PATH_CM}")
-    logger.debug(f"OUTPUT_PATH_ENS: {OUTPUT_PATH_ENS}")
     logger.debug(f"OUTPUT_PATH_DG: {OUTPUT_PATH_DG}")
     logger.debug(f"Path OUTPUT_PATH_DG is valid: {os.path.exists(OUTPUT_PATH_DG)}")
 
@@ -736,19 +807,34 @@ def main():
         perform_qmapping = True
 
     CONTROL_MEMBER_HRUS = os.getenv("ieasyhydroforecast_HRU_CONTROL_MEMBER")
-    ENSEMBLE_HRUS = os.getenv("ieasyhydroforecast_HRU_ENSEMBLE")
+    ENSEMBLE_HRUS_RAW = os.getenv("ieasyhydroforecast_HRU_ENSEMBLE")
+
+    # Ensemble consumption gate (PREPG-023 C1): the ensemble block below is
+    # only processed when the conceptual model (the known consumer) is
+    # enabled, or a consumer declares the need explicitly via the new
+    # ieasyhydroforecast_ensemble_forcing_required. Both are parsed
+    # case-insensitively against "true", default off, through the same
+    # helper — do not add another spelling of a boolean (see INFRA-038).
+    run_cm_models_raw = os.getenv("ieasyhydroforecast_run_CM_models")
+    ensemble_forcing_required_raw = os.getenv("ieasyhydroforecast_ensemble_forcing_required")
+    run_cm_models = _env_flag_is_true(run_cm_models_raw)
+    ensemble_forcing_required = _env_flag_is_true(ensemble_forcing_required_raw)
+    ensembles_required = run_cm_models or ensemble_forcing_required
 
     logger.info("Meteo data configuration:")
     logger.info("  Q_MAP_PARAM_PATH: %s", Q_MAP_PARAM_PATH)
     logger.info("  Control member HRUs: %s", CONTROL_MEMBER_HRUS)
-    logger.info("  Ensemble HRUs: %s", ENSEMBLE_HRUS)
+    logger.info("  Ensemble HRUs: %s", ENSEMBLE_HRUS_RAW)
     logger.info("  Quantile mapping: %s", perform_qmapping)
 
     # Initialize the client
     client = sapphire_dg_client.client.SapphireDGClient(api_key=API_KEY)
     # Get the codes for the HRU's
     control_member_hrus = [str(x) for x in CONTROL_MEMBER_HRUS.split(",")]
-    hru_ensemble_forecast = [str(x) for x in ENSEMBLE_HRUS.split(",")]
+    # ieasyhydroforecast_HRU_ENSEMBLE is only parsed lazily, inside the
+    # ensemble consumption gate ahead of the "ENSEMBLE MAPPING" section
+    # below — parsing it here unconditionally is what used to raise
+    # AttributeError on a deployment that never sets it.
 
     today = datetime.today().strftime("%Y-%m-%d")
     start_date = datetime.today() - timedelta(days=365)
@@ -896,38 +982,101 @@ def main():
     # --------------------------------------------------------------------
     # ENSEMBLE  MAPPING
     # --------------------------------------------------------------------
-    logger.info("=== Ensemble processing: %d HRUs ===", len(hru_ensemble_forecast))
-    for ens_idx, code_ens in enumerate(hru_ensemble_forecast, 1):
+    # ensemble_run_had_failures stays False when the gate is closed (C3:
+    # a skipped ensemble stage is exit 0 -- there is no failure to report).
+    # These three are initialized here (not just inside the `else` below)
+    # so the truthful completion banner (PREPG-023 F1, ahead of the final
+    # sys.exit) can report on the gate-closed state too.
+    ensemble_run_had_failures = False
+    hru_ensemble_forecast: list[str] = []
+    ensemble_hrus_written: list[str] = []
+    ensemble_hrus_failed: list[tuple[str, set[str]]] = []
+
+    if not ensembles_required:
         logger.info(
-            "--- [%d/%d] Ensemble HRU %s ---", ens_idx, len(hru_ensemble_forecast), code_ens
+            "Skipping ensemble processing: ieasyhydroforecast_run_CM_models=%r "
+            "ieasyhydroforecast_ensemble_forcing_required=%r (both off).",
+            run_cm_models_raw,
+            ensemble_forcing_required_raw,
         )
-        print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
-        print(f"Storing files downloaded to {OUTPUT_PATH_DG}")
-        if ENSEMBLE_HRUS == "None":
-            break
-        # download the ensemble forecast
-        try:
-            files_downloaded = []
-            for model in range(1, 51):
-                files = _call_with_transport_retry(
-                    lambda model=model, code_ens=code_ens: client.ecmwf_ens.get_ensemble_forecast(
-                        hru_code=code_ens, date=today, models=[str(model)], directory=OUTPUT_PATH_DG
+    else:
+        hru_ensemble_forecast = _parse_ensemble_hru_list(ENSEMBLE_HRUS_RAW)
+        if not hru_ensemble_forecast:
+            opened_by = [
+                name
+                for name, is_on in (
+                    ("ieasyhydroforecast_run_CM_models", run_cm_models),
+                    (
+                        "ieasyhydroforecast_ensemble_forcing_required",
+                        ensemble_forcing_required,
                     ),
-                    context=f"HRU {code_ens} model {model} date {today}",
                 )
-                files_downloaded.append(files)
-            # Unnest the list of lists
-            files_downloaded = [item for sublist in files_downloaded for item in sublist]
-            # May cause timeout errors from gateway server side. Better to download one by one.
-            # files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
-            #    hru_code=code_ens,
-            #    date=today,
-            #    models=["pf"],
-            #    directory=OUTPUT_PATH_DG
-            # )
-        except ValueError as e:
-            if "Couldn't find any files for the given HRU code, date and models!" in str(e):
-                print(f"No data for {today}, trying {yesterday}")
+                if is_on
+            ]
+            logger.error(
+                "Ensemble forcing is required (%s is on) but "
+                "ieasyhydroforecast_HRU_ENSEMBLE names no HRUs (raw value=%r). "
+                "Set ieasyhydroforecast_HRU_ENSEMBLE to at least one HRU code, "
+                "or turn off %s.",
+                " and ".join(opened_by),
+                ENSEMBLE_HRUS_RAW,
+                " and ".join(opened_by),
+            )
+            sys.exit(1)
+
+        OUTPUT_PATH_ENS = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyhydroforecast_OUTPUT_PATH_ENS"),
+        )
+        # Test if the output path exists and create it if it doesn't
+        if not os.path.exists(OUTPUT_PATH_ENS):
+            os.makedirs(OUTPUT_PATH_ENS, exist_ok=True)
+        logger.debug(f"OUTPUT_PATH_ENS: {OUTPUT_PATH_ENS}")
+
+        # PREPG-023 C2: one bad HRU must not abort the module mid-flight.
+        # The whole per-HRU unit -- download through write -- is wrapped
+        # in a single try/except below so a failure at any stage is
+        # recorded and the loop moves on to the next HRU, instead of the
+        # previous `sys.exit(1)` calls that aborted every remaining HRU
+        # (and left the already-durable control-member CSVs/API writes
+        # reported as a total failure). The retry helper
+        # (_call_with_transport_retry, PREPG-010) and the redaction
+        # helper (dg_utils.redact_api_key, PREPG-015) are preserved
+        # exactly on every error path. (ensemble_hrus_written and
+        # ensemble_hrus_failed are initialized above, ahead of this
+        # if/else, so they exist as empty lists for the gate-closed
+        # completion banner too.)
+
+        def _log_partial_ensemble_summary(attempted_idx: int, fault_hru: str) -> None:
+            """PREPG-023 G3: a fatal fault re-raises from inside the
+            loop below, which bypasses the normal after-loop summary
+            (ensemble_run_had_failures / "ensemble_hrus_attempted=..."
+            further down) entirely -- leaving no aggregate status at
+            all, just a bare traceback. Call this immediately before
+            each such `raise` so the counts accumulated so far
+            (written/failed) survive alongside how far the loop got
+            (attempted_idx) and which HRU triggered the abort. Do NOT
+            call this for isolated (non-fatal) per-HRU failures -- those
+            continue the loop and reach the real summary normally.
+            """
+            logger.error(
+                "ensemble_hrus_attempted=%d written=%d failed=%d "
+                "(partial -- ensemble loop aborted before completion by "
+                "a fatal fault on HRU %s)",
+                attempted_idx,
+                len(ensemble_hrus_written),
+                len(ensemble_hrus_failed),
+                fault_hru,
+            )
+
+        for ens_idx, code_ens in enumerate(hru_ensemble_forecast, 1):
+            logger.info(
+                "--- [%d/%d] Ensemble HRU %s ---", ens_idx, len(hru_ensemble_forecast), code_ens
+            )
+            print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
+            print(f"Storing files downloaded to {OUTPUT_PATH_DG}")
+            try:
+                # download the ensemble forecast
                 try:
                     files_downloaded = []
                     for model in range(1, 51):
@@ -935,103 +1084,300 @@ def main():
                             lambda model=model,
                             code_ens=code_ens: client.ecmwf_ens.get_ensemble_forecast(
                                 hru_code=code_ens,
-                                date=yesterday,
+                                date=today,
                                 models=[str(model)],
                                 directory=OUTPUT_PATH_DG,
                             ),
-                            context=f"HRU {code_ens} model {model} date {yesterday}",
+                            context=f"HRU {code_ens} model {model} date {today}",
                         )
                         files_downloaded.append(files)
                     # Unnest the list of lists
                     files_downloaded = [item for sublist in files_downloaded for item in sublist]
-                    # Attempt to download the ensemble forecast for yesterday
+                    # May cause timeout errors from gateway server side. Better to download one by one.
                     # files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
                     #    hru_code=code_ens,
-                    #    date=yesterday,
+                    #    date=today,
                     #    models=["pf"],
                     #    directory=OUTPUT_PATH_DG
                     # )
-                except ValueError as e2:
-                    print(f"Error for date {yesterday}: {dg_utils.redact_api_key(str(e2))}")
-                    print(dg_utils.redact_api_key(traceback.format_exc()))
-                    # Handle the second error or re-raise it
-                    sys.exit(1)
-            else:
-                # If it's a different error, re-raise it.
-                # The exit value will be 1 (failure) in this case.
-                print(f"Unexpected error for date {today}: {dg_utils.redact_api_key(str(e))}")
-                print(dg_utils.redact_api_key(traceback.format_exc()))
-                sys.exit(1)
+                except ValueError as e:
+                    if "Couldn't find any files for the given HRU code, date and models!" in str(e):
+                        print(f"No data for {today}, trying {yesterday}")
+                        try:
+                            files_downloaded = []
+                            for model in range(1, 51):
+                                files = _call_with_transport_retry(
+                                    lambda model=model,
+                                    code_ens=code_ens: client.ecmwf_ens.get_ensemble_forecast(
+                                        hru_code=code_ens,
+                                        date=yesterday,
+                                        models=[str(model)],
+                                        directory=OUTPUT_PATH_DG,
+                                    ),
+                                    context=f"HRU {code_ens} model {model} date {yesterday}",
+                                )
+                                files_downloaded.append(files)
+                            # Unnest the list of lists
+                            files_downloaded = [
+                                item for sublist in files_downloaded for item in sublist
+                            ]
+                            # Attempt to download the ensemble forecast for yesterday
+                            # files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
+                            #    hru_code=code_ens,
+                            #    date=yesterday,
+                            #    models=["pf"],
+                            #    directory=OUTPUT_PATH_DG
+                            # )
+                        except ValueError as e2:
+                            print(f"Error for date {yesterday}: {dg_utils.redact_api_key(str(e2))}")
+                            print(dg_utils.redact_api_key(traceback.format_exc()))
+                            # PREPG-023 C2: this used to sys.exit(1) here,
+                            # aborting every remaining HRU. Re-raise so the
+                            # per-HRU handler below records the failure and
+                            # the loop continues with the next HRU.
+                            raise
+                    else:
+                        # If it's a different error, record it and move on
+                        # to the next HRU (PREPG-023 C2) instead of
+                        # aborting the whole module.
+                        print(
+                            f"Unexpected error for date {today}: {dg_utils.redact_api_key(str(e))}"
+                        )
+                        print(dg_utils.redact_api_key(traceback.format_exc()))
+                        raise
 
-        # print(f"Files downloaded: {files_downloaded}")
+                # print(f"Files downloaded: {files_downloaded}")
 
-        # A renaming of shapefiles sometimes is required in the data gateway.
-        # The user can define name twins for the shapefiles in the data gateway
-        # and in the hydromet in the configuration file:
-        # ieasyhydroforecast_config_file_data_gateway_name_twins that is read at
-        # before the loops.
-        # Test if code_ens is in left column of the mapping
-        code_ens_data_gateway = code_ens
-        if code_ens in mapping:
-            logger.debug(f"Mapping found for {code_ens}")
-            # If it is, get the name from the right column
-            code_ens_data_gateway = code_ens
-            code_ens = mapping[code_ens]
-            logger.debug(f"Old code: {code_ens_data_gateway}, new code: {code_ens}")
+                # A renaming of shapefiles sometimes is required in the data gateway.
+                # The user can define name twins for the shapefiles in the data gateway
+                # and in the hydromet in the configuration file:
+                # ieasyhydroforecast_config_file_data_gateway_name_twins that is read at
+                # before the loops.
+                # Test if code_ens is in left column of the mapping
+                code_ens_data_gateway = code_ens
+                if code_ens in mapping:
+                    logger.debug(f"Mapping found for {code_ens}")
+                    # If it is, get the name from the right column
+                    code_ens_data_gateway = code_ens
+                    code_ens = mapping[code_ens]
+                    logger.debug(f"Old code: {code_ens_data_gateway}, new code: {code_ens}")
 
-        # merge the ensemble forecast
-        combined_ensemble_forecast = merge_ensemble_forecast(files_downloaded)
-        # Replace code with the actual code from the mapping (if applicable)
-        if code_ens_data_gateway in mapping:
-            combined_ensemble_forecast["code"] = code_ens
+                # merge the ensemble forecast
+                combined_ensemble_forecast, missing_vars = merge_ensemble_forecast(files_downloaded)
+                if combined_ensemble_forecast is None:
+                    # PREPG-023 C2: a missing variable fails only this
+                    # HRU -- record it and move to the next one instead
+                    # of exiting the module.
+                    ensemble_hrus_failed.append((code_ens, missing_vars))
+                    continue
 
-        combined_ensemble_forecast["code"] = combined_ensemble_forecast["code"].astype(str)
+                # Replace code with the actual code from the mapping (if applicable)
+                if code_ens_data_gateway in mapping:
+                    combined_ensemble_forecast["code"] = code_ens
 
-        # load the parameters
-        if perform_qmapping:
-            P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_P_params.csv"))
-            T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_T_params.csv"))
+                combined_ensemble_forecast["code"] = combined_ensemble_forecast["code"].astype(str)
 
-            P_params_hru["code"] = P_params_hru["code"].astype(str)
-            T_params_hru["code"] = T_params_hru["code"].astype(str)
+                # load the parameters
+                if perform_qmapping:
+                    P_params_hru = pd.read_csv(
+                        os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_P_params.csv")
+                    )
+                    T_params_hru = pd.read_csv(
+                        os.path.join(Q_MAP_PARAM_PATH, f"HRU{c_m_hru}_T_params.csv")
+                    )
 
-            # Perform the quantile mapping for the ensemble members
-            P_ensemble, T_ensemble = dg_utils.do_quantile_mapping(
-                combined_ensemble_forecast, P_params_hru, T_params_hru, ensemble=True
-            )
-        else:
-            P_ensemble = combined_ensemble_forecast[["date", "P", "code", "ensemble_member"]].copy()
-            T_ensemble = combined_ensemble_forecast[["date", "T", "code", "ensemble_member"]].copy()
+                    P_params_hru["code"] = P_params_hru["code"].astype(str)
+                    T_params_hru["code"] = T_params_hru["code"].astype(str)
 
-        # check if there are nan values
-        if P_ensemble.isnull().values.any():
-            print(f"Nan values in P data (ensemble) for HRU {code_ens}")
-            print("Take Last Observation")
-            P_ensemble = dg_utils.fill_gaps_grouped(P_ensemble, "P", ["ensemble_member"], "ffill")
+                    # Perform the quantile mapping for the ensemble members
+                    P_ensemble, T_ensemble = dg_utils.do_quantile_mapping(
+                        combined_ensemble_forecast, P_params_hru, T_params_hru, ensemble=True
+                    )
+                else:
+                    P_ensemble = combined_ensemble_forecast[
+                        ["date", "P", "code", "ensemble_member"]
+                    ].copy()
+                    T_ensemble = combined_ensemble_forecast[
+                        ["date", "T", "code", "ensemble_member"]
+                    ].copy()
 
-        if T_ensemble.isnull().values.any():
-            print(f"Nan values in T data (ensemle) for HRU {code_ens}")
-            print("Take Last Observation")
-            T_ensemble = dg_utils.fill_gaps_grouped(
-                T_ensemble, "T", ["ensemble_member"], "interpolate"
-            )
+                # check if there are nan values
+                if P_ensemble.isnull().values.any():
+                    print(f"Nan values in P data (ensemble) for HRU {code_ens}")
+                    print("Take Last Observation")
+                    P_ensemble = dg_utils.fill_gaps_grouped(
+                        P_ensemble, "P", ["ensemble_member"], "ffill"
+                    )
 
-        # save the data
-        P_ensemble.to_csv(
-            os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_P_ensemble_forecast.csv"), index=False
-        )
-        T_ensemble.to_csv(
-            os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_T_ensemble_forecast.csv"), index=False
-        )
+                if T_ensemble.isnull().values.any():
+                    print(f"Nan values in T data (ensemle) for HRU {code_ens}")
+                    print("Take Last Observation")
+                    T_ensemble = dg_utils.fill_gaps_grouped(
+                        T_ensemble, "T", ["ensemble_member"], "interpolate"
+                    )
 
-    if perform_qmapping:
+                # save the data
+                P_ensemble.to_csv(
+                    os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_P_ensemble_forecast.csv"),
+                    index=False,
+                )
+                T_ensemble.to_csv(
+                    os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_T_ensemble_forecast.csv"),
+                    index=False,
+                )
+
+                ensemble_hrus_written.append(code_ens)
+
+            except MemoryError as e:
+                # PREPG-023 F2(b): MemoryError is a process-wide fault,
+                # not an HRU-local one -- continuing the loop under
+                # memory exhaustion risks silently truncating further
+                # HRU output. Log it (with traceback, for diagnosis) and
+                # re-raise so the loop stops instead of isolating it.
+                logger.error(
+                    "Ensemble HRU %s failed (%s) -- not HRU-local, stopping the ensemble loop: %s",
+                    code_ens,
+                    type(e).__name__,
+                    dg_utils.redact_api_key(str(e)),
+                )
+                logger.error(dg_utils.redact_api_key(traceback.format_exc()))
+                # PREPG-023 G3: log the run-so-far summary before this
+                # raise bypasses the after-loop summary below.
+                _log_partial_ensemble_summary(ens_idx, code_ens)
+                raise
+            except OSError as e:
+                # PREPG-023 G2: process-wide faults, same reasoning as
+                # ENOSPC/EROFS below -- continuing to write more HRU
+                # output after any of these is the same harm.
+                #   ENOSPC  -- filesystem full
+                #   EROFS   -- filesystem remounted read-only
+                #   EDQUOT  -- the process's disk quota is exhausted
+                #   ENOMEM  -- the kernel is out of memory (e.g. a failed
+                #              write/mmap syscall under memory pressure)
+                # Deliberately NOT included: EIO, EMFILE, EFBIG -- those
+                # can plausibly be specific to this HRU's file/transfer
+                # (a bad sector, this process's fd count, this file's
+                # size) rather than process-wide, so they stay HRU-local
+                # and fall through to the isolated branch below.
+                if e.errno in (errno.ENOSPC, errno.EROFS, errno.EDQUOT, errno.ENOMEM):
+                    # Everything else about OSError (e.g. a transient
+                    # network OSError from the client) stays HRU-local
+                    # and falls through to the isolated branch below.
+                    logger.error(
+                        "Ensemble HRU %s failed (%s, errno=%s) -- not "
+                        "HRU-local, stopping the ensemble loop: %s",
+                        code_ens,
+                        type(e).__name__,
+                        errno.errorcode.get(e.errno, e.errno),
+                        dg_utils.redact_api_key(str(e)),
+                    )
+                    logger.error(dg_utils.redact_api_key(traceback.format_exc()))
+                    # PREPG-023 G3: log the run-so-far summary before
+                    # this raise bypasses the after-loop summary below.
+                    _log_partial_ensemble_summary(ens_idx, code_ens)
+                    raise
+                logger.error(
+                    "Ensemble HRU %s failed (%s): %s",
+                    code_ens,
+                    type(e).__name__,
+                    dg_utils.redact_api_key(str(e)),
+                )
+                logger.error(dg_utils.redact_api_key(traceback.format_exc()))
+                ensemble_hrus_failed.append((code_ens, set()))
+            except Exception as e:
+                # PREPG-023 C2: isolate this HRU's failure (download,
+                # parse, quantile-map, or write) from the rest of the
+                # loop. The download-path
+                # branches above already print their own redacted
+                # message before re-raising; this also catches any
+                # exception raised further down in the per-HRU body
+                # (e.g. an exhausted SSLError, or a parse/quantile-map
+                # error) that was never printed anywhere else.
+                #
+                # PREPG-023 F2(a): the full traceback (redacted) is
+                # logged at ERROR, not DEBUG -- a programming error
+                # (TypeError, AttributeError, ...) must stay diagnosable
+                # instead of being flattened into a one-line "this HRU
+                # failed" message.
+                logger.error(
+                    "Ensemble HRU %s failed (%s): %s",
+                    code_ens,
+                    type(e).__name__,
+                    dg_utils.redact_api_key(str(e)),
+                )
+                logger.error(dg_utils.redact_api_key(traceback.format_exc()))
+                ensemble_hrus_failed.append((code_ens, set()))
+
+        ensemble_run_had_failures = bool(ensemble_hrus_failed)
         logger.info(
-            "PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE. DOWNSCALING WITH QUANTILE MAPPING DONE."
+            "ensemble_hrus_attempted=%d written=%d failed=%d",
+            len(hru_ensemble_forecast),
+            len(ensemble_hrus_written),
+            len(ensemble_hrus_failed),
+        )
+        for failed_hru, failed_missing in ensemble_hrus_failed:
+            if failed_missing:
+                logger.error(
+                    "Ensemble HRU %s failed: missing variables {%s}",
+                    failed_hru,
+                    ",".join(sorted(failed_missing)),
+                )
+            else:
+                logger.error("Ensemble HRU %s failed during processing.", failed_hru)
+
+    # PREPG-023 G1: this prefix used to claim "WEATHER DATA ... DONE"
+    # and "ECMWF IFS FORECASTS WRITTEN" unconditionally. That was true
+    # only for the control-member section above -- any control-member
+    # failure has already sys.exit'd the module long before this point,
+    # so reaching here does mean the control member is fully done -- but
+    # it says nothing about the ensemble section (below, independently
+    # gated and fallible). Scoping the prefix to "CONTROL MEMBER" keeps
+    # it truthful in every ensemble state (skipped / written / partially
+    # failed / all failed) without needing a state-specific prefix per
+    # branch; the ensemble-specific truth is carried by ensemble_status,
+    # appended to this same final line below.
+    if perform_qmapping:
+        completion_banner = (
+            "PREPROCESSING OF CONTROL MEMBER WEATHER DATA FROM DATA GATWAY DONE. "
+            "DOWNSCALING WITH QUANTILE MAPPING DONE FOR THE CONTROL MEMBER."
         )
     else:
-        logger.info(
-            "PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE BUT NO DOWNSCALING DONE.\nERA5-LAND and ECMWF IFS FORECASTS WRITTEN WITHOUT DOWNSCALING."
+        completion_banner = (
+            "PREPROCESSING OF CONTROL MEMBER WEATHER DATA FROM DATA GATWAY DONE "
+            "BUT NO DOWNSCALING DONE.\n"
+            "ERA5-LAND and ECMWF IFS CONTROL MEMBER FORECASTS WRITTEN WITHOUT DOWNSCALING."
         )
+
+    # PREPG-023 F1: append a truthful ensemble-forcing status, covering
+    # all three states (skipped / written / failed), to the
+    # control-member-scoped banner above -- so a reader of only the
+    # final line gets the complete, truthful picture rather than the
+    # control-member-only prefix alone. Log at ERROR (not INFO) when any
+    # required ensemble HRU failed.
+    if not ensembles_required:
+        ensemble_status = "Ensemble forcing: SKIPPED (consumption gate closed)."
+    elif ensemble_run_had_failures:
+        ensemble_status = (
+            f"Ensemble forcing: FAILED for {len(ensemble_hrus_failed)}/"
+            f"{len(hru_ensemble_forecast)} HRU(s) (written={len(ensemble_hrus_written)})."
+        )
+    else:
+        ensemble_status = (
+            f"Ensemble forcing: written for {len(ensemble_hrus_written)}/"
+            f"{len(hru_ensemble_forecast)} HRU(s)."
+        )
+
+    if ensemble_run_had_failures:
+        logger.error("%s %s", completion_banner, ensemble_status)
+    else:
+        logger.info("%s %s", completion_banner, ensemble_status)
+
+    # PREPG-023 C2: exit non-zero after the loop if any required
+    # ensemble HRU failed. The control member's CSVs/API writes and any
+    # ensemble HRUs that DID succeed have already been written above --
+    # this only affects the module's final exit status.
+    if ensemble_run_had_failures:
+        sys.exit(1)
 
     sys.exit(0)
 
