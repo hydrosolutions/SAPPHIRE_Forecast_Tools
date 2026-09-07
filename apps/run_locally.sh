@@ -155,6 +155,7 @@ declare -a RESULTS_MODULE=()
 declare -a RESULTS_STATUS=()
 declare -a RESULTS_TIME=()
 declare -a RESULTS_ERROR_LOG=()
+declare -a RESULTS_REASON=()
 
 # Tracking arrays (API validation — reported separately in summary)
 declare -a VALIDATION_MODULE=()
@@ -395,10 +396,23 @@ record_result() {
     local status="$2"
     local elapsed="$3"
     local error_log="${4:-}"
+    local reason="${5:-}"
     RESULTS_MODULE+=("$module")
     RESULTS_STATUS+=("$status")
     RESULTS_TIME+=("$elapsed")
     RESULTS_ERROR_LOG+=("$error_log")
+    RESULTS_REASON+=("$reason")
+}
+
+# record_skip - record a SKIP row for an explicit neutral gating branch (a
+# module the target covers that was not invoked because a gate said not to,
+# not because anything failed). See INFRA-030. No de-duplication: callers
+# inside a per-mode loop call this once per iteration, same as an enabled
+# runner would record one row per iteration.
+record_skip() {
+    local module="$1"
+    local reason="$2"
+    record_result "$module" "SKIP" 0 "" "$reason"
 }
 
 record_validation() {
@@ -549,6 +563,7 @@ resolve_ml_bare_target_modes() {
         for mode in PENTAD DECAD; do
             if should_skip_ml_for_mode "$mode"; then
                 log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
+                record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
             else
                 ML_BARE_RESOLVED_MODES+=("$mode")
             fi
@@ -1483,6 +1498,7 @@ run_short_term_pipeline() {
     run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if should_skip_module preprocessing_gateway; then
         log INFO "Skipping preprocessing_gateway (not required for ${ORG} org)"
+        record_skip "preprocessing_gateway" "not required for ${ORG} org"
     else
         run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
@@ -1493,9 +1509,10 @@ run_short_term_pipeline() {
         log INFO "Running forecasting for mode: ${mode}"
 
         if should_skip_module machine_learning; then
-            :
+            record_skip "machine_learning" "not required for ${ORG} org, mode=${mode}"
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
+            record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
             run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
@@ -1514,6 +1531,7 @@ run_long_term_pipeline() {
 
     if should_skip_module long_term_forecasting; then
         log INFO "Skipping long-term pipeline (not required for ${ORG} org)"
+        record_skip "long_term_forecasting" "not required for ${ORG} org"
         return 0
     fi
 
@@ -1537,6 +1555,7 @@ run_long_term_operational_pipeline() {
 
     if should_skip_module long_term_forecasting; then
         log INFO "Skipping long-term operational pipeline (not required for ${ORG} org)"
+        record_skip "long_term_forecasting (operational)" "not required for ${ORG} org"
         return 0
     fi
 
@@ -1552,6 +1571,7 @@ run_long_term_operational_pipeline() {
 
     if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then
         log WARN "No active modes today, skipping long-term pipeline"
+        record_skip "long_term_forecasting (operational)" "no modes active today"
         return 0
     fi
 
@@ -1584,6 +1604,8 @@ run_all() {
     if ! should_skip_module long_term_forecasting; then
         run_long_term_pipeline
         lt_rc=$?
+    else
+        record_skip "long_term_forecasting" "not required for ${ORG} org"
     fi
 
     run_api_validation "all"
@@ -1614,6 +1636,8 @@ run_maintenance_pipeline() {
     run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if ! should_skip_module preprocessing_gateway; then
         run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+    else
+        record_skip "preprocessing_gateway (maintenance)" "not required for ${ORG} org"
     fi
 
     # linear_regression and ML maintenance run per mode
@@ -1622,9 +1646,10 @@ run_maintenance_pipeline() {
         log INFO "Running maintenance for mode: ${mode}"
 
         if should_skip_module machine_learning; then
-            :
+            record_skip "machine_learning (maintenance)" "not required for ${ORG} org, mode=${mode}"
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
+            record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
             run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
@@ -1636,6 +1661,8 @@ run_maintenance_pipeline() {
     if ! should_skip_module long_term_forecasting; then
         log INFO "Running long-term postprocessing maintenance"
         run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+    else
+        record_skip "postprocessing_forecasts (long-term maintenance)" "not required for ${ORG} org"
     fi
 
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
@@ -1651,6 +1678,8 @@ run_daily_pipeline() {
     run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if ! should_skip_module preprocessing_gateway; then
         run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+    else
+        record_skip "preprocessing_gateway" "not required for ${ORG} org"
     fi
 
     # --- Phase 2: Maintenance preprocessing (runs once) ---
@@ -1658,6 +1687,8 @@ run_daily_pipeline() {
     run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     if ! should_skip_module preprocessing_gateway; then
         run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+    else
+        record_skip "preprocessing_gateway (maintenance)" "not required for ${ORG} org"
     fi
 
     # --- Phase 3: Forecasting + postprocessing per horizon ---
@@ -1666,9 +1697,10 @@ run_daily_pipeline() {
         log INFO "Phase 3: ML + linear regression + postprocessing (${mode})"
 
         if should_skip_module machine_learning; then
-            :
+            record_skip "machine_learning" "not required for ${ORG} org, mode=${mode}"
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
+            record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
             run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
@@ -1682,9 +1714,10 @@ run_daily_pipeline() {
         log INFO "Phase 4: ML + LR + postprocessing maintenance (${mode})"
 
         if should_skip_module machine_learning; then
-            :
+            record_skip "machine_learning (maintenance)" "not required for ${ORG} org, mode=${mode}"
         elif should_skip_ml_for_mode "$mode"; then
             log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
+            record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
             run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         fi
@@ -1698,6 +1731,7 @@ run_daily_pipeline() {
     # --- Phase 5: Long-term forecasting (config-aware scheduling) ---
     if should_skip_module long_term_forecasting; then
         log INFO "Phase 5: Skipping long-term forecasting (not required for ${ORG} org)"
+        record_skip "long_term_forecasting (operational)" "not required for ${ORG} org"
     else
         query_lt_schedule
         if [ -n "${LT_ACTIVE_WINDOW:-}" ]; then
@@ -1712,6 +1746,7 @@ run_daily_pipeline() {
             run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         else
             log INFO "Phase 5: Skipping long-term forecasting — no modes active today"
+            record_skip "long_term_forecasting (operational)" "no modes active today"
         fi
     fi
 
@@ -1722,6 +1757,7 @@ run_yearly_pipeline() {
     banner "YEARLY PIPELINE (snow norms + skill metrics)"
     if should_skip_module preprocessing_gateway; then
         log INFO "Skipping snow norm recalculation (not required for ${ORG} org)"
+        record_skip "preprocessing_gateway (snow norms)" "not required for ${ORG} org"
     else
         run_recalculate_snow_norms || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
@@ -1985,23 +2021,31 @@ print_summary() {
     # --- Module results ---
     local pass_count=0
     local fail_count=0
+    local skip_count=0
 
     for i in "${!RESULTS_MODULE[@]}"; do
         local mod="${RESULTS_MODULE[$i]}"
         local status="${RESULTS_STATUS[$i]}"
         local elapsed="${RESULTS_TIME[$i]}"
+        local reason="${RESULTS_REASON[$i]:-}"
         local duration
         duration="$(format_duration "$elapsed")"
 
         if [ "$status" = "PASS" ]; then
             log OK "  ${mod}: PASS (${duration})"
             pass_count=$((pass_count + 1))
+        elif [ "$status" = "SKIP" ]; then
+            log INFO "  ${mod}: SKIP (${reason})"
+            skip_count=$((skip_count + 1))
         else
             # Print the recorded status verbatim rather than a hardcoded
             # "FAIL" -- LTF-010's recovery target records "FAIL (REFUSED)"
             # for exit 2 so it reads as distinct from a plain "FAIL" (exit
             # 1) in this same summary. Every other caller still records the
-            # literal string "FAIL", so this is a no-op for them.
+            # literal string "FAIL", so this is a no-op for them. This is
+            # deliberately still "everything else is a failure" (not a
+            # closed set like SKIP/PASS) so an unexpected status is never
+            # silently dropped from all three counts -- INFRA-030.
             log ERROR "  ${mod}: ${status} (${duration})"
             fail_count=$((fail_count + 1))
         fi
@@ -2035,6 +2079,7 @@ print_summary() {
     # --- Totals ---
     echo "" | tee -a "$LOG_FILE"
     local summary="Modules: ${pass_count} passed, ${fail_count} failed"
+    [ $skip_count -gt 0 ] && summary="${summary}, ${skip_count} skipped"
     if [ ${#VALIDATION_MODULE[@]} -gt 0 ]; then
         summary="${summary} | Validation: ${val_pass} passed, ${val_fail} failed"
     fi
@@ -2393,6 +2438,7 @@ main() {
         maintenance:preprocessing_gateway)
             if should_skip_module preprocessing_gateway; then
                 log INFO "Skipping maintenance:preprocessing_gateway (not required for ${ORG} org)"
+                record_skip "preprocessing_gateway (maintenance)" "not required for ${ORG} org"
             else
                 run_maintenance_preprocessing_gateway || exit_code=$?
             fi
@@ -2403,6 +2449,7 @@ main() {
         maintenance:machine_learning)
             if should_skip_module machine_learning; then
                 log INFO "Skipping maintenance:machine_learning (not required for ${ORG} org)"
+                record_skip "machine_learning (maintenance)" "not required for ${ORG} org"
             else
             local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
             local modes_to_run=()
@@ -2418,6 +2465,7 @@ main() {
             for mode in "${modes_to_run[@]}"; do
                 if should_skip_ml_for_mode "$mode"; then
                     log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
+                    record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
                     continue
                 fi
                 export SAPPHIRE_PREDICTION_MODE="$mode"
@@ -2433,6 +2481,7 @@ main() {
         maintenance:postprocessing_long_term)
             if should_skip_module long_term_forecasting; then
                 log INFO "Skipping maintenance:postprocessing_long_term (not required for ${ORG} org)"
+                record_skip "postprocessing_forecasts (long-term maintenance)" "not required for ${ORG} org"
             else
                 run_maintenance_postprocessing_long_term || exit_code=$?
             fi
@@ -2451,6 +2500,7 @@ main() {
         recalculate_snow_norms)
             if should_skip_module preprocessing_gateway; then
                 log INFO "Skipping recalculate_snow_norms (not required for ${ORG} org)"
+                record_skip "preprocessing_gateway (snow norms)" "not required for ${ORG} org"
             else
                 run_recalculate_snow_norms || exit_code=$?
             fi
@@ -2461,6 +2511,7 @@ main() {
         calibrate_long_term)
             if should_skip_module long_term_forecasting; then
                 log INFO "Skipping calibrate_long_term (not required for ${ORG} org)"
+                record_skip "long_term_forecasting (calibrate)" "not required for ${ORG} org"
             else
                 run_calibrate_long_term || exit_code=$?
             fi
@@ -2476,6 +2527,7 @@ main() {
         preprocessing_gateway)
             if should_skip_module preprocessing_gateway; then
                 log INFO "Skipping preprocessing_gateway (not required for ${ORG} org)"
+                record_skip "preprocessing_gateway" "not required for ${ORG} org"
             else
                 run_preprocessing_gateway || exit_code=$?
                 run_module_validation "preprocessing_gateway"
@@ -2488,6 +2540,7 @@ main() {
         machine_learning)
             if should_skip_module machine_learning; then
                 log INFO "Skipping machine_learning (not required for ${ORG} org)"
+                record_skip "machine_learning" "not required for ${ORG} org"
             else
                 local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
                 resolve_ml_bare_target_modes
@@ -2520,6 +2573,7 @@ main() {
         long_term_forecasting)
             if should_skip_module long_term_forecasting; then
                 log INFO "Skipping long_term_forecasting (not required for ${ORG} org)"
+                record_skip "long_term_forecasting" "not required for ${ORG} org"
             else
                 run_long_term_forecasting || exit_code=$?
                 run_module_validation "long_term_forecasting"
