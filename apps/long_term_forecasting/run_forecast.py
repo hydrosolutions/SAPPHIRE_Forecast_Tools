@@ -570,7 +570,11 @@ Examples:
             "--today. Refuses if any member row already exists for that issue "
             "date, marks regenerated rows with flag=1, and reads the rows back "
             "from the database before reporting success. Exit codes: 0 success, "
-            "1 ran but nothing proven written, 2 refused (nothing was run)."
+            "1 could not be attempted (misconfiguration, a query error, an "
+            "unexpected error before any model ran) OR ran but nothing proven "
+            "written -- check the database before retrying, 2 declined and "
+            "nothing written by this run (existing rows, or the issue "
+            "date/mode does not qualify)."
         ),
     )
 

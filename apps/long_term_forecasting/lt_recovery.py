@@ -18,6 +18,14 @@ Acceptance is defined on DATABASE rows only. ``run_forecast.py --today`` also
 overwrites ``{model}_forecast.csv`` and rewrites the hindcast CSV; that is an
 accepted side effect of the recovery, deliberately not guarded here.
 
+A declined (``EXIT_REFUSED``) run is not side-effect-free on disk. Stage 1
+loads and synchronises configuration for the requested mode *before* the
+guard can decline, and ``ForecastConfig.synchronize_forecast_settings``
+(``config_forecast.py``) writes each member model's ``general_config.json``
+as part of that load — this happens even when the guard goes on to refuse.
+"Nothing was run" in the refusal log line refers to the forecast and the
+database rows, never to the process as a whole.
+
 Limitation: the guard is not a lock
 -----------------------------------
 The guard reads and the forecast writes as two separate steps, with the whole
@@ -67,9 +75,24 @@ except ImportError:  # pragma: no cover - exercised by the dependency-gated path
 
 #: Exit code: recovery ran and rows were read back.
 EXIT_OK = 0
-#: Exit code: the forecast ran but could not be proven to have written rows.
+#: Exit code: either (a) stage 1 could not even be attempted — misconfiguration,
+#: an API/query error, or another unexpected error before the guard could
+#: decide — in which case the month is still missing and nothing was written;
+#: or (b) stage 2/3 ran and the forecast could not be proven to have written
+#: rows, or the read-back itself failed. In case (b), rows MAY already have
+#: been written — do not assume the month is empty. Check the database state
+#: before retrying: an unconditional retry can be refused by the existing-row
+#: guard if rows already landed.
 EXIT_FAILED = 1
-#: Exit code: refused before anything ran; the database was not touched.
+#: Exit code: declined — member rows already exist, or the operator's input
+#: (issue date, forecast mode) does not qualify. Nothing was written by this
+#: run (though stage 1 may still have loaded and synchronised each model's
+#: configuration; see the module docstring). This does NOT mean the month is
+#: complete or healthy: the existing-row case fires on a single row, so a
+#: refusal can mean one station's row exists and the rest of the month is
+#: missing — refused as a whole rather than partially overwritten. A refusal
+#: is not proof the month is done; the existing-row case in particular may
+#: need investigating.
 EXIT_REFUSED = 2
 
 #: Flag persisted on rows produced by a recovery run (see API-006).
@@ -108,11 +131,44 @@ class RecoveryError(Exception):
 
 
 class RecoveryRefused(RecoveryError):
-    """The recovery was refused; no forecast was run."""
+    """The recovery was declined; no forecast was run by this call.
+
+    Raised when the answer is "I am not doing that": member rows already
+    exist for the target key, or the operator's input (issue date, forecast
+    mode) does not qualify. Maps to :data:`EXIT_REFUSED`.
+
+    A refusal means nothing was written *by this run* — it does NOT mean the
+    month is complete or healthy. The existing-row case in particular fires
+    on a single row: it can mean one station's row exists and the rest of
+    the month is missing, refused as a whole rather than partially
+    overwritten. Treat it as something that may need investigating, not as
+    "nothing is wrong".
+    """
+
+
+class RecoveryMisconfigured(RecoveryError):
+    """The deployment cannot even be checked; the recovery could not be attempted.
+
+    Raised when required configuration is missing or empty before the guard
+    can run at all (no usable station codes, no member models configured for
+    the mode). Unlike :class:`RecoveryRefused`, the month is still missing
+    and something needs fixing. Maps to :data:`EXIT_FAILED`.
+    """
 
 
 class RecoveryQueryError(RecoveryError):
-    """A long-forecast query failed. Always treated as fail-closed."""
+    """A long-forecast query failed. Always treated as fail-closed.
+
+    Raised by :func:`build_postprocessing_client` and :func:`count_member_rows`,
+    which are both used in stage 1 (the pre-guard count) and, via
+    ``count_member_rows`` again, in stage 3 (the read-back). Always maps to
+    :data:`EXIT_FAILED`, but what it implies about the database differs by
+    stage: raised in stage 1, the recovery could not even be attempted and
+    nothing was written; raised in stage 3, the forecast already ran in
+    stage 2 and rows may already exist — the query failure only means the
+    write could not be *confirmed*, not that it did not happen. Check the
+    database state before retrying either way.
+    """
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -313,11 +369,12 @@ def check_station_codes(station_codes: Iterable[Any] | None) -> list[str]:
         The codes as non-empty strings.
 
     Raises:
-        RecoveryRefused: If no usable code is present.
+        RecoveryMisconfigured: If no usable code is present. This is a
+            deployment configuration gap, not an operator-input refusal.
     """
     codes = [str(code).strip() for code in (station_codes or []) if str(code).strip()]
     if not codes:
-        raise RecoveryRefused(
+        raise RecoveryMisconfigured(
             "Station list is empty. An empty list disables organisation scoping and "
             "would read the whole database, so the guard cannot be trusted. Check "
             "ieasyforecast_config_file_station_selection."
@@ -537,8 +594,25 @@ def run_recovery(
     """Guard, run and read back one dated long-term recovery.
 
     The three stages are kept explicit because they carry different exit
-    codes: a refusal means the database was never touched, a failure means the
-    forecast ran but could not be proven to have written anything.
+    codes.
+
+    A refusal (:data:`EXIT_REFUSED`, stage 1) means the request was declined
+    — member rows already exist, or the operator's input does not qualify —
+    and no rows were written by this run. This is NOT proof the month is
+    complete: the existing-row guard fires on a single row, so it can refuse
+    a partially populated month as a whole.
+
+    A failure (:data:`EXIT_FAILED`) means different things depending on
+    which stage raised it. A stage 1 failure (misconfiguration, a query
+    error, an unexpected exception before the guard could decide) means the
+    recovery could not be attempted at all — the month is still missing and
+    nothing was written. A stage 2 or 3 failure means the forecast may have
+    run and rows may or may not have been written — a stage 2 failure means
+    the forecast call itself raised, and a stage 3 failure means either no
+    row with a usable value was read back or the read-back query itself
+    failed. Check the database state before retrying a stage 2/3 failure: an
+    unconditional retry can be refused by the existing-row guard if rows
+    already landed.
 
     Args:
         issue_date: Operator-supplied ISO date (``YYYY-MM-DD``).
@@ -572,7 +646,7 @@ def run_recovery(
 
         model_types = member_model_types(config)
         if not model_types:
-            raise RecoveryRefused(
+            raise RecoveryMisconfigured(
                 f"Mode {mode} has no member models configured (only ensemble "
                 f"aggregates). There is nothing to recover."
             )
@@ -619,12 +693,31 @@ def run_recovery(
             horizon_value,
             effective_date.date(),
         )
-    except RecoveryError as exc:
+    except RecoveryRefused as exc:
+        # RecoveryRefused must be caught before the broader RecoveryError
+        # below: it subclasses it, and a decline (the request was declined,
+        # not merely unattempted — though the existing-row case can mean a
+        # partially populated month, which may need investigating) must not
+        # fall through to the "could not be attempted" bucket.
         logger.error("Long-term recovery REFUSED (nothing was run): %s", exc)
         return EXIT_REFUSED
+    except RecoveryError as exc:
+        # Catches RecoveryMisconfigured and RecoveryQueryError: the guard
+        # could not even be evaluated, so nothing was declined — it simply
+        # could not be attempted. The month is still missing.
+        logger.error(
+            "Long-term recovery FAILED (could not be attempted): %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return EXIT_FAILED
     except Exception as exc:
-        logger.exception("Long-term recovery REFUSED (nothing was run): %s", exc)
-        return EXIT_REFUSED
+        logger.exception(
+            "Long-term recovery FAILED (could not be attempted): %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return EXIT_FAILED
 
     # ── Stage 2: run the forecast for the dated issue. ──────────────────
     try:
