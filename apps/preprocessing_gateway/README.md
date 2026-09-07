@@ -15,7 +15,7 @@ This module is the first step in the operational forecast pipeline. It runs dail
 
 | Script | Purpose |
 |--------|---------|
-| `Quantile_Mapping_OP.py` | Downloads and bias-corrects operational ECMWF IFS forecasts (control member + ensemble) |
+| `Quantile_Mapping_OP.py` | Downloads and bias-corrects operational ECMWF IFS forecasts (control member always; ensemble only when the [consumption gate](#ensemble-consumption-gate) is open) |
 | `extend_era5_reanalysis.py` | Extends historical ERA5-Land reanalysis with recent operational data |
 | `snow_data_operational.py` | Processes operational snow data (SWE, snow depth, snow melt and direct precipitation runoff) |
 | `recalculate_snow_norms.py` | Recalculates yearly snow norms and dashboard-facing snow statistics from historical reanalysis CSVs |
@@ -133,7 +133,8 @@ SAPPHIRE Data Gateway (ECMWF IFS + Snowmapper)
 +---------------------------------+
 |  Quantile_Mapping_OP.py         |
 |  - Control member forecast      |     --> CSV + API (meteo)
-|  - Ensemble forecasts           |     --> CSV only
+|  - Ensemble forecasts (gated,   |     --> CSV only
+|    see below)                   |
 |  - Bias correction              |
 +---------------------------------+
          |
@@ -165,12 +166,14 @@ SAPPHIRE Data Gateway (ECMWF IFS + Snowmapper)
 | `ieasyhydroforecast_env_file_path` | Path to the .env configuration file |
 | `ieasyhydroforecast_API_KEY_GATEAWAY` | API key for SAPPHIRE Data Gateway access |
 | `ieasyhydroforecast_HRU_CONTROL_MEMBER` | HRU codes for control member forecasts |
-| `ieasyhydroforecast_HRU_ENSEMBLE` | HRU codes for ensemble forecasts |
+| `ieasyhydroforecast_run_CM_models` | `true`/`false`, case-insensitive, default off. One of the two ensemble consumption gate inputs — see [Ensemble consumption gate](#ensemble-consumption-gate) below. |
+| `ieasyhydroforecast_ensemble_forcing_required` | `true`/`false`, case-insensitive, default off. The other ensemble consumption gate input, for a consumer other than the conceptual model (or the conceptual model run outside Luigi). See [Ensemble consumption gate](#ensemble-consumption-gate) below. |
+| `ieasyhydroforecast_HRU_ENSEMBLE` | Comma-separated HRU codes for ensemble forecasts. Only read, and only required, when the ensemble consumption gate is open — see below. |
 | `ieasyhydroforecast_HRU_SNOW_DATA` | HRU codes for snow data |
 | `ieasyhydroforecast_SNOW_VARS` | Snow variables to download (e.g. `SWE,HS,RoF`) |
 | `ieasyhydroforecast_Q_MAP_PARAM_PATH` | Path to quantile mapping parameter files |
 | `ieasyhydroforecast_OUTPUT_PATH_CM` | Output path for control member data |
-| `ieasyhydroforecast_OUTPUT_PATH_ENS` | Output path for ensemble data |
+| `ieasyhydroforecast_OUTPUT_PATH_ENS` | Output path for ensemble data. Only created, and only written to, when the ensemble consumption gate is open. |
 | `ieasyhydroforecast_OUTPUT_PATH_REANALYSIS` | Output path for reanalysis data |
 | `ieasyhydroforecast_OUTPUT_PATH_SNOW` | Output path for snow data |
 | `SAPPHIRE_SYNC_MODE` | API write scope: `operational` (default), `maintenance`, or `initial` |
@@ -180,13 +183,52 @@ SAPPHIRE Data Gateway (ECMWF IFS + Snowmapper)
 
 See [doc/configuration.md](../../doc/configuration.md) for the complete list of environment variables.
 
+### Ensemble consumption gate
+
+`Quantile_Mapping_OP.py` downloads and processes the ensemble forecast (the 50-member ECMWF IFS
+ensemble) only when a consumer has declared it needs it — the control member is unaffected and
+always runs. The gate is open when **either** `ieasyhydroforecast_run_CM_models` or
+`ieasyhydroforecast_ensemble_forcing_required` is `true` (case-insensitive; unset or anything else
+is off, and both default to off). The conceptual model — the known in-repo consumer, see
+[`apps/conceptual_model/`](../conceptual_model/) — always gets its ensemble forcing when it is
+enabled; `ieasyhydroforecast_ensemble_forcing_required` exists for a consumer the CM flag can't see,
+such as the conceptual model invoked directly outside Luigi.
+
+- **Gate closed:** no ensemble download is attempted, no ensemble CSVs are written, one INFO line
+  names both variables and the values that closed the gate, and the module exits `0`.
+- **Gate open with no HRUs in `ieasyhydroforecast_HRU_ENSEMBLE`** (unset, empty, or the literal
+  string `None`) **is a fatal configuration error**, not a skip — the module logs which gate input
+  opened the gate and exits non-zero. **This is a behaviour change**: setting
+  `ieasyhydroforecast_HRU_ENSEMBLE=None` used to be the supported way to disable ensemble
+  processing; with the gate open it is now a hard failure. To disable ensemble processing, leave
+  both gate variables off instead.
+- **Gate open, HRUs configured:** each HRU is attempted independently. A failure on one HRU
+  (missing precipitation/temperature files, a download error, a parse/quantile-mapping error) is
+  recorded against that HRU only, and the loop continues with the next one. After the loop, the
+  module logs an `attempted=… written=… failed=…` summary and exits non-zero if any HRU failed —
+  the control member's output, and any ensemble HRUs that did succeed, are still written. A
+  process-wide fault (filesystem full or read-only, disk quota exhausted, out of memory) still
+  stops the run immediately rather than being isolated to one HRU.
+
+**Side effects of a successful (or partially successful) ensemble run:**
+
+- a written HRU overwrites `{code}_P_ensemble_forecast.csv` and `{code}_T_ensemble_forecast.csv` in
+  `ieasyhydroforecast_OUTPUT_PATH_ENS`;
+- the raw per-model downloads land in `ieasyhydroforecast_OUTPUT_PATH_DG`, which is cleared at the
+  start of every run whenever the module is not running at `DEBUG` log level, regardless of whether
+  the gate is open;
+- the P and T CSVs for one HRU are written **non-atomically** (precipitation first), so a failure
+  between the two writes can leave a freshly written precipitation file next to an older, or
+  entirely absent, temperature file for that HRU.
+
 ## Output Data Formats
 
 ### Control Member Output
 CSV files with columns: `date`, `P` or `T`, `code`
 
 ### Ensemble Output
-CSV files with columns: `date`, `P` or `T`, `code`, `ensemble_member`
+CSV files with columns: `date`, `P` or `T`, `code`, `ensemble_member`. Written only when the
+[ensemble consumption gate](#ensemble-consumption-gate) is open, per successfully processed HRU.
 
 ### Snow Output
 CSV files with columns: `date`, `<var>`, `<var>_1` ... `<var>_N`, `code`
@@ -220,6 +262,7 @@ Test files:
 | File | What it covers |
 |------|---------------|
 | `test_integration_preprocessing_gateway.py` | End-to-end pipeline: cross-script CSV handoff, sync modes, snow pipeline, error propagation, backfill |
+| `test_ensemble_consumption_gate.py` | Ensemble consumption gate: both gate inputs, case-insensitivity, no-HRUs config failure, per-HRU failure isolation |
 | `test_api_integration.py` | API write functions: sync modes, elevation bands, NaN handling, consistency checks |
 | `test_backfill_new_stations.py` | Gap detection, CSV extraction, backfill writers |
 | `test_data_transforms.py` | Quantile mapping, DG data transformation |
