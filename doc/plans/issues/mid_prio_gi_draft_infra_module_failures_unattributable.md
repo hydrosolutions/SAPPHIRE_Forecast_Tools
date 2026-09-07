@@ -72,6 +72,14 @@ elif [ $lt_rc -eq 4 ]; then
 ```
 — `run_locally.sh:725-727`
 
+**Stale even before this issue was drafted, now doubly so.** This snippet predates INFRA-037's own
+fix (which removed `rc=$lt_rc` from the exit-4 branch so the surrounding module keeps `PASS`) and
+INFRA-044 (2026-09-07), which further split exit 4 into an informational PARTIAL case (INFO log, no
+result row, `run_locally.sh` exits 0) and a new exit 6 for the TOTAL case (`log ERROR` x2 +
+`record_result … "FAIL"`, byte-for-byte what this snippet shows, but keyed on `lt_rc -eq 6` now, not
+4). Re-derive the current branch shape with `grep -n "lt_rc" apps/run_locally.sh` before acting on
+this issue; do not use the snippet above as ground truth.
+
 But `print_summary` returns 1 whenever any module failed (`:1585-1588`), and the caller does:
 
 ```bash
@@ -140,9 +148,12 @@ should exit with. Do not treat it as a drop-in reference.
 
 ## Contract not to break
 
-- Exit codes 2 / 4 / 5 from `sync_long_horizon_hydrograph.py` are branched on by
-  `run_maintenance_preprocessing_runoff`; do not renumber without updating that mapping — and note
-  that the mapping currently affects log text only (defect B).
+- Exit codes 2 / 4 / 5 / 6 from `sync_long_horizon_hydrograph.py` (6 added by INFRA-044, 2026-09-07)
+  are branched on by `run_maintenance_preprocessing_runoff`; do not renumber without updating that
+  mapping. Defect B's premise ("the mapping currently affects log text only") no longer holds for 4
+  vs. 6: as of INFRA-044 the mapping also decides whether a result row is recorded at all (4: no row;
+  6: `FAIL` row) and the module's exit code (both leave module `rc` at 0, but 6 still makes the
+  overall script exit non-zero via the recorded row; 4 does not).
 - Do not raise `SDK_FAILED` per-station logging to WARNING **and** keep the terminal aggregate ERROR
   without checking the volume: a deployment with many virtual stations would emit one line per
   station per horizon. Counts-only is likely the right shape.

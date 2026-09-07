@@ -971,12 +971,33 @@ run_maintenance_preprocessing_runoff() {
             # Fatal: leave CURRENT_MODULE_LOG on the long-horizon log so the
             # FAIL row recorded below references the output that explains it.
         elif [ $lt_rc -eq 4 ]; then
+            # PARTIAL SDK norm-lookup failure (INFRA-044): >=1 but not all
+            # attempted stations' iEH HF monthly-norm lookup raised. This is
+            # a known, station-level upstream condition (norms are provided
+            # by iEH HF), not a failure we own -- so no result row is
+            # recorded at all, and the module is not failed (rc stays 0).
+            # See the LONG-HORIZON RUN SUMMARY block for counts.
+            log INFO "Long-horizon hydrograph sync: one or more stations' monthly norm lookup did not return a norm. This is a known upstream (iEH HF) condition, not a failure -- see the LONG-HORIZON RUN SUMMARY counts near the end of ${CURRENT_MODULE_LOG} for details."
+            # Not fatal, no row recorded: restore the maintenance log for the
+            # module-level record below.
+            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
+        elif [ $lt_rc -eq 6 ]; then
+            # TOTAL SDK norm-lookup failure (INFRA-044): every attempted
+            # station's iEH HF monthly-norm lookup raised -- consistent
+            # with, but not proof of, a service-wide iEH HF outage on this
+            # path, not station-level norm absence (a single-station run
+            # with a structural, station-level lookup failure looks
+            # identical). Explicit branch so this does not fall into the
+            # generic non-zero branch below (which would additionally fail
+            # the whole maintenance module by assigning its rc from ours).
             log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
             # Pointer only (counts already survive the error-details tail --
             # see the sub-step's own LONG-HORIZON RUN SUMMARY print, which
-            # lands last in this log, ahead of the tail window). Distinguish
-            # a few failed stations from a total outage by reading them, not
-            # by re-deriving them here. (INFRA-037)
+            # lands last in this log, ahead of the tail window). INFRA-037's
+            # advice to tell a few failed stations from a total outage by
+            # reading the counts no longer applies here: INFRA-044 made that
+            # distinction automatic, and reaching this branch at all means
+            # the writer already classified it as total (exit 6).
             log ERROR "  Counts are in the LONG-HORIZON RUN SUMMARY block near the end of ${CURRENT_MODULE_LOG} -- also tailed under the 'preprocessing_runoff (long-horizon sync)' row below."
             record_result "preprocessing_runoff (long-horizon sync)" "FAIL" "$lt_elapsed" "$CURRENT_MODULE_LOG"
             # Downgraded, not fatal to the overall module (rc stays 0):

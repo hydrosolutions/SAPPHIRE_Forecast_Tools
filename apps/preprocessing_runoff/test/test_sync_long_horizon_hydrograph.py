@@ -951,7 +951,20 @@ def test_mixed_batch_status_summary_tallies_statuses_and_total():
 @pytest.mark.parametrize(
     ("statuses", "expected_exit_code"),
     [
-        ([sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED], 4),
+        # INFRA-044 C1: a single-station all-SDK-failed run is a TOTAL
+        # norm-lookup outage (sdk_failed == total_attempted > 0), not a
+        # partial one -- it now exits 6, not 4. (Previously exit 4; changed
+        # because exit 4 no longer covers the all-failed case.)
+        ([sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED], 6),
+        # PARTIAL SDK failure -- some, but not all, attempted stations
+        # failed -- still exits 4.
+        (
+            [
+                sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED,
+                sync_lhh.LongHorizonStationWriteStatus.WRITTEN,
+            ],
+            4,
+        ),
         ([sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT], 0),
         ([sync_lhh.LongHorizonStationWriteStatus.WRITTEN], 0),
         ([sync_lhh.LongHorizonStationWriteStatus.API_FAILED], 5),
@@ -963,6 +976,43 @@ def test_exit_code_for_station_status_summary(statuses, expected_exit_code):
     summary = sync_lhh._summarize_long_horizon_station_statuses(records)
 
     assert sync_lhh._exit_code_for_long_horizon_summary(summary) == expected_exit_code
+
+
+def test_exit_code_zero_attempted_stations_never_returns_six():
+    # Guard: a zero-station run must not become exit 6 even though
+    # sdk_failed (0) == total_attempted (0) -- the `total_attempted > 0`
+    # guard in _exit_code_for_long_horizon_summary excludes it. This case
+    # already exits 2 elsewhere (main()'s "no SDK sites" / "no records"
+    # checks), never reaching this function with a real failure.
+    summary = sync_lhh.LongHorizonRunSummary(
+        status_counts={status: 0 for status in sync_lhh.LongHorizonStationWriteStatus},
+        total_attempted=0,
+    )
+
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) != 6
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 0
+
+
+def test_exit_code_api_failure_precedence_survives_total_sdk_outage_shape():
+    # Directly construct a summary where sdk_failed == total_attempted (the
+    # exit-6 shape) AND an API failure is also present, to prove API
+    # precedence still wins even in that boundary shape. This exact
+    # combination cannot arise from _summarize_long_horizon_station_statuses
+    # (an API_FAILED entry is never counted in sdk_failed, so the two counts
+    # cannot both equal total_attempted through normal counting) -- it is
+    # deliberately adversarial input to pin the precedence order in the
+    # function itself, independent of how summaries are normally built.
+    summary = sync_lhh.LongHorizonRunSummary(
+        status_counts={
+            sync_lhh.LongHorizonStationWriteStatus.WRITTEN: 0,
+            sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT: 0,
+            sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED: 2,
+            sync_lhh.LongHorizonStationWriteStatus.API_FAILED: 1,
+        },
+        total_attempted=2,
+    )
+
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 5
 
 
 def test_degraded_summary_logs_exact_counts_only_line(caplog):
@@ -1480,15 +1530,89 @@ def test_main_exits_five_when_some_station_completes_after_api_read_write_failur
     assert exc.value.code == 5
 
 
-def test_main_exits_four_when_sdk_norm_lookup_fails(monkeypatch):
+def test_main_exits_four_when_sdk_norm_lookup_fails(monkeypatch, caplog):
+    # INFRA-044 C1: exit 4 is now the PARTIAL norm-lookup-failure case -- one
+    # of two attempted stations failed, the other completed. (Previously a
+    # single all-failed station also exited 4; that shape now exits 6, see
+    # test_main_exits_six_when_every_attempted_station_sdk_failed below.)
     records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
-    records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)]
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+    ]
     _patch_main_dependencies(monkeypatch, records)
 
-    with pytest.raises(SystemExit) as exc:
+    with caplog.at_level(sync_lhh.logging.INFO), pytest.raises(SystemExit) as exc:
         sync_lhh.main()
 
     assert exc.value.code == 4
+    # C1a wording check: exit 4 means the lookup raised (caught by a bare
+    # `except Exception`), not that the station is confirmed to have no
+    # norm -- the code cannot tell the two apart. Must not assert absence.
+    assert "no norm was obtained" in caplog.text
+    assert "Known upstream iEH HF condition, not a failure" in caplog.text
+    assert "the station having no norm" in caplog.text
+
+
+def test_main_exits_six_when_every_attempted_station_sdk_failed(monkeypatch, caplog):
+    # INFRA-044 C1: sdk_failed == total_attempted > 0 -- a TOTAL norm-lookup
+    # outage across every attempted station -- is the new exit 6, fatal
+    # classification. C1a: main()'s reporting branch must route this through
+    # SDK wording, not fall into the API `else` branch and claim "0 API
+    # read/write failure(s)".
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}, {"code": "19998"}])
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+    ]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with caplog.at_level(sync_lhh.logging.INFO), pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 6
+    assert "service-wide iEH HF outage" in caplog.text
+    assert "API read/write failure" not in caplog.text
+
+
+def test_main_exit_four_logs_at_info_not_error(monkeypatch, caplog):
+    # C4 (P2 shell change) relies on the Python side logging exit 4 at INFO:
+    # run_in_venv tees the child's output straight to the operator, so an
+    # ERROR line here would reach the log regardless of the shell branch.
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}])
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.WRITTEN),
+    ]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with caplog.at_level(sync_lhh.logging.INFO), pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 4
+    matching = [r for r in caplog.records if "no norm was obtained" in r.message]
+    assert matching, "expected the exit-4 message to be logged"
+    assert all(r.levelno == sync_lhh.logging.INFO for r in matching)
+    assert not any(r.levelno >= sync_lhh.logging.ERROR for r in caplog.records)
+
+
+def test_main_exit_six_logs_at_error(monkeypatch, caplog):
+    # The fatal, all-stations-failed outage classification must be logged at
+    # ERROR -- it is the opposite severity of exit 4.
+    records = sync_lhh._LongHorizonWriteResult([{"code": "19999"}, {"code": "19998"}])
+    records.station_statuses = [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED),
+    ]
+    _patch_main_dependencies(monkeypatch, records)
+
+    with caplog.at_level(sync_lhh.logging.INFO), pytest.raises(SystemExit) as exc:
+        sync_lhh.main()
+
+    assert exc.value.code == 6
+    matching = [r for r in caplog.records if "service-wide iEH HF outage" in r.message]
+    assert matching, "expected the exit-6 message to be logged"
+    assert all(r.levelno == sync_lhh.logging.ERROR for r in matching)
 
 
 # INFRA-037: the precedence was deliberately inverted so exit 4 means "SDK
@@ -1511,21 +1635,24 @@ def test_main_exits_five_before_four_when_sdk_and_api_failures_both_present(monk
     assert exc.value.code == 5
 
 
-def test_main_exits_four_when_all_sdk_failed_even_with_zero_records(monkeypatch, caplog):
+def test_main_exits_six_when_all_sdk_failed_even_with_zero_records(monkeypatch, caplog):
     # PREPQ-015 decision (recorded per the latest review round): after this
     # fix, write_long_horizon_hydrograph can no longer produce this exact
     # input naturally -- SDK_FAILED always writes 17 records now, and
     # station_statuses/attempted_station_codes stay in lockstep (see the
     # len(station_statuses) == len(attempted_station_codes) assertions added
-    # elsewhere in this file). test_main_exits_four_when_sdk_norm_lookup_fails
-    # above already covers exit 4 with the now-realistic non-zero-records
-    # shape. Retained here (not dropped) as a SYNTHETIC unit test of main()'s
-    # exit-code/logging logic in isolation: main() only reads
-    # `station_statuses` to pick the exit code and only reads
+    # elsewhere in this file). Retained here (not dropped) as a SYNTHETIC
+    # unit test of main()'s exit-code/logging logic in isolation: main()
+    # only reads `station_statuses` to pick the exit code and only reads
     # `attempted_station_codes`/`records` for the "no records produced" log
     # branch, so this artificial all-empty-except-status input still
     # exercises real code paths in main() even though the writer can no
     # longer construct this exact shape.
+    #
+    # INFRA-044 C1: a single-station, all-SDK-failed station_statuses list
+    # means sdk_failed == total_attempted > 0 -- the TOTAL norm-lookup
+    # outage shape -- so this now exits 6, not 4 (renamed from
+    # test_main_exits_four_when_all_sdk_failed_even_with_zero_records).
     records = sync_lhh._LongHorizonWriteResult()
     records.station_statuses = [(TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED)]
     records.attempted_station_codes = []
@@ -1536,8 +1663,8 @@ def test_main_exits_four_when_all_sdk_failed_even_with_zero_records(monkeypatch,
     with caplog.at_level(sync_lhh.logging.ERROR), pytest.raises(SystemExit) as exc:
         sync_lhh.main()
 
-    assert exc.value.code == 4
-    assert "SDK norm lookup failure" in caplog.text
+    assert exc.value.code == 6
+    assert "service-wide iEH HF outage" in caplog.text
     assert "No monthly hydrograph records produced" not in caplog.text
 
 

@@ -93,6 +93,14 @@ whenever `lt_rc == 4` (`apps/run_locally.sh:918-934`), and `print_summary`/`main
 that into a non-zero process exit (`:923-931`, `:2270`) — "any `SDK_FAILED` exits non-zero" already
 holds today; this fix does not touch the exit-code function.
 
+**Superseded by INFRA-044 (2026-09-07).** `_exit_code_for_long_horizon_summary` *did* later change:
+it gained exit 6 for `sdk_failed == total_attempted > 0` (TOTAL outage), and exit 4 is now the
+PARTIAL-only case. "Any `SDK_FAILED` exits non-zero" no longer holds for `run_locally.sh` — a
+PARTIAL failure (exit 4) is now informational (INFO log, no result row, exit 0); only a TOTAL
+outage (exit 6) still records a FAIL row and keeps the process exit non-zero. This section's claim
+was accurate for PREPQ-015 at the time; it is preserved above as the record of that design and
+superseded here, not rewritten.
+
 ### Stale-norm policy (accepted trade-off, not fixed here)
 
 `_read_existing_month_norms` (`:311-334`) is the read-merge both `NORM_ABSENT` and (after this fix)
@@ -133,6 +141,13 @@ With no grading, a deployment whose stations are structurally normless reports e
 api_failed=…`) already lets a log reader distinguish "a few stations failing" (small `sdk_failed`)
 from "a total outage" (`sdk_failed` near `total_attempted`, or `api_failed > 0`) — that is the only
 mitigation this issue provides against alarm fatigue.
+
+**Superseded by INFRA-044 (2026-09-07).** The owner later reversed this acceptance: a structurally
+normless deployment no longer reports a FAIL row for `run_locally.sh` at all — the PARTIAL case
+(exit 4) became informational (INFO log, no row, exit 0). Only a TOTAL outage (every attempted
+station, exit 6) still recurs as a FAIL row for as long as it lasts. The distinction this section
+described as a manual log-reading exercise ("a few stations failing" vs. "a total outage") is now
+automated by the exit code itself.
 
 ## Empirical confirmation
 

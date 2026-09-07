@@ -157,9 +157,15 @@ and you run via Docker, you have no ML image.
 >   4 (at least one station's iEasyHydro-HF monthly-norm SDK lookup raised) —
 >   a condition the owner regards as expected/degraded, not fatal. **Fixed**:
 >   that sub-step's exit 4 no longer aborts `daily`; the run continues into
->   ML and the other modules, but still exits non-zero overall, and records a
->   separate `preprocessing_runoff (long-horizon sync): FAIL` line in
->   `PIPELINE SUMMARY`. Look for a `WARNING` (not `DEBUG`) log line naming the
+>   ML and the other modules. **Updated by INFRA-044 (2026-09-07)**: exit 4
+>   now covers only a PARTIAL norm-lookup failure (some, not all, attempted
+>   stations) and is informational — an INFO log line, **no** `PIPELINE
+>   SUMMARY` row, and `daily` now exits **0** for this condition. A TOTAL
+>   norm-lookup outage (every attempted station) is a new exit code, 6, which
+>   still exits non-zero overall and still records a separate
+>   `preprocessing_runoff (long-horizon sync): FAIL` line in `PIPELINE
+>   SUMMARY` — if you see that FAIL line, you have the total-outage case, not
+>   the partial one described below. Look for a `WARNING` (not `DEBUG`) log line naming the
 >   specific station code and the SDK exception —
 >   `write_station_monthly_hydrograph: SDK call failed for site <code>,
 >   continuing with a read-merge of any previously stored norm. Error: ...` —
@@ -738,4 +744,4 @@ Step 3 and Step 5 output — that combination is not a known failure mode.
 | PREPG-015 | Data Gateway API key reachable in logs — the redaction rules above |
 | INFRA-029 | Root logger capped at WARNING; why two Step 4 causes are invisible |
 | INFRA-030 | Skipped modules used to leave no summary line — fixed (implemented and confirmed; automated coverage in `TestSkipSummaryRows`): `PIPELINE SUMMARY` now records a `<module>: SKIP (<reason>)` row per explicit skip site and adds `, N skipped` to the totals line — Step 2 |
-| INFRA-037 | A `sync_long_horizon_hydrograph.py` exit-4 (SDK norm lookup) failure in the Phase 2 maintenance sub-step used to abort the whole `daily` run before ML ran — fixed (implemented and confirmed: full apps test suite green — 16/16 modules and services, zero failures, no skips introduced by this branch; multiple rounds of out-of-loop review): exit 4 now continues but still exits non-zero and records a separate FAIL row; exits 1/3/5 remain fatal — why you are here, and see Step 5 |
+| INFRA-037 | A `sync_long_horizon_hydrograph.py` exit-4 (SDK norm lookup) failure in the Phase 2 maintenance sub-step used to abort the whole `daily` run before ML ran — fixed (implemented and confirmed: full apps test suite green — 16/16 modules and services, zero failures, no skips introduced by this branch; multiple rounds of out-of-loop review): exit 4 continues instead of aborting; exits 1/3/5 remain fatal — why you are here, and see Step 5. **Superseded by INFRA-044 (2026-09-07)**: exit 4 (now PARTIAL-only) is informational — no FAIL row, `daily` exits 0; a new exit 6 (TOTAL — every attempted station) is what still exits non-zero and records a separate FAIL row |

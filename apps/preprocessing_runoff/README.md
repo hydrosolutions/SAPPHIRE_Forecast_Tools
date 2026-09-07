@@ -184,9 +184,16 @@ constituent monthly norms is absent this run, the rollup is rewritten to
 `None`. No station's data is dropped by either classification; the run
 summary still distinguishes the two so an operator can tell "SDK returned
 but no usable norm" from "the SDK call itself failed," and any `SDK_FAILED`
-station keeps the run's exit code non-zero (4, unless an API read/write
-failure also occurred, which takes precedence at 5) to surface the failure
-without withholding the station's otherwise-computable data.
+station keeps the run's exit code non-zero: **4** if some (but not all)
+attempted stations' SDK norm lookup failed (PARTIAL — a known,
+station-level upstream condition; `apps/run_locally.sh` logs this at INFO
+and records no result row, INFRA-044), **6** if EVERY attempted station's
+SDK norm lookup failed (TOTAL — all attempted norm lookups failed; possible
+service-wide iEH HF outage on this path, not proven, since one attempted
+station whose lookup structurally fails looks identical; `apps/run_locally.sh`
+still records a `FAIL` row for this case), or **5** if an API read/write
+failure also occurred (which takes precedence over both) — to surface the
+failure without withholding the station's otherwise-computable data.
 
 **Predecessor:** The old `sync_monthly_norms.py` script
 (yearly-cron-launched via the retired Luigi task

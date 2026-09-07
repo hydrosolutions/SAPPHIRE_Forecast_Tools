@@ -17,14 +17,24 @@ INFRA-037 phases, and this file locks all three in end-to-end:
      outer mode loop to resolve SAPPHIRE_PREDICTION_MODE for it the way the
      daily/maintenance pipelines do. Validation must run under the mode(s)
      ML actually attempted, not the pre-loop original mode.
-  C. A downgrade of ``sync_long_horizon_hydrograph.py`` exit code 4 (SDK
-     norm lookup failure) from aborting ``preprocessing_runoff`` maintenance
-     to a separate FAIL row that lets the rest of the run continue. For the
-     remaining fatal exit codes (1, 3, 5), CURRENT_MODULE_LOG must stay
-     pointed at the long-horizon log when the module-level FAIL is
-     recorded, so MODULE ERROR DETAILS shows the sub-step output that
-     explains the failure rather than the maintenance log's unrelated
-     successful primary-step output.
+  C. ``sync_long_horizon_hydrograph.py``'s exit-code routing in
+     ``run_maintenance_preprocessing_runoff`` (INFRA-037, refined by
+     INFRA-044). Exit 4 (>=1 but not all attempted stations' SDK
+     monthly-norm lookup raised -- a known, station-level upstream
+     condition) never aborted ``preprocessing_runoff`` maintenance, and as
+     of INFRA-044 it records **no result row at all**: an INFO line only,
+     module ``rc`` stays 0. Exit 6 (every attempted station's SDK
+     monthly-norm lookup raised -- consistent with, but not proof of, a
+     service-wide iEH HF outage on this path) is the code that keeps
+     today's FAIL-row-but-
+     module-still-continues behaviour byte-for-byte: a separate FAIL row is
+     recorded and the rest of the run continues, exactly as exit 4 used to
+     behave before INFRA-044. For the remaining fatal exit codes (1, 3, 5,
+     and 6's own FAIL row), CURRENT_MODULE_LOG must stay pointed at the
+     long-horizon log when the module-level FAIL is recorded, so MODULE
+     ERROR DETAILS shows the sub-step output that explains the failure
+     rather than the maintenance log's unrelated successful primary-step
+     output.
 
 ``apps/test_run_tests.sh`` is the local precedent for driving a bash script
 from tests with synthetic fixtures (fake ``.venv/bin/<exe>`` stubs that exit
@@ -44,11 +54,14 @@ script, args, SAPPHIRE_PREDICTION_MODE) to a shared call log and exits with
 a scripted code, so assertions are made only on process exit code and
 stdout/stderr text -- never on run_locally.sh's internal shell variables.
 
-NOTE on scope: this file does not test whether an exit-4 downgrade reflects
-a *single* station's norm-lookup failure vs. *all* stations failing --
-that distinction is not observable at the shell level, since
-sync_long_horizon_hydrograph.py always exits one process code regardless of
-how many stations failed underneath it. That is already covered at the
+NOTE on scope: since INFRA-044, the PARTIAL (exit 4) vs. TOTAL (exit 6)
+distinction *is* observable at the shell level -- that is the whole point
+of the split, and Group C below drives both codes through the real script
+to prove run_locally.sh routes each one correctly. What this file still
+does NOT test is *how many* stations failed within a PARTIAL (exit 4) run
+-- "one of many" and "all but one of many" are both just exit 4 to the
+shell, since sync_long_horizon_hydrograph.py exits a single process code
+regardless of the exact count. That finer-grained count is covered at the
 Python level by
 apps/preprocessing_runoff/test/test_sync_long_horizon_hydrograph.py.
 """
@@ -816,14 +829,30 @@ class TestMachineLearningBareTargetModes:
 
 
 # ---------------------------------------------------------------------------
-# Group C -- the long-horizon sync exit-4 downgrade
+# Group C -- the long-horizon sync exit-4 (informational)/exit-6 (fatal but
+# non-aborting) routing (INFRA-037, refined by INFRA-044)
 # ---------------------------------------------------------------------------
 
-# (lt_rc, expect_nonzero_exit, expect_maintenance_status, expect_extra_fail_row)
+# The exact row name recorded for the long-horizon sub-step. Used both to
+# assert a FAIL row is present (row + ": FAIL") and, for exit 4, to assert
+# NO row at all -- checking only "row + ': FAIL' not in out" would also
+# pass if some other status string (e.g. a future DEGRADED) were recorded
+# for it, which is not what C4 decided. Asserting this bare prefix is
+# absent from the whole output rules out any row for this sub-step,
+# whatever status string it might carry.
+_LONG_HORIZON_ROW = "preprocessing_runoff (long-horizon sync)"
+
+# (lt_rc, expect_nonzero_exit, expect_maintenance_status, expect_long_horizon_row)
+#
+# expect_long_horizon_row: whether ANY row (not just a FAIL row) for
+# "preprocessing_runoff (long-horizon sync)" should appear in the output.
+# Only True for lt_rc=6 (INFRA-044 C4): lt_rc=4 is informational and
+# records no row at all -- that is the decision this table locks.
 _LT_RC_CASES = [
     (0, False, "PASS", False),
     (2, False, "PASS", False),
-    (4, True, "PASS", True),
+    (4, False, "PASS", False),
+    (6, True, "PASS", True),
     (1, True, "FAIL", False),
     (3, True, "FAIL", False),
     (5, True, "FAIL", False),
@@ -854,7 +883,7 @@ class TestLongHorizonSyncExitCodeHandling:
     """
 
     @pytest.mark.parametrize(
-        ("lt_rc", "expect_nonzero_exit", "expect_maintenance_status", "expect_extra_fail_row"),
+        ("lt_rc", "expect_nonzero_exit", "expect_maintenance_status", "expect_long_horizon_row"),
         _LT_RC_CASES,
         ids=[f"lt_rc={case[0]}" for case in _LT_RC_CASES],
     )
@@ -864,7 +893,7 @@ class TestLongHorizonSyncExitCodeHandling:
         lt_rc,
         expect_nonzero_exit,
         expect_maintenance_status,
-        expect_extra_fail_row,
+        expect_long_horizon_row,
     ):
         _override_sync_exit_code(synth_tree, lt_rc)
         result = run_main(synth_tree, "maintenance:preprocessing_runoff")
@@ -877,19 +906,59 @@ class TestLongHorizonSyncExitCodeHandling:
 
         assert f"preprocessing_runoff (maintenance): {expect_maintenance_status}" in out
 
-        extra_row = "preprocessing_runoff (long-horizon sync): FAIL"
-        if expect_extra_fail_row:
-            assert extra_row in out
+        if expect_long_horizon_row:
+            assert f"{_LONG_HORIZON_ROW}: FAIL" in out
         else:
-            assert extra_row not in out
+            # Absence of the bare row prefix, not just "not FAIL" -- see
+            # _LONG_HORIZON_ROW's comment.
+            assert _LONG_HORIZON_ROW not in out
 
-    def test_daily_continues_past_downgraded_failure_and_runs_ml(self, synth_tree):
-        """This is the central claim of the whole branch: a downgraded
-        exit-4 failure must let Phase 3 (run_daily_pipeline's "ML + linear
-        regression + postprocessing" loop) actually execute, not just its
-        first module. Assert on all three Phase-3 consumers -- a test that
-        only checked machine_learning could pass while linear_regression
-        and postprocessing_forecasts were silently skipped.
+    def test_exit_four_logs_info_and_records_no_result_row(self, synth_tree):
+        """INFRA-044 C4, the owner decision: a PARTIAL norm-lookup failure
+        (lt_rc=4) is not our failure. It must log at INFO (not ERROR, not
+        WARN), point at the LONG-HORIZON RUN SUMMARY counts, and record NO
+        result row at all for the long-horizon sync -- module `rc` stays 0
+        so "preprocessing_runoff (maintenance)" is PASS, and the whole
+        script exits 0.
+
+        Also pins the wording: exit 4 means the lookup RAISED (a bare
+        `except Exception` catches an SDK ValueError identical for any
+        non-200), which is "no norm was obtained" -- NOT "the station has
+        no norm". The message must not assert absence.
+        """
+        _override_sync_exit_code(synth_tree, 4)
+        result = run_main(synth_tree, "maintenance:preprocessing_runoff")
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "preprocessing_runoff (maintenance): PASS" in out
+        assert _LONG_HORIZON_ROW not in out, (
+            "no result row -- of any status -- should be recorded for the "
+            "long-horizon sync on a partial (informational) failure"
+        )
+        assert "[INFO] Long-horizon hydrograph sync:" in out, (
+            "the partial-failure condition must be logged at INFO"
+        )
+        assert "[ERROR] Long-horizon hydrograph sync" not in out
+        assert "[WARN] Long-horizon hydrograph sync" not in out
+        assert "LONG-HORIZON RUN SUMMARY" in out, (
+            "the INFO line should point at the LONG-HORIZON RUN SUMMARY counts"
+        )
+        # Word it accurately: "did not return a norm" / "raised", not an
+        # assertion that the station HAS no norm -- the code cannot tell
+        # the difference (see docstring).
+        assert "did not return a norm" in out
+        assert "has no norm" not in out
+        assert "station has no" not in out
+
+    def test_daily_continues_past_exit_six_failure_and_runs_ml(self, synth_tree):
+        """This is the central claim of the whole branch: a fatal-but-
+        non-aborting (exit 6) sub-step failure must let Phase 3
+        (run_daily_pipeline's "ML + linear regression + postprocessing"
+        loop) actually execute, not just its first module. Assert on all
+        three Phase-3 consumers -- a test that only checked machine_learning
+        could pass while linear_regression and postprocessing_forecasts
+        were silently skipped.
 
         Round-5 review finding 2: the module-name-only assertions below
         would ALSO pass if Phase 3 were skipped entirely and only Phase 4
@@ -913,8 +982,14 @@ class TestLongHorizonSyncExitCodeHandling:
             has "args=--hindcast" -- different, and observable.
         Neither module ever appears with these Phase-3 signatures unless
         Phase 3 itself actually ran.
+
+        lt_rc=6 (not 4) exercises this: since INFRA-044, exit 4 is
+        informational and no longer aborts anything worth calling a
+        "downgraded failure" -- exit 6 is now the code that keeps a FAIL
+        row while letting the surrounding module (and the rest of the
+        pipeline) continue, i.e. today's byte-for-byte old exit-4 handling.
         """
-        _override_sync_exit_code(synth_tree, 4)
+        _override_sync_exit_code(synth_tree, 6)
         result = run_main(synth_tree, "daily")
 
         assert result.returncode != 0
@@ -924,14 +999,13 @@ class TestLongHorizonSyncExitCodeHandling:
             for ln in calls
         ), "maintenance:preprocessing_gateway step never ran -- Phase 2 did not continue"
         assert any("module=machine_learning" in ln for ln in calls), (
-            "machine_learning never ran after the downgraded exit-4 failure"
+            "machine_learning never ran after the exit-6 failure"
         )
         assert any("module=linear_regression" in ln for ln in calls), (
-            "linear_regression never ran after the downgraded exit-4 failure -- "
-            "Phase 3 did not fully continue"
+            "linear_regression never ran after the exit-6 failure -- Phase 3 did not fully continue"
         )
         assert any("module=postprocessing_forecasts" in ln for ln in calls), (
-            "postprocessing_forecasts never ran after the downgraded exit-4 failure -- "
+            "postprocessing_forecasts never ran after the exit-6 failure -- "
             "Phase 3 did not fully continue"
         )
         # Phase-3-specific discriminators (see docstring): these can only be
@@ -958,8 +1032,8 @@ class TestLongHorizonSyncExitCodeHandling:
             "was skipped and only Phase 4 executed"
         )
 
-    def test_maintenance_continues_past_downgraded_failure(self, synth_tree):
-        _override_sync_exit_code(synth_tree, 4)
+    def test_maintenance_continues_past_exit_six_failure(self, synth_tree):
+        _override_sync_exit_code(synth_tree, 6)
         result = run_main(synth_tree, "maintenance")
 
         assert result.returncode != 0
@@ -969,8 +1043,8 @@ class TestLongHorizonSyncExitCodeHandling:
             for ln in calls
         ), "maintenance:preprocessing_gateway step never ran -- pipeline did not continue"
 
-    def test_initialize_continues_past_downgraded_failure(self, synth_tree):
-        _override_sync_exit_code(synth_tree, 4)
+    def test_initialize_continues_past_exit_six_failure(self, synth_tree):
+        _override_sync_exit_code(synth_tree, 6)
         result = run_main(synth_tree, "initialize")
 
         assert result.returncode != 0
@@ -979,17 +1053,52 @@ class TestLongHorizonSyncExitCodeHandling:
             "Step 2 (initial API sync) never ran -- Step 1 did not continue"
         )
 
-    def test_bare_maintenance_target_continues_past_downgraded_failure(self, synth_tree):
-        _override_sync_exit_code(synth_tree, 4)
+    def test_bare_maintenance_target_continues_past_exit_six_failure(self, synth_tree):
+        _override_sync_exit_code(synth_tree, 6)
         result = run_main(synth_tree, "maintenance:preprocessing_runoff")
         out = result.stdout + result.stderr
 
         assert result.returncode != 0
         assert "preprocessing_runoff (maintenance): PASS" in out
-        assert "preprocessing_runoff (long-horizon sync): FAIL" in out
+        assert f"{_LONG_HORIZON_ROW}: FAIL" in out
+
+    def test_all_stations_sdk_failure_exits_nonzero_end_to_end(self, synth_tree):
+        """The most important test in this issue (test item 7): the
+        regression guard for the PREPQ-015 property. Exit 4's downgrade to
+        informational-with-no-row (C4) removed the graded shell-level
+        signal for a partial norm-lookup failure -- but a simulated TOTAL
+        SDK norm-lookup outage (every attempted station's lookup raised,
+        i.e. sync_long_horizon_hydrograph.py's exit 6 per C1) must still
+        make run_locally.sh exit non-zero end to end. This is what proves
+        the outage blind spot PREPQ-014/015 were written to avoid was not
+        reintroduced by making exit 4 informational.
+        """
+        _override_sync_exit_code(synth_tree, 6)
+        result = run_main(synth_tree, "maintenance:preprocessing_runoff")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, (
+            "a simulated all-stations SDK norm-lookup outage (exit 6) must make "
+            "run_locally.sh exit non-zero -- this is the outage blind-spot guard"
+        )
+        assert f"{_LONG_HORIZON_ROW}: FAIL" in out
+        assert "Long-horizon hydrograph sync had SDK norm lookup failure(s)" in out
+
+    def test_partial_sdk_failure_exits_zero_end_to_end(self, synth_tree):
+        """Test item 8: a partial SDK norm-lookup failure (lt_rc=4) and
+        nothing else wrong returns process status 0 end to end, and prints
+        no failure (or any other) row for the long-horizon sync.
+        """
+        _override_sync_exit_code(synth_tree, 4)
+        result = run_main(synth_tree, "maintenance:preprocessing_runoff")
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "preprocessing_runoff (maintenance): PASS" in out
+        assert _LONG_HORIZON_ROW not in out
 
     def test_fatal_code_five_still_aborts_daily_and_ml_never_runs(self, synth_tree):
-        """Mirror image of test_daily_continues_past_downgraded_failure_and_
+        """Mirror image of test_daily_continues_past_exit_six_failure_and_
         runs_ml: a fatal (exit 5) sub-step failure aborts Phase 2 before
         Phase 3 is ever reached, so NONE of Phase 3's three consumers --
         machine_learning, linear_regression, postprocessing_forecasts --
@@ -1063,38 +1172,77 @@ class TestLongHorizonSyncExitCodeHandling:
             "got '(no output captured)' or the wrong log's tail instead"
         )
 
-    def test_exit_four_error_points_to_run_summary_and_its_log(self, synth_tree):
-        """Peer review (INFRA-037): exit 4 covers both "a few of many
-        stations failed" (benign) and "every station failed" (total
-        outage), and the original ERROR line here was identical for both,
-        with no counts and no pointer. The real counts already live in the
+    def test_exit_six_records_long_horizon_log_not_maintenance_log(self, synth_tree):
+        """Same contract as test_fatal_failure_records_long_horizon_log_not_
+        maintenance_log, but for exit 6 specifically: unlike exit 5, exit 6
+        does NOT fail the surrounding "preprocessing_runoff (maintenance)"
+        module (rc stays 0, so that row is PASS) -- only the separate
+        "preprocessing_runoff (long-horizon sync)" row is FAIL. That row's
+        own record_result call must still be made while CURRENT_MODULE_LOG
+        points at the long-horizon log, so its MODULE ERROR DETAILS tail
+        shows the sub-step's own output, not the maintenance log's
+        unrelated successful primary-step output.
+        """
+        synth_tree.override(
+            "preprocessing_runoff",
+            textwrap.dedent("""\
+                if [ "$script" = "preprocessing_runoff.py" ]; then
+                    exit 0
+                fi
+                if [ "$script" = "sync_long_horizon_hydrograph.py" ]; then
+                    echo "SYNC_SUBSTEP_EXIT_SIX_MARKER"
+                    exit 6
+                fi
+                """),
+        )
+        result = run_main(synth_tree, "maintenance:preprocessing_runoff")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert "preprocessing_runoff (maintenance): PASS" in out
+        assert f"{_LONG_HORIZON_ROW}: FAIL" in out
+        assert "MODULE ERROR DETAILS" in out
+
+        details = out.split("MODULE ERROR DETAILS", 1)[1]
+        assert "SYNC_SUBSTEP_EXIT_SIX_MARKER" in details, (
+            "MODULE ERROR DETAILS should tail the long-horizon log for the "
+            "long-horizon sync's own FAIL row, not the maintenance log or "
+            "'(no output captured)'"
+        )
+
+    def test_exit_six_error_points_to_run_summary_and_its_log(self, synth_tree):
+        """As of INFRA-044, exit 6 IS the code reserved for "every attempted
+        station failed" (a total SDK norm-lookup outage) -- exit 4 no longer
+        covers that case (it is now PARTIAL-only and informational). This
+        test pins that run_locally.sh's ERROR line for exit 6 names the
+        LONG-HORIZON RUN SUMMARY block and points at where it landed, so an
+        operator reading only the top-level pipeline output can find the
+        counts that explain the outage. The real counts live in the
         sub-step's own LONG-HORIZON RUN SUMMARY print (see
         sync_long_horizon_hydrograph.py, which always survives
         print_error_details' tail -- it prints last, right before the
-        sub-step's own final `sys.exit(4)` logger.error line, and nothing
+        sub-step's own final `sys.exit(6)` logger.error line, and nothing
         the sub-step emits afterward can push it out of the tail window).
         This test does not (and cannot, at the shell level -- see the
         module docstring's NOTE on scope) fabricate that block itself,
         since the stub here is a bash exit-code substitute, not the real
-        Python script. It only pins that run_locally.sh's own ERROR line
-        now names the block and points at where it landed, instead of
-        silently repeating the same undifferentiated message.
+        Python script.
         """
-        _override_sync_exit_code(synth_tree, 4)
+        _override_sync_exit_code(synth_tree, 6)
         result = run_main(synth_tree, "maintenance:preprocessing_runoff")
         out = result.stdout + result.stderr
 
         assert result.returncode != 0
         assert "Long-horizon hydrograph sync had SDK norm lookup failure(s)" in out
         assert "LONG-HORIZON RUN SUMMARY" in out, (
-            "the exit-4 ERROR line should name the LONG-HORIZON RUN SUMMARY "
+            "the exit-6 ERROR line should name the LONG-HORIZON RUN SUMMARY "
             "block so the operator knows where the counts live"
         )
         assert "preprocessing_runoff_long_horizon.log" in out, (
-            "the exit-4 ERROR line should point at the sub-step's own log "
+            "the exit-6 ERROR line should point at the sub-step's own log "
             "file, not just repeat the generic message"
         )
-        assert "preprocessing_runoff (long-horizon sync)" in out, (
+        assert _LONG_HORIZON_ROW in out, (
             "the pointer should name the summary row the sub-step's own log is recorded on"
         )
 

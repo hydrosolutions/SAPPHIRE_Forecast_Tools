@@ -1,6 +1,6 @@
 # INFRA-044: a known upstream data gap is reported as a failure
 
-**Status**: Draft (2026-09-03)
+**Status**: Review (2026-09-07)
 **Module**: `apps/run_locally.sh` + `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
 **Priority**: **High** — blocking. A developer bringing up a dev machine sees
 `Modules: 1 passed, 1 failed` and a red `preprocessing_runoff (long-horizon sync): FAIL` on a run
@@ -16,7 +16,17 @@ create".
 **Related**: **INFRA-037** (created the exit-4 carve-out this issue refines), **INFRA-024** (the
 sibling defect: `print_summary` normalises every recorded FAIL to exit 1), **PREPQ-014** (why exit 4
 recurs), **PREPQ-015** (whose shipped design explicitly *relies* on today's behaviour — see below),
-**PREPQ-020** (the short-horizon twin, found in the same investigation), **INFRA-030** (wants a `SKIP` status and records that `print_summary` "classifies status **binarily** … so a naive `SKIP` status would print as FAIL" — C2 below is the enabling change; see "Overlap with INFRA-030").
+**PREPQ-020** (the short-horizon twin, found in the same investigation), **INFRA-030** (SHIPPED 2026-09-07, PR #497 — it added the `SKIP` status and the three-way renderer itself, so this issue no longer enables it and C2/C3 are withdrawn).
+
+**Implementation note (2026-09-07).** P1 and P2 are both implemented (see "Phases" and the ticked
+checklists below). Every `:NNN` line citation elsewhere in this file — in "Current behaviour", "The
+contract", and "Blast radius" — describes the **pre-implementation** snapshot (2026-09-03) that
+those sections were written against, i.e. what to look for and where, before the change. It is
+**not** re-derived here; re-run `grep -n` for the current locations. As implemented, the real
+anchors are: `_exit_code_for_long_horizon_summary` at `sync_long_horizon_hydrograph.py:629-654`;
+`main()`'s exit-code docstring at `:744-759`; `main()`'s SDK-vs-API reporting branch at `:792-819`;
+`run_maintenance_preprocessing_runoff` at `run_locally.sh:925-1010` (its `lt_rc` branch chain,
+including the new `-eq 6` branch, at `:962-1005`).
 
 ---
 
@@ -48,7 +58,7 @@ The mechanism, end to end:
 |---|---|
 | `_exit_code_for_long_horizon_summary` (`sync_long_horizon_hydrograph.py:629-641`) | `api_failed≥1` → 5; else `sdk_failed≥1` → 4; else 0. **`norm_absent` never affects the exit code** — the `DEGRADED: 5/62` line is a separate, already-correct non-fatal warning (`:644-659`). |
 | `run_maintenance_preprocessing_runoff` (`run_locally.sh:923-934`) | `lt_rc=4` → `log ERROR` ×2 + `record_result … "FAIL"`; module `rc` stays 0, so the module row is `PASS`. |
-| `print_summary` (`:1847-1853`) | any status ≠ `PASS` → `log ERROR "… FAIL"` and `fail_count++`. |
+| `print_summary` | since INFRA-030 (PR #497) this is a three-way `PASS` / `SKIP` / else branch; a recorded `FAIL` still lands in the `else`, so it is rendered as a failure and increments `fail_count` exactly as before. Re-derive line numbers with `grep -n`. |
 | `print_summary` (`:1901-1904`) | `fail_count > 0` → `return 1`. |
 | `main()` (`:2346-2348`) | `print_summary || exit_code=1` → the script exits 1. |
 
@@ -73,12 +83,14 @@ from "iEH HF answered 401/500/502": `_lookup_monthly_norms` catches bare `Except
 (`ieasyhydro_sdk/sdk_endpoint_definitions.py:90-109` → `sdk_base.py:64`). Three attempts to grade
 that exception were made and refuted (PREPQ-014).
 
-So making exit 4 informational removes the *graded* signal for a service-wide iEH-HF outage on this
-path. **C1's exit 6 is therefore not optional** — it is the fatal classification specifically for
-`sdk_failed == total_attempted` after station enumeration, and it is what separates "norms are
-absent, which is fine" from "iEH HF is down, which is not".
-`doc/prod/kghm_pipeline_handover.md:159-176` already tells operators to apply exactly that rule by
-hand.
+So making exit 4 informational removes the *graded* signal for a possible service-wide iEH-HF
+outage on this path. **C1's exit 6 is therefore not optional** — it is the fatal classification
+specifically for `sdk_failed == total_attempted` after station enumeration, and it is what
+separates "norms are absent, which is fine" from "iEH HF might be down, which is not" (the ratio
+alone cannot prove the latter — a single-station run whose only attempted station has a
+structural, station-level lookup failure produces the identical shape; see the exception-handling
+note above). `doc/prod/kghm_pipeline_handover.md:159-176` already tells operators to apply exactly
+that rule by hand.
 
 **It is not the only remaining trace, and the issue should not claim it is.** The counts block is
 printed unconditionally (`sync_long_horizon_hydrograph.py:662`); a failure before the loop — SDK
@@ -116,8 +128,8 @@ Two further sites in the same file hard-code the 0-5 taxonomy:
 - `main()`'s reporting branch is `if exit_code == 4: <SDK wording> else: <API wording>`
   (`:772-785`). **Exit 6 would fall into the `else` and log "completed with 0 API read/write
   failure(s)"** — the exact opposite of what happened. Route 4 **and** 6 through SDK-specific
-  wording (6 should say every attempted station's norm lookup failed, and name it as an outage
-  signature), leaving 5 on the API wording.
+  wording (6 should say every attempted station's norm lookup failed, and describe it as
+  consistent with a service-wide outage rather than asserting one), leaving 5 on the API wording.
 
 This is inside the one Python file C1 already touches; it is not a scope expansion, it is the rest
 of the same change. Its integration tests need the same update.
@@ -157,13 +169,12 @@ In `run_maintenance_preprocessing_runoff` (`run_locally.sh:923-934`):
   maintenance module.
 - Exits 1/2/3/5 unchanged.
 
-> **Why the `DEGRADED` state is still worth building (C2/C3).** With C4 as decided, the long-horizon
-> sync no longer produces a degraded row, so C2 ships with no in-tree producer. Keep it anyway: it
-> is the enabling change for **INFRA-030** (`SKIP`), it is what **LTF-010** would need if the
-> recovery's refusal classes are ever split, and building the three-way renderer now is cheaper than
-> retrofitting it later. **If you would rather not add an unused state, C2/C3 can be dropped and
-> this issue reduced to C1 + C4** — say so, and the phases collapse to two. The tests in this issue
-> are written so that decision is a deletion, not a rewrite.
+> **Superseded note (2026-09-07).** An earlier revision argued here that the `DEGRADED` renderer
+> was worth building anyway, as the enabling change for INFRA-030's `SKIP`. **That rationale is
+> gone**: INFRA-030 shipped (PR #497) and built its own three-way `PASS`/`SKIP`/else branch in
+> `print_summary`, so nothing is waiting on a `DEGRADED` state. C2/C3 stay withdrawn. If a degraded
+> state is ever wanted, it is now an `elif` alongside the existing `SKIP` branch, not a
+> restructure.
 
 **C5 — no other target changes.** No other `record_result` call site becomes `DEGRADED` in this
 issue. Adding the state is the deliverable; classifying other modules into it is not.
@@ -260,9 +271,11 @@ Line numbers are as of 2026-09-03; re-derive them with `grep -n` at implementati
 1. **Exit-code unit tests** for `_exit_code_for_long_horizon_summary`: partial SDK failure → 4;
    `sdk_failed == total_attempted` → 6; `sdk_failed == total_attempted` **with** an API failure → 5
    (API precedence survives); `total_attempted == 0` → not 6; no failures → 0.
+   **DONE (P1)** — `apps/preprocessing_runoff/test/test_sync_long_horizon_hydrograph.py`.
 1b. **CLI reporting for code 6 (C1a).** `main()` under an all-stations-SDK-failed summary logs
    SDK-failure wording and **must not** log "API read/write failure(s)" — the defect the `else`
    branch at `:772-785` would otherwise produce. Assert on the emitted message, not just the code.
+   **DONE (P1)** — same file.
 6. **Branch routing (per C4, the owner decision)**: `lt_rc=4` logs at INFO, records **no result row
    at all**, and leaves module `rc=0`; `lt_rc=6` records `FAIL` and leaves module `rc=0`; `lt_rc=5`
    still sets `rc=5`; `lt_rc=3` still hits the catch-all; in every fatal case `CURRENT_MODULE_LOG`
@@ -270,29 +283,54 @@ Line numbers are as of 2026-09-03; re-derive them with `grep -n` at implementati
    `test_run_locally_orchestration.py` contract, which must not regress).
    **Assert the absence of a row for `lt_rc=4`** — that is the decision, and a test that merely
    checks "not FAIL" would pass against a DEGRADED row too.
+   **DONE (P2)** — `apps/pipeline/tests/test_run_locally_orchestration.py::TestLongHorizonSyncExitCodeHandling`
+   (`test_exit_code_table[lt_rc=4]`/`[lt_rc=6]`/`[lt_rc=5]`/`[lt_rc=3]`,
+   `test_exit_four_logs_info_and_records_no_result_row`,
+   `test_exit_six_records_long_horizon_log_not_maintenance_log`,
+   `test_fatal_failure_records_long_horizon_log_not_maintenance_log`) plus the static wiring guard
+   `apps/preprocessing_runoff/test/test_run_locally_long_horizon_wiring.py`
+   (`test_lt_rc_four_is_informational_and_records_no_row`,
+   `test_lt_rc_six_matches_historical_exit_four_fail_handling`). Mutation-verified: reverting either
+   branch to its pre-INFRA-044 shape fails the relevant tests (see agent report).
 7. **Regression guard for the PREPQ-015 property**: a simulated all-stations-SDK-failed long-horizon
    run makes `run_locally.sh` exit non-zero. This is the test that proves the blind spot was not
    reintroduced; it is the most important one in this issue.
+   **DONE (P2)** —
+   `test_run_locally_orchestration.py::TestLongHorizonSyncExitCodeHandling::test_all_stations_sdk_failure_exits_nonzero_end_to_end`.
 8. **Partial-SDK-failure run exits 0 end to end**: the maintenance target with a partial SDK
    failure and nothing else wrong returns process status 0 **and prints no failure or degraded row
    for the long-horizon sync**.
+   **DONE (P2)** —
+   `test_run_locally_orchestration.py::TestLongHorizonSyncExitCodeHandling::test_partial_sdk_failure_exits_zero_end_to_end`.
 
 ## Acceptance criteria
 
-- [ ] On kyg, `bash apps/run_locally.sh maintenance:preprocessing_runoff` with the known 4-station
+- [x] On kyg, `bash apps/run_locally.sh maintenance:preprocessing_runoff` with the known 4-station
       signature prints **no result row** for the long-horizon sync, logs the condition at INFO, the
       `LONG-HORIZON RUN SUMMARY` counts still appear in the run output, and the script **exits 0**.
-- [ ] A simulated total SDK outage still prints a red `FAIL` row, exits non-zero, and its log names
+      **Verified via the synthetic shell harness** (`test_partial_sdk_failure_exits_zero_end_to_end`,
+      `test_exit_code_table[lt_rc=4]`), which drives the real, unmodified `run_locally.sh` with a
+      stubbed `sync_long_horizon_hydrograph.py` exit code — not re-verified against a live kyg run
+      in this session (no kyg access from this environment).
+- [x] A simulated total SDK outage still prints a red `FAIL` row, exits non-zero, and its log names
       an SDK failure — not an API failure.
-- [ ] No run that is genuinely failing today starts passing, other than the exit-4 case.
-- [ ] The sweep grep was run, **every hit was classified in the agent's report** (current-contract /
+      `test_all_stations_sdk_failure_exits_nonzero_end_to_end`,
+      `test_exit_six_error_points_to_run_summary_and_its_log`.
+- [x] No run that is genuinely failing today starts passing, other than the exit-4 case.
+      `test_exit_code_table` covers 0/1/2/3/4/5/6 in one parametrized table;
+      `test_fatal_code_five_still_aborts_daily_and_ml_never_runs` guards exit 5 specifically.
+- [x] The sweep grep was run, **every hit was classified in the agent's report** (current-contract /
       historical / unrelated), and every current-contract hit was updated. A hit list without
       classifications does not satisfy this criterion — a partial doc fix closes the issue while
       leaving the wrong contract documented.
-- [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero failures, zero unexpected skips.
-- [ ] `run_locally.sh`'s result rendering is byte-identical to trunk — the only shell change is the
-      exit-4/exit-6 branch routing.
-- [ ] `bash -n apps/run_locally.sh` clean; `ruff check` / `ruff format --check` clean on the changed
+- [x] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero failures, zero unexpected skips.
+      See the agent's verbatim test output in its report; only the two pre-existing
+      `test_src.py` skips remain (dependency-gated, not introduced by this change).
+- [x] `run_locally.sh`'s result rendering is byte-identical to trunk — the only shell change is the
+      exit-4/exit-6 branch routing. Verified by diff: `print_summary`, `print_error_details`, and
+      `record_result` are untouched; only `run_maintenance_preprocessing_runoff`'s `lt_rc` branch
+      chain changed.
+- [x] `bash -n apps/run_locally.sh` clean; `ruff check` / `ruff format --check` clean on the changed
       Python file.
 
 ## Phases

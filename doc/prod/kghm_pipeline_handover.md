@@ -5,8 +5,11 @@
 **TL;DR:** Deploying the code is necessary but **not sufficient**. One extra run
 (`bin/yearly_runoff_hydrograph_aggregation.sh`, already part of checklist §2.6) is needed to recover
 long-horizon rows that were silently dropped, and the crontab should be audited before you trust it.
-Also: that run, and any manual `apps/run_locally.sh daily`, will now **exit non-zero by design** —
-expected, but only under the exact signature in §4. **Read §4 before you run anything.**
+Also: that run will now **exit non-zero by design** — expected, but only under the exact signature in
+§4. **As of INFRA-044 (2026-09-07), a manual `apps/run_locally.sh daily`/`maintenance` run under the
+known kghm signature (§4) exits 0** — the partial norm-lookup condition became informational (an INFO
+log line, no result row) instead of a recorded failure; only a TOTAL norm-lookup outage (every
+attempted station) still exits non-zero there. §4 explains both. **Read §4 before you run anything.**
 
 > Sentinel station code `19999` only in this doc. The affected stations are identified below by
 > **property**, not by code — read the real codes from the `WARNING` lines in your own log, since the
@@ -44,11 +47,11 @@ a different cause — start from
 The routes that *do* reach the long-horizon writer behave differently from each other, which matters
 for §4:
 
-| Route | Emits `LONG-HORIZON RUN SUMMARY` / exit 4? |
+| Route | Emits `LONG-HORIZON RUN SUMMARY` / SDK-failure exit code (4 partial, 6 total)? |
 |---|---|
-| `bin/yearly_runoff_hydrograph_aggregation.sh` — yearly cron entry **(9)**, and checklist §2.6 | Yes. §4's signature applies. |
-| `apps/run_locally.sh` (maintenance phase / `daily`) | Yes, normalised to overall exit 1 plus a FAIL row. §4's signature applies. |
-| `bin/backfill_discharge_aggregation.sh` — checklist **§3.5** | **No.** It calls the writer through a capturing client and deliberately treats the captured records, *not* the writer's status-bearing return value, as its output. It reports through its own dry-run JSON diff report and does not surface exit 4. **§4's signature does not cover this route** — review its diff report on its own terms. |
+| `bin/yearly_runoff_hydrograph_aggregation.sh` — yearly cron entry **(9)**, and checklist §2.6 | Yes. §4's signature applies; the wrapper itself just propagates the writer's raw exit code (4 or 6) and logs a generic warning either way — it does not distinguish them. |
+| `apps/run_locally.sh` (maintenance phase / `daily`) | Yes, but as of **INFRA-044** (2026-09-07) the two SDK-failure codes are no longer treated the same: a PARTIAL failure (exit 4 — the known kghm signature below) is logged at INFO with **no result row**, and the script exits **0**; a TOTAL outage (exit 6 — every attempted station) is still normalised to overall exit 1 plus a `preprocessing_runoff (long-horizon sync): FAIL` row. §4's signature applies to both, distinguishing which one you have. |
+| `bin/backfill_discharge_aggregation.sh` — checklist **§3.5** | **No.** It calls the writer through a capturing client and deliberately treats the captured records, *not* the writer's status-bearing return value, as its output. It reports through its own dry-run JSON diff report and does not surface exit 4/6. **§4's signature does not cover this route** — review its diff report on its own terms. |
 | `bin/dev_local_backfill.sh` | Developer tool; not part of this procedure. |
 
 Underneath both of those orchestration bugs, the same four stations were losing **all** of their
@@ -65,7 +68,7 @@ backfill in §3 is needed.
 
 | PR | Issue(s) | Effect on this deployment |
 |---|---|---|
-| **#468** | INFRA-037 + ML-016 | `run_locally.sh daily` no longer aborts on this condition. Exit 4 from the long-horizon sync is now recorded as its own `preprocessing_runoff (long-horizon sync): FAIL` row instead of failing the maintenance module, so the run continues into Phase 3 — but still exits non-zero overall. The bare `machine_learning` target now resolves its own mode instead of crashing on an unset `SAPPHIRE_PREDICTION_MODE`. |
+| **#468** | INFRA-037 + ML-016 | `run_locally.sh daily` no longer aborts on this condition. Exit 4 from the long-horizon sync is now recorded as its own `preprocessing_runoff (long-horizon sync): FAIL` row instead of failing the maintenance module, so the run continues into Phase 3 — but still exits non-zero overall. The bare `machine_learning` target now resolves its own mode instead of crashing on an unset `SAPPHIRE_PREDICTION_MODE`. **Superseded by INFRA-044 (2026-09-07, see §4):** the FAIL-row-plus-nonzero-exit behaviour described here now applies only to a TOTAL SDK norm-lookup outage (a new exit code, 6). Exit 4 (PARTIAL — the case this deployment's known signature actually is) became informational: no result row, INFO log, exit 0. |
 | **#472** | (docs only, prerequisite for PREPQ-015) | The original PREPQ-015 draft was found **not implementable** — both readings of it *would have* shipped a new bug (one silently erasing the failure signal and exiting 0, the other creating a new partial-write mode). This PR corrected the draft and confirmed the failure's cause with a live probe against kghm's iEH-HF, unblocking #475. No deployment behaviour changed. |
 | **#475** | PREPQ-015 | **The real cure.** A raised SDK lookup keeps the station's `SDK_FAILED` status **and** now also writes its 12 monthly, 1 seasonal and 4 quarterly rows, preserving any previously stored monthly norm. This recovers the discarded observed runoff; it does not fabricate a norm the station never had. |
 | **#477** | INFRA-039 | Closes one silent-no-op path: an out-of-domain `SAPPHIRE_PREDICTION_MODE` or `ML_MODE` passed to the targets that dispatch `linear_regression`/`machine_learning` is now rejected at entry (exit 1) instead of running to completion having written nothing. |
@@ -77,8 +80,10 @@ Issue IDs above are named, not linked — look them up in
 
 ## 3. What to do
 
-**Read §4 first.** Two of these steps are expected to exit non-zero, and §4 is what tells you whether
-a given non-zero exit is the expected one or a real incident.
+**Read §4 first.** One of these steps (the yearly wrapper, step 2) is expected to exit non-zero, and
+§4 is what tells you whether a given non-zero exit is the expected one or a real incident. **As of
+INFRA-044 (2026-09-07)**, step 4 (`apps/run_locally.sh daily`) is no longer expected to exit
+non-zero under this deployment's known signature — see step 4 and §4.
 
 0. **Prerequisites, before you start the checklist.**
    - `cd /data/SAPPHIRE_Forecast_Tools` (or wherever this repo lives on this server) and confirm with
@@ -124,8 +129,10 @@ a given non-zero exit is the expected one or a real incident.
 
    **Checklist §2.6 runs the long-horizon backfill for you** — it invokes
    `bash bin/yearly_runoff_hydrograph_aggregation.sh ${ENV_FILE_PATH}`, which is exactly the recovery
-   run this handover is about. **That run is expected to exit 4** (§4). Do not treat it as a failed
-   deployment step, and do not run it a second time afterwards.
+   run this handover is about. **That run is expected to exit 4** (§4) — the standalone wrapper always
+   propagates the writer's raw exit code and does not distinguish partial (4) from total (6) the way
+   `apps/run_locally.sh` does (§4). Do not treat it as a failed deployment step, and do not run it a
+   second time afterwards.
 
    If you skipped §2.6, or need to recover a prior year, run it by hand instead:
    ```bash
@@ -148,40 +155,74 @@ a given non-zero exit is the expected one or a real incident.
 
 4. **Run the pipeline normally.** The nightly cron was never affected by the Phase 2 abort (§1). If
    you invoke `apps/run_locally.sh daily` by hand, it should now reach Phase 3 and produce ML
-   forecasts, while still exiting 1 with the `long-horizon sync` FAIL row described in §4.
+   forecasts. **As of INFRA-044 (2026-09-07)**, under this deployment's known PARTIAL signature (§4)
+   the run now exits **0** — no `long-horizon sync` row is recorded at all, only an INFO log line. If
+   the run instead exits non-zero with a `long-horizon sync` FAIL row, that means the signature has
+   escalated to a TOTAL SDK outage (exit 6) — treat it as an incident per §4, not as this expected
+   case.
 
 ## 4. What is EXPECTED — and the exact signature that makes it expected
 
 This is the most important section. The items below are the intended outcome of the fixes above —
-**but only under the signature described here.** The same status code also covers real outages, so
-"exit 4 is normal" is *not* a safe rule on its own.
+**but only under the signature described here.**
 
-- **Exit 4 from the long-horizon writer, under a specific signature.** This applies to the two
-  routes marked "§4's signature applies" in the §1 table — the yearly wrapper (checklist §2.6) and
-  `apps/run_locally.sh`. The writer exits 4 when at least one station's monthly-norm SDK lookup
-  raised. Accept it as expected only when **all** of
-  these hold:
-  - `api_failed=0` (a non-zero `api_failed` exits **5** and is always fatal);
+**Updated by INFRA-044 (2026-09-07).** Before this, PARTIAL and TOTAL SDK norm-lookup failure shared
+one exit code (4), and distinguishing "this deployment's known, harmless condition" from "a real
+outage" required manually comparing `sdk_failed` against `total_attempted` and reading the exception
+text — see the superseded row for PR #468 in §2. **That manual check is now automated**: the writer
+itself now returns a different exit code for each case (`_exit_code_for_long_horizon_summary` in
+`apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`), so the writer now classifies PARTIAL vs
+TOTAL automatically — a genuine improvement over the manual comparison. But exit 6 means "every
+attempted station's monthly-norm lookup raised," which is consistent with a service-wide outage
+without proving one: on a deployment with a small `total_attempted` count, exit 6 can still be the
+known per-station condition (`sdk_failed == total_attempted`, including the degenerate case of one
+attempted station) rather than an outage. The guidance below about re-baselining the known count and
+reading the exception text remains load-bearing for exit 6 — it is what tells you whether a TOTAL
+failure is the known condition or a real outage, not merely useful context.
+
+- **Exit 4 (PARTIAL) — at least one, but not all, attempted stations' monthly-norm SDK lookup raised.**
+  This applies to the two routes in the §1 table. The writer exits 4 when `sdk_failed >= 1` and
+  `sdk_failed < total_attempted`. As of INFRA-044:
+  - The standalone yearly wrapper (checklist §2.6) still exits **4** directly and logs a generic
+    warning — unchanged, since that script does not distinguish exit codes.
+  - `apps/run_locally.sh` (maintenance phase / `daily`) now treats this as **informational, not a
+    failure**: an INFO log line naming the condition, **no result row at all** for the long-horizon
+    sync, and the script **exits 0**. `preprocessing_runoff (maintenance)` shows `PASS`.
+
+  Accept it as this known, harmless condition (rather than investigating further) when **all** of
+  these still hold:
+  - `api_failed=0` (a non-zero `api_failed` exits **5** and is always fatal, regardless of `sdk_failed`);
   - `sdk_failed` equals the small known count — **4** as of the 2026-08-21 probe, against
     `total_attempted=62 written=53 norm_absent=5`;
   - the failing station codes are the same set as the previous run;
   - each `WARNING` line names `ValueError: No path provided or the provided path is None`.
 
-  **If any of those differ — especially if `sdk_failed` climbs toward `total_attempted` — treat it as
-  an incident, not as this known condition.** The norm lookup catches `Exception` broadly
+  These four checks are now a confirmation, not the primary signal — the exit code (4, not 6) already
+  tells you it wasn't a total outage. Re-baseline the numbers above if the station set legitimately
+  changes.
+
+- **Exit 6 (TOTAL) — every attempted station's monthly-norm SDK lookup raised.** The writer exits 6
+  when `sdk_failed == total_attempted > 0` — consistent with, but not proof of, a service-wide
+  iEH-HF outage on this path, not station-level norm absence (a single-station run whose only
+  attempted station has a structural, station-level lookup failure produces the same ratio).
+  **Treat this as an incident, not as the known condition above** — both the standalone wrapper and
+  `apps/run_locally.sh` still treat exit 6 as failed: the wrapper exits 6 directly;
+  `apps/run_locally.sh` normalises it to overall exit **1** plus a
+  `preprocessing_runoff (long-horizon sync): FAIL` row, while `preprocessing_runoff (maintenance)`
+  itself still shows `PASS` (the surrounding maintenance module is not aborted — only the long-horizon
+  sub-step's own row is `FAIL`).
+
+  The norm lookup catches `Exception` broadly
   (`apps/preprocessing_runoff/sync_long_horizon_hydrograph.py:295-300`), so an expired credential, a
-  502, or a service-wide iEH-HF outage produces the *same* `sdk_failed` status and the *same* exit 4
-  as the four known stations. The count and the exception text are what distinguish them. Re-baseline
-  the numbers above if the station set legitimately changes.
+  502, or a service-wide iEH-HF outage all raise the same way — the writer cannot tell them apart from
+  each other, only from the PARTIAL case (which it can, via the `sdk_failed == total_attempted` guard).
 
-  Where you see it: the standalone wrapper exits **4** directly; `apps/run_locally.sh` normalises it
-  to overall exit **1** plus a `preprocessing_runoff (long-horizon sync): FAIL` row, while
-  `preprocessing_runoff (maintenance)` itself shows `PASS`.
-
-- **That FAIL row recurring indefinitely on this deployment.** Reclassifying it into a passing status
-  was proposed and deliberately rejected — three separate grading approaches were each shown to be
-  able to mask a genuine outage as success (see PREPQ-014 in `doc/plans/module_issues.md`). The
-  recurring alarm is the accepted cost of not building that blind spot.
+- **That exit-6 FAIL row would recur indefinitely for as long as the outage lasts.** Reclassifying it
+  into a passing status was proposed and deliberately rejected — three separate grading approaches were
+  each shown to be able to mask a genuine outage as success (see PREPQ-014 in
+  `doc/plans/module_issues.md`). Unlike the PARTIAL case above (which the owner decided is simply not
+  our failure, see INFRA-044), a TOTAL outage staying loud is accepted as the cost of not building that
+  blind spot.
 
 - **New `WARNING` log lines**, one per failing station, naming the station code and the SDK exception.
   These are new only because the message was moved from `DEBUG` to `WARNING` — the root logger caps at

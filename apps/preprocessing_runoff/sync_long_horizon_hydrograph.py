@@ -632,11 +632,28 @@ def _exit_code_for_long_horizon_summary(summary: LongHorizonRunSummary) -> int:
     API_FAILED is checked before SDK_FAILED, so a run with both kinds of
     failure exits 5, not 4 -- exit 4 is reserved for SDK norm failures with
     zero API failures. Callers may rely on that as an invariant: exit code 4
-    implies no API read/write failures occurred this run.
+    implies no API read/write failures occurred this run. That invariant now
+    also holds for exit 6.
+
+    Exit 4 and exit 6 both mean "zero API failures, but >=1 SDK norm lookup
+    failure"; they differ in whether the SDK failure is PARTIAL or TOTAL.
+    Exit 4 is a partial norm-lookup failure (some, but not all, attempted
+    stations' SDK lookups failed) -- a known, station-level upstream
+    condition. Exit 6 is a total norm-lookup failure (every attempted
+    station's SDK lookup failed) -- consistent with, but not proof of, a
+    service-wide iEH HF outage on this path: ``_lookup_monthly_norms``
+    catches bare ``Exception``, so a single-station run whose only
+    attempted station has a structural (station-level) lookup failure
+    produces the identical ratio. Still treated as fatal regardless of
+    cause. The `total_attempted > 0` guard keeps a zero-station run from
+    ever returning 6; that case already exits 2 elsewhere.
     """
     if summary.status_counts[LongHorizonStationWriteStatus.API_FAILED] >= 1:
         return 5
-    if summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED] >= 1:
+    sdk_failed = summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED]
+    if sdk_failed == summary.total_attempted > 0:
+        return 6
+    if sdk_failed >= 1:
         return 4
     return 0
 
@@ -732,11 +749,19 @@ def main() -> None:
         1  API setup/runtime error.
         2  No SDK sites/no records.
         3  Unexpected exception.
-        4  >=1 SDK norm lookup failure, and zero API read/write failures.
+        4  >=1 (but not all) attempted stations' SDK norm lookup failed, and
+           zero API read/write failures (PARTIAL norm-lookup failure -- a
+           known, station-level upstream condition).
         5  >=1 API read/write failure (regardless of SDK norm failures --
            _exit_code_for_long_horizon_summary checks API_FAILED first, so a
            run with both kinds of failure exits 5, not 4). A caller may treat
            exit 4 as the invariant "no API failures occurred this run".
+        6  Every attempted station's SDK norm lookup failed, and zero API
+           read/write failures (TOTAL norm-lookup failure -- consistent
+           with, but not proof of, a service-wide iEH HF outage on this
+           path; a single-station run with a structural, station-level
+           lookup failure produces the same ratio). The same "no API
+           failures" invariant holds for exit 6.
     """
     parser = _build_parser()
     args = parser.parse_args()
@@ -771,12 +796,27 @@ def main() -> None:
         print(_format_long_horizon_run_summary_artifact(run_summary))
         exit_code = _exit_code_for_long_horizon_summary(run_summary)
         if exit_code != 0:
-            if exit_code == 4:
-                logger.error(
-                    "Long-horizon monthly hydrograph ingestion completed with %d SDK norm "
-                    "lookup failure(s).",
-                    run_summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED],
-                )
+            if exit_code in (4, 6):
+                sdk_failed_count = run_summary.status_counts[
+                    LongHorizonStationWriteStatus.SDK_FAILED
+                ]
+                if exit_code == 6:
+                    logger.error(
+                        "Long-horizon monthly hydrograph ingestion failed: SDK monthly-norm "
+                        "lookup failed for all %d attempted station(s) -- possible "
+                        "service-wide iEH HF outage on this path, not station-level norm "
+                        "absence, though this cannot be confirmed from this signal alone.",
+                        sdk_failed_count,
+                    )
+                else:
+                    logger.info(
+                        "Long-horizon monthly hydrograph ingestion completed with %d "
+                        "station(s) whose SDK monthly-norm lookup raised (no norm was "
+                        "obtained -- this is not the same as the station having no norm). "
+                        "Known upstream iEH HF condition, not a failure; see the "
+                        "LONG-HORIZON RUN SUMMARY above for counts.",
+                        sdk_failed_count,
+                    )
             else:
                 logger.error(
                     "Long-horizon monthly hydrograph ingestion completed with %d API "

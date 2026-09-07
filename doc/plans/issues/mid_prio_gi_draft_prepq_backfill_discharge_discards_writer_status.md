@@ -33,8 +33,10 @@ not sound for deciding *whether the run succeeded*, and nothing else in this mod
 status signal.
 
 `write_long_horizon_hydrograph` classifies each station as `WRITTEN`, `NORM_ABSENT`, `SDK_FAILED`
-or `API_FAILED`, and its own `main()` maps those to graded exit codes (4 for SDK failure, 5 for
-API failure). Routed through this backfill, all of that is dropped at `:109`. `main()`
+or `API_FAILED`, and its own `main()` maps those to graded exit codes (4 for a PARTIAL SDK failure,
+6 for a TOTAL SDK outage — `sdk_failed == total_attempted` — added by INFRA-044 on 2026-09-07, and
+5 for an API failure, which takes precedence over both). Routed through this backfill, all of that
+is dropped at `:109`. `main()`
 (`:477-538`) then logs a per-year summary — `record_count`, `added`, `unchanged`, `changed`,
 `verified`, `snapshot_file` (`:511-524`) — none of which carries a station-status field, and calls
 `sys.exit(0)` unconditionally at `:525`. The only non-zero exits are `RuntimeError` → 1
@@ -83,9 +85,13 @@ Recover the status signal at the seam that currently drops it, without changing 
 - Surface per-status counts in the per-year summary logged at `:511-524` — at minimum
   `sdk_failed` and `api_failed` — so the diff report an operator reviews shows them.
 - Exit non-zero when any station reached a non-`WRITTEN`/`NORM_ABSENT` terminal status. Reusing
-  `sync_lhh._exit_code_for_long_horizon_summary`'s grading (5 for API failure taking precedence
-  over 4 for SDK failure) keeps one convention across both entrypoints; a plain non-zero would also
-  be an improvement over today.
+  `sync_lhh._exit_code_for_long_horizon_summary`'s grading (5 for API failure taking precedence over
+  a PARTIAL SDK failure, 4, or a TOTAL SDK outage, 6 — added by INFRA-044, 2026-09-07) keeps one
+  convention across both entrypoints; a plain non-zero would also be an improvement over today. **If
+  this issue is implemented, decide deliberately whether the backfill should propagate the 4/6
+  PARTIAL-vs-TOTAL distinction or collapse it** — `run_locally.sh` treats 4 as informational
+  (no failure) and 6 as fatal for the *sync* entrypoint (INFRA-044); this backfill entrypoint has no
+  equivalent shell-level consumer today, so that specific split is not automatically inherited.
 
 **Constraint the fix must preserve**: `--dry-run` must keep writing nothing, and the captured
 records must remain the sole determinant of *what* is written in apply mode. This issue is about
