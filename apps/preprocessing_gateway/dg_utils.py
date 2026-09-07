@@ -498,6 +498,121 @@ def transform_snow_data(df, var_name):
     return new_df
 
 
+# --------------------------------------------------------------------
+# Snow operational single-day gap tolerance (PREPG-025)
+#
+# `SapphireSnowModelClient.get_operational` returns all-or-nothing from
+# its `start_date` to the forecast horizon, so a single missing interior
+# day voids the entire response. The per-issue-date `snow-forecast`
+# endpoint is not all-or-nothing that way: each issuance covers a fixed
+# forward window, and consecutive issuances overlap heavily, so a single
+# absent issue date is covered by its neighbours. See
+# doc/plans/issues/mid_prio_gi_draft_prepg_snow_single_day_gap_tolerance.md
+# --------------------------------------------------------------------
+
+# Per-issue-date snow-forecast window length, in days (an issuance dated
+# `issue_date` covers `issue_date .. issue_date + SNOW_FORECAST_WINDOW_DAYS
+# - 1`). Measured empirically against the Data Gateway 2026-09-04
+# (PREPG-025); the API does not expose this as a parameter.
+SNOW_FORECAST_WINDOW_DAYS = 10
+
+# Substring (case-insensitive) the Data Gateway uses in the error body
+# when `get_operational` has no data for the requested date. PREPG-025's
+# fallback triggers ONLY on this condition -- every other failure (auth,
+# network, spin-up rejection, ...) must keep today's behaviour: log and
+# return False.
+_SNOW_OPERATIONAL_GAP_MARKER = "not available for date"
+
+# Substring (case-insensitive) for the expected "no data for this issue
+# date" response from snow-forecast. This is not a failure of the
+# fallback -- it is exactly the case the overlapping issue-date windows
+# are meant to cover.
+#
+# Matched on the FULL distinctive phrase the gateway actually returns
+# ('{"message": "No data found for the given HRU code, date and
+# parameter!", "success": false}'), not the bare substring "no data
+# found": the client raises the same ValueError for every non-200
+# response and does not expose the HTTP status, so a bare-substring
+# match would also catch an unrelated server failure whose body merely
+# happens to contain that phrase (e.g. a 500 reading "No data found
+# because the backing store is unavailable") and wrongly treat it as an
+# expected absent issuance -- letting older data silently satisfy
+# completeness instead of the run failing.
+_SNOW_FORECAST_NO_DATA_MARKER = "no data found for the given hru code"
+
+
+def is_snow_operational_gap_error(exc: Exception) -> bool:
+    """True if `exc` is the Data Gateway's "not available for date"
+    response from `get_operational` (PREPG-025).
+
+    This is the only condition that should trigger the per-issue-date
+    `snow-forecast` fallback in `snow_data_operational.py`.
+    """
+    return _SNOW_OPERATIONAL_GAP_MARKER in str(exc).lower()
+
+
+def is_snow_forecast_no_data_error(exc: Exception) -> bool:
+    """True if `exc` is the Data Gateway's "No data found" response for
+    a single `snow-forecast` issue date (PREPG-025).
+
+    Expected during fallback assembly: it just means that particular
+    issue date has nothing, and a neighbouring issue date's overlapping
+    window is relied on to cover the target dates it would have served.
+    """
+    return _SNOW_FORECAST_NO_DATA_MARKER in str(exc).lower()
+
+
+def fetch_snow_forecast_for_issue_date(client, hru_code, variable, issue_date, directory):
+    """Fetch a single issue-date snow-forecast file, with the correct
+    query parameter name.
+
+    UPSTREAM CLIENT BUG (PREPG-025): `sapphire_dg_client`'s
+    `SapphireSnowModelClient.get_snow_forecast` sends `param=<lower>`,
+    but the endpoint requires `parameter=<UPPER>`. With the wrong name
+    the server still answers HTTP 200 but returns HS for every
+    requested variable, and `transform_snow_data(df, variable)` labels
+    values with the CALLER's requested variable without checking the
+    source -- so using the public method here would silently write HS
+    as SWE and RoF. This function exists only because of that bug: it
+    calls the endpoint directly through the client's existing
+    `_call_api` request path (which appends the api_key and raises
+    ValueError on any non-200 response) with the correct parameter
+    name. DELETE this function and call `client.get_snow_forecast(...)`
+    once the upstream client is fixed and re-pinned -- the
+    variable-identity test in
+    test/test_snow_operational_fallback.py pins the current behaviour
+    so that swap can be verified safe.
+
+    Args:
+        client: A `SapphireSnowModelClient` (or compatible) instance.
+        hru_code: HRU code to fetch.
+        variable: Snow variable, e.g. "SWE", "HS", "RoF".
+        issue_date: Issue date string, "YYYY-MM-DD".
+        directory: Local directory to save the downloaded file into.
+
+    Returns:
+        Local file path of the downloaded CSV.
+
+    Raises:
+        ValueError: Propagated from `client._call_api` on any non-200
+            response, e.g. the expected "No data found" for an issue
+            date with nothing to report.
+    """
+    endpoint = (
+        "api/calculations/snow-forecast/template/RSMinerva"
+        f"?hru_code={hru_code}&date={issue_date}&parameter={variable.upper()}"
+    )
+    resp = client._call_api(method="GET", endpoint=endpoint)
+
+    cd = resp.headers.get("Content-Disposition")
+    if cd and "filename" in cd:
+        filename = cd.split("filename=")[1]
+    else:
+        filename = f"snow_forecast_{hru_code}_{variable}_{issue_date}.csv"
+
+    return client._save_file(resp, directory, filename)
+
+
 def is_leap_year(year: int) -> bool:
     """Check whether a given year is a leap year.
 
