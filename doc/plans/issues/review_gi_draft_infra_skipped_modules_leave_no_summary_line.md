@@ -1,6 +1,16 @@
 ## A skipped module leaves no `PIPELINE SUMMARY` line, so "N passed, 0 failed" can describe a run whose headline module never executed (INFRA-030)
 
-**Status**: Draft (2026-08-18)
+**Status**: Review (2026-09-07). Implemented on `apps/run_locally.sh`
+(`fix_infra030_skip_summary` branch): a new `record_skip()` wraps `record_result` with a `SKIP`
+status and a reason string; `print_summary` renders each as `<module>: SKIP (<reason>)`, counts
+skips separately from pass/fail, excludes them from the red `MODULE ERROR DETAILS` block, leaves
+the exit code untouched, and appends `, N skipped` to the totals line only when N > 0. Scope
+actually shipped is **gate-level**, narrower than this file's original "every module … PASS,
+FAIL or SKIP" wording — see § Acceptance criteria for the corrected contract and why. Passed
+out-of-loop review; automated coverage is
+`apps/pipeline/tests/test_run_locally_orchestration.py::TestSkipSummaryRows` (10 tests, 3 of
+them mutation-verified). Full `apps` test suite green, 16/16 modules and services, zero
+failures and zero unexpected skips (`cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh`).
 **Module**: `apps/run_locally.sh` (and the same reporting contract in the Docker/Luigi pipeline)
 **Priority**: **Medium** — the gating decisions themselves are correct; the reporting of them
 is not. Nothing is mis-computed, but a summary reader cannot tell "correctly gated out" from
@@ -149,14 +159,25 @@ recovery outcomes are the most likely first consumer.
 
 ## Testing
 
-- [ ] `run_locally.sh maintenance:machine_learning` with `SAPPHIRE_PREDICTION_MODE` unset and
-      `ML_MODE=DECAD` emits a summary line `machine_learning (maintenance): SKIP (ML_MODE=DECAD)`
-      and exits 0.
-- [ ] `run_locally.sh long-term-operational` on a non-issue day reports the long-term module as
-      SKIP with the gate reason, and the totals line names the skip.
-- [ ] A skipped module does not increment `fail_count` and does not change the exit code.
-- [ ] An org-level skip (`ORG=uzhm`) produces a SKIP line rather than silence.
-- [ ] `SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero failures, zero unexpected skips.
+- [x] `run_locally.sh maintenance:machine_learning` with `SAPPHIRE_PREDICTION_MODE` unset and
+      `ML_MODE=DECAD` emits a summary line and exits 0 — covered by
+      `TestSkipSummaryRows::test_maintenance_ml_mode_mismatch_now_prints_a_summary_at_all`
+      (reason text is `ML_MODE=DECAD, mode=PENTAD`, i.e. the shipped reason also names the
+      resolved mode, not just `ML_MODE=DECAD` as this line originally predicted).
+- [x] `run_locally.sh long-term-operational` on a non-issue day reports the long-term module as
+      SKIP with the gate reason, and the totals line names the skip — covered by
+      `TestSkipSummaryRows::test_operational_schedule_gate_records_skip_row`.
+- [x] A skipped module does not increment `fail_count` and does not change the exit code — covered
+      by `TestSkipSummaryRows::test_one_fail_and_one_skip_fail_count_is_one_not_two` (mixed
+      FAIL+SKIP run: `fail_count` is 1, not 2, exit code still reflects only the real failure) and
+      `TestSkipSummaryRows::test_direct_dispatch_arm_skip_site` / `test_whole_pipeline_org_gate_skip_site`
+      (skip-only runs exit 0).
+- [x] An org-level skip (`ORG=uzhm`) produces a SKIP line rather than silence — covered by
+      `TestSkipSummaryRows::test_short_term_both_mode_org_skip_records_one_row_per_horizon`
+      (`ieasyhydroforecast_organization=uzhm`) and, for `demo`,
+      `test_whole_pipeline_org_gate_skip_site` / `test_direct_dispatch_arm_skip_site`.
+- [x] `SAPPHIRE_TEST_ENV=True bash run_tests.sh` (`pipeline`) — zero failures, zero unexpected
+      skips. Verified 2026-09-07.
 
 ## Out of scope
 
@@ -168,7 +189,37 @@ recovery outcomes are the most likely first consumer.
 
 ## Acceptance criteria
 
-- [ ] Every module a target covers appears in the summary with PASS, FAIL or SKIP.
-- [ ] The totals line reports skips separately from passes and failures.
-- [ ] No skip is reported as PASS or FAIL.
-- [ ] Exit codes are unchanged by this issue.
+**Corrected 2026-09-07 to the gate-level contract actually implemented, and confirmed by the
+owner the same day** — gate-level is the wanted behaviour, not merely the shipped one. Do not
+reopen this as a defect; a run that skips a whole section prints one line naming the section, and
+that is the intended summary.
+
+**Corrected 2026-09-07 to the gate-level contract actually implemented.** The original first
+bullet below ("every module … appears … with PASS, FAIL or SKIP") over-claims: it reads as
+runner-level accounting, but one gate can guard several runners and only the headline one gets a
+row. For example `run_daily_pipeline`'s Phase 5 long-term gate, when it fires, suppresses
+`run_long_term_forecasting_operational`, `run_postprocessing_long_term`,
+`run_recalculate_long_term_skill_metrics`, and `run_maintenance_postprocessing_long_term` — four
+runners — but records exactly one row, labelled `long_term_forecasting (operational)`. Runner-level
+accounting (one row per suppressed runner) was presented to the owner with both output shapes side
+by side on 2026-09-07 and declined in favour of the shorter summary: it would need
+either a caller-supplied list of the runners a gate covers, or a static map from gate to runner set,
+and neither existed before this change. The `reason` string parameter and the three-way branch in
+`print_summary` both support adding it later without another restructure, if it is ever wanted.
+Note the third branch is `PASS` / `SKIP` / **else**, and the `else` deliberately still means "any
+other status is a failure" — it is *not* a closed fail set, so an unrecognised status is still
+counted and rendered rather than silently dropped from all three counts
+(`TestSkipSummaryRows::test_unknown_status_is_still_counted_as_a_failure` pins this).
+
+- [x] Every explicit neutral gating branch this issue's Observation/Mechanism sections identified
+      (org-level `should_skip_module`, an `ML_MODE`/mode mismatch via `should_skip_ml_for_mode`,
+      and the long-term schedule gate) records **exactly one** `SKIP` row, labelled with the
+      headline runner the gate controls — not one row per runner the gate suppresses.
+- [x] The totals line reports skips separately from passes and failures (`, N skipped`, shown only
+      when N > 0 — see Invariant 5,
+      `TestSkipSummaryRows::test_no_skip_baseline_totals_line_is_byte_identical_to_today`).
+- [x] No skip is reported as PASS or FAIL, and no skip is swept into `MODULE ERROR DETAILS`
+      (`TestSkipSummaryRows::test_one_fail_and_one_skip_fail_count_is_one_not_two`).
+- [x] Exit codes are unchanged by this issue (every `TestSkipSummaryRows` case with only SKIP rows
+      asserts `returncode == 0`; the mixed FAIL+SKIP case asserts `returncode == 1` driven by the
+      FAIL alone).
