@@ -9,22 +9,28 @@ on its configured issue days). Every one reports success to cron whether or not 
 owner decision, rather than widening that issue — one of these wrappers needs a different fix shape
 (see the hazard below) and INFRA-023 was already scoped and staged.
 **Related**: **INFRA-023** owns the same defect for seven other scripts and establishes the two fix
-shapes; read it first. **P-007** (fixed) removed the layer below this one.
+shapes; read it first — and note `run_preprocessing_gateway.sh` moved from there to here on
+2026-09-07, so the canonical scheduled wrappers are all in one place. **P-007** (fixed) removed the
+layer below this one.
 
 ---
 
 ## Problem
 
-Five wrappers submit work via `docker compose run` and then finish without propagating its status,
-so cron records success no matter what happened:
+These canonical scheduled wrappers submit work via `docker compose run` and then finish without
+propagating its status, so cron records success no matter what happened:
 
-| Script | Cron slot | Final statement |
+| Script | Installed where (survey 2026-09-07) | Final statement |
 |---|---|---|
-| `bin/run_pentadal_forecasts.sh` | 04:00 daily | `echo` at `:74` (compose at `:66-71`) |
-| `bin/run_decadal_forecasts.sh` | 05:00 daily | `echo` at `:74` (compose at `:66-71`) |
+| `bin/run_preprocessing_gateway.sh` | kghm, tjhm — **moved here from INFRA-023** | `echo` at `:76` |
+| `bin/run_pentadal_forecasts.sh` | all three | `echo` at `:74` (compose at `:66-71`) |
+| `bin/run_decadal_forecasts.sh` | all three | `echo` at `:74` (compose at `:66-71`) |
 | `bin/run_long_term_forecasts.sh` | 06:00 on each deployment's **configured issue day(s)** — not daily | `echo` at `:125` (compose at `:118-122`) |
 | `bin/run_daily_maintenance.sh` | 19:00 daily | `echo` at `:83` (compose at `:71-75`) |
-| `bin/run_preprocessing_runoff.sh` | not a standalone cron row | `echo` at `:52` (compose at `:45-49`) |
+
+**Cut: `bin/run_preprocessing_runoff.sh`.** The survey confirmed it has no cron row on any of the
+three deployments, so fixing it is not worth a production diff. The recipe below applies if it is
+ever scheduled.
 
 These are Luigi-backed, so **two layers** are required — the same distinction INFRA-023 draws.
 Capturing and propagating the compose status alone is not sufficient: Luigi defaults `task_failed`,
@@ -44,14 +50,26 @@ pattern to copy. Do **not** use `set -e` and do **not** exit early.
 Verify the same question for the other four before changing them: does anything run after the
 compose call that must still happen?
 
-## Precondition — do not skip
+## Precondition — DONE (2026-09-07)
 
-**Inspect the installed crontabs first**, for each of these wrapper names, looking specifically for
-anything *after* the wrapper: a right-hand `&&`, a retry supervisor, or any other consumer of the
-exit code. The repository's documented cron rows have nothing following `bash <wrapper>`, and no
-systemd unit chains them — but installed crontabs have never been inspected. A consumer that stops
-downstream work, or retries a mutating job, would turn this fix into an outage. INFRA-023's PR2
-carries the same precondition; one survey can serve both.
+The installed-crontab survey has been run on all three deployments. **No exit-code consumers
+exist**: every SAPPHIRE cron line is `cd /data/SAPPHIRE_Forecast_Tools && bash bin/<wrapper>.sh
+<env> >> <log> 2>&1`, with the `&&` *before* the wrapper and nothing after it but a redirect. No
+chained command, no retry supervisor, no systemd unit. The outage risk that gated this issue is
+retired, and it is safe to implement.
+
+**Per-deployment installation, so impact is not overstated:** kghm and tjhm run the gateway,
+pentadal, decadal, long-term and daily maintenance. uzhm runs **linear regression only** — no
+long-term, no machine learning — so it schedules pentadal, decadal and daily maintenance, and has
+no gateway or long-term row at all. That is by design, not a gap.
+
+## Known caller that changes behaviour
+
+`dev_local_backfill.sh --run-pipeline` runs both `run_preprocessing_gateway.sh` and
+`run_daily_maintenance.sh` from one `steps` array under the same failure guard (`:532-536`), so a
+newly non-zero result from either aborts phases 4-6 unless `--continue-on-error` is passed. That is
+development behaviour, not a production cron chain — recorded so it is not mistaken for a regression
+when it starts happening. Also recorded in INFRA-023.
 
 ## Expected effect, and it is the point
 
@@ -67,7 +85,7 @@ contradicting the exit status.
 
 ## Acceptance criteria
 
-- Each of the five named scripts exits non-zero when its Luigi task fails, and 0 when it succeeds.
+- Each named script exits non-zero when its Luigi task fails, and 0 when it succeeds.
 - `run_daily_maintenance.sh` **still runs the frontend updater** when the Luigi step fails, and
   exits non-zero afterwards. A test must prove the updater ran.
 - **The aggregate includes the frontend updater's own status.** It is invoked at
@@ -92,4 +110,4 @@ contradicting the exit status.
   the issue exists separately; an early exit is the wrong fix shape here.
 - Do not change what any wrapper *does* — only what it reports.
 - Do not fold in INFRA-023's seven scripts; that issue is separately scoped and staged.
-- Do not add a shared helper or framework for this. Five explicit local edits are the right size.
+- Do not add a shared helper or framework for this. A handful of explicit local edits is the right size.
