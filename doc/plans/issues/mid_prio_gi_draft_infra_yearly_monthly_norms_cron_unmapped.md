@@ -213,7 +213,7 @@ if one is ever scheduled, this issue's recipe still applies.
 | Script | Status | What it needs |
 |---|---|---|
 | `bin/run_periodic_maintenance.sh` | scheduled on all three (long_term / skill_recalc / snow_norms) | task-type validation **and** exit propagation + `[retcode]` for its three scheduled types |
-| `bin/yearly_runoff_hydrograph_aggregation.sh` | scheduled on kghm (9) and tjhm | fix the `tee`/`inspect` fallback — see below; it is the replacement this issue tells operators to use |
+| `bin/yearly_runoff_hydrograph_aggregation.sh` | scheduled on kghm (9) and tjhm | capture `${PIPESTATUS[0]}` so a `tee` failure cannot mask Docker's real exit code — **narrower than an earlier revision claimed; see the correction below** |
 
 **`run_preprocessing_gateway.sh` has moved to INFRA-047**, where it belongs with the other canonical
 scheduled wrappers. It is not fixed here.
@@ -227,12 +227,24 @@ missing gateway, long-term, snow-norm and Jan-1 rows are expected, not gaps.
 
 ### Two shapes, two different fixes
 
-- **Direct `docker run` wrappers** (`daily_*`, bimonthly): **two small edits, not one line.**
-  Capture `${PIPESTATUS[0]}` immediately after the `| tee` — `$?` there is *tee's* status, and the
-  `docker inspect` fallback only masks that while inspect works — and add the final
-  `exit "$CONTAINER_EXIT_CODE"`. Adding the exit alone still reports success when inspect fails.
-  **In this issue that shape now applies only to `yearly_runoff_hydrograph_aggregation.sh`**, whose
-  `tee`/`inspect` fallback is described above; the four `daily_*` wrappers that also had it are cut.
+- **`yearly_runoff_hydrograph_aggregation.sh` — a real but narrow defect. Check `pipefail` before
+  assuming which one.** An earlier revision of this issue said this wrapper could exit 0 on a
+  Docker-create failure. **That is wrong**, and it was taken from a review finding without checking
+  the shell semantics. The script sets `set -euo pipefail` at `:57`, and the `set +e` at `:199`
+  disables *errexit only* — `pipefail` stays on. Measured:
+
+  ```
+  docker fails (9), tee ok        ->  $? = 9    pipefail propagates Docker's status; NOT 0
+  docker fails (9), tee fails (2) ->  $? = 2    tee's status masks Docker's real cause
+  ```
+
+  So it does not report false success. The genuine defect is the second line: if `tee` itself fails
+  — disk full, or permissions on `$SERVICE_LOG` — its incidental status replaces Docker's and the
+  operator sees the wrong cause. Capture `${PIPESTATUS[0]}` at `:216` instead of `$?`.
+
+  **The sibling is a different case:** `yearly_snow_norm_recalculation.sh:135-144` has **no**
+  `pipefail`, so there `$?` after the pipe really is tee's status and the false-green reading does
+  hold. Do not generalise between them.
 - **Luigi-backed wrappers** — in this issue, `run_periodic_maintenance.sh` for its three scheduled
   types (the gateway wrapper has the same shape but is INFRA-047's): propagation is necessary but
   not sufficient. Luigi defaults

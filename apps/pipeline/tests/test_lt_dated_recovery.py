@@ -428,16 +428,57 @@ class TestLuigiRetcodeReachesTheProcessExit:
         assert "lt_memory=1" in result.stdout
         assert "task_failed=1" in result.stdout
 
-    def test_wrapper_sets_luigi_config_path_for_recovery_only(self):
+    def test_wrapper_sets_luigi_config_path_for_all_task_types(self):
+        """INFRA-023 inversion.
+
+        Before: this test asserted LUIGI_CONFIG_PATH was set only inside
+        `if [ "$TASK_TYPE" = "lt_recovery" ]`, and was only ever passed
+        through a recovery-scoped `RECOVERY_DOCKER_ARGS` array -- so
+        long_term/skill_recalc/snow_norms never got it, and a failed task
+        of those types exited 0 via Luigi's own default retcodes.
+        After: TASK_TYPE is already validated (earlier in the script) to
+        be one of the four live types, so LUIGI_CONFIG_PATH is set
+        unconditionally -- no per-type branch gates it any more -- via a
+        renamed, no-longer-recovery-scoped array.
+        """
         path = os.path.join(_REPO_ROOT, "bin", "run_periodic_maintenance.sh")
         with open(path) as handle:
             text = handle.read()
         assert "LUIGI_CONFIG_PATH=/app/luigi.cfg" in text
-        index = text.index("LUIGI_CONFIG_PATH=/app/luigi.cfg")
-        preceding = text[:index]
-        assert 'if [ "$TASK_TYPE" = "lt_recovery" ]' in preceding
-        # ... and it is only ever passed through the recovery-scoped array.
-        assert 'RECOVERY_DOCKER_ARGS[@]+"${RECOVERY_DOCKER_ARGS[@]}"' in text
+        # It is written by an unindented `cat` -- i.e. not nested inside any
+        # conditional block -- unlike the old recovery-scoped version.
+        assert "\ncat >> temp_luigi.cfg <<'EOF'" in text
+        assert "\n    cat >> temp_luigi.cfg <<'EOF'" not in text
+        assert 'LUIGI_RETCODE_DOCKER_ARGS[@]+"${LUIGI_RETCODE_DOCKER_ARGS[@]}"' in text
+
+    def test_scheduled_type_config_reaches_real_luigi(self, tmp_path):
+        """INFRA-023: prove the [retcode] layer for a *scheduled* task type
+        (not just lt_recovery) with Luigi actually running.
+
+        Rather than duplicating a full real-Luigi execution per task type,
+        this pulls the wrapper's *actual* generated temp_luigi.cfg for a
+        non-recovery task type ("snow_norms", with Docker stubbed so no
+        real container runs) and feeds that exact content into this
+        class's existing real-Luigi harness -- the same one that proves
+        LUIGI_CONFIG_PATH makes a failed task exit non-zero for
+        lt_recovery above. The two together show: (a) the wrapper writes
+        the retcode block for a scheduled type, and (b) Luigi genuinely
+        honours that block's content, regardless of which task type
+        produced it (the mechanism itself no longer branches on
+        TASK_TYPE).
+        """
+        wrapper_dir = tmp_path / "wrapper_run"
+        wrapper_dir.mkdir()
+        _, _, cfg = TestWrapperExitStatus()._run(wrapper_dir, ["snow_norms"])
+        assert "[retcode]" in cfg
+        assert "task_failed = 1" in cfg
+        retcode_block = cfg[cfg.index("[retcode]") - 1 :]  # keep the leading blank line
+
+        luigi_dir = tmp_path / "luigi_run"
+        luigi_dir.mkdir()
+        workdir = self._layout(luigi_dir, retcode_block)
+        mounted = str(luigi_dir / "app" / "luigi.cfg")
+        assert self._run_luigi(workdir, {"LUIGI_CONFIG_PATH": mounted}) == 1
 
 
 class TestOperatorEntryPoint:
@@ -468,14 +509,31 @@ class TestOperatorEntryPoint:
         assert "LT_RECOVERY_ISSUE_DATE" in text
         assert "[0-9]{4}-[0-9]{2}-[0-9]{2}" in text
 
-    def test_wrapper_sets_non_zero_luigi_retcodes_for_recovery_only(self):
-        """Luigi's default retcodes are all 0; the status would be meaningless."""
+    def test_wrapper_sets_non_zero_luigi_retcodes_for_all_task_types(self):
+        """INFRA-023 inversion.
+
+        Before: this test asserted the [retcode] block only appeared inside
+        `if [ "$TASK_TYPE" = "lt_recovery" ]`, i.e. Luigi's default retcodes
+        (all 0) stayed in effect for long_term/skill_recalc/snow_norms, so a
+        failed task there could never make the wrapper's status meaningful.
+        After: the block is written exactly once, unconditionally, for
+        every task type this wrapper validates -- proven here by checking
+        the `cat` that writes it is not indented under any conditional.
+        """
         text = self._wrapper()
         assert "[retcode]" in text
         assert "task_failed = 1" in text
-        retcode_block_start = text.index("[retcode]")
-        preceding = text[:retcode_block_start]
-        assert 'if [ "$TASK_TYPE" = "lt_recovery" ]' in preceding
+        # There is exactly one real [retcode] *section header* (as opposed
+        # to the comments above it that also mention "[retcode]" in prose).
+        assert text.count("\n[retcode]\n") == 1
+        retcode_block_start = text.index("\n[retcode]\n")
+        cat_heredoc_start = text.rindex("cat >> temp_luigi.cfg", 0, retcode_block_start)
+        line_start = text.rfind("\n", 0, cat_heredoc_start) + 1
+        heredoc_line_prefix = text[line_start:cat_heredoc_start]
+        assert heredoc_line_prefix == "", (
+            f"expected the heredoc write to be unindented (unconditional), "
+            f"got {heredoc_line_prefix!r}"
+        )
 
     def test_compose_forwards_recovery_arguments(self):
         text = self._compose()
@@ -560,10 +618,17 @@ class TestWrapperExitStatus:
         assert result.returncode == 0, result.stdout + result.stderr
 
     @pytest.mark.parametrize("task_type", ["long_term", "skill_recalc", "snow_norms"])
-    def test_existing_task_types_still_swallow_the_status(self, tmp_path, task_type):
-        """REGRESSION: cron lines for the other task types must not start failing."""
+    def test_existing_task_types_now_propagate_the_status(self, tmp_path, task_type):
+        """INFRA-023 inversion.
+
+        Before: this test asserted a Compose failure for these three
+        scheduled task types was swallowed -- the wrapper always exited 0
+        regardless of `compose_exit`, so a failed long_term/skill_recalc/
+        snow_norms run reported success to cron.
+        After: they propagate COMPOSE_STATUS exactly like lt_recovery does.
+        """
         result, _, _ = self._run(tmp_path, [task_type], compose_exit=7)
-        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.returncode == 7, result.stdout + result.stderr
 
     def test_recovery_passes_luigi_config_path(self, tmp_path):
         _, calls, cfg = self._run(tmp_path, ["lt_recovery", "month_0", "2026-08-01"])
@@ -575,11 +640,21 @@ class TestWrapperExitStatus:
         assert "[retcode]" in cfg
         assert "task_failed = 1" in cfg
 
-    def test_other_task_types_get_no_config_path_and_no_retcode(self, tmp_path):
-        """REGRESSION: neither the env var nor the [retcode] block leaks out."""
+    def test_other_task_types_now_get_config_path_and_retcode(self, tmp_path):
+        """INFRA-023 inversion.
+
+        Before: this test asserted neither LUIGI_CONFIG_PATH nor the
+        [retcode] block leaked out for a non-recovery task type.
+        After: both must be present, or shell-level propagation
+        (test_existing_task_types_now_propagate_the_status) is a no-op --
+        Luigi's own retcodes default to 0, so without this layer a failed
+        long_term/skill_recalc/snow_norms task still yields COMPOSE_STATUS
+        0 regardless of what the wrapper does with the exit status.
+        """
         _, calls, cfg = self._run(tmp_path, ["long_term"])
-        assert "LUIGI_CONFIG_PATH" not in calls
-        assert "[retcode]" not in cfg
+        assert "LUIGI_CONFIG_PATH=/app/luigi.cfg" in calls
+        assert "[retcode]" in cfg
+        assert "task_failed = 1" in cfg
 
     @pytest.mark.parametrize(
         "args",
@@ -609,3 +684,55 @@ class TestWrapperExitStatus:
         )
         assert result.returncode == 1
         assert not log.exists()
+
+    def test_unknown_task_type_exits_non_zero(self, tmp_path):
+        """INFRA-023: a retired or misspelled task_type must not reach Luigi."""
+        result, calls, _ = self._run(tmp_path, ["bogus_type"])
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert calls == ""
+
+    def test_monthly_norms_names_its_replacement(self, tmp_path):
+        """INFRA-023: `monthly_norms` was deliberately retired (Phase 4 of
+        the runoff long-horizon hydrograph plan). It must not silently pass
+        validation and reach Luigi three layers down -- it must be rejected
+        here, in the wrapper, with a message naming the replacement script.
+        """
+        result, calls, _ = self._run(tmp_path, ["monthly_norms"])
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "yearly_runoff_hydrograph_aggregation.sh" in result.stdout
+        assert calls == ""
+
+    def test_printed_and_validated_lists_agree(self, tmp_path):
+        """INFRA-023: the printed list and the validated list went out of
+        sync once already (that is the whole reason this issue exists).
+        The fix makes both the empty-argument usage message and the
+        unknown-task_type error message interpolate the same
+        VALID_TASK_TYPES_STR variable (built from the VALID_TASK_TYPES
+        array that also drives validation), so this asserts there is only
+        one literal list of task types in the whole script -- the array
+        itself -- and that every printed usage message references the
+        variable derived from it rather than a second hardcoded string.
+        """
+        text = TestOperatorEntryPoint._wrapper()
+        assert "VALID_TASK_TYPES=(long_term skill_recalc snow_norms lt_recovery)" in text
+        usage_lines = [line for line in text.splitlines() if "Valid task_types:" in line]
+        assert len(usage_lines) == 2, usage_lines
+        for line in usage_lines:
+            assert "${VALID_TASK_TYPES_STR}" in line, line
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["long_term"],
+            ["skill_recalc"],
+            ["snow_norms"],
+            ["lt_recovery", "month_0", "2026-08-01"],
+        ],
+    )
+    def test_all_four_valid_task_types_reach_docker(self, tmp_path, args):
+        """All four live task types must still be accepted and still reach
+        the `docker compose run` call -- a validation that rejects a
+        working task type is worse than the bug it fixes."""
+        result, calls, _ = self._run(tmp_path, args, compose_exit=0)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "run" in calls

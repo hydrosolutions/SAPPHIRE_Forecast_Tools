@@ -48,14 +48,46 @@ source "$(dirname "$0")/utils/common_functions.sh"
 # Print the banner
 print_banner
 
+# Single source of truth for the valid task types, so the printed list and the
+# validated list cannot go out of sync again (INFRA-023: they did once,
+# because only the empty-argument case was rejected and "monthly_norms" -- a
+# deliberately retired task type -- passed straight through to Luigi, which
+# rejected it three layers down). Defined before any argument parsing so both
+# the empty-argument message below and the validation error message further
+# down share this one list.
+VALID_TASK_TYPES=(long_term skill_recalc snow_norms lt_recovery)
+VALID_TASK_TYPES_STR="${VALID_TASK_TYPES[*]}"
+VALID_TASK_TYPES_STR="${VALID_TASK_TYPES_STR// /, }"
+
 # Parse task type argument
 TASK_TYPE="${1}"
 if [ -z "$TASK_TYPE" ]; then
     echo "| Error: task_type argument required."
     echo "| Usage: bash bin/run_periodic_maintenance.sh <task_type> <env_file_path>"
-    echo "| Valid task_types: long_term, skill_recalc, snow_norms, lt_recovery"
+    echo "| Valid task_types: ${VALID_TASK_TYPES_STR}"
     exit 1
 fi
+
+TASK_TYPE_IS_VALID=false
+for _valid_type in "${VALID_TASK_TYPES[@]}"; do
+    if [ "$TASK_TYPE" = "$_valid_type" ]; then
+        TASK_TYPE_IS_VALID=true
+        break
+    fi
+done
+unset _valid_type
+
+if [ "$TASK_TYPE_IS_VALID" != true ]; then
+    if [ "$TASK_TYPE" = "monthly_norms" ]; then
+        echo "| Error: task_type 'monthly_norms' was retired."
+        echo "| Use bin/yearly_runoff_hydrograph_aggregation.sh instead."
+    else
+        echo "| Error: unknown task_type '${TASK_TYPE}'."
+        echo "| Valid task_types: ${VALID_TASK_TYPES_STR}"
+    fi
+    exit 1
+fi
+
 echo "| Running Periodic Maintenance: ${TASK_TYPE}"
 
 # Extra arguments for the dated long-term recovery. Empty for every other
@@ -131,8 +163,9 @@ EOF
 # task_failed, missing_data, already_running, scheduling_error and not_run are
 # all 0; only unhandled_exception defaults to 4). A failed task would therefore
 # exit 0 and any status this script returns would be meaningless. Map the
-# failures onto non-zero for the recovery path only; the other task types keep
-# Luigi's defaults so their behaviour is unchanged.
+# failures onto non-zero for every task type this wrapper reaches -- TASK_TYPE
+# is already validated above to be one of the four live types, so this block
+# is unconditional.
 #
 # LUIGI_CONFIG_PATH is required, not optional: Luigi resolves the bare
 # 'luigi.cfg' entry in its default search path relative to the process CWD, and
@@ -141,9 +174,7 @@ EOF
 # read. LUIGI_CONFIG_PATH goes through add_config_path(), which APPENDS to the
 # search path rather than replacing it, so the image's [core]/[resources]/
 # [worker] settings still apply and [retcode] is layered on top.
-RECOVERY_DOCKER_ARGS=()
-if [ "$TASK_TYPE" = "lt_recovery" ]; then
-    cat >> temp_luigi.cfg <<'EOF'
+cat >> temp_luigi.cfg <<'EOF'
 
 [retcode]
 unhandled_exception = 4
@@ -153,8 +184,7 @@ already_running = 6
 scheduling_error = 7
 not_run = 8
 EOF
-    RECOVERY_DOCKER_ARGS=(-e LUIGI_CONFIG_PATH=/app/luigi.cfg)
-fi
+LUIGI_RETCODE_DOCKER_ARGS=(-e LUIGI_CONFIG_PATH=/app/luigi.cfg)
 
 # Run the periodic maintenance workflow.
 # The exports feed the compose command interpolation; the -e flags put the same
@@ -167,7 +197,7 @@ docker compose -f bin/docker-compose-luigi.yml run \
     -e MAINTENANCE_TASK_TYPE=${TASK_TYPE} \
     -e MAINTENANCE_LT_MODE="${LT_RECOVERY_MODE}" \
     -e MAINTENANCE_LT_ISSUE_DATE="${LT_RECOVERY_ISSUE_DATE}" \
-    ${RECOVERY_DOCKER_ARGS[@]+"${RECOVERY_DOCKER_ARGS[@]}"} \
+    ${LUIGI_RETCODE_DOCKER_ARGS[@]+"${LUIGI_RETCODE_DOCKER_ARGS[@]}"} \
     --user root \
     --rm \
     periodic-maintenance
@@ -176,9 +206,12 @@ COMPOSE_STATUS=$?
 echo "| Periodic maintenance (${TASK_TYPE}) task submitted to Luigi daemon"
 echo "| Check progress at: http://localhost:${LUIGI_SCHEDULER_PORT}"
 
-# lt_recovery is a repair an operator is waiting on, so its outcome has to
-# reach the caller. The other task types keep their historical behaviour
-# (status ignored) so this change cannot alter existing cron lines.
+# Every task type reached by this wrapper now propagates COMPOSE_STATUS (see
+# the [retcode] block above -- without it Luigi's own defaults would make
+# COMPOSE_STATUS 0 regardless of task outcome). lt_recovery is a repair an
+# operator is waiting on, so it keeps its detailed success/NOT-CONFIRMED
+# summary; the other three get a simpler success/failure line so this
+# reporting never contradicts the exit status below.
 if [ "$TASK_TYPE" = "lt_recovery" ]; then
     if [ "$COMPOSE_STATUS" -eq 0 ]; then
         echo "| Long-term recovery for ${LT_RECOVERY_MODE} ${LT_RECOVERY_ISSUE_DATE}:"
@@ -200,5 +233,12 @@ if [ "$TASK_TYPE" = "lt_recovery" ]; then
         echo "|   Check the month in the database before re-running: the guard"
         echo "|   will refuse a re-run if any member row now exists."
     fi
-    exit "$COMPOSE_STATUS"
+else
+    if [ "$COMPOSE_STATUS" -eq 0 ]; then
+        echo "| Periodic maintenance (${TASK_TYPE}): SUCCESS."
+    else
+        echo "| Periodic maintenance (${TASK_TYPE}): FAILED (exit ${COMPOSE_STATUS})."
+    fi
 fi
+
+exit "$COMPOSE_STATUS"
