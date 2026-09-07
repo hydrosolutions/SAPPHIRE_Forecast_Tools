@@ -45,6 +45,15 @@
 #   bash apps/run_locally.sh recalculate_snow_norms
 #   bash apps/run_locally.sh calibrate_long_term
 #
+#   # Long-term recovery of ONE missed month (operator-invoked, LTF-010).
+#   # Both variables are mandatory -- there is no default mode or date.
+#   # This writes for real against whatever ieasyhydroforecast_env_file_path
+#   # points at (not a "dev database"); see the target's own banner and
+#   # doc/dev/testing_workflow.md for the full side-effect list.
+#   lt_forecast_mode=month_0 LT_RECOVERY_DATE=2026-08-01 \
+#     ieasyhydroforecast_env_file_path=/path/to/.env \
+#     bash apps/run_locally.sh maintenance:long_term_forecasting
+#
 # Combined targets:
 #   daily                                Short-term daily + long-term (gated by day-of-month)
 #
@@ -63,6 +72,9 @@
 #   maintenance:machine_learning             ML NaN recalc + gap-fill + new stations
 #   maintenance:postprocessing_forecasts     Fill missing ensemble forecasts
 #   maintenance:postprocessing_long_term     Fill missing monthly ensemble forecasts
+#   maintenance:long_term_forecasting        Recover ONE missed long-term month (operator-invoked;
+#                                             requires lt_forecast_mode + LT_RECOVERY_DATE; not in
+#                                             any aggregate -- see the target's own banner)
 #   calibrate_long_term                      Calibrate and hindcast long-term models
 #   recalculate_skill_metrics                Full skill metrics rebuild (yearly)
 #   recalculate_snow_norms                   Yearly snow norm recalculation
@@ -1264,6 +1276,83 @@ run_maintenance_postprocessing_long_term() {
     return $rc
 }
 
+# run_maintenance_long_term_forecasting - LTF-010: local entry point for the
+# operator-invoked long-term recovery (LTF-009 Stage A). Runs
+# `run_forecast.py --today <LT_RECOVERY_DATE> --recover` directly in the
+# long_term_forecasting venv -- no Luigi, no Docker; the Luigi task's
+# max_retries=1 and per-(mode,date) marker are orchestration concerns with
+# no local equivalent. validate_env has already refused the run (exit 1,
+# nothing invoked) if lt_forecast_mode or LT_RECOVERY_DATE is unset/empty,
+# or if the organization skips long_term_forecasting -- so both variables
+# are guaranteed non-empty by the time this runs.
+#
+# Side effects -- this is a REAL recovery against whatever
+# ieasyhydroforecast_env_file_path points at, not a sandboxed "dev
+# database": a successful run overwrites {model}_forecast.csv and, only if
+# it already exists, the hindcast CSV; stage 1 rewrites each model's
+# general_config.json even when the run is later declined (REFUSED is not
+# side-effect-free). Acceptance is on database rows only, and only
+# partially -- see the exit taxonomy below. See also
+# doc/dev/testing_workflow.md.
+#
+# Precondition -- the guard is not a lock (see lt_recovery.py's module
+# docstring): it reads, the model runs, then it writes. A concurrent
+# operational run, another recovery, or a manual writer that inserts rows
+# for the same key during that window is silently overwritten by this
+# run's upsert. The Luigi path serialises via lt_memory; this direct venv
+# invocation bypasses that entirely, so nothing at all stands between a
+# rehearsal and a scheduled forecast running concurrently. The operator
+# must ensure no long-term forecast is in flight before running this.
+#
+# Exit taxonomy (post-LTF-011; lt_recovery.py EXIT_OK / EXIT_FAILED /
+# EXIT_REFUSED):
+#   0 - recovered, and the read-back found at least one row -> PASS
+#   2 - REFUSED: declined, nothing written by this run (existing rows, or
+#       the request itself was wrong) -> FAIL (REFUSED), stays non-zero.
+#       Not proof the month is complete: the existing-row guard can decline
+#       on a single row, refusing an otherwise-partial month as a whole.
+#   1 - FAILED: could not even be attempted, or started and failed partway
+#       -> FAIL
+#   other (signal, parser error, ...) -> FAIL
+run_maintenance_long_term_forecasting() {
+    banner "Maintenance: long_term_forecasting (long-term recovery)"
+    log WARN "This performs a REAL guarded recovery against whatever ieasyhydroforecast_env_file_path points at -- it is not a dev database. A successful run overwrites {model}_forecast.csv and (if present) the hindcast CSV; stage 1 also rewrites each model's general_config.json even if the run is later declined."
+    log WARN "PRECONDITION: the guard is not a lock -- it reads, the model runs, then it writes. A concurrent operational run, another recovery, or a manual writer touching the same month during that window is silently overwritten by this run's upsert. Ensure no long-term forecast is in flight before running this."
+    log INFO "  Mode (lt_forecast_mode): ${lt_forecast_mode}"
+    log INFO "  Recovery date (LT_RECOVERY_DATE): ${LT_RECOVERY_DATE}"
+    local start
+    start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting_recovery.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv long_term_forecasting run_forecast.py \
+        "lt_forecast_mode=${lt_forecast_mode}" \
+        "IN_DOCKER=False" \
+        -- --today "${LT_RECOVERY_DATE}" --recover
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    case "$rc" in
+        0)
+            log OK "long-term recovery completed and read back in $(format_duration $elapsed)"
+            record_result "long_term_forecasting (recovery)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+            ;;
+        2)
+            log ERROR "long-term recovery REFUSED -- nothing was written by this run (exit 2) after $(format_duration $elapsed). Not proof the month is complete: the existing-row guard can decline on a single row."
+            record_result "long_term_forecasting (recovery)" "FAIL (REFUSED)" "$elapsed" "$CURRENT_MODULE_LOG"
+            ;;
+        1)
+            log ERROR "long-term recovery FAILED (exit 1) after $(format_duration $elapsed): could not be attempted, or started and failed partway."
+            record_result "long_term_forecasting (recovery)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+            ;;
+        *)
+            log ERROR "long-term recovery exited unexpectedly (exit ${rc}) after $(format_duration $elapsed)"
+            record_result "long_term_forecasting (recovery)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+            ;;
+    esac
+    return $rc
+}
+
 run_recalculate_long_term_skill_metrics() {
     local modes="${1:-MONTHLY QUARTERLY SEASONAL}"
     banner "Recalculate: long-term skill metrics (${modes})"
@@ -1660,6 +1749,30 @@ validate_env() {
         log OK "Env file: ${ieasyhydroforecast_env_file_path}"
     fi
 
+    # LTF-010: maintenance:long_term_forecasting (the operator-invoked
+    # long-term recovery) gets its own gate here, ahead of every check
+    # below and ahead of the --dry-run early return in main() (validate_env
+    # runs before that return, main():~2185-2193). A missing parameter or
+    # an organisation that skips long_term_forecasting must refuse loudly
+    # and invoke nothing -- it must NOT inherit the should_skip_module
+    # silent-skip pattern the other maintenance:<module> dispatch arms use,
+    # or an operator seeing green would conclude the month was repaired.
+    if [ "$target" = "maintenance:long_term_forecasting" ]; then
+        if should_skip_module long_term_forecasting; then
+            log ERROR "Long-term recovery is not available for this deployment (organization: '${ORG}'). long_term_forecasting is skipped for this org."
+            errors=$((errors + 1))
+        else
+            if [ -z "${lt_forecast_mode:-}" ]; then
+                log ERROR "lt_forecast_mode is not set. maintenance:long_term_forecasting requires it (e.g. lt_forecast_mode=month_0) -- there is no default mode for a recovery."
+                errors=$((errors + 1))
+            fi
+            if [ -z "${LT_RECOVERY_DATE:-}" ]; then
+                log ERROR "LT_RECOVERY_DATE is not set. maintenance:long_term_forecasting requires it (ISO date, e.g. LT_RECOVERY_DATE=2026-08-01) -- there is no default recovery date."
+                errors=$((errors + 1))
+            fi
+        fi
+    fi
+
     # Check prediction mode for targets that need it
     # (daily sets its own mode, so no warning needed)
     case "$target" in
@@ -1673,7 +1786,7 @@ validate_env() {
         daily)
             log OK "Prediction mode: PENTAD + DECAD (daily) + long-term (gated)"
             ;;
-        long-term|long-term-operational|calibrate_long_term|recalculate_snow_norms|yearly|maintenance:postprocessing_long_term)
+        long-term|long-term-operational|calibrate_long_term|recalculate_snow_norms|yearly|maintenance:postprocessing_long_term|maintenance:long_term_forecasting)
             # These targets don't depend on SAPPHIRE_PREDICTION_MODE
             ;;
     esac
@@ -1801,6 +1914,19 @@ validate_env() {
 # Summary
 # ---------------------------------------------------------------------------
 
+_is_fail_status() {
+    # Closed set, not "!= PASS": LTF-010's recovery target records
+    # "FAIL (REFUSED)" for exit 2, which must still get a log tail in
+    # print_error_details below. Matching the two known FAIL spellings
+    # explicitly (rather than "anything that is not PASS") keeps this from
+    # coupling to a future non-failing status -- e.g. the planned SKIP
+    # (INFRA-030) -- which would otherwise render inside the red
+    # MODULE ERROR DETAILS block the moment it existed. Every non-recovery
+    # caller only ever records "PASS" or the literal "FAIL", so this is
+    # behaviourally identical for them today.
+    [ "$1" = "FAIL" ] || [ "$1" = "FAIL (REFUSED)" ]
+}
+
 print_error_details() {
     # Print last N lines of log for each failed entry in the given arrays.
     # Usage: print_error_details <label> MODULE_ARRAY STATUS_ARRAY ERROR_LOG_ARRAY
@@ -1812,7 +1938,7 @@ print_error_details() {
 
     local has_failures=false
     for i in "${!_statuses[@]}"; do
-        if [ "${_statuses[$i]}" = "FAIL" ]; then
+        if _is_fail_status "${_statuses[$i]}"; then
             has_failures=true
             break
         fi
@@ -1830,7 +1956,7 @@ print_error_details() {
     echo "$sep" >> "$LOG_FILE"
 
     for i in "${!_modules[@]}"; do
-        if [ "${_statuses[$i]}" = "FAIL" ]; then
+        if _is_fail_status "${_statuses[$i]}"; then
             local err_log="${_error_logs[$i]:-}"
             echo ""
             echo "" >> "$LOG_FILE"
@@ -1871,7 +1997,12 @@ print_summary() {
             log OK "  ${mod}: PASS (${duration})"
             pass_count=$((pass_count + 1))
         else
-            log ERROR "  ${mod}: FAIL (${duration})"
+            # Print the recorded status verbatim rather than a hardcoded
+            # "FAIL" -- LTF-010's recovery target records "FAIL (REFUSED)"
+            # for exit 2 so it reads as distinct from a plain "FAIL" (exit
+            # 1) in this same summary. Every other caller still records the
+            # literal string "FAIL", so this is a no-op for them.
+            log ERROR "  ${mod}: ${status} (${duration})"
             fail_count=$((fail_count + 1))
         fi
     done
@@ -1955,6 +2086,26 @@ Maintenance targets:
   maintenance:machine_learning        ML NaN recalc + gap-fill + new stations
   maintenance:postprocessing_forecasts  Fill missing ensemble forecasts
   maintenance:postprocessing_long_term  Fill missing monthly ensemble forecasts
+  maintenance:long_term_forecasting  Recover ONE missed long-term month (operator-invoked).
+                          Requires lt_forecast_mode AND LT_RECOVERY_DATE (both mandatory,
+                          no defaults) -- runs `run_forecast.py --today <LT_RECOVERY_DATE>
+                          --recover` directly in the long_term_forecasting venv (no Luigi,
+                          no Docker). NOT part of any aggregate target (maintenance, daily,
+                          all, long-term, long-term-operational, yearly). Not available for
+                          demo/uzhm orgs. This is a REAL write against whatever
+                          ieasyhydroforecast_env_file_path points at, not a dev database: a
+                          successful run overwrites {model}_forecast.csv and, if it already
+                          exists, the hindcast CSV; stage 1 also rewrites each model's
+                          general_config.json even when the run is declined (exit 2,
+                          REFUSED). Exit codes: 0 PASS, 2 REFUSED (declined, nothing written
+                          by this run -- not proof the month is complete), 1 FAILED (could
+                          not be attempted, or started and failed partway) -- 1 and 2 both
+                          report FAIL and keep the process exit non-zero.
+                          PRECONDITION -- the guard is NOT a lock: it reads, the model runs,
+                          then it writes. A concurrent operational run, another recovery, or
+                          a manual writer touching the same month during that window is
+                          silently overwritten by this run's upsert. Nothing detects that.
+                          Ensure no long-term forecast is in flight before running this.
   calibrate_long_term     Calibrate and hindcast long-term models
   recalculate_skill_metrics  Full skill metrics rebuild (run yearly)
   recalculate_snow_norms  Yearly snow norm recalculation
@@ -2003,7 +2154,12 @@ Environment variables:
                                             also consults ML_MODE via should_skip_ml_for_mode.
                                           - every other module target: forwarded as-is to
                                             the module's own venv invocation.
-  lt_forecast_mode                   Specific month for long-term (e.g. month_3)
+  lt_forecast_mode                   Specific month for long-term (e.g. month_3). MANDATORY
+                                        (no default) for maintenance:long_term_forecasting.
+  LT_RECOVERY_DATE                   ISO issue date (YYYY-MM-DD) for the ONE month
+                                        maintenance:long_term_forecasting recovers. MANDATORY,
+                                        no default -- unlike RUNOFF_LONG_HORIZON_TARGET_YEAR
+                                        below, omitting it is an error, not a fallback.
   LT_SIMULATE_YEARS                  Space-separated years to simulate (default: 2024)
   LT_SIMULATE_NUM_MONTHS             Months to simulate per year (default: 1)
   LT_SIMULATE_MODES                  Space-separated month modes to run (default: "0")
@@ -2087,6 +2243,14 @@ Examples:
   ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh maintenance:postprocessing_long_term
 
+  # Long-term recovery of ONE missed month (operator-invoked, LTF-010).
+  # Both variables are mandatory. This writes for real against whatever
+  # ieasyhydroforecast_env_file_path points at -- see the target's own
+  # entry above for the full side-effect list.
+  lt_forecast_mode=month_0 LT_RECOVERY_DATE=2026-08-01 \
+    ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh maintenance:long_term_forecasting
+
   # Dry run
   bash apps/run_locally.sh --dry-run maintenance
 
@@ -2142,7 +2306,7 @@ main() {
     fi
 
     # Validate target
-    local valid_targets="daily short-term long-term long-term-operational all maintenance calibrate_long_term recalculate_skill_metrics recalculate_snow_norms yearly maintenance:postprocessing_long_term initialize"
+    local valid_targets="daily short-term long-term long-term-operational all maintenance calibrate_long_term recalculate_skill_metrics recalculate_snow_norms yearly maintenance:postprocessing_long_term maintenance:long_term_forecasting initialize"
     local is_valid=false
     for t in $valid_targets; do
         [ "$target" = "$t" ] && is_valid=true
@@ -2272,6 +2436,14 @@ main() {
             else
                 run_maintenance_postprocessing_long_term || exit_code=$?
             fi
+            ;;
+        maintenance:long_term_forecasting)
+            # No should_skip_module / missing-parameter guard needed here:
+            # validate_env already refused (exit 1, nothing invoked) before
+            # dispatch was ever reached if the org skips long_term_forecasting
+            # or if lt_forecast_mode/LT_RECOVERY_DATE is unset -- see the
+            # LTF-010 block near the top of validate_env.
+            run_maintenance_long_term_forecasting || exit_code=$?
             ;;
         recalculate_skill_metrics)
             run_recalculate_skill_metrics || exit_code=$?

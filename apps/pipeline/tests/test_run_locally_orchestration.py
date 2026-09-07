@@ -945,7 +945,14 @@ class TestLongHorizonSyncExitCodeHandling:
             "only maintenance's postprocessing_maintenance.py appeared, meaning Phase 3 "
             "was skipped and only Phase 4 executed"
         )
-        assert any("module=linear_regression" in ln and "args= mode=" in ln for ln in calls), (
+        # "args= lt_forecast_mode=" (empty args, immediately followed by the
+        # next logged field) rather than "args= mode=" -- the stub template
+        # now logs lt_forecast_mode between args= and the trailing mode=
+        # field (LTF-010), so the old "args= mode=" adjacency no longer
+        # holds for ANY call, operational or maintenance.
+        assert any(
+            "module=linear_regression" in ln and "args= lt_forecast_mode=" in ln for ln in calls
+        ), (
             "Phase 3's operational linear_regression call (no --hindcast argument) never "
             "ran -- only the maintenance call (args=--hindcast) appeared, meaning Phase 3 "
             "was skipped and only Phase 4 executed"
@@ -1574,3 +1581,202 @@ class TestModeDomainRegressionGuards:
         calls = [ln for ln in synth_tree.calls() if "module=linear_regression" in ln]
         assert calls, "linear_regression stub was never invoked"
         assert [_mode_of(ln) for ln in calls] == [""]
+
+
+def _lt_forecast_mode_of(call_line: str) -> str:
+    """Extract the `lt_forecast_mode=<value>` field from a call-log line.
+
+    Unlike `_mode_of`, this cannot use rsplit("mode=", 1) -- the literal
+    text "lt_forecast_mode=" itself contains "mode=" as a substring, and
+    the stub template places this field BEFORE the trailing mode= field
+    precisely so `_mode_of` keeps working unchanged. Split on the full key
+    instead, and stop at the next space (the following ` mode=...` field).
+    """
+    return call_line.split("lt_forecast_mode=", 1)[1].split(" ", 1)[0]
+
+
+class TestMaintenanceLongTermForecasting:
+    """LTF-010: `maintenance:long_term_forecasting`, the local entry point
+    for the operator-invoked long-term recovery (LTF-009 Stage A --
+    `run_forecast.py --today <date> --recover`, run directly in the
+    long_term_forecasting venv; no Luigi, no Docker).
+
+    Both `lt_forecast_mode` and `LT_RECOVERY_DATE` are mandatory -- there is
+    no default mode or date for a recovery -- and that check must fire
+    ahead of --dry-run's early return in main() (validate_env runs before
+    that return). The exit taxonomy is post-LTF-011 (PR #493, merged on
+    trunk the same day this target was written): 0 -> PASS, 2 (REFUSED,
+    declined -- nothing written by this run) -> FAIL labelled distinctly so
+    it reads as different from 1 (FAILED -- could not be attempted, or
+    started and failed partway) -> plain FAIL. Both 1 and 2 keep the
+    process exit non-zero; REFUSED is not proof the month is complete
+    (the existing-row guard can decline on a single row).
+    """
+
+    TARGET = "maintenance:long_term_forecasting"
+
+    # All six aggregates named in the issue -- C3 requires every one of
+    # them, not just the obvious three, to never dispatch the recovery.
+    AGGREGATE_TARGETS = [
+        "maintenance",
+        "daily",
+        "all",
+        "long-term",
+        "long-term-operational",
+        "yearly",
+    ]
+
+    RECOVERY_ENV = {"lt_forecast_mode": "month_0", "LT_RECOVERY_DATE": "2026-08-01"}
+
+    @staticmethod
+    def _recover_calls(synth_tree):
+        """Calls that are specifically the guarded recovery invocation.
+
+        Filtered on "--recover" in the args, not just the script name --
+        `long-term-operational` (and `daily` when a long-term window is
+        active) also call run_forecast.py, with --all/--today instead of
+        --recover, and must not be mistaken for a recovery call.
+        """
+        return [
+            ln for ln in synth_tree.calls() if "script=run_forecast.py" in ln and "--recover" in ln
+        ]
+
+    def test_happy_path_invokes_recover_and_reports_pass(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, extra_env=self.RECOVERY_ENV)
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        calls = self._recover_calls(synth_tree)
+        assert len(calls) == 1, synth_tree.calls()
+        assert "args=--today 2026-08-01 --recover" in calls[0], calls[0]
+        assert "long_term_forecasting (recovery): PASS" in out, out
+
+    def test_refused_exit_2_is_labelled_distinctly_and_stays_nonzero(self, synth_tree):
+        synth_tree.override(
+            "long_term_forecasting",
+            'if [ "$script" = "run_forecast.py" ]; then exit 2; fi',
+        )
+        result = run_main(synth_tree, self.TARGET, extra_env=self.RECOVERY_ENV)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert len(self._recover_calls(synth_tree)) == 1, synth_tree.calls()
+        assert "REFUSED" in out, out
+        # Distinguishable from a plain exit-1 FAIL row -- this is the test
+        # that pins "exit 2 is not benign": it must fail if REFUSED is ever
+        # rendered identically to a plain FAIL (or to PASS) without first
+        # splitting the refusal classes inside lt_recovery.py.
+        assert "long_term_forecasting (recovery): FAIL (REFUSED)" in out, out
+        # A REFUSED row must still get a MODULE ERROR DETAILS log tail, not
+        # just a distinct summary label -- print_error_details' has_failures
+        # scan and per-module loop both need to treat "FAIL (REFUSED)" as a
+        # failure. Reverting either of those two conditionals back to a
+        # literal `= "FAIL"` match (while keeping the summary-label change)
+        # leaves every other new test in this class passing, so this is the
+        # only assertion in the file that pins the log-tail half.
+        assert "MODULE ERROR DETAILS" in out, out
+        assert "--- long_term_forecasting (recovery) ---" in out, out
+
+    def test_failed_exit_1_reports_plain_fail(self, synth_tree):
+        synth_tree.override(
+            "long_term_forecasting",
+            'if [ "$script" = "run_forecast.py" ]; then exit 1; fi',
+        )
+        result = run_main(synth_tree, self.TARGET, extra_env=self.RECOVERY_ENV)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert len(self._recover_calls(synth_tree)) == 1, synth_tree.calls()
+        assert "long_term_forecasting (recovery): FAIL" in out, out
+        assert "long_term_forecasting (recovery): FAIL (REFUSED)" not in out, out
+        assert "REFUSED" not in out, out
+
+    def test_missing_mode_refuses_before_invoking_anything(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, extra_env={"LT_RECOVERY_DATE": "2026-08-01"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "lt_forecast_mode" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_missing_date_refuses_before_invoking_anything(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, extra_env={"lt_forecast_mode": "month_0"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "LT_RECOVERY_DATE" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_missing_both_names_both_and_invokes_nothing(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "lt_forecast_mode" in out, out
+        assert "LT_RECOVERY_DATE" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    @pytest.mark.parametrize("target", AGGREGATE_TARGETS)
+    def test_not_part_of_any_aggregate(self, synth_tree, target):
+        run_main(synth_tree, target, extra_env=self.RECOVERY_ENV)
+        assert not self._recover_calls(synth_tree), (
+            f"target {target!r} invoked the recovery stub: {synth_tree.calls()}"
+        )
+
+    def test_dry_run_with_missing_parameters_still_fails(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, dry_run=True)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "lt_forecast_mode" in out, out
+        assert "LT_RECOVERY_DATE" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_mode_passthrough_not_defaulted(self, synth_tree):
+        result = run_main(
+            synth_tree,
+            self.TARGET,
+            extra_env={"lt_forecast_mode": "quarter", "LT_RECOVERY_DATE": "2026-08-01"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        calls = self._recover_calls(synth_tree)
+        assert len(calls) == 1, calls
+        assert _lt_forecast_mode_of(calls[0]) == "quarter", calls[0]
+
+    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    def test_skipped_organisations_refuse_and_name_the_org(self, synth_tree, org):
+        result = run_main(
+            synth_tree,
+            self.TARGET,
+            extra_env={**self.RECOVERY_ENV, "ieasyhydroforecast_organization": org},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "not available for this deployment" in out, out
+        assert org in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_child_always_receives_in_docker_false(self, synth_tree):
+        """run_in_venv inherits the ambient environment, so an operator's
+        shell exporting IN_DOCKER=True must not leak into the child --
+        data_interface.py:65 selects the database hostname from this var.
+        """
+        synth_tree.override(
+            "long_term_forecasting",
+            'if [ "$script" = "run_forecast.py" ]; then '
+            'if [ "${IN_DOCKER:-}" = "False" ]; then exit 0; else exit 9; fi; '
+            "fi",
+        )
+        result = run_main(
+            synth_tree,
+            self.TARGET,
+            extra_env={**self.RECOVERY_ENV, "IN_DOCKER": "True"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "exited unexpectedly" not in out, out
+        assert len(self._recover_calls(synth_tree)) == 1, synth_tree.calls()

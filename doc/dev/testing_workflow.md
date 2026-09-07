@@ -432,6 +432,56 @@ ieasyhydroforecast_env_file_path=/path/to/.env \
 bash apps/run_locally.sh --continue-on-error short-term
 ```
 
+Long-term recovery of ONE missed month (operator-invoked, LTF-010):
+
+```bash
+# Both variables are mandatory -- there is no default mode or date, so
+# omitting either refuses the run (non-zero exit) before anything is
+# invoked. Runs `run_forecast.py --today <LT_RECOVERY_DATE> --recover`
+# directly in the long_term_forecasting venv (no Luigi, no Docker) and is
+# NOT part of any aggregate target (maintenance, daily, all, long-term,
+# long-term-operational, yearly), and is not available for demo/uzhm orgs.
+lt_forecast_mode=month_0 LT_RECOVERY_DATE=2026-08-01 \
+  ieasyhydroforecast_env_file_path=/path/to/.env \
+  bash apps/run_locally.sh maintenance:long_term_forecasting
+```
+
+> **Warning**: this is a REAL guarded write against whatever
+> `ieasyhydroforecast_env_file_path` points at — running it locally does
+> **not** mean it is sandboxed against a dev database; it writes wherever
+> that env file's configuration points. A successful run overwrites
+> `{model}_forecast.csv` and, only if it already exists, the hindcast CSV.
+> Stage 1 also rewrites each model's `general_config.json` even when the
+> run is later declined (exit 2), so a declined recovery is not
+> side-effect-free on disk. Exit codes: `0` PASS (recovered and read back);
+> `2` REFUSED — declined, nothing written by this run (existing rows, or
+> the request itself was wrong) — reported as `FAIL (REFUSED)` and **stays
+> non-zero**, since a refusal is not proof the month is complete (the
+> existing-row guard can decline on a single row); `1` FAILED — could not
+> be attempted, or started and failed partway — reported as plain `FAIL`.
+>
+> **Precondition — the guard is not a lock.** `lt_recovery.py` reads,
+> then the model runs, then it writes. A concurrent operational run,
+> another recovery, or a manual writer that inserts rows for the same
+> `(horizon_type, horizon_value, effective_date)` during that window is
+> **silently overwritten** by this run's upsert — nothing detects it. The
+> Luigi path serialises long-term runs via the `lt_memory` resource; this
+> local target is a direct venv invocation and bypasses that entirely, so
+> nothing at all stands between a rehearsal here and a scheduled forecast
+> running concurrently. Run a recovery only when you know no long-term
+> forecast is in flight.
+>
+> **Local/container clock difference.** Recovery eligibility (`now_local()`
+> in `lt_recovery.py`) uses the process's own naive, local clock, not a
+> fixed timezone. A host-side `run_locally.sh` invocation and the deployed
+> long-term Compose container can therefore disagree about which issue
+> dates are currently permitted, especially near a month boundary — e.g.
+> just after local midnight while the container (on UTC or a different
+> zone) is still on the previous date, this local target may admit a
+> recovery the deployed path would reject as future-dated, or vice versa.
+> A local rehearsal passing is not proof the deployment will accept the
+> same recovery.
+
 ### What It Does
 
 1. Validates the environment (env file, prediction mode, venvs)
