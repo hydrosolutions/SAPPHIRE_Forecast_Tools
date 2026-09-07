@@ -181,58 +181,49 @@ Consequence for this issue — **note the asymmetry, it decides the fix**:
   this job.
 - The wrapper defect still stands for the three *scheduled* periodic types routed through
   `run_periodic_maintenance.sh`: `long_term`, `skill_recalc`, `snow_norms`. Those report success to
-  cron regardless of outcome. **That is fixed by this issue's PR2, not by the validation half** —
+  cron regardless of outcome. **That is fixed by this issue's exit-propagation half, not by the validation half** —
   an earlier revision said it was out of scope entirely and contradicted the acceptance criteria.
 
-### The wrappers in scope (re-derived 2026-09-05; two reviewers)
+### Scope, after the installed-crontab survey (2026-09-07)
 
-> **This is NOT "the scheduled cron surface" — an earlier revision claimed that and was wrong.**
-> Four *canonical* cron wrappers have the identical defect and are deliberately **out of scope**
-> here; see below. Do not let the table imply the class is closed.
+> **The survey is DONE.** It was the precondition on this issue and it has been run on all three
+> deployments (kghm, tjhm, uzhm). Results below. They shrink this issue considerably.
 
-**In scope — seven scripts.** Each ends without propagating its container/compose status, so cron
-sees success on failure:
+**Survey result 1 — nothing consumes these exit codes.** Every SAPPHIRE cron line on all three
+servers has the identical shape `cd /data/SAPPHIRE_Forecast_Tools && bash bin/<wrapper>.sh <env>
+>> <log> 2>&1`. The `&&` is *before* the wrapper (`cd && bash`), never after; nothing follows the
+wrapper but a redirect. No chained command, no retry supervisor, no systemd unit. **The blast-radius
+concern that gated this issue is resolved: making these wrappers honest cannot stop downstream work.**
 
-| Script | Schedule | Shape |
+**Survey result 2 — `monthly_norms` is installed nowhere.** kghm entry (9) and tjhm both call
+`bin/yearly_runoff_hydrograph_aggregation.sh` directly; uzhm has no 01 Jan row at all. So the
+task-type validation half of this issue is **precautionary, not a live fix** — it protects a future
+crontab from a mistake nobody has currently made. Worth doing, not urgent, and this issue should
+stop implying otherwise.
+
+**Survey result 3 — five previously in-scope scripts are not deployed anywhere.** All four
+`daily_*_maintenance.sh` are commented out on tjhm and absent on kghm and uzhm;
+`bimonthly_long_term_postprocessing.sh` is superseded by `run_periodic_maintenance.sh long_term`
+(kghm's own crontab comment says it is "kept on origin for manual / debugging use only").
+**They are cut from this issue.** Fixing a wrapper nobody schedules is not worth a production diff;
+if one is ever scheduled, this issue's recipe still applies.
+
+### In scope — one script, plus its Jan-1 replacement
+
+| Script | Status | What it needs |
 |---|---|---|
-| `bin/run_periodic_maintenance.sh` | 3 periodic types | Luigi-backed |
-| `bin/run_preprocessing_gateway.sh` | 03:00 daily (canonical) | Luigi-backed |
-| `bin/daily_gateway_maintenance.sh` | legacy/manual | direct `docker run` |
-| `bin/daily_linreg_maintenance.sh` | legacy/manual | direct, **two modes** |
-| `bin/daily_postprc_maintenance.sh` | legacy/manual | direct `docker run` |
-| `bin/daily_preprunoff_maintenance.sh` | legacy/manual | direct `docker run` |
-| `bin/bimonthly_long_term_postprocessing.sh` | bimonthly | direct, **two calls** |
+| `bin/run_periodic_maintenance.sh` | scheduled on all three (long_term / skill_recalc / snow_norms) | task-type validation **and** exit propagation + `[retcode]` for its three scheduled types |
+| `bin/yearly_runoff_hydrograph_aggregation.sh` | scheduled on kghm (9) and tjhm | fix the `tee`/`inspect` fallback — see below; it is the replacement this issue tells operators to use |
 
-**`yearly_runoff_hydrograph_aggregation.sh` — the Jan-1 replacement — is NOT reliably safe, and
-this issue previously said it was.** It does `exit "$CONTAINER_EXIT_CODE"` at `:241`, but that value
-comes from `EXIT_CODE=$?` captured after a `| tee` pipeline (`:214-216`) — i.e. *tee's* status — with
-`docker inspect ... || echo "$EXIT_CODE"` as the fallback (`:220`). If Docker fails before leaving an
-inspectable container, tee returns 0, inspect fails, the fallback yields 0, and the wrapper exits 0.
-That is the same fallback defect this issue fixes in the four `daily_*` wrappers, and PREPG-020
-already carried it forward for this exact script. **Consequence for the first half of this issue:**
-telling operators to switch the Jan-1 slot to this wrapper does not by itself guarantee a visible
-failure. Fix it here with the same `${PIPESTATUS[0]}` treatment and pin the inspect-failure case,
-following `yearly_snow_norm_recalculation.sh:135-144`.
+**`run_preprocessing_gateway.sh` has moved to INFRA-047**, where it belongs with the other canonical
+scheduled wrappers. It is not fixed here.
 
-**Already propagate, leave alone:**
-`yearly_skill_metrics_recalculation.sh` (`:128`, fixed under migration P6),
-`yearly_snow_norm_recalculation.sh` (`:165`, fixed under PREPG-020), and
-`initialize_site_backfill.sh`, whose `main` does `exit "$overall_exit"` (`:608`) — **that sticky
-aggregate is the pattern to copy** for the two multi-call wrappers above.
+**Not defective, checked during the survey and recorded so nobody re-derives it:**
+`bin/bimonthly_long_term_skill_metrics_recalculation.sh` is scheduled on kghm and tjhm and is in
+neither issue — it already aggregates into `failed_modes` and exits 1 correctly.
 
-**OUT OF SCOPE — tracked as INFRA-047
-([`mid_prio_gi_draft_infra_canonical_cron_wrappers_exit_zero.md`](mid_prio_gi_draft_infra_canonical_cron_wrappers_exit_zero.md)), not an oversight.** These canonical cron wrappers have the same
-defect and will still report success after this issue lands:
-`run_pentadal_forecasts.sh` (04:00), `run_decadal_forecasts.sh` (05:00),
-`run_long_term_forecasts.sh` (06:00), `run_daily_maintenance.sh` (19:00), and
-`run_preprocessing_runoff.sh`. **`run_daily_maintenance.sh` carries a hazard that makes a naive fix
-actively harmful: it runs the frontend updater AFTER Luigi, so an immediate-exit fix would suppress
-it.** Any follow-up must use a sticky aggregate there, not an early exit.
-
-**Re-derive this table by reading each script's final statement, never by grep.** Two greps produced
-two wrong tables: filtering on `CONTAINER_EXIT_CODE` silently excludes `run_preprocessing_gateway.sh`
-(which never captures a status at all), and matching `return "$VAR"` false-positives on a
-function-local return whose callers discard it.
+**Deployment note:** uzhm runs linear regression only — no long-term, no machine learning — so its
+missing gateway, long-term, snow-norm and Jan-1 rows are expected, not gaps.
 
 ### Two shapes, two different fixes
 
@@ -240,22 +231,23 @@ function-local return whose callers discard it.
   Capture `${PIPESTATUS[0]}` immediately after the `| tee` — `$?` there is *tee's* status, and the
   `docker inspect` fallback only masks that while inspect works — and add the final
   `exit "$CONTAINER_EXIT_CODE"`. Adding the exit alone still reports success when inspect fails.
-  Only these four `daily_*` wrappers use the `$?`-after-pipe pattern; the gateway wrapper has no
-  pipe and the bimonthly one inspects directly.
-- **Luigi-backed wrappers** (`run_periodic_maintenance.sh` for its three scheduled types, and
-  `run_preprocessing_gateway.sh`): propagation is necessary but not sufficient. Luigi defaults
+  **In this issue that shape now applies only to `yearly_runoff_hydrograph_aggregation.sh`**, whose
+  `tee`/`inspect` fallback is described above; the four `daily_*` wrappers that also had it are cut.
+- **Luigi-backed wrappers** — in this issue, `run_periodic_maintenance.sh` for its three scheduled
+  types (the gateway wrapper has the same shape but is INFRA-047's): propagation is necessary but
+  not sufficient. Luigi defaults
   `task_failed`, `missing_data`, `already_running`, `scheduling_error` and `not_run` to **0**
   (`unhandled_exception` defaults to 4), so without a `[retcode]` block the status propagated is
   itself 0. `run_periodic_maintenance.sh:139-152` already shows the working pattern, applied to
   `lt_recovery` only — extend it rather than inventing one, and pass `LUIGI_CONFIG_PATH` the same
   way. Note propagation alone is **not** wholly a no-op: it still surfaces compose-level failures
   and `unhandled_exception=4`. It is a no-op specifically for the zero-default categories.
-- **Multi-call wrappers need a sticky aggregate, not a trailing exit.**
-  `daily_linreg_maintenance.sh` loops PENTAD then DECAD reassigning the status inside the loop
-  (`:105`, `:144-147`), so a trailing `exit` reports only DECAD — a failed PENTAD followed by a
-  successful DECAD would still exit 0. `bimonthly_long_term_postprocessing.sh` has the same shape
-  across its two `run_container` calls (`:152`, `:159`), whose return values both callers discard.
-  Use a flag that is never reset, as `initialize_site_backfill.sh` does. Do **not** use `set -e`.
+- **The sticky-aggregate shape is no longer needed here** — it applied to
+  `daily_linreg_maintenance.sh` (PENTAD then DECAD) and `bimonthly_long_term_postprocessing.sh`
+  (two `run_container` calls), both cut after the survey showed neither is scheduled anywhere. The
+  pattern is recorded in INFRA-047, which still needs it for `run_daily_maintenance.sh`. If either
+  cut wrapper is ever scheduled, use a flag that is never reset, as `initialize_site_backfill.sh`
+  does (`:608`), and do **not** use `set -e`.
 
 ### Existing tests pin the CURRENT behaviour and must be inverted
 
@@ -269,29 +261,25 @@ execution path, so such a test proves shell propagation only. For the `[retcode]
 existing pattern that runs Luigi for real:
 `test_lt_dated_recovery.py:299-429` (`TestLuigiRetcodeReachesTheProcessExit`).
 
-### Land this in TWO PRs, with a survey between them (owner decision 2026-09-05)
+### Staging — the survey is done, so this is now one PR (2026-09-07)
 
-1. **Survey the installed crontabs FIRST — before PR1, not between the PRs.** An earlier revision
-   of this plan said PR1 "changes no exit status" and could land ahead of the survey. **That was
-   wrong**: PR1's entire purpose is to make a retired task name stop exiting 0. An installed line
-   such as `... monthly_norms && downstream` would stop running `downstream`, and a retry supervisor
-   could start retrying it. The survey must therefore include the retired invocation and its
-   arguments, not only the seven wrapper names.
-2. **PR1 — task-type validation.** Validate `$TASK_TYPE` against all four advertised types and give
-   a retired name a message naming its replacement.
-   What the survey must look for, per in-scope wrapper name and for `monthly_norms`: anything
-   *after* the invocation — a right-hand `&&`, a retry supervisor, or any other consumer of the exit
-   code. Repository cron rows have nothing after `bash <wrapper>` and no systemd unit chains them,
-   but **installed crontabs have never been inspected**.
-3. **PR2 — exit-status propagation**, informed by that survey. Within each Luigi-backed wrapper the
-   `[retcode]` block, `LUIGI_CONFIG_PATH`, compose-status capture and final propagation must land
-   **atomically**; the direct-wrapper changes are independent of each other.
+The two-PR split existed because the caller contract was unknown: PR1 makes the retired task name
+stop exiting 0, and nobody had checked whether an installed crontab chained anything after it. **The
+survey has now been run on all three deployments and found no exit-code consumers at all** (see
+"Scope, after the installed-crontab survey" above), and `monthly_norms` is installed nowhere. Both
+risks are retired, so the halves can land together in one PR.
 
-One known caller already changes behaviour: `dev_local_backfill.sh --run-pipeline` runs **both**
-`run_preprocessing_gateway.sh` and `run_daily_maintenance.sh` from one `steps` array under the same
-failure guard (`:532-536`), so a newly non-zero result from either aborts phases 4-6 unless
-`--continue-on-error` is passed. Development behaviour, not a production cron chain — noted so it is not
-mistaken for a regression.
+Keep one property from the old staging: within `run_periodic_maintenance.sh`, the `[retcode]` block,
+`LUIGI_CONFIG_PATH`, compose-status capture and final propagation must land **atomically** — any
+subset covers less than it appears to, because Luigi returns 0 on ordinary task failure without the
+`[retcode]` block.
+
+One known caller changes behaviour, though from **INFRA-047's** changes rather than this issue's:
+`dev_local_backfill.sh --run-pipeline` runs both `run_preprocessing_gateway.sh` and
+`run_daily_maintenance.sh` from one `steps` array under the same failure guard (`:532-536`), so a
+newly non-zero result from either aborts phases 4-6 unless `--continue-on-error` is passed.
+Development behaviour, not a production cron chain — recorded in both issues so it is not mistaken
+for a regression.
 
 ## What to inspect
 
@@ -324,15 +312,13 @@ mistaken for a regression.
 - **Do not "fix" the two production checklists — they are already correct**
   (`update_deployment_checklist.md:864-876`, `first_deploy_checklist.md:646`/`:852`).
   The documentation sweep itself is done (DOC-007); it is not a criterion for this fix.
-- **This issue has two halves and both must land, in two PRs** (see "Land this in TWO PRs"):
-  (a) task-type validation in `run_periodic_maintenance.sh`; (b) exit propagation across **all
-  seven in-scope scripts, named explicitly** — `run_periodic_maintenance.sh`,
-  `run_preprocessing_gateway.sh`, the four `daily_*_maintenance.sh`, and
-  `bimonthly_long_term_postprocessing.sh` — including the Luigi `[retcode]` layer where it applies.
-  "Six wrappers" was the old wording and let an implementer satisfy the criterion while leaving
-  `long_term`, `skill_recalc` and `snow_norms` silent. Delivering only (a) leaves every wrapper
-  failure invisible. Do **not** pull unrelated schedule drift (e.g. the snow date) in, and do not
-  extend to the out-of-scope canonical wrappers listed above.
+- **This issue has two halves, both in scope, and the survey that gated them is done** — so they
+  may land in **one PR**: (a) task-type validation in `run_periodic_maintenance.sh`; (b) exit
+  propagation plus the Luigi `[retcode]` layer for its three scheduled types (`long_term`,
+  `skill_recalc`, `snow_norms`), and the `tee`/`inspect` fix in
+  `yearly_runoff_hydrograph_aggregation.sh`. Delivering only (a) leaves every periodic failure
+  invisible. Do **not** pull unrelated schedule drift (e.g. the snow date) in, and do not extend to
+  INFRA-047's canonical wrappers.
 
 ## Contract not to break
 
