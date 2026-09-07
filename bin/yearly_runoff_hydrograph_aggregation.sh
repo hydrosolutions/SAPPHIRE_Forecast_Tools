@@ -213,7 +213,24 @@ docker run \
     "${WRITER_CMD[@]}" \
     2>&1 | tee "$SERVICE_LOG"
 
-EXIT_CODE=$?
+# PIPESTATUS[0] is docker run's own status, captured immediately before any
+# other command overwrites it.
+#
+# NOTE the reason differs from the sibling wrappers. This script sets
+# `set -euo pipefail` (:57), and the `set +e` above disables *errexit only* --
+# pipefail stays on -- so a bare `$?` here is NOT tee's status: it is the
+# rightmost non-zero status in the pipeline. Docker's failure does propagate.
+# What a bare `$?` gets wrong is the case where `tee` ALSO fails (disk full,
+# or permissions on $SERVICE_LOG): pipefail then reports tee's incidental
+# status instead of docker's, so the operator sees the wrong cause.
+# PIPESTATUS[0] always names docker's own status regardless.
+# (yearly_snow_norm_recalculation.sh has no pipefail, so there a bare `$?`
+# really is tee's status -- do not carry that reasoning across.)
+#
+# This is only the *fallback* used if `docker inspect` below also fails (e.g.
+# the container vanished); when inspect succeeds, its answer (the container's
+# actual State.ExitCode) takes precedence.
+EXIT_CODE=${PIPESTATUS[0]}
 set -e
 
 # Capture container exit code if different from tee exit code
