@@ -189,6 +189,11 @@ recovery outcomes are the most likely first consumer.
 
 ## Acceptance criteria
 
+**Corrected 2026-09-07 to the gate-level contract actually implemented, and confirmed by the
+owner the same day** — gate-level is the wanted behaviour, not merely the shipped one. Do not
+reopen this as a defect; a run that skips a whole section prints one line naming the section, and
+that is the intended summary.
+
 **Corrected 2026-09-07 to the gate-level contract actually implemented.** The original first
 bullet below ("every module … appears … with PASS, FAIL or SKIP") over-claims: it reads as
 runner-level accounting, but one gate can guard several runners and only the headline one gets a
@@ -196,7 +201,8 @@ row. For example `run_daily_pipeline`'s Phase 5 long-term gate, when it fires, s
 `run_long_term_forecasting_operational`, `run_postprocessing_long_term`,
 `run_recalculate_long_term_skill_metrics`, and `run_maintenance_postprocessing_long_term` — four
 runners — but records exactly one row, labelled `long_term_forecasting (operational)`. Runner-level
-accounting (one row per suppressed runner) was considered and deliberately deferred: it would need
+accounting (one row per suppressed runner) was presented to the owner with both output shapes side
+by side on 2026-09-07 and declined in favour of the shorter summary: it would need
 either a caller-supplied list of the runners a gate covers, or a static map from gate to runner set,
 and neither existed before this change. The `reason` string parameter and the three-way branch in
 `print_summary` both support adding it later without another restructure, if it is ever wanted.
