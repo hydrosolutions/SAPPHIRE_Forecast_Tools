@@ -20,11 +20,16 @@
 #                    Unlike the other task types this one RETURNS the Luigi exit
 #                    status. Exit 0 means rows were written AND read back.
 #                    A non-zero exit means the recovery was NOT CONFIRMED --
-#                    it does NOT mean the database is unchanged: only a refusal
-#                    (child exit 2) guarantees nothing was written, while a
-#                    read-back or forecast failure (child exit 1) can leave
-#                    partial or even complete rows behind. Read the container
-#                    log before re-running.
+#                    it does NOT mean the database is unchanged: only a decline
+#                    (child exit 2) guarantees no forecast ran and no rows were
+#                    written by this run -- and even a decline is not proof the
+#                    month is complete (see below). A child exit 1 covers two
+#                    different situations: either the recovery could not even
+#                    be attempted (misconfiguration, a query error, an
+#                    unexpected error -- nothing written), or it started and
+#                    failed partway (forecast or read-back failure -- rows may
+#                    be absent, partial or complete). Read the container log
+#                    before re-running.
 #                    Note: it also overwrites the mode's forecast/hindcast CSVs.
 #
 #                    LIMITATION -- check/write race: the guard and the write are
@@ -182,10 +187,16 @@ if [ "$TASK_TYPE" = "lt_recovery" ]; then
         echo "| Long-term recovery for ${LT_RECOVERY_MODE} ${LT_RECOVERY_ISSUE_DATE}:"
         echo "|   NOT CONFIRMED (exit ${COMPOSE_STATUS}). This does NOT mean the"
         echo "|   database is unchanged. Read the container log:"
-        echo "|     'REFUSED' (child exit 2) - nothing ran, no rows were written."
-        echo "|     'FAILED'  (child exit 1) - the forecast ran; rows may be"
-        echo "|                absent, partial or complete. A read-back error in"
-        echo "|                particular says nothing about what was written."
+        echo "|     'REFUSED' (child exit 2) - declined: no forecast ran and no"
+        echo "|                rows were written by this run. Not proof the month"
+        echo "|                is complete -- a single existing row is enough to"
+        echo "|                decline, and may mean a partially populated month."
+        echo "|     'FAILED'  (child exit 1) - could not even be attempted"
+        echo "|                (misconfiguration, a query error, an unexpected"
+        echo "|                error), OR started and failed partway (forecast or"
+        echo "|                read-back failure); rows may be absent, partial or"
+        echo "|                complete. A read-back error in particular says"
+        echo "|                nothing about what was written."
         echo "|   Check the month in the database before re-running: the guard"
         echo "|   will refuse a re-run if any member row now exists."
     fi

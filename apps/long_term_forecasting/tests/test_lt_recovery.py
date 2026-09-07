@@ -8,12 +8,26 @@ Contracts under test:
 - a run that writes only flag=2 (missing/all-NaN) rows FAILS;
 - only the current and previous calendar month are recoverable, the date must
   be the configured issue date, and a future date is refused;
-- an empty station list is refused before any query is issued;
-- the operational flag assignment is unchanged when no recovery flag is given.
+- an empty station list FAILS (exit 1) before any query is issued — it is a
+  deployment gap, not a decline;
+- the operational flag assignment is unchanged when no recovery flag is given;
+- EXIT_REFUSED (2) is "declined": rows already exist, or an operator-input
+  refusal (bad/missing/future date, outside the window, no scheduled issue
+  date, no forecast mode). This is NOT proof the month is complete or
+  healthy — an existing-row decline can mean a single station's row exists
+  and the rest of the month is missing, refused as a whole. EXIT_FAILED (1)
+  covers two different situations: a stage 1 failure (empty station scope,
+  missing member-model configuration, a RecoveryQueryError, or an
+  unexpected exception before the guard could decide) means nothing was
+  written and the month is still missing; a stage 2/3 failure means the
+  forecast may have run and rows may or may not have been written, so the
+  database state must be checked before retrying. The two log messages are
+  distinguishable without the exit code (LTF-011).
 
 Station codes are synthetic (19999 / 19998).
 """
 
+import logging
 import os
 import sys
 
@@ -29,6 +43,8 @@ from lt_recovery import (  # noqa: E402
     MISSING_VALUE_FLAG,
     OPERATIONAL_FLAG,
     RECOVERY_FLAG,
+    RecoveryError,
+    RecoveryMisconfigured,
     RecoveryQueryError,
     RecoveryRefused,
     apply_success_flag,
@@ -197,10 +213,13 @@ class TestMemberSelection:
         config = FakeConfig(models=["LR_Base", "SM_GBT", "LR_Base"])
         assert member_model_types(config) == ["LR_Base", "SM_GBT"]
 
-    def test_mode_with_only_aggregates_is_refused(self):
+    def test_mode_with_only_aggregates_fails(self):
+        """Missing member-model configuration is a deployment gap, not a
+        decline: it exits 1 (RecoveryMisconfigured), not 2. REGRESSION: this
+        exits 2 against the pre-LTF-011 code — it must fail if reverted."""
         config = FakeConfig(models=["EM", "Skilled Mean"])
         kwargs, calls, client = build_run_recovery_kwargs(config=config)
-        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert run_recovery(**kwargs) == EXIT_FAILED
         assert calls == []
         assert client.calls == []
 
@@ -299,8 +318,10 @@ class TestStationCodes:
         assert check_station_codes([19999, " 19998 "]) == ["19999", "19998"]
 
     @pytest.mark.parametrize("codes", [None, [], ["", "  "]])
-    def test_empty_refused(self, codes):
-        with pytest.raises(RecoveryRefused, match="Station list is empty"):
+    def test_empty_is_misconfigured_not_refused(self, codes):
+        """An empty station list is a deployment gap (RecoveryMisconfigured,
+        exit 1), not an operator decline (RecoveryRefused, exit 2)."""
+        with pytest.raises(RecoveryMisconfigured, match="Station list is empty"):
             check_station_codes(codes)
 
 
@@ -463,10 +484,12 @@ class TestRunRecoveryGuard:
         assert run_recovery(**kwargs) == EXIT_OK
         assert len(calls) == 1
 
-    def test_guard_query_error_refuses_without_running(self):
+    def test_guard_query_error_fails_without_running(self):
+        """A RecoveryQueryError (API unreachable/failed) could not be
+        attempted — it exits 1, not 2, even though the forecast never ran."""
         client = FakeClient(error=RuntimeError("connection reset"))
         kwargs, calls, _ = build_run_recovery_kwargs(client=client)
-        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert run_recovery(**kwargs) == EXIT_FAILED
         assert calls == []
 
 
@@ -558,6 +581,14 @@ class TestRunRecoveryReadBack:
 
 
 class TestRunRecoveryRefusals:
+    """Operator-input refusals and 'already done': all exit 2.
+
+    A refusal is not proof the system is healthy: the existing-row case in
+    particular can mean a single station's row exists and the rest of the
+    month is missing, refused as a whole (see G1 in the LTF-011 follow-up
+    review).
+    """
+
     def test_future_date_refused(self):
         kwargs, calls, client = build_run_recovery_kwargs(issue_date="2026-09-01", now="2026-08-30")
         assert run_recovery(**kwargs) == EXIT_REFUSED
@@ -582,12 +613,6 @@ class TestRunRecoveryRefusals:
         assert calls == []
         assert client.calls == []
 
-    def test_empty_station_list_refused_before_any_query(self):
-        kwargs, calls, client = build_run_recovery_kwargs(station_codes=())
-        assert run_recovery(**kwargs) == EXIT_REFUSED
-        assert calls == []
-        assert client.calls == [], "no query may be issued without org scoping"
-
     def test_missing_forecast_mode_refused(self):
         kwargs, calls, client = build_run_recovery_kwargs(forecast_mode="")
         assert run_recovery(**kwargs) == EXIT_REFUSED
@@ -600,21 +625,136 @@ class TestRunRecoveryRefusals:
         assert calls == []
         assert client.calls == []
 
-    def test_config_load_failure_refuses(self):
+    def test_missing_issue_date_refused(self):
+        kwargs, calls, client = build_run_recovery_kwargs(issue_date=None)
+        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert calls == []
+        assert client.calls == []
+
+    def test_already_exists_message_says_nothing_was_run(self, caplog):
+        """C2: the refusal log line keeps saying nothing was run, and its
+        specific reason ('already exist') is distinguishable from an
+        operator-input decline without needing the exit code."""
+        caplog.set_level(logging.ERROR, logger="long_term_forecasting")
+        client = FakeClient([make_row(model_type="LR_Base")])
+        kwargs, calls, _ = build_run_recovery_kwargs(client=client)
+        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert "nothing was run" in caplog.text
+        assert "already exist" in caplog.text
+        assert calls == []
+
+    def test_operator_declined_message_differs_from_already_exists(self, caplog):
+        """The two refusal causes ('already exist' vs 'declined input') read
+        differently even though they share exit code 2."""
+        caplog.set_level(logging.ERROR, logger="long_term_forecasting")
+        kwargs, calls, client = build_run_recovery_kwargs(forecast_mode="")
+        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert "No forecast mode supplied" in caplog.text
+        assert "already exist" not in caplog.text
+
+    def test_refusal_is_not_shadowed_by_the_broader_error_handler(self):
+        """Handler-order pin (G6): RecoveryRefused subclasses RecoveryError,
+        so this only returns EXIT_REFUSED because `except RecoveryRefused`
+        precedes `except RecoveryError` in run_recovery. Swap the two
+        `except` clauses (or merge them into one) and a decline would be
+        caught by the broader RecoveryError handler instead, and this
+        assertion would flip to EXIT_FAILED. Confirmed by hand: reversing
+        the order of the two `except` clauses in run_recovery makes this
+        test fail. Contrast with test_query_error_fails_not_refuses below,
+        which is NOT order-sensitive because RecoveryQueryError is never a
+        RecoveryRefused."""
+        client = FakeClient([make_row(model_type="LR_Base")])
+        kwargs, calls, _ = build_run_recovery_kwargs(client=client)
+        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert calls == []
+
+
+class TestRunRecoveryStage1Failures:
+    """Could-not-be-attempted causes: all exit 1, month still missing.
+
+    REGRESSION: every case here exits 2 (EXIT_REFUSED) against the
+    pre-LTF-011 code, where a single `except RecoveryError` /
+    `except Exception` pair returned EXIT_REFUSED for everything. Each test
+    must fail if C1 is reverted.
+    """
+
+    def test_empty_station_list_fails_before_any_query(self):
+        kwargs, calls, client = build_run_recovery_kwargs(station_codes=())
+        assert run_recovery(**kwargs) == EXIT_FAILED
+        assert calls == []
+        assert client.calls == [], "no query may be issued without org scoping"
+
+    def test_config_load_failure_fails(self):
         def broken_factory(_mode):
             raise FileNotFoundError("month_9.json missing")
 
         kwargs, calls, client = build_run_recovery_kwargs()
         kwargs["config_factory"] = broken_factory
-        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert run_recovery(**kwargs) == EXIT_FAILED
         assert calls == []
         assert client.calls == []
 
-    def test_client_construction_failure_refuses(self):
+    def test_config_load_failure_message_names_exception_type(self, caplog):
+        """C2: the failure path must say the recovery could not be attempted
+        and name the exception type, so a log reader can tell it apart from
+        a refusal without the exit code."""
+        caplog.set_level(logging.ERROR, logger="long_term_forecasting")
+
+        def broken_factory(_mode):
+            raise FileNotFoundError("month_9.json missing")
+
+        kwargs, calls, client = build_run_recovery_kwargs()
+        kwargs["config_factory"] = broken_factory
+        assert run_recovery(**kwargs) == EXIT_FAILED
+        assert "could not be attempted" in caplog.text
+        assert "FileNotFoundError" in caplog.text
+
+    def test_client_construction_failure_fails(self):
+        """RecoveryQueryError (API unavailable/disabled/not ready) exits 1."""
+
         def broken_client():
             raise RecoveryQueryError("API not ready")
 
         kwargs, calls, _ = build_run_recovery_kwargs()
         kwargs["client_factory"] = broken_client
-        assert run_recovery(**kwargs) == EXIT_REFUSED
+        assert run_recovery(**kwargs) == EXIT_FAILED
         assert calls == []
+
+    def test_query_error_fails_not_refuses(self):
+        """Classification pin, NOT an order pin: RecoveryQueryError is a
+        RecoveryError but never a RecoveryRefused, so it always lands in the
+        `except RecoveryError` handler and returns EXIT_FAILED regardless of
+        which of the two `except` clauses run_recovery lists first --
+        swapping their order does not change this result (verified by
+        hand). The order-sensitive test is
+        TestRunRecoveryRefusals.test_refusal_is_not_shadowed_by_the_broader_error_handler,
+        which uses a RecoveryRefused instead."""
+
+        def broken_client():
+            raise RecoveryQueryError("API not ready")
+
+        kwargs, calls, _ = build_run_recovery_kwargs()
+        kwargs["client_factory"] = broken_client
+        result = run_recovery(**kwargs)
+        assert result == EXIT_FAILED
+        assert result != EXIT_REFUSED
+
+    def test_unexpected_exception_in_stage_one_fails_not_refuses(self):
+        """Regression guard: an exception stage 1 does not anticipate must
+        exit 1, not 2. Catches someone re-widening the bare `except
+        Exception` back onto EXIT_REFUSED."""
+
+        def broken_station_codes_fn():
+            raise KeyError("ieasyforecast_config_file_station_selection")
+
+        kwargs, calls, client = build_run_recovery_kwargs()
+        kwargs["station_codes_fn"] = broken_station_codes_fn
+        assert run_recovery(**kwargs) == EXIT_FAILED
+        assert calls == []
+        assert client.calls == []
+
+    def test_unexpected_exception_is_not_a_recovery_error(self):
+        """Sanity check backing the previous test: KeyError is not a
+        RecoveryError, so it can only reach EXIT_FAILED via the bare
+        `except Exception` handler, not the RecoveryError handler."""
+        assert not issubclass(KeyError, RecoveryError)
