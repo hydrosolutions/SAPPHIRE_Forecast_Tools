@@ -498,6 +498,12 @@ def dg_call_site_env(tmp_path, monkeypatch):
     reuse of test_integration_preprocessing_gateway.py's `gateway_env` /
     `gateway_env_ensemble` -- PREPG-015's allowed-file list excludes
     that module.
+
+    Sets ieasyhydroforecast_run_CM_models=true so every test in this
+    file keeps reaching the ensemble download under the PREPG-023 C1
+    consumption gate -- none of the tests here exercise the gate-closed
+    skip path, only redaction on the control-member and ensemble call
+    sites.
     """
     intermediate = tmp_path / "intermediate_data"
     dg_dir = intermediate / "dg_download"
@@ -521,6 +527,7 @@ def dg_call_site_env(tmp_path, monkeypatch):
         "ieasyhydroforecast_OUTPUT_PATH_DG": "dg_download",
         "ieasyhydroforecast_HRU_CONTROL_MEMBER": "19999",
         "ieasyhydroforecast_HRU_ENSEMBLE": "19999",
+        "ieasyhydroforecast_run_CM_models": "true",
         "ieasyhydroforecast_API_KEY_GATEAWAY": "FAKE-KEY-DO-NOT-USE",
         "ieasyhydroforecast_Q_MAP_PARAM_PATH": "qmap_params",
         "ieasyhydroforecast_models_and_scalers_path": str(models_dir),

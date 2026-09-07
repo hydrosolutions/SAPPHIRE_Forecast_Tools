@@ -337,6 +337,23 @@ def gateway_env(tmp_path):
         old_env[k] = os.environ.get(k)
         os.environ[k] = v
 
+    # F4: save/restore (but do not set) the two PREPG-023 ensemble
+    # consumption gate variables, clearing them by default. Without
+    # this, an ambient ieasyhydroforecast_run_CM_models=true or
+    # ieasyhydroforecast_ensemble_forcing_required=true exported in a
+    # developer's shell or CI worker would silently open the gate for
+    # every test using this fixture that assumes it closed (most of
+    # them, since ieasyhydroforecast_HRU_ENSEMBLE="None" above pairs
+    # with a closed gate). Tests that want the gate open set one of
+    # these explicitly -- see gateway_env_ensemble, which relies on
+    # both being absent here before it opens the gate itself.
+    for gate_var in (
+        "ieasyhydroforecast_run_CM_models",
+        "ieasyhydroforecast_ensemble_forcing_required",
+    ):
+        old_env[gate_var] = os.environ.get(gate_var)
+        os.environ.pop(gate_var, None)
+
     yield {
         "tmp_path": tmp_path,
         "intermediate": intermediate,
@@ -362,21 +379,45 @@ def gateway_env(tmp_path):
 
 
 @pytest.fixture()
-def gateway_env_ensemble(gateway_env):
+def gateway_env_ensemble(gateway_env, request):
     """gateway_env variant that reaches the ensemble download (PREPG-010).
 
-    gateway_env sets ieasyhydroforecast_HRU_ENSEMBLE=None, which makes
-    QM's ensemble loop `break` before any download is attempted
-    (Quantile_Mapping_OP.py's `if ENSEMBLE_HRUS == "None": break`).
-    Transport-retry tests need to reach the download itself, so this
+    gateway_env sets ieasyhydroforecast_HRU_ENSEMBLE=None, which (pre
+    PREPG-023) made QM's ensemble loop `break` before any download was
+    attempted. Transport-retry tests need to reach the download itself, so this
     override switches both the control-member and ensemble HRU to a
     synthetic, non-real station code (19999) -- not the pre-existing
     HRU001/12345/67890 fixture data used by the rest of this file.
+
+    PREPG-023 C1 added an ensemble consumption gate (ieasyhydroforecast_
+    run_CM_models OR ieasyhydroforecast_ensemble_forcing_required) ahead
+    of the download. This fixture defaults the gate OPEN
+    (ieasyhydroforecast_run_CM_models=true) so every pre-existing user of
+    this fixture keeps reaching the download unchanged. Pass
+    `indirect=True` with `params=[False]` (via
+    `@pytest.mark.parametrize("gateway_env_ensemble", [False],
+    indirect=True)`) to get the gate CLOSED instead -- needed by tests
+    that set ieasyhydroforecast_HRU_ENSEMBLE="None" and assert exit 0,
+    since with the gate open that combination is a C1a config error, not
+    a quiet skip.
     """
     os.environ["ieasyhydroforecast_HRU_CONTROL_MEMBER"] = "19999"
     os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = "19999"
     gateway_env["hru"] = "19999"
+
+    gate_open = getattr(request, "param", True)
+    old_run_cm_models = os.environ.get("ieasyhydroforecast_run_CM_models")
+    if gate_open:
+        os.environ["ieasyhydroforecast_run_CM_models"] = "true"
+    else:
+        os.environ.pop("ieasyhydroforecast_run_CM_models", None)
+
     yield gateway_env
+
+    if old_run_cm_models is None:
+        os.environ.pop("ieasyhydroforecast_run_CM_models", None)
+    else:
+        os.environ["ieasyhydroforecast_run_CM_models"] = old_run_cm_models
 
 
 def make_dg_mock_side_effect(dg_df, dg_dir, filename="control_member.csv"):
@@ -421,6 +462,90 @@ def mock_api_client():
     mock_client._snow_writes = snow_writes
 
     return mock_client
+
+
+# =====================================================================
+# F4. gateway_env clears both ensemble consumption gate variables
+# =====================================================================
+
+
+class TestGatewayEnvClearsGateVars:
+    """PREPG-023 F4/G4: gateway_env must not let an ambient
+    ieasyhydroforecast_run_CM_models / ...ensemble_forcing_required
+    leak into a test that assumes the gate closed."""
+
+    @pytest.fixture()
+    def _ambient_gate_var_contamination(self, monkeypatch):
+        """Simulates a leaked ieasyhydroforecast_run_CM_models /
+        ...ensemble_forcing_required from the ambient shell/CI
+        environment -- set BEFORE gateway_env's own setup runs.
+
+        G4: in a clean test environment the two gate variables are
+        absent anyway, so a test that merely asserts their absence
+        after gateway_env runs passes even if gateway_env's clearing
+        loop is deleted -- it was never exercising that code. This
+        fixture is requested ahead of gateway_env in every test below
+        (same-scope sibling fixtures without a dependency relationship
+        between them instantiate in the order they are requested in the
+        test's parameter list), so it contaminates os.environ first and
+        gateway_env's clearing loop has to actually do something to
+        make the assertions below pass.
+
+        monkeypatch (not gateway_env's own os.environ save/restore) is
+        used here so nothing leaks regardless of what gateway_env does
+        to these variables in between: monkeypatch's teardown restores
+        the true pre-test value at the very end, after gateway_env's
+        own teardown has already run and (if it runs at all) already
+        restored whatever it saved -- which was this fixture's "true"
+        value ("true"), not the real ambient one.
+        """
+        monkeypatch.setenv("ieasyhydroforecast_run_CM_models", "true")
+        monkeypatch.setenv("ieasyhydroforecast_ensemble_forcing_required", "true")
+
+    def test_gate_vars_absent_by_default(self, _ambient_gate_var_contamination, gateway_env):
+        """G4: with both gate variables contaminated ahead of
+        gateway_env's own setup, gateway_env must still clear them.
+        Confirmed by hand to FAIL if gateway_env's clearing loop
+        (test_integration_preprocessing_gateway.py's gateway_env
+        fixture, the "F4" block) is reverted/removed."""
+        assert "ieasyhydroforecast_run_CM_models" not in os.environ
+        assert "ieasyhydroforecast_ensemble_forcing_required" not in os.environ
+
+    def test_gate_vars_cleared_means_gate_still_closed(
+        self, _ambient_gate_var_contamination, gateway_env
+    ):
+        """G4: the clearing is not merely cosmetic -- a run under
+        gateway_env (ieasyhydroforecast_HRU_ENSEMBLE="None", which
+        pairs with a closed gate) must still take the gate-closed path
+        (no ensemble download attempted, exit 0) despite the ambient
+        contamination, proving main() reads the gate only after
+        gateway_env's clearing has taken effect."""
+        env = gateway_env
+        codes = env["codes"]
+        today = datetime.today()
+        dates_dg = [(today - timedelta(days=d)).strftime("%d.%m.%Y") for d in range(5, -1, -1)]
+        t_vals = [[5.0] * len(codes) for _ in dates_dg]
+        p_vals = [[2.0] * len(codes) for _ in dates_dg]
+        dg_df = make_dg_control_member_csv(codes, dates_dg, t_vals, p_vals)
+
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = make_dg_mock_side_effect(
+            dg_df, env["dg_dir"]
+        )
+
+        with (
+            patch("Quantile_Mapping_OP.sl.load_environment"),
+            patch(
+                "Quantile_Mapping_OP.sapphire_dg_client.client.SapphireDGClient",
+                return_value=mock_dg,
+            ),
+            patch.object(qm, "SAPPHIRE_API_AVAILABLE", False),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            qm.main()
+
+        assert exc_info.value.code == 0
+        mock_dg.ecmwf_ens.get_ensemble_forecast.assert_not_called()
 
 
 # =====================================================================
@@ -1479,10 +1604,21 @@ class TestTransportRetryMainLevel:
         p_df = pd.read_csv(env["ens_dir"] / f"{self.HRU}_P_ensemble_forecast.csv")
         assert p_df["P"].iloc[0] == pytest.approx(3.0)
 
-    def test_ensemble_today_ssl_error_exhausts_and_propagates_unchanged(self, gateway_env_ensemble):
+    def test_ensemble_today_ssl_error_exhausts_and_isolated_to_hru(
+        self, gateway_env_ensemble, caplog
+    ):
         """SSLError IS retried like any ConnectionError -- exactly 2
-        calls on exhaustion -- and then propagates with its original
-        type and message, not converted to sys.exit."""
+        calls on exhaustion. Before PREPG-023 C2 this propagated straight
+        out of main() uncaught (crashing the whole module rather than
+        just this HRU). C2 requires the whole per-HRU unit -- download
+        through write -- to be wrapped, so the exhausted transport fault
+        now fails only this HRU: main() exits via a controlled
+        SystemExit(1) instead of letting the raw SSLError escape, and
+        the exception class/message are still visible in the log
+        (redacted, per PREPG-015) rather than silently swallowed."""
+        import logging
+
+        caplog.set_level(logging.ERROR)
         env = gateway_env_ensemble
         mock_dg = MagicMock()
         mock_dg.operational.get_control_spinup_and_forecast.side_effect = self._cm_side_effect(env)
@@ -1500,12 +1636,17 @@ class TestTransportRetryMainLevel:
         mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
 
         with self._run_main_with_mocks(mock_dg):
-            with pytest.raises(requests.exceptions.SSLError) as exc_info:
+            with pytest.raises(SystemExit) as exc_info:
                 qm.main()
 
-        assert str(exc_info.value) == original_message
+        assert exc_info.value.code == 1
         flaky_calls = [c for c in calls if c[1] == flaky_model]
         assert len(flaky_calls) == 2
+
+        error_text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
+        assert "SSLError" in error_text
+        assert original_message in error_text
+        assert self.HRU in error_text
 
     def test_ensemble_non_matching_valueerror_not_retried_exits_via_main(
         self, gateway_env_ensemble, capsys
@@ -1596,11 +1737,15 @@ class TestTransportRetryMainLevel:
     # Control member
     # -----------------------------------------------------------------
 
+    @pytest.mark.parametrize("gateway_env_ensemble", [False], indirect=True)
     def test_control_member_connection_error_retried_and_recovers(self, gateway_env_ensemble):
         """A ConnectionError on the control-member download is retried
         once and the run continues; recovered values reach the CM CSVs."""
         env = gateway_env_ensemble
-        # This test only exercises the control-member site.
+        # This test only exercises the control-member site. The
+        # consumption gate is closed via the fixture's indirect param
+        # (PREPG-023 C1a: gate open + HRU_ENSEMBLE="None" is now a loud
+        # config error, not a quiet skip).
         os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = "None"
 
         codes = [self.HRU]
@@ -1768,3 +1913,107 @@ class TestTransportRetryMainLevel:
         assert "LIVE-SECRET-19999" not in all_text
         assert "api_key" not in all_text
         assert "dg.example.com" not in all_text
+
+
+# =====================================================================
+# PREPG-023 C2: control-member work survives an ensemble failure
+# =====================================================================
+
+
+class TestEnsembleFailureDoesNotBlockControlMember:
+    """Test 7: with ensembles required and failing, the control-member
+    CSVs and its SAPPHIRE API write must still happen and be reported --
+    the ensemble stage's failure must not roll back or skip work that
+    was already durable before PREPG-023 C2 (the module used to
+    `sys.exit(1)` from inside the ensemble loop, which only stopped
+    later processing, but this pins that the CM work is unaffected and
+    still gets to the API)."""
+
+    HRU = "19999"
+    HRU_2 = "28888"
+
+    def test_control_member_api_write_survives_ensemble_failure(
+        self, gateway_env_ensemble, mock_api_client, ensemble_csv_factory
+    ):
+        # F5: the control-member CSVs/API writes happen *before* the
+        # ensemble loop runs at all -- with only one configured ensemble
+        # HRU, this test would still pass even if the C2 per-HRU
+        # isolation were reverted to the old `sys.exit(1)`, since the
+        # old exit only ever happened after the CM step. Configuring a
+        # SECOND ensemble HRU and asserting that HRU's own output is the
+        # part that only C2 isolation can produce -- the old
+        # `sys.exit(1)` on the first HRU's failure would never reach it.
+        env = gateway_env_ensemble
+        os.environ["ieasyhydroforecast_HRU_ENSEMBLE"] = f"{self.HRU},{self.HRU_2}"
+
+        codes = [self.HRU]
+        # A wide, real-wall-clock date range (not a fixed/mocked date --
+        # mirrors test_api_write_failure_does_not_block_csv) so at least
+        # one record falls inside the "operational" sync mode's 2-day
+        # write window (_write_meteo_to_api uses pd.Timestamp.today(),
+        # which a mocked Quantile_Mapping_OP.datetime would not affect).
+        today = datetime.today()
+        dates_dg = [(today - timedelta(days=d)).strftime("%d.%m.%Y") for d in range(200, -1, -1)]
+        t_vals = [[5.0] for _ in dates_dg]
+        p_vals = [[2.0] for _ in dates_dg]
+        dg_df = make_dg_control_member_csv(codes, dates_dg, t_vals, p_vals)
+
+        mock_dg = MagicMock()
+        mock_dg.operational.get_control_spinup_and_forecast.side_effect = make_dg_mock_side_effect(
+            dg_df, env["dg_dir"], "cm_19999.csv"
+        )
+
+        # The FIRST ensemble HRU never returns any files for any model,
+        # so merge_ensemble_forecast fails it -- PREPG-023 C2 records
+        # that failure and moves on to the SECOND HRU, which succeeds.
+        # Without C2 (i.e. the old sys.exit(1) inside the loop), the
+        # module would exit as soon as the first HRU failed and the
+        # second HRU's files below would never be written.
+        def ens_side_effect(hru_code, date, models, directory):
+            if hru_code == self.HRU:
+                return []
+            model = int(models[0])
+            p_file = ensemble_csv_factory(self.HRU_2, model, "tp", ["01/01/2024"], [4.0])
+            t_file = ensemble_csv_factory(self.HRU_2, model, "2t", ["01/01/2024"], [270.0])
+            return [p_file, t_file]
+
+        mock_dg.ecmwf_ens.get_ensemble_forecast.side_effect = ens_side_effect
+
+        with (
+            patch("Quantile_Mapping_OP.sl.load_environment"),
+            patch(
+                "Quantile_Mapping_OP.sapphire_dg_client.client.SapphireDGClient",
+                return_value=mock_dg,
+            ),
+            patch(
+                "Quantile_Mapping_OP.SapphirePreprocessingClient",
+                return_value=mock_api_client,
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            qm.main()
+
+        # The first HRU's ensemble failure is real: exit is non-zero.
+        assert exc_info.value.code != 0
+
+        # The control-member CSVs were still written...
+        p_csv = env["cm_dir"] / f"{self.HRU}_P_control_member.csv"
+        t_csv = env["cm_dir"] / f"{self.HRU}_T_control_member.csv"
+        assert p_csv.exists()
+        assert t_csv.exists()
+
+        # ...the control-member data still reached the SAPPHIRE API...
+        assert len(mock_api_client._meteo_writes) > 0
+        written_codes = {
+            record["code"] for records in mock_api_client._meteo_writes for record in records
+        }
+        assert self.HRU in written_codes
+
+        # ...AND the SECOND ensemble HRU's output exists alongside it.
+        # This assertion is the one that only C2 isolation can satisfy:
+        # it fails if the first HRU's failure aborts the module before
+        # the second HRU is ever attempted.
+        assert (env["ens_dir"] / f"{self.HRU_2}_P_ensemble_forecast.csv").exists()
+        assert (env["ens_dir"] / f"{self.HRU_2}_T_ensemble_forecast.csv").exists()
+        # And the first, failing HRU's output must NOT exist.
+        assert not (env["ens_dir"] / f"{self.HRU}_P_ensemble_forecast.csv").exists()
