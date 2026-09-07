@@ -31,10 +31,30 @@ CMD ["sh", "-c", "uv run Quantile_Mapping_OP.py && uv run extend_era5_reanalysis
 **first** and terminates the chain via `sys.exit(1)` on nine paths. Two fire on kghm and were observed
 on consecutive days:
 
-| Date | Log line | Exit path |
+| Date | Log line | Exit path (line numbers as of trunk `613cf4c4`) |
 |---|---|---|
-| 2026-09-03 | `No temperature data found in the ensemble forecast files.` | `Quantile_Mapping_OP.py:302-303` |
-| 2026-09-04 | `Control member download failed for HRU <x> due to ValueError` | `Quantile_Mapping_OP.py:819-821` |
+| 2026-09-03 | `No temperature data found in the ensemble forecast files.` | `:316-319` — **see the note below, this trigger is now retired on kghm** |
+| 2026-09-04 | `Control member download failed for HRU <x> due to ValueError` | `:905-907` — still immediately `sys.exit(1)`, not gated |
+
+> **Trigger update after PR #489 (PREPG-023), verified on trunk `613cf4c4`.** The coupling this
+> issue fixes is untouched, but the example that motivated it is now historical. #489 gated the
+> whole ensemble stage on `ieasyhydroforecast_run_CM_models` OR the new
+> `ieasyhydroforecast_ensemble_forcing_required` (`:822`). On a kghm-shaped deployment with both
+> off, the stage is **skipped entirely** (`:995-1001`) — no download, no merge, no
+> missing-temperature error — and **QM exits 0**. Anyone re-running the 2026-09-03 scenario today
+> will find it passes. The missing-variable path also no longer exits where it is detected: it
+> returns `(None, {"T"})`, the caller records the HRU as failed and continues, and the module exits
+> non-zero after the loop (`:1380`).
+>
+> **Live triggers to reason from instead**, since the ensemble-temperature one is retired here:
+> the control-member download failure (`:905-907`, immediately fatal, gated by nothing); any
+> ensemble failure on a deployment where the gate is open (conceptual model enabled, or the new
+> variable set); and #489's new config error — gate open with `HRU_ENSEMBLE` naming no HRUs now
+> exits non-zero rather than skipping.
+>
+> **The premise is therefore "any QM failure suppresses snow, and QM has several fatal paths",**
+> not "the ensemble temperature gap suppresses snow". The 2026-09-03 observation stands as evidence
+> under the pre-#489 behaviour and is labelled as such.
 
 **Cleanest evidence** — the local runner logs show the chain launching only its first script:
 `apps/logs/run_locally_20260904_101318.log:15-31` and `run_locally_20260903_140947.log:15-53`
@@ -51,14 +71,16 @@ load-bearing** — it is recorded here rather than quietly removed, because it c
 
 - **ERA5 extension genuinely depends on quantile mapping.** `extend_era5_reanalysis.py:586-615`
   reads `{hru}_P_control_member.csv` / `_T_control_member.csv` from `OUTPUT_PATH_CM`; QM writes
-  exactly those files at `Quantile_Mapping_OP.py:871-872`. `test_api_coverage_gaps.py:700-706`
+  exactly those files at `Quantile_Mapping_OP.py:957-958` (was `:871-872` before #489 re-indented
+  the file; semantics unchanged, and still written before the ensemble stage). `test_api_coverage_gaps.py:700-706`
   documents the required QM→extend ordering. `QM && extend` is correct and must stay.
 - **Snow is independent.** It reads a different Data Gateway endpoint (`snow-operational` via
   `get_operational`) and writes a different sink (`/snow/` vs `/meteo/`). Nothing it consumes is
   produced by QM or by the ERA5 extension.
 - **But snow is not free to run in parallel either.** QM deletes every file in the shared
-  `OUTPUT_PATH_DG` at `Quantile_Mapping_OP.py:705-715` when not in debug, and snow downloads into
-  that same directory. Concurrent execution would race.
+  `OUTPUT_PATH_DG` at `Quantile_Mapping_OP.py:780-788` (was `:705-715` before #489) when not in
+  debug, and snow downloads into that same directory. Concurrent execution would race. Still
+  unconditional at the start of every non-debug run.
 
 So the defect is narrower than first stated: **snow — and only snow — is removed by a fault it has
 no dependency on**, and it must be run sequentially, not concurrently.
@@ -134,7 +156,7 @@ requires it.
   exits non-zero** — the QM failure must not be masked by snow's success.
 - `extend_era5_reanalysis.py` still runs **only** after a successful QM. Do not add a criterion
   requiring it to run regardless; it would read `{hru}_*_control_member.csv` that QM never wrote.
-- Snow does not run concurrently with QM (shared `OUTPUT_PATH_DG`, deleted at `:705-715`).
+- Snow does not run concurrently with QM (shared `OUTPUT_PATH_DG`, deleted at `:780-788`).
 - The `Dockerfile` CMD and `run_locally.sh` stay behaviourally equivalent to each other — if only one
   changes, the local runner stops predicting production, which is how this went unnoticed.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green, zero skips.
