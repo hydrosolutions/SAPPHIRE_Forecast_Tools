@@ -61,14 +61,50 @@ scheduler_port = ${LUIGI_SCHEDULER_PORT}
 check_complete_on_run = true
 EOF
 
+# Luigi's task-failure return codes default to ZERO (luigi/retcodes.py:
+# task_failed, missing_data, already_running, scheduling_error and not_run are
+# all 0; only unhandled_exception defaults to 4). A failed task would therefore
+# exit 0 and any status this script returns would be meaningless.
+#
+# LUIGI_CONFIG_PATH is required, not optional: Luigi resolves the bare
+# 'luigi.cfg' entry in its default search path relative to the process CWD, and
+# the Compose service sets working_dir: /app/apps/pipeline, so the image's own
+# apps/pipeline/luigi.cfg wins and the file mounted at /app/luigi.cfg is never
+# read. LUIGI_CONFIG_PATH goes through add_config_path(), which APPENDS to the
+# search path rather than replacing it, so the image's [core]/[resources]/
+# [worker] settings still apply and [retcode] is layered on top.
+cat >> temp_luigi.cfg <<'EOF'
+
+[retcode]
+unhandled_exception = 4
+missing_data = 5
+task_failed = 1
+already_running = 6
+scheduling_error = 7
+not_run = 8
+EOF
+LUIGI_RETCODE_DOCKER_ARGS=(-e LUIGI_CONFIG_PATH=/app/luigi.cfg)
+
 # Run the pentadal forecasting with proper configuration
 # Note: PYTHONPATH=/app is set in docker-compose-luigi.yml for Luigi module resolution
 docker compose -f bin/docker-compose-luigi.yml run \
     -v $(pwd)/temp_luigi.cfg:/app/luigi.cfg \
     -e SAPPHIRE_PREDICTION_MODE=PENTAD \
+    ${LUIGI_RETCODE_DOCKER_ARGS[@]+"${LUIGI_RETCODE_DOCKER_ARGS[@]}"} \
     --user root \
     --rm \
     pentadal
+COMPOSE_STATUS=$?
 
 echo "| Pentadal forecasting task submitted to Luigi daemon"
 echo "| Check progress at: http://localhost:${LUIGI_SCHEDULER_PORT}"
+
+# COMPOSE_STATUS now reflects Luigi's own outcome (see the [retcode] block
+# above -- without it a failed task would still exit 0).
+if [ "$COMPOSE_STATUS" -eq 0 ]; then
+    echo "| Pentadal forecasting: SUCCESS."
+else
+    echo "| Pentadal forecasting: FAILED (exit ${COMPOSE_STATUS})."
+fi
+
+exit "$COMPOSE_STATUS"

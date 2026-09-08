@@ -8,7 +8,7 @@ forecast horizon, so one missing interior day voids the entire response.
 exactly that condition by assembling the recent window from per-issue-date
 `snow-forecast` calls, whose overlapping windows cover a single absent
 issue date. See
-doc/plans/issues/mid_prio_gi_draft_prepg_snow_single_day_gap_tolerance.md
+doc/plans/issues/archive/mid_prio_gi_draft_prepg_snow_single_day_gap_tolerance.md
 
 Also covers two 2026-09 out-of-loop review rounds. First round (all
 FIXED):

@@ -1,6 +1,8 @@
 ## `preprocessing_gateway` reports PASS with all six snow tasks errored (PREPG-009)
 
-**Status**: Draft (2026-08-14)
+**Status**: **Complete** — merged 2026-09-07 in **PR #491** (with PREPG-025 and PREPG-024).
+Filed 2026-08-14. `main()` now tallies succeeded-vs-attempted, logs the failures by name and
+returns 1, and the module exits on that status via `sys.exit(main())`.
 **Module**: `apps/preprocessing_gateway` (`snow_data_operational.py`), surfaced via
 `apps/run_locally.sh`
 **Priority**: **Medium** — silent-success on a fully failed sub-task. Not data loss, but the

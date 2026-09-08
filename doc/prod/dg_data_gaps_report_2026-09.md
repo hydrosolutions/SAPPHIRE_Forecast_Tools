@@ -6,7 +6,7 @@ backfilled; items 2 and 3 need no action from us. Retained as the record of what
 **Concerns**: `data-gateway.ieasyhydro.org` — snow-operational, snow-forecast and ensemble
 endpoints; and the `sapphire-dg-client` Python client
 **Origin**: PREPG-009 and PREPG-024 — see
-[`doc/plans/issues/mid_prio_gi_draft_prepg_snow_task_failures_exit_zero.md`](../plans/issues/mid_prio_gi_draft_prepg_snow_task_failures_exit_zero.md)
+[`doc/plans/issues/archive/mid_prio_gi_draft_prepg_snow_task_failures_exit_zero.md`](../plans/issues/archive/mid_prio_gi_draft_prepg_snow_task_failures_exit_zero.md)
 
 Three independent items, most urgent first. Item 1 is currently blocking snow ingestion on every
 SAPPHIRE deployment.

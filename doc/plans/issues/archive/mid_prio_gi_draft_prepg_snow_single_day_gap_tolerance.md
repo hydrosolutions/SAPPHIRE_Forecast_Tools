@@ -1,8 +1,11 @@
 ## Snow ingestion cannot tolerate a single missing upstream day (PREPG-025)
 
-**Status**: **IMPLEMENTED 2026-09-04** — commits `87211ffe`, `ed560b4d`, `b1234e77`. Not blocked:
-the dg-client bug is worked around by a local wrapper (see "Blocked on the client fix" below, which
-records why waiting was rejected). Deployed order was PREPG-025 -> PREPG-009 -> PREPG-024.
+**Status**: **Complete** — merged 2026-09-07 in **PR #491** (with PREPG-009 and PREPG-024).
+Implemented 2026-09-04 in commits `87211ffe`, `ed560b4d`, `b1234e77`. It was never blocked on the
+dg-client fix: the client bug is worked around by a local wrapper (`dg_utils.fetch_snow_forecast_for_issue_date`),
+and the section "Blocked on the client fix" below records why waiting was rejected. Landed order was
+PREPG-025 -> PREPG-009 -> PREPG-024. The upstream client bug was reported to the Data Gateway team
+in `doc/prod/dg_data_gaps_report_2026-09.md`; the workaround stands until they ship a fix.
 **Module**: `apps/preprocessing_gateway` (`snow_data_operational.py`)
 **Priority**: **Medium** — recurring, and each occurrence stops snow ingestion on every deployment
 until the gateway backfills the day.

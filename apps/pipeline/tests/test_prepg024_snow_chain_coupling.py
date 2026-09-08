@@ -2,7 +2,7 @@
 Tests for PREPG-024: a `Quantile_Mapping_OP.py` failure must no longer
 suppress `snow_data_operational.py` in `apps/run_locally.sh`.
 
-See doc/plans/issues/mid_prio_gi_draft_prepg_qm_failure_suppresses_snow.md.
+See doc/plans/issues/archive/mid_prio_gi_draft_prepg_qm_failure_suppresses_snow.md.
 
 Before this fix, `run_preprocessing_gateway()` ran the three
 preprocessing_gateway scripts in a `for` loop that `break`s on the first

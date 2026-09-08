@@ -1,6 +1,11 @@
 ## A `Quantile_Mapping_OP.py` failure silently suppresses snow ingestion (PREPG-024)
 
-**Status**: Draft (2026-09-04) — **exit contract decided, see "Exit contract" below**
+**Status**: **Complete** — merged 2026-09-07 in **PR #491** (with PREPG-025 and PREPG-009).
+Filed 2026-09-04; the exit contract agreed before implementation is recorded under "Exit contract"
+below and is what shipped. Snow now runs regardless of the meteo outcome, in both the container
+`CMD` and `run_locally.sh`, and either failure alone still makes the run non-zero. **The meteo pair
+stays chained on purpose** — `extend_era5_reanalysis.py` reads the control-member CSVs
+`Quantile_Mapping_OP.py` writes, so only the snow coupling was wrong.
 **Module**: `apps/preprocessing_gateway` (`Dockerfile:43`), surfaced via
 `bin/daily_gateway_maintenance.sh`, `apps/pipeline/pipeline_docker.py` and `apps/run_locally.sh:681-683`
 **Priority**: **Medium** — snow is removed by a fault it has no dependency on. Structural,
@@ -91,7 +96,7 @@ no dependency on**, and it must be run sequentially, not concurrently.
 |---|---|
 | Container / Luigi (`pipeline_docker.py:384-428`) | non-zero → retry, notify, raise, **no marker** |
 | `run_locally.sh` | recorded FAIL → final exit 1 |
-| **`bin/run_preprocessing_gateway.sh`** — the canonical 03:00 cron entry (`update_deployment_checklist.md:802-803`) | **exits 0.** Submits via `docker compose run`, never captures the status, ends on two `echo`s; its Luigi CLI also keeps the default `task_failed=0` |
+| **`bin/run_preprocessing_gateway.sh`** — the canonical 03:00 cron entry (`update_deployment_checklist.md:802-803`) | **FIXED by INFRA-047**; it exited 0 when this issue was written (submitted via `docker compose run`, never captured the status, ended on two `echo`s, and its Luigi CLI kept the default `task_failed=0`). It now propagates. |
 | `bin/daily_gateway_maintenance.sh` (`:120-141`) — legacy/manual, **not** the cron path | **exits 0** (logs a WARNING) |
 
 **Consequence, and it limits what this issue can deliver:** fixing the `&&` chain makes the failure

@@ -3,13 +3,15 @@
 > ## ⚠️ SUPERSEDED — do not follow the rollout commands in this document
 >
 > The `monthly_norms` Luigi task described here was **retired**. It is no longer in
-> `RunPeriodicMaintenanceWorkflow`'s task map, and `bin/run_periodic_maintenance.sh` still
-> *accepts* the name while exiting 0 without running anything (INFRA-023) — so every cron
-> line and manual command below is a silent no-op.
+> `RunPeriodicMaintenanceWorkflow`'s task map. Until INFRA-023 (merged 2026-09-07)
+> `bin/run_periodic_maintenance.sh` still *accepted* the name while exiting 0 without running
+> anything, so every cron line and manual command below was a silent no-op. Since INFRA-023 the
+> wrapper **rejects** the name with a non-zero exit naming the replacement — the commands below now
+> fail loudly instead of silently, but they still do not work.
 >
 > **The replacement is `bin/yearly_runoff_hydrograph_aggregation.sh`.** See DOC-007
 > (`review_gi_draft_doc_deployment_cron_block_stale_authority.md`) and INFRA-023
-> (`mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`).
+> (`archive/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`).
 >
 > Retained as the historical design record only.
 

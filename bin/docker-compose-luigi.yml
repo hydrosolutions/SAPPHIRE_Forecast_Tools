@@ -117,8 +117,9 @@ services:
   # Periodic maintenance workflow (bimonthly/yearly tasks)
   # Pass MAINTENANCE_TASK_TYPE env var to select: long_term, skill_recalc,
   # snow_norms, lt_recovery
-  # (monthly_norms was retired: the task map no longer has it and the run exits 0
-  #  without doing anything -- use bin/yearly_runoff_hydrograph_aggregation.sh instead)
+  # (monthly_norms was retired. Since INFRA-023 the wrapper REJECTS it up front
+  #  with a non-zero exit naming the replacement -- it no longer passes through
+  #  and exits 0 without doing anything. Use bin/yearly_runoff_hydrograph_aggregation.sh)
   # Usage: MAINTENANCE_TASK_TYPE=long_term docker compose -f bin/docker-compose-luigi.yml run --rm periodic-maintenance
   #
   # lt_recovery additionally needs MAINTENANCE_LT_MODE (e.g. month_0) and

@@ -10,7 +10,7 @@ a silent no-op.
 **Found**: 2026-08-26, out-of-loop review of the kghm operator handover (PR #480); scope expanded
 substantially by a second out-of-loop pass over rev 1 of this draft.
 **Related**: **INFRA-023**
-(`mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`, Draft, **Medium**) — the
+(`archive/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`, **Complete**, PR #494) — the
 wrapper defect the stale line walked operators into. DOC-007 is the documentation half; this fix
 does **not** close INFRA-023, and INFRA-023 would not have closed this.
 

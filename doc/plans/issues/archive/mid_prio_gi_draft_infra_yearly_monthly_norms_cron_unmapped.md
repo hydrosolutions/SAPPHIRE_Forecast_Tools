@@ -1,9 +1,17 @@
 ## The `monthly_norms` retirement was left incomplete — the wrapper still accepts it, silently (INFRA-023)
 
-**Status**: Draft — **REFRAMED 2026-08-21 after out-of-loop review.** The original framing ("a
-cron points at a task Luigi does not implement") is accurate but reads as an oversight. It is not:
-`monthly_norms` was **deliberately retired** in Phase 4 of the runoff work, and two tests pin the
-removal. The real defect is that the deprecation was never finished — see § The actual fix.
+**Status**: **Complete** — merged 2026-09-07 in **PR #494**. The wrapper now rejects
+`monthly_norms` up front with a non-zero exit naming `bin/yearly_runoff_hydrograph_aggregation.sh`,
+validates every task type against a single `VALID_TASK_TYPES` list that also drives the printed
+help, and propagates the compose status on every branch rather than only `lt_recovery`.
+
+**REFRAMED 2026-08-21 after out-of-loop review**, and **rescoped again 2026-09-05** after the
+installed-crontab survey. The original framing ("a cron points at a task Luigi does not implement")
+is accurate but reads as an oversight. It is not: `monthly_norms` was **deliberately retired** in
+Phase 4 of the runoff work, and two tests pin the removal. The real defect was that the deprecation
+was never finished — see § The actual fix. The survey then removed roughly two thirds of the
+original scope: `monthly_norms` is installed on no deployment, and nothing consumes these wrappers'
+exit codes today, which is why the sibling exit-code work became **INFRA-047**.
 **Module**: `bin/run_periodic_maintenance.sh`, `apps/pipeline/pipeline_docker.py`, `doc/deployment.md`
 **Priority**: **Medium** — *downgraded from High 2026-08-21; the original premise was disproved.*
 The claim was that a deployment following `doc/deployment.md` has **never** run the yearly
