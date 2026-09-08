@@ -59,8 +59,11 @@ class TestWriteSnowToApi:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_api_not_ready_returns_false(self, mock_client_class):
-        """When API health check fails, should return False (non-blocking)."""
+    def test_api_not_ready_raises_sapphire_api_error(self, mock_client_class):
+        """PREPG-026: when API health check fails, write_snow_to_api must
+        raise SapphireAPIError (a genuine delivery failure), not return
+        False -- False is reserved for the function's other, benign
+        no-write conditions."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -70,9 +73,58 @@ class TestWriteSnowToApi:
             mock_client.readiness_check.return_value = False
             mock_client_class.return_value = mock_client
 
+            # PREPG-026 review fix: the readiness check now sits at the
+            # point of actual delivery (inside `if records:`), reached
+            # only when the operational (yesterday..today) window has
+            # data. Use today's date, not a hardcoded past date, so
+            # the window is always non-empty and this test cannot rot
+            # as the calendar moves on.
+            today = pd.Timestamp.today().normalize()
             data = pd.DataFrame(
                 {
-                    "date": pd.to_datetime(["2024-01-01"]),
+                    "date": [today],
+                    "code": [12345],
+                    "SWE": [100.5],
+                }
+            )
+
+            with pytest.raises(dg_utils.SapphireAPIError):
+                dg_utils.write_snow_to_api(data, "SWE", "test_hru")
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("dg_utils.SapphirePreprocessingClient")
+    def test_api_unreachable_but_nothing_to_deliver_still_returns_false(self, mock_client_class):
+        """PREPG-026 review fix: an unreachable API must stay benign
+        (return False, not raise) when there was nothing to deliver
+        anyway -- here, the operational (yesterday..today) window is
+        empty because all the data is older than yesterday. This is
+        the exact case the out-of-loop review caught: the readiness
+        check must sit at the point of actual delivery (inside `if
+        records:`), not at the top of the function, or an unreachable
+        API would fail tasks that had no publishable data regardless
+        of the API's state -- breaking the 'nothing to deliver stays
+        benign' contract.
+
+        `readiness_check` is configured to return False so that if the
+        check were (incorrectly) still at the top of the function, this
+        test would fail with a raised SapphireAPIError instead of
+        passing -- pinning the check's position, not just its
+        existence.
+        """
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = False
+            mock_client_class.return_value = mock_client
+
+            stale = pd.Timestamp.today().normalize() - pd.Timedelta(days=10)
+            data = pd.DataFrame(
+                {
+                    "date": [stale],
                     "code": [12345],
                     "SWE": [100.5],
                 }
@@ -80,6 +132,8 @@ class TestWriteSnowToApi:
 
             result = dg_utils.write_snow_to_api(data, "SWE", "test_hru")
             assert result is False
+            mock_client.readiness_check.assert_not_called()
+            mock_client.write_snow.assert_not_called()
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -268,8 +322,11 @@ class TestWriteSnowToApiMaintenance:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_api_not_ready_returns_false(self, mock_client_class):
-        """When API health check fails, should return False (non-blocking)."""
+    def test_api_not_ready_raises_sapphire_api_error(self, mock_client_class):
+        """PREPG-026: when API health check fails, write_snow_to_api must
+        raise SapphireAPIError (a genuine delivery failure), not return
+        False -- False is reserved for the function's other, benign
+        no-write conditions."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -279,22 +336,30 @@ class TestWriteSnowToApiMaintenance:
             mock_client.readiness_check.return_value = False
             mock_client_class.return_value = mock_client
 
+            # PREPG-026 review fix: the readiness check now sits at the
+            # point of actual delivery (inside `if records:`), reached
+            # only when the maintenance (last-365-days) window has
+            # data. Anchor both `reference_date` and the data date to
+            # today rather than a hardcoded past date, so the window
+            # is always non-empty and this test cannot rot as the
+            # calendar moves on.
+            today_str = pd.Timestamp.today().normalize().strftime("%Y-%m-%d")
             data = pd.DataFrame(
                 {
-                    "date": pd.to_datetime(["2024-01-01"]),
+                    "date": pd.to_datetime([today_str]),
                     "code": [12345],
                     "SWE": [100.5],
                 }
             )
 
-            result = dg_utils.write_snow_to_api(
-                data,
-                "SWE",
-                "test_hru",
-                mode="maintenance",
-                reference_date="2024-01-01",
-            )
-            assert result is False
+            with pytest.raises(dg_utils.SapphireAPIError):
+                dg_utils.write_snow_to_api(
+                    data,
+                    "SWE",
+                    "test_hru",
+                    mode="maintenance",
+                    reference_date=today_str,
+                )
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -908,13 +973,36 @@ class TestSnowDataOperationalIntegration:
 
     @patch("snow_data_operational._check_snow_consistency")
     @patch("dg_utils.write_snow_to_api")
-    def test_api_failure_non_fatal_csv_still_written(self, mock_write_api, mock_check):
-        """When API write raises SapphireAPIError, CSV is still written."""
+    @patch("snow_data_operational.pd.read_csv")
+    @patch("snow_data_operational.dg_utils.transform_snow_data")
+    def test_api_write_failure_returns_false_but_csv_still_written(
+        self, mock_transform, mock_read_csv, mock_write_api, mock_check
+    ):
+        """PREPG-026: when the DG fetch succeeds but the API write raises
+        SapphireAPIError (e.g. an unreachable API), the task must report
+        failure (return False) so PREPG-009's aggregate turns it into a
+        non-zero exit -- while the CSV, which was already written before
+        the API call, is not lost.
+
+        Rewritten from the previous (vacuous) version of this test, which
+        made ``get_operational`` raise instead, so the function returned
+        False at the DG-fetch stage and never reached the API write --
+        the mocked SapphireAPIError never fired and the test pinned
+        nothing about the API-failure path it claimed to cover.
+        """
+        mock_transform.return_value = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"]),
+                "code": [12345],
+                "SWE": [100.0],
+            }
+        )
+        mock_read_csv.return_value = pd.DataFrame({"raw": ["data"]})
         mock_write_api.side_effect = sdo.SapphireAPIError("API down")
         mock_check.return_value = True
 
         mock_client = Mock()
-        mock_client.get_operational.side_effect = Exception("DG error")
+        mock_client.get_operational.return_value = "/tmp/fake.csv"
 
         import tempfile
 
@@ -922,8 +1010,6 @@ class TestSnowDataOperationalIntegration:
             swe_dir = os.path.join(tmpdir, "SWE")
             os.makedirs(swe_dir, exist_ok=True)
 
-            # DG fails so CSV is not written either, but the point is
-            # the function handles the exception gracefully
             result = sdo.get_snow_data_operational(
                 client=mock_client,
                 hru="12345",
@@ -932,7 +1018,104 @@ class TestSnowDataOperationalIntegration:
                 dg_path="/tmp/dg",
                 save_path=tmpdir,
             )
+
             assert result is False
+            mock_write_api.assert_called_once()
+            # The API write raised before the "written" flag could be
+            # set, so the consistency check (which only runs after a
+            # successful write) must not have been called.
+            mock_check.assert_not_called()
+
+            csv_path = os.path.join(tmpdir, "SWE", "12345_SWE.csv")
+            assert os.path.exists(csv_path), "CSV must still be written despite the API failure"
+            # Read the raw file contents directly rather than via
+            # pd.read_csv: `pd` here is the same module object as
+            # `snow_data_operational.pd`, which this test patches
+            # `.read_csv` on for the duration of the test, so
+            # `pd.read_csv` would return the mocked DataFrame instead
+            # of the file's real contents.
+            with open(csv_path) as f:
+                written_csv = f.read()
+            assert "12345" in written_csv
+            assert "SWE" in written_csv
+
+    @patch("snow_data_operational._check_snow_consistency")
+    @patch("dg_utils.SapphirePreprocessingClient")
+    @patch("snow_data_operational.pd.read_csv")
+    @patch("snow_data_operational.dg_utils.transform_snow_data")
+    def test_unreachable_api_read_snow_raises_returns_false_without_escaping(
+        self, mock_transform, mock_read_csv, mock_client_class, mock_check
+    ):
+        """PREPG-026 review fix (second regression, caught by
+        out-of-loop review): a genuinely unreachable API does not just
+        fail ``readiness_check()`` -- calling any other client method,
+        such as ``read_snow`` (used by the preservation read,
+        ``_read_existing_snow_fields``), raises a connection-style
+        exception too. When the readiness check briefly sat *after*
+        that preservation read, this exception surfaced as
+        ``SnowPreservationReadError`` (PREPG-020) and escaped
+        ``get_snow_data_operational`` uncaught -- aborting the whole
+        run instead of failing just this task. With the readiness
+        check moved back above the preservation read,
+        ``readiness_check() -> False`` must be caught first, raising
+        ``SapphireAPIError`` (turned into a controlled ``False`` by
+        the caller's ``except`` clause) before ``read_snow`` is ever
+        reached.
+
+        Unlike the mocked-``write_snow_to_api`` tests above, this one
+        does not mock ``dg_utils.write_snow_to_api`` itself -- only the
+        API client it constructs -- so the real function body (and the
+        real position of the readiness check relative to the
+        preservation read) is what runs.
+        """
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_transform.return_value = pd.DataFrame(
+                {
+                    "date": [pd.Timestamp.today().normalize()],
+                    "code": [12345],
+                    "SWE": [100.0],
+                }
+            )
+            mock_read_csv.return_value = pd.DataFrame({"raw": ["data"]})
+            mock_check.return_value = True
+
+            mock_api_client = Mock()
+            mock_api_client.readiness_check.return_value = False
+            mock_api_client.read_snow.side_effect = ConnectionError("Connection refused")
+            mock_client_class.return_value = mock_api_client
+
+            mock_dg_client = Mock()
+            mock_dg_client.get_operational.return_value = "/tmp/fake.csv"
+
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                swe_dir = os.path.join(tmpdir, "SWE")
+                os.makedirs(swe_dir, exist_ok=True)
+
+                # Must not raise: SnowPreservationReadError must not
+                # escape here, and the function must return the
+                # controlled False, not let SapphireAPIError itself
+                # escape either.
+                result = sdo.get_snow_data_operational(
+                    client=mock_dg_client,
+                    hru="12345",
+                    variable="SWE",
+                    date="2024-01-01",
+                    dg_path="/tmp/dg",
+                    save_path=tmpdir,
+                )
+
+            assert result is False
+            # read_snow must never be reached -- the readiness check
+            # sits before the preservation read that calls it.
+            mock_api_client.read_snow.assert_not_called()
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("snow_data_operational._check_snow_consistency")
     @patch("dg_utils.write_snow_to_api")

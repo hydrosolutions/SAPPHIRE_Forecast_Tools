@@ -61,6 +61,7 @@ sys.modules["sapphire_dg_client.client"] = MagicMock()
 sys.modules["sapphire_dg_client.SapphireDGClient"] = MagicMock()
 sys.modules["sapphire_dg_client.snow_model"] = MagicMock()
 
+import dg_utils  # noqa: E402
 import setup_library  # noqa: E402
 import snow_data_operational as sdo  # noqa: E402
 
@@ -252,3 +253,182 @@ class TestSummaryLogging:
         assert exit_code not in (0, None)
 
         assert "0/6 succeeded" in stderr, f"Expected '0/6 succeeded' in summary, got:\n{stderr}"
+
+
+class TestApiWriteFailureExitStatus:
+    """PREPG-026: a failed *API delivery* (as opposed to a failed DG
+    *fetch*, covered above) must also fail the task and turn into a
+    non-zero process exit, without aborting the remaining HRU/variable
+    tasks and without breaking the benign no-write paths.
+
+    These pin the two production edits together:
+    - ``dg_utils.write_snow_to_api`` raising ``SapphireAPIError`` on a
+      failed readiness check instead of returning ``False``;
+    - ``snow_data_operational.get_snow_data_operational`` returning
+      ``False`` (not ``True``) when it catches that error.
+
+    Neither edit alone makes these tests fail if reverted: raising
+    without also returning False still falls through to the
+    unconditional ``return True``; returning False in the except
+    clause without the raise never fires (readiness-false still just
+    returns False, indistinguishable from any other benign no-write).
+    Reverting either production edit turns these tests red.
+    """
+
+    def _mock_client_class(self, monkeypatch, readiness_results):
+        """Patch dg_utils.SapphirePreprocessingClient so every
+        instantiation returns the same mock client, whose
+        readiness_check() yields the next value from
+        ``readiness_results`` on each call (one call per HRU/variable
+        task). read_snow/write_snow are wired to succeed so a
+        readiness-true task completes a real write."""
+        mock_api_client = MagicMock()
+        mock_api_client.readiness_check.side_effect = list(readiness_results)
+        mock_api_client.read_snow.return_value = pd.DataFrame()
+        mock_api_client.write_snow.return_value = 1
+
+        mock_client_class = MagicMock(return_value=mock_api_client)
+        monkeypatch.setattr(dg_utils, "SapphirePreprocessingClient", mock_client_class)
+        return mock_api_client
+
+    def test_api_unreachable_fails_all_tasks_and_exits_nonzero(self, snow_main_env, monkeypatch):
+        """With the API enabled but unreachable for every task, the run
+        must exit non-zero, and every task must still have attempted
+        its DG fetch and its readiness check -- the API failure on
+        task 1 must not abort tasks 2-6 (PREPG-009's
+        run-all-then-aggregate)."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.setenv("SAPPHIRE_API_URL", "http://sapphire-api.invalid")
+        mock_api_client = self._mock_client_class(
+            monkeypatch, readiness_results=[False] * TOTAL_TASKS
+        )
+
+        exit_code, call_log = _run_real_entry_point(set(), snow_main_env["dg_dir"], monkeypatch)
+
+        # All six DG fetches happened despite every API write failing.
+        assert len(call_log) == TOTAL_TASKS
+        assert set(call_log) == set(TASK_ORDER)
+        # Readiness was checked once per task -- the failure path was
+        # exercised for every task, not short-circuited after the first.
+        assert mock_api_client.readiness_check.call_count == TOTAL_TASKS
+        assert exit_code not in (0, None)
+
+    def test_first_api_write_failure_does_not_abort_remaining_tasks(
+        self, snow_main_env, capsys, monkeypatch
+    ):
+        """Only the first task's API write fails (unreachable); the
+        other five must still run to completion and succeed. This is
+        the regression a naive 'let the exception propagate' fix would
+        cause: it would abort the loop after task 1 and tasks 2-6 would
+        never even reach the Data Gateway."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.setenv("SAPPHIRE_API_URL", "http://sapphire-api.invalid")
+        mock_api_client = self._mock_client_class(
+            monkeypatch, readiness_results=[False] + [True] * (TOTAL_TASKS - 1)
+        )
+
+        exit_code, call_log = _run_real_entry_point(set(), snow_main_env["dg_dir"], monkeypatch)
+        stderr = capsys.readouterr().err
+
+        assert len(call_log) == TOTAL_TASKS, (
+            "All six HRU/variable tasks must still be attempted after the first fails its API write"
+        )
+        assert set(call_log) == set(TASK_ORDER)
+        assert mock_api_client.readiness_check.call_count == TOTAL_TASKS
+        assert exit_code not in (0, None)
+        assert f"5/{TOTAL_TASKS} succeeded" in stderr, (
+            f"Expected 5/{TOTAL_TASKS} succeeded (only the first task's API write failed), "
+            f"got:\n{stderr}"
+        )
+
+    def test_api_disabled_still_exits_zero_and_writes_csv(self, snow_main_env, monkeypatch):
+        """SAPPHIRE_API_ENABLED=false must keep exiting 0 -- this is a
+        benign no-write condition (dg_utils.py:1126-1129), not the
+        readiness-check failure PREPG-026 changes. The CSV must still
+        be written."""
+        # snow_main_env already sets SAPPHIRE_API_ENABLED=false; set it
+        # again explicitly so this test documents the contract on its
+        # own, independent of the fixture's default.
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "false")
+
+        exit_code, call_log = _run_real_entry_point(set(), snow_main_env["dg_dir"], monkeypatch)
+
+        assert len(call_log) == TOTAL_TASKS
+        assert exit_code in (0, None)
+
+        csv_path = os.path.join(
+            snow_main_env["tmp_path"], "intermediate", "snow", "SWE", f"{TEST_HRUS[0]}_SWE.csv"
+        )
+        assert os.path.exists(csv_path), "CSV must be written even though API writing is disabled"
+
+    def test_api_client_absent_still_exits_zero(self, snow_main_env, monkeypatch):
+        """With sapphire-api-client absent, the run must still exit 0
+        -- the one dependency-gated skip CLAUDE.md sanctions -- and
+        must be distinguishable from "the API was reachable and
+        refused" (which now exits non-zero, see
+        test_api_unreachable_fails_all_tasks_and_exits_nonzero).
+        Simulated by forcing dg_utils.SAPPHIRE_API_AVAILABLE to False
+        regardless of whether the package happens to be installed in
+        this test environment, so the test is deterministic either
+        way."""
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.setattr(dg_utils, "SAPPHIRE_API_AVAILABLE", False)
+
+        exit_code, call_log = _run_real_entry_point(set(), snow_main_env["dg_dir"], monkeypatch)
+
+        assert len(call_log) == TOTAL_TASKS
+        assert exit_code in (0, None)
+
+        csv_path = os.path.join(
+            snow_main_env["tmp_path"], "intermediate", "snow", "SWE", f"{TEST_HRUS[0]}_SWE.csv"
+        )
+        assert os.path.exists(csv_path), "CSV must be written even though the API client is absent"
+
+    def test_read_snow_raises_on_unreachable_api_still_attempts_all_tasks(
+        self, snow_main_env, monkeypatch
+    ):
+        """PREPG-026 review fix (regression from the first move,
+        confirmed reachable by out-of-loop review): a genuinely
+        unreachable API doesn't just fail readiness_check() -- it also
+        makes read_snow raise (used by the preservation read,
+        _read_existing_snow_fields). When the readiness check briefly
+        sat after that preservation read, read_snow's exception
+        surfaced as SnowPreservationReadError (PREPG-020) and escaped
+        get_snow_data_operational uncaught -- main() has no exception
+        boundary, so the whole run aborted at task 1 and tasks 2-6
+        never even reached the Data Gateway. With the readiness check
+        moved back above the preservation read, this must resolve as
+        a controlled per-task failure: all six tasks still attempted,
+        non-zero exit, no uncaught traceback. This is the contract-4
+        guarantee under a real outage, not just a mocked
+        readiness_check() -> False."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.setenv("SAPPHIRE_API_URL", "http://sapphire-api.invalid")
+
+        mock_api_client = MagicMock()
+        mock_api_client.readiness_check.return_value = False
+        mock_api_client.read_snow.side_effect = ConnectionError("Connection refused")
+        mock_client_class = MagicMock(return_value=mock_api_client)
+        monkeypatch.setattr(dg_utils, "SapphirePreprocessingClient", mock_client_class)
+
+        exit_code, call_log = _run_real_entry_point(set(), snow_main_env["dg_dir"], monkeypatch)
+
+        # All six DG fetches happened -- read_snow raising like a real
+        # outage would must not abort the loop (this would fail with
+        # an uncaught SnowPreservationReadError, not a clean
+        # SystemExit, if the regression were still present).
+        assert len(call_log) == TOTAL_TASKS
+        assert set(call_log) == set(TASK_ORDER)
+        # read_snow must never be reached: the readiness check now
+        # sits before the preservation read, so it fails there first.
+        mock_api_client.read_snow.assert_not_called()
+        assert exit_code not in (0, None)

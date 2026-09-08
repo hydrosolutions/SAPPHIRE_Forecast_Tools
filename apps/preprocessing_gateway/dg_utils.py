@@ -1118,6 +1118,11 @@ def write_snow_to_api(
             (i.e. more than a day has passed) is permanently outside
             every future operational run's window and will not be
             picked up automatically.
+        SapphireAPIError: The readiness check failed (API unreachable
+            or not ready) (PREPG-026). Unlike this function's other
+            ``False`` returns, this is the one genuine delivery
+            failure, so it is raised rather than returned to let the
+            caller distinguish it and fail the task.
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping snow API write")
@@ -1130,15 +1135,6 @@ def write_snow_to_api(
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
-
-    if not client.readiness_check():
-        logger.warning(
-            "SAPPHIRE API at %s is not ready, skipping snow write (HRU %s, %s)",
-            api_url,
-            hru_code,
-            snow_type,
-        )
-        return False
 
     if data.empty:
         logger.info("No snow data to write to API (%s, HRU %s)", snow_type, hru_code)
@@ -1212,6 +1208,30 @@ def write_snow_to_api(
         snow_type,
         list(codes),
     )
+
+    if not client.readiness_check():
+        # PREPG-026: unlike this function's other `False` returns
+        # (client absent, API disabled, no data, empty sync window, no
+        # publishable values -- all benign), an unreachable/not-ready
+        # API is the one genuine delivery failure. Raise so the caller
+        # can tell it apart and fail the task instead of silently
+        # reporting success. The check sits here -- after the benign
+        # no-write cases above have already returned, but before the
+        # preservation read below -- because everything past this
+        # point needs a working API: `_read_existing_snow_fields` is
+        # itself an API call, and an uncaught exception from it would
+        # escape as SnowPreservationReadError (PREPG-020) and abort
+        # the whole run instead of just this task. This is a
+        # deliberate trade: with the check here, "no publishable
+        # values" (further below) combined with an unreachable API now
+        # reports failure rather than exiting 0 -- accepted, because an
+        # uncaught crash that kills the remaining tasks is far worse
+        # than a red run on an edge case where the API was down
+        # anyway.
+        raise SapphireAPIError(
+            f"SAPPHIRE API at {api_url} is not ready, failed to deliver snow "
+            f"write (HRU {hru_code}, {snow_type})"
+        )
 
     # Read existing metadata so operational writes don't clobber full-year
     # norms/statistics produced by recalculate_snow_norms.py.
