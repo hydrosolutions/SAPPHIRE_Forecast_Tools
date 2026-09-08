@@ -527,7 +527,7 @@ non-zero (`bin/yearly_runoff_hydrograph_aggregation.sh:206-213`). So an exit 4 t
 > (`apps/pipeline/pipeline_docker.py:2049-2057`). `bin/README.md:231` names a *different* script for
 > the same slot (`yearly_runoff_hydrograph_aggregation.sh`). A deployment following `deployment.md`
 > would therefore never run the yearly long-horizon aggregation. See
-> `doc/plans/issues/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`.
+> `doc/plans/issues/archive/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`.
 
 **3. Per horizon, should a virtual site keep its observed rows with `norm=None`?** — **RESOLVED by
 PREPQ-015's design: yes, but via fall-through, not grading (updated 2026-08-21, second pass).** At

@@ -101,9 +101,12 @@ a given non-zero exit is the expected one or a real incident.
      repository root (parent of sapphire/)` and exits 1 — but cron surfaces that to nobody, so a
      crontab predating that fix has been backing up nothing, nightly, in a log no one reads.
    - **Do not restore the retired `run_periodic_maintenance.sh monthly_norms` task.** If the installed
-     crontab still calls it instead of `bin/yearly_runoff_hydrograph_aggregation.sh`, that wrapper
-     accepts the retired task name, hands it to Luigi, which raises — but the wrapper has no `set -e`
-     and never captures that exit code, so it prints "task submitted" and exits 0 regardless
+     crontab still calls it instead of `bin/yearly_runoff_hydrograph_aggregation.sh`, replace it.
+     On a checkout predating INFRA-023 (merged 2026-09-07) that wrapper accepts the retired task
+     name, hands it to Luigi, which raises — but the wrapper never exits on that status, so it
+     prints "task submitted" and exits 0 regardless. Once this server is updated the wrapper
+     **rejects** the name with a non-zero exit naming the replacement, so a stale line will start
+     reporting failure: that is the fix working, not a new fault
      (INFRA-023, still open — Draft). Replace the entry with
      `bin/yearly_runoff_hydrograph_aggregation.sh`, matching entry **(9)** in the checklist's
      canonical block.

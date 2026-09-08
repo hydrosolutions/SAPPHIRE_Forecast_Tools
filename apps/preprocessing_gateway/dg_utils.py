@@ -507,7 +507,7 @@ def transform_snow_data(df, var_name):
 # endpoint is not all-or-nothing that way: each issuance covers a fixed
 # forward window, and consecutive issuances overlap heavily, so a single
 # absent issue date is covered by its neighbours. See
-# doc/plans/issues/mid_prio_gi_draft_prepg_snow_single_day_gap_tolerance.md
+# doc/plans/issues/archive/mid_prio_gi_draft_prepg_snow_single_day_gap_tolerance.md
 # --------------------------------------------------------------------
 
 # Per-issue-date snow-forecast window length, in days (an issuance dated

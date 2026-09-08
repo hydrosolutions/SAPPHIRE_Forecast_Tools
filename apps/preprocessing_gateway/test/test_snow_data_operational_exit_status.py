@@ -11,7 +11,7 @@ returned, so even a 6/6 failure exited 0 and looked like a PASS to
 automation.
 
 Decided contract (see
-doc/plans/issues/mid_prio_gi_draft_prepg_snow_task_failures_exit_zero.md):
+doc/plans/issues/archive/mid_prio_gi_draft_prepg_snow_task_failures_exit_zero.md):
 a single non-zero aggregate exit status, no graded codes. Partial vs.
 total failure is distinguished only in the log (named failed tasks +
 succeeded/failed counts), never in the exit status.

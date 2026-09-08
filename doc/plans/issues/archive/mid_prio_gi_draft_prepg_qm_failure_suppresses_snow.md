@@ -1,6 +1,11 @@
 ## A `Quantile_Mapping_OP.py` failure silently suppresses snow ingestion (PREPG-024)
 
-**Status**: Draft (2026-09-04) — **exit contract decided, see "Exit contract" below**
+**Status**: **Complete** — merged 2026-09-07 in **PR #491** (with PREPG-025 and PREPG-009).
+Filed 2026-09-04; the exit contract agreed before implementation is recorded under "Exit contract"
+below and is what shipped. Snow now runs regardless of the meteo outcome, in both the container
+`CMD` and `run_locally.sh`, and either failure alone still makes the run non-zero. **The meteo pair
+stays chained on purpose** — `extend_era5_reanalysis.py` reads the control-member CSVs
+`Quantile_Mapping_OP.py` writes, so only the snow coupling was wrong.
 **Module**: `apps/preprocessing_gateway` (`Dockerfile:43`), surfaced via
 `bin/daily_gateway_maintenance.sh`, `apps/pipeline/pipeline_docker.py` and `apps/run_locally.sh:681-683`
 **Priority**: **Medium** — snow is removed by a fault it has no dependency on. Structural,

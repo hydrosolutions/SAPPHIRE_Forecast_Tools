@@ -1,6 +1,9 @@
 ## The canonical forecast cron wrappers exit 0 on failure (INFRA-047)
 
-**Status**: Draft (2026-09-05)
+**Status**: **Review** — implemented, tests green, PR open. Filed 2026-09-05; rescoped
+2026-09-05 against the installed-crontab survey (three of the five wrappers are installed on the
+surveyed deployments, and **no cron line consumes an exit code today** — this is groundwork for
+alerting, not a live-outage fix).
 **Module**: `bin/`
 **Priority**: **Medium** — these are the main scheduled forecast runs (three daily, plus long-term
 on its configured issue days). Every one reports success to cron whether or not the forecast ran.
