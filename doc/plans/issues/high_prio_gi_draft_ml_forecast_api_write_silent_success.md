@@ -1,7 +1,10 @@
 # ML-021: `make_forecast.py` exits 0 after writing no forecasts to the API
 
-**Status**: Draft — **REVIEWED 2026-09-08 (third out-of-loop pass, against trunk `ebe422fc`). NOT
-safe to implement as written.** The defect is confirmed still live. But the proposed direction does
+**Status**: **Ready** — reviewed 2026-09-08 (third out-of-loop pass, trunk `ebe422fc`) and
+**unblocked 2026-09-08 by owner decisions**; see "Owner decisions taken 2026-09-08" for the settled
+truth table, which supersedes acceptance criterion 1. The review found the original proposal did
+**not** fix the headline scenario and that one step was out of its claimed scope; both are resolved
+below. The original text was **NOT safe to implement as written** — The defect is confirmed still live. But the proposed direction does
 **not** fix the headline scenario, and one of its steps is not achievable in the scope it claims.
 See "Review 2026-09-08" before treating anything below as a work order. Originally Draft 2026-08-20,
 revised same day after two independent out-of-loop reviews.
@@ -247,7 +250,43 @@ every predictor returned an empty frame" — both arrive as an empty frame.
 - The **ML-016** note is stale: the bare target now resolves and validates modes
   (`run_locally.sh:529-580`). Does not affect this issue's reasoning.
 
-### Decisions required before implementation
+### Owner decisions taken 2026-09-08 — these settle the plan
+
+1. **A zero-row save is a failure.** The database accepting the request and storing nothing must
+   report failure. This is the reported bug, so `_write_ml_forecast_to_api` must stop returning
+   `True` on a zero count (`utils_ml_forecast.py:805-813`) and must stop printing
+   "Successfully wrote 0 …".
+2. **"Nothing to send" is NOT a failure.** Zero eligible stations / an empty record set is a normal
+   outcome, matching PP-051's shipped doctrine (`SKIPPED_NO_RECORDS` is benign). **It must be logged
+   loudly** — today it is INFO under a WARNING-capped root logger, so it reaches no log at all. Raise
+   it to WARNING. This resolves the contradiction with acceptance criterion 1: AC1's "every outcome
+   except DISABLED is a failure" is **wrong and is superseded by the truth table below**.
+3. **`run_locally.sh` IS in scope.** One model's save failure must not stop the other models from
+   running and writing their CSV backups. Implement with a dedicated exit code meaning "the forecast
+   computed and its CSV was written, but the database save failed — record it and continue"; every
+   other non-zero keeps today's fail-fast behaviour.
+4. **In `ML_MODE=BOTH`, a PENTAD failure must no longer stop DECAD.** *This diverges from the
+   recommendation and widens the change*: the current stop-on-first-failure behaviour is
+   **test-pinned at `test_run_locally_orchestration.py:713-725`**, so that test must be deliberately
+   inverted, not deleted, and the inversion must be called out in the PR.
+
+### The truth table (supersedes acceptance criterion 1)
+
+| Situation | Task result | Why |
+|---|---|---|
+| Rows saved, count > 0 | **success** | |
+| Request accepted, **0 rows stored** | **FAILURE** | decision 1 — the reported bug |
+| API unreachable (readiness false) | **FAILURE** | a genuine delivery failure |
+| The save call raised | **FAILURE** | a genuine delivery failure |
+| Nothing to send (no stations, or no records produced) | **success**, logged at WARNING | decision 2 |
+| `SAPPHIRE_API_ENABLED=false` | **success** | supported CSV-only mode |
+| Client not installed | **success** | dependency-gated; note it is unreachable operationally anyway (an API-mode run fails earlier at `forecast_library.py:2334`) |
+
+**CSV is out of scope.** The two CSV writes keep exactly today's behaviour, including today's
+swallowing of archive failures. Failure is keyed on the database save alone. Anything else would
+change behaviour this issue did not set out to change — file it separately if it matters.
+
+### Decisions as originally raised (superseded by the above)
 
 1. **The success/failure truth table**, explicitly: which outcomes fail, whether a zero API count
    fails, and which of the two CSV writes is "required".
