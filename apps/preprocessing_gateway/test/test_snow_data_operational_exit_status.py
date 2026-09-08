@@ -389,3 +389,46 @@ class TestApiWriteFailureExitStatus:
             snow_main_env["tmp_path"], "intermediate", "snow", "SWE", f"{TEST_HRUS[0]}_SWE.csv"
         )
         assert os.path.exists(csv_path), "CSV must be written even though the API client is absent"
+
+    def test_read_snow_raises_on_unreachable_api_still_attempts_all_tasks(
+        self, snow_main_env, monkeypatch
+    ):
+        """PREPG-026 review fix (regression from the first move,
+        confirmed reachable by out-of-loop review): a genuinely
+        unreachable API doesn't just fail readiness_check() -- it also
+        makes read_snow raise (used by the preservation read,
+        _read_existing_snow_fields). When the readiness check briefly
+        sat after that preservation read, read_snow's exception
+        surfaced as SnowPreservationReadError (PREPG-020) and escaped
+        get_snow_data_operational uncaught -- main() has no exception
+        boundary, so the whole run aborted at task 1 and tasks 2-6
+        never even reached the Data Gateway. With the readiness check
+        moved back above the preservation read, this must resolve as
+        a controlled per-task failure: all six tasks still attempted,
+        non-zero exit, no uncaught traceback. This is the contract-4
+        guarantee under a real outage, not just a mocked
+        readiness_check() -> False."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.setenv("SAPPHIRE_API_URL", "http://sapphire-api.invalid")
+
+        mock_api_client = MagicMock()
+        mock_api_client.readiness_check.return_value = False
+        mock_api_client.read_snow.side_effect = ConnectionError("Connection refused")
+        mock_client_class = MagicMock(return_value=mock_api_client)
+        monkeypatch.setattr(dg_utils, "SapphirePreprocessingClient", mock_client_class)
+
+        exit_code, call_log = _run_real_entry_point(set(), snow_main_env["dg_dir"], monkeypatch)
+
+        # All six DG fetches happened -- read_snow raising like a real
+        # outage would must not abort the loop (this would fail with
+        # an uncaught SnowPreservationReadError, not a clean
+        # SystemExit, if the regression were still present).
+        assert len(call_log) == TOTAL_TASKS
+        assert set(call_log) == set(TASK_ORDER)
+        # read_snow must never be reached: the readiness check now
+        # sits before the preservation read, so it fails there first.
+        mock_api_client.read_snow.assert_not_called()
+        assert exit_code not in (0, None)
