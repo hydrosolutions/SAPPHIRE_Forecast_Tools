@@ -1,12 +1,15 @@
 # INFRA-045: `validate_pipeline` robustness gaps exposed by the deployment-env fix
 
-**Status**: Draft (2026-09-04). Prerequisite satisfied and all seven findings re-verified
-2026-09-08; **four owner decisions below must be resolved before this becomes `Ready`** (see
-§ Owner decisions). Status vocabulary is owned by `doc/plans/README.md` — this is not `Ready` yet.
+**Status**: **Ready** (2026-09-08). Filed as Draft 2026-09-04. Its prerequisite (PR #486) is
+merged, all seven findings were re-verified against trunk on 2026-09-08, and the three owner
+decisions raised by out-of-loop review are resolved (§ Owner decisions): `target=daily` derives both
+horizons; the code's freshness default of 3 is authoritative; **F4 and F6 are withdrawn**, leaving
+**five active findings across two phases** (P1 → P3 on the validator, P5 on the launcher). Status
+vocabulary is owned by `doc/plans/README.md`.
 **Module**: `apps/validate_pipeline/validate_pipeline.py` (+ its test suite)
 **Priority**: **Medium** — none of these breaks the validator's happy path, and `validate_pipeline`
 still has no production invoker (it runs only from `apps/run_locally.sh`, so this is a dev gate, not
-an operational one). But four of the seven turn operator misconfiguration into a Python traceback or a
+an operational one). But three of the five active findings turn operator misconfiguration into a Python traceback or a
 plausible wrong answer, which is exactly the class of thing a *validator* exists to prevent.
 **Labels**: `infra`, `validate_pipeline`, `robustness`, `exit-contract`
 **Found**: 2026-09-03/04, across three out-of-loop review rounds on the fix that made
@@ -29,7 +32,7 @@ semantics and false passes) and **INFRA-024** (exit-code attribution). This issu
 > on `maxat_sapphire_2` and that this issue must not be started. **That fix merged as PR #486.**
 > Confirmed present on trunk today: `_load_deployment_env()` called from `main()`, the `critical`
 > field on `CheckResult` (`validate_pipeline.py:180`), the critical-row guard in the `--phase pre`
-> block, and the tests F4 and F6 refer to.
+> block, and the tests the (now-withdrawn) F4 and F6 referred to.
 >
 > **This issue is unblocked.** The box is kept as a corrected note rather than deleted so that a
 > reader who remembers the warning can see it was resolved, not silently dropped.
@@ -46,9 +49,9 @@ that date and must be re-derived again with `grep -n` at implementation time.
 | F1b | yes | see the corrected citations in that section — all four of its original ones were stale |
 | F2 | yes | `int(os.environ.get("FRESHNESS_THRESHOLD_DAYS", ...))` unguarded, `validate_pipeline.py:1081` |
 | F3 | yes | `return MODE_TO_HORIZONS.get(mode, ["pentad"])`, `validate_pipeline.py:1349` |
-| F4 | yes | `check_presence`'s `try/except` covers the API call only; `pd.to_datetime(df["date"], ...)` sits after it, unguarded |
+| ~~F4~~ | **WITHDRAWN** (owner, 2026-09-08) | defect is real at function level, but the input shape is unreachable via the installed client — see § Owner decisions |
 | F5 | yes (docs only) | decision already taken 2026-09-04; two docstrings still promise the unqualified exit contract |
-| F6 | yes | both `test_env_file_pointer_absent_by_default` and `test_ambient_env_vars_absent_by_default` still observe absence rather than exercising the fixture |
+| ~~F6~~ | **WITHDRAWN** (owner, 2026-09-08) | diagnosis is correct — both tests still observe absence rather than exercising the fixture — but the fix was judged disproportionate |
 
 ## Why these were split out rather than fixed inline
 
@@ -69,8 +72,9 @@ Exit codes:
     1 — at least one check FAILed
 ```
 
-Four of the six findings are violations of it: the process exits via an uncaught traceback, or exits
-0 having not performed the validation it was asked for.
+Three of the five active findings are violations of it — the process exits via an uncaught traceback
+(F2), or exits 0 having not performed the validation it was asked for (F3, and F1 under
+`--phase post`). A fourth, F4, was originally counted here and has since been withdrawn.
 
 ---
 
@@ -207,7 +211,21 @@ itself regardless of the ambient mode. Test it two ways — with the mode unset 
 pentad-only path) and with it set to `PENTAD` — and assert decade checks actually ran in both. A
 test asserting only "no error" would pass against the current broken behaviour.
 
-## F4 — `check_presence` can still exit the process with a traceback
+## ~~F4 — `check_presence` can still exit the process with a traceback~~ — WITHDRAWN
+
+> **Owner decision 2026-09-08: cut, to avoid over-complicating the issue.** The defect is real at
+> the function level, but out-of-loop review established that the duplicate-`date`-column response
+> it guards against **cannot arrive through the installed client** — every SDK reader builds its
+> DataFrame from decoded JSON records, and decoded JSON mappings cannot carry duplicate keys. It was
+> reachable only from a hand-constructed test input.
+>
+> **Consequence for whoever reads this later**: `check_presence` is left as it is, and
+> `test_check_presence_valueerror_not_mislabelled_though_still_propagates` **stays exactly as
+> written** — it pins today's propagation deliberately. Do not "fix" that test; its docstring
+> explains why it pins only half of what it motivated. If the client's response construction ever
+> changes so a malformed shape can reach this code, reopen this section rather than re-deriving it.
+>
+> The original analysis is kept below for that reopening.
 
 **Severity: Important. Pre-existing.**
 
@@ -251,7 +269,21 @@ the false-alarm shape this cluster is trying to remove.
 *(A critical row — the requested validation could not be performed — is different and already
 forces a non-zero exit there; that is not affected by this decision.)*
 
-## F6 — the ambient-environment isolation tests are vacuous
+## ~~F6 — the ambient-environment isolation tests are vacuous~~ — WITHDRAWN
+
+> **Owner decision 2026-09-08: cut, to avoid over-complicating the issue.** The diagnosis stands and
+> is not disputed: `test_env_file_pointer_absent_by_default` and
+> `test_ambient_env_vars_absent_by_default` observe `os.environ` *after* the autouse fixture has run,
+> so in a clean environment they pass whether or not the fixture works. **They are decoration, and
+> they remain in the tree.**
+>
+> This is an accepted, recorded risk rather than an oversight: if someone removes an entry from the
+> fixture's variable list, no test will notice, and the symptom will be tests behaving differently on
+> different developers' machines. That trail is recorded here so it is diagnosable when it happens.
+> The proportionate fix, if it is ever wanted, is one parametrised subprocess case per variable —
+> **not** the nested matrix plus drop-one mutation proof the original text below asks for.
+>
+> The original analysis is kept below for that reopening.
 
 **Severity: Minor. Introduced by the env-loading patch's own tests.**
 
@@ -274,7 +306,8 @@ the fixture's variable list.
 
 - `apps/validate_pipeline/validate_pipeline.py`
 - `apps/validate_pipeline/test/test_validate_pipeline.py`
-- `apps/validate_pipeline/test/conftest.py` (F6 only)
+- ~~`apps/validate_pipeline/test/conftest.py`~~ — was F6 only; **F6 withdrawn, so this file is
+  now out of scope and must not be touched**
 - `apps/run_locally.sh` (**F1b only** — the pointer canonicalisation; no other change)
 - `apps/pipeline/tests/test_run_locally_orchestration.py` (**F1b only** — this is the launcher's
   actual test harness, which P5 must modify; it was missing from this list until 2026-09-08)
@@ -296,8 +329,8 @@ wrong.
       asserting the exact exit code and, where relevant, that the target file was preserved — not by
       a repo-wide `grep -rn "Traceback"`, which is ambiguous and cannot show the intended validation
       actually ran: bad `FRESHNESS_THRESHOLD_DAYS`, bad `SAPPHIRE_API_URL`, unrecognised
-      `SAPPHIRE_PREDICTION_MODE`, duplicate-key API response, `--output-json` == `--baseline` under
-      **both** `--phase pre` and `--phase post`.
+      `SAPPHIRE_PREDICTION_MODE`, and `--output-json` == `--baseline` under **both** `--phase pre`
+      and `--phase post`. (The duplicate-key API response case is gone with F4.)
 - [ ] `--target daily` performs decade checks with `SAPPHIRE_PREDICTION_MODE` unset (D1), and no
       other target's horizon set changes. A deployment with stale decade data is expected to start
       FAILing `daily` — call that out in the PR description and the runbook rather than letting it
@@ -305,8 +338,6 @@ wrong.
 - [ ] `doc/configuration.md`'s freshness default reads 3, matching the code (D2), and no other
       passage still says 7.
 - [ ] F5 is a docstring change only; `--phase pre`'s exit code is unchanged for ordinary FAIL rows.
-- [ ] The F6 test fails when its corresponding variable is dropped from the fixture list (one
-      parametrised case per variable — see F6's proportionality note).
 - [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero failures, zero unexpected skips.
       Run the **affected-scope suite after each phase**, not only once at the end (CLAUDE.md's
       standing precondition); P5 additionally needs `bash -n apps/run_locally.sh` and the
@@ -317,26 +348,24 @@ wrong.
 
 > **Serialisation corrected 2026-09-08.** P1–P4 were all marked "Depends on: none" while editing
 > **the same two files** (`validate_pipeline.py` and `test_validate_pipeline.py`). Running them
-> concurrently would collide. They are now a single serial chain; only P5 is genuinely independent,
-> because it touches the launcher and its own harness. Run the affected-scope suite after **each**
-> phase, not once at the end.
+> concurrently would collide. **After the F4/F6 withdrawals the issue is two phases**: P1 → P3 on the
+> validator (serial, same files), and P5 on the launcher (genuinely independent). Run the
+> affected-scope suite after **each** phase, not once at the end.
 
 - **P1 — malformed config values (F2, F3) + the D1 `daily` horizon derivation.** Files:
   `validate_pipeline.py`, test file. Depends on: none. Agents: 1. Accept: F2 and F3 tests pass, each
   proven by its own subprocess assertion (exit code + message), not a repo-wide traceback grep; and
   `--target daily` runs decade checks with the mode unset. **This phase now carries a
   which-checks-run change (D1), so its review must confirm no other target's horizon set moved.**
-- **P2 — malformed API response (F4).** Files: `validate_pipeline.py`, test file.
-  **Depends on: P1** (same files). Agents: 1. Accept: F4 test passes **and
-  `test_check_presence_valueerror_not_mislabelled_though_still_propagates` is updated, not deleted**.
-  *Subject to the owner decision on whether F4 survives at all.*
+- ~~**P2 — malformed API response (F4).**~~ **WITHDRAWN** with F4 (owner, 2026-09-08). Note this
+  means `test_check_presence_valueerror_not_mislabelled_though_still_propagates` is **not** touched
+  by this issue at all — it stays as written.
 - **P3 — path collision (F1, both phases) and the exit-contract docstrings (F5).** Files:
-  `validate_pipeline.py`, test file. **Depends on: P2.** Agents: 1. Accept: collision rejected under
+  `validate_pipeline.py`, test file. **Depends on: P1** (P2 withdrawn; same files as P1). Agents: 1. Accept: collision rejected under
   `--phase pre` *and* `--phase post`, alias detection via `samefile()`, and the docstrings cover
   exit 2 as well as 0/1.
-- **P4 — non-vacuous isolation tests (F6).** Files: test file, `conftest.py`. **Depends on: P3.**
-  Agents: 1. Accept: one parametrised poison-variable case per fixture entry.
-  *Subject to the owner decision on whether F6 survives.*
+- ~~**P4 — non-vacuous isolation tests (F6).**~~ **WITHDRAWN** with F6 (owner, 2026-09-08).
+  `conftest.py` is therefore not modified by this issue.
 - **P5 — relative-pointer canonicalisation (F1b).** Files: `apps/run_locally.sh` +
   `apps/pipeline/tests/test_run_locally_orchestration.py`. Depends on: none (the only genuinely
   independent phase). Agents: 1. Accept: a relative pointer works end to end **from an arbitrary
@@ -347,9 +376,7 @@ wrong.
 {
   "phases": {
     "P1": { "depends_on": [], "parallel_agents": 1 },
-    "P2": { "depends_on": ["P1"], "parallel_agents": 1 },
-    "P3": { "depends_on": ["P2"], "parallel_agents": 1 },
-    "P4": { "depends_on": ["P3"], "parallel_agents": 1 },
+    "P3": { "depends_on": ["P1"], "parallel_agents": 1 },
     "P5": { "depends_on": [], "parallel_agents": 1 }
   }
 }
@@ -388,8 +415,11 @@ implementer's judgement.
 default before declaring this done; two documents disagreeing is how this arose. F2 additionally
 rejects non-numeric **and negative** values (`int()` alone accepts a negative).
 
-**D3 — STILL OPEN (owner has not decided; do not start P2 or P4 until they have).**
-Proportionality: do F4 and F6 survive?
+**D3 — DECIDED 2026-09-08: cut both F4 and F6**, "to not over-complicate things". P2 and P4 are
+withdrawn with them; the issue is now five active findings across two phases. Each withdrawn section
+keeps its original analysis and states what a later reader must NOT do (do not touch
+`test_check_presence_valueerror_not_mislabelled_though_still_propagates`; do not touch
+`conftest.py`), plus what the accepted residual risk is. The reasoning that led to the cut:
 - **F4** — the duplicate-`date`-column response it guards against **cannot come from the installed
   client**: every SDK reader builds its DataFrame from decoded JSON records, and decoded JSON
   mappings cannot carry duplicate keys. The function-level exception is real but the input shape is
