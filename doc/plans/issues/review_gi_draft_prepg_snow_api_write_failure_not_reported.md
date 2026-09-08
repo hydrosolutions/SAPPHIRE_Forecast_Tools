@@ -1,11 +1,11 @@
 ## A failed snow API write does not fail the task (PREPG-026)
 
-**Status**: Draft (2026-09-05) — **REVIEWED 2026-09-08, NOT safe to implement as written.** An
-out-of-loop `codex exec` pass plus an in-loop pass agree: the central instruction below ("a `False`
-from `write_snow_to_api` means delivery failed") is **false about the code**, and following it
-literally would break this issue's own first contract. Five confirmed defects in the plan are
-recorded under "Review findings" before the § Problem section stands as a work order. **Do not
-implement until the owner answers the decisions listed there.**
+**Status**: **Review** — implemented 2026-09-08, tests green, PR pending. The minimal design below
+is what shipped; the "Review findings" section is kept as the record of why the original plan could
+not be implemented as written. Two review rounds were needed: the first placement broke the benign
+no-write contract, and the fix for that introduced an uncaught crash. Both are recorded below under
+"What the review rounds changed". A second out-of-loop pass over the final diff returned no findings.
+
 **Module**: `apps/preprocessing_gateway` (`snow_data_operational.py`)
 **Priority**: **Medium** — the preprocessing API can go entirely stale while every run reports
 success. Not data corruption: the CSV is still written, so nothing is lost, only unpublished.
@@ -18,7 +18,28 @@ alone). Same silent-success family as PP-051 / PP-054 / LR-010.
 
 ---
 
-## Review findings (2026-09-08) — read before the rest of this document
+## What the review rounds changed (2026-09-08)
+
+Recorded because both defects tested green, and the second was worse than the bug being fixed.
+
+1. **First placement** put the raise where the old `return False` was — at the top of
+   `write_snow_to_api`, ahead of the benign no-write checks. An unreachable API then turned "nothing
+   to publish anyway" into a failed task, breaking contract 3. Reachable: only the PREPG-025 fallback
+   validates coverage, so on the primary path a gateway returning stale-only data gives an empty
+   operational window.
+2. **Moving it to the delivery point fixed that and introduced worse.** `_read_existing_snow_fields`
+   is itself an API call and wraps any exception in `SnowPreservationReadError`, which PREPG-020
+   re-raises; `main()` has no exception boundary, so an unreachable API aborted the whole run at task
+   one. **539 tests were green over that path** — the mocked `read_snow` returned a `MagicMock`
+   instead of raising, so nothing exercised it.
+3. **Final position**: after the benign returns, before the preservation read. Accepted trade,
+   recorded in the code comment: "no publishable values" plus an unreachable API now fails rather
+   than exiting 0.
+
+The two tests added for (2) drive the real function body by patching the client class and make
+`read_snow` raise a connection error, as an unreachable API actually does.
+
+## Review findings (2026-09-08) — the original plan review
 
 Verified against the code at trunk `dd30c568`. Every finding below was checked at file:line; the
 line references are current.
