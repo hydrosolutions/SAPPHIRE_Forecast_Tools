@@ -286,6 +286,41 @@ every predictor returned an empty frame" — both arrive as an empty frame.
 swallowing of archive failures. Failure is keyed on the database save alone. Anything else would
 change behaviour this issue did not set out to change — file it separately if it matters.
 
+### Precedence: "nothing to send" wins, and must be detected FIRST
+
+Added 2026-09-08 after the confirm pass, which found the table underdetermined: the helper today
+checks client availability (`:737`), disabled (`:742`) and readiness (`:752`) **before** it ever
+discovers the record set is empty (`:804`). Two states therefore overlap and the table alone does not
+say which applies:
+
+- **disabled + nothing to send** → returns at the disabled branch, so the WARNING decision 2 requires
+  is **never emitted**;
+- **readiness-false + nothing to send** → classified as a delivery failure, though decision 2 says
+  "nothing to send" is a success.
+
+**Rule: emptiness is evaluated before client construction and before the readiness check.** If there
+is nothing to send, return the benign "nothing to send" outcome and log it at WARNING, whatever the
+API's state — we cannot have failed to deliver something we never had. Only if there *is* something
+to send do the client/disabled/readiness branches apply.
+
+This is the same ordering class that produced two defects in PREPG-026: a check placed where it reads
+naturally rather than where the semantics require it.
+
+### Scope of decision 4 — which loops
+
+The confirm pass found the decision named only the bare-target loop (`run_locally.sh:2569`), but mode
+loops also exist at `:1528` (short-term), `:1665` (maintenance), `:1716`/`:1733` (daily operational
+and maintenance phases) and `:2486` (direct ML maintenance). Changing only the bare target would
+leave `short-term` and `daily` still stopping before DECAD — the decision half-applied, which is
+worse than not applying it, because the behaviour would then differ by entry point.
+
+**Rule: keep `break 2` fail-fast *within* the failed horizon, but continue to the next horizon.**
+Apply at every entry point listed above; if any is deliberately excluded, say which and why here.
+
+**Two tests pin the current behaviour and must both be deliberately inverted, not deleted:**
+`test_run_locally_orchestration.py:713-725` (stop-on-first-failure) and `:756-774` (which expects
+validation to run for PENTAD only, because DECAD never ran). Call both inversions out in the PR.
+
 ### Decisions as originally raised (superseded by the above)
 
 1. **The success/failure truth table**, explicitly: which outcomes fail, whether a zero API count
@@ -304,7 +339,16 @@ report a zero count as failure, capture the boolean in the two wrappers, aggrega
 `make_ml_forecast`, and add one dedicated exit code in `run_locally.sh`. That is a direction, not a
 decision — it still depends on answers 1-4.
 
-## Proposed direction (needs owner sign-off — do not implement from this draft)
+## ~~Proposed direction~~ — **SUPERSEDED 2026-09-08. DO NOT IMPLEMENT THIS SECTION.**
+
+> This block is retained only as the record of what was originally proposed and why it was rejected.
+> **The work order is "Owner decisions taken 2026-09-08" and the truth table above.** Specifically:
+> step 1's `WROTE(n)` **cannot be produced by a wrapper-only change** (the helper discards the count);
+> step 2's Python-side "aggregate after the model loop" is **impossible** (the loop is in the shell);
+> step 3 is **decided** — nothing to send is benign; step 5's "optionally raise to WARNING" is **not
+> optional**, it is required by decision 2 and is the only thing that makes the condition visible.
+
+### Original text, superseded
 
 1. `write_pentad_forecast` / `write_decad_forecast` return an explicit outcome —
    `WROTE(n)` / `DISABLED` / `NOT_AVAILABLE` / `NOTHING_TO_WRITE` / `FAILED` —
@@ -352,8 +396,19 @@ not LR.
 
 ## Acceptance criteria
 
-1. Every outcome except `DISABLED` — and only when the required CSV write
-   succeeded — is treated as a failure and reported with its cause.
+> **Criterion 1 below is SUPERSEDED by the truth table above** — it classifies a successful write as
+> a failure. The truth table governs. The remaining criteria stand, with two additions:
+>
+> **7. The headline regression is pinned by a test**: non-empty records, `write_forecasts()` returns
+> `0` → the helper reports failure, the run exits non-zero, and no "Successfully wrote 0" line is
+> produced. No existing test covers this — today's tests cover a positive count
+> (`test_api_integration.py:223`) and empty input that never reaches the API (`:383`).
+> **8. A test pins that "nothing to send" is logged at WARNING and does NOT fail**, including when
+> the API is disabled and when readiness is false — the two overlapping states above.
+
+1. ~~Every outcome except `DISABLED` — and only when the required CSV write
+   succeeded — is treated as a failure and reported with its cause.~~ **SUPERSEDED — see the truth
+   table.**
 2. `SAPPHIRE_API_ENABLED=false` exits 0 when the CSV write succeeds; tests cover
    disabled+client-missing, disabled+CSV-success, and disabled+CSV-failure
    independently. (Existing code intentionally swallows archive-CSV failures;
