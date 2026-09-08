@@ -67,17 +67,71 @@ scheduler_port = ${LUIGI_SCHEDULER_PORT}
 check_complete_on_run = true
 EOF
 
+# Luigi's task-failure return codes default to ZERO (luigi/retcodes.py:
+# task_failed, missing_data, already_running, scheduling_error and not_run are
+# all 0; only unhandled_exception defaults to 4). A failed task would therefore
+# exit 0 and any status this script returns would be meaningless.
+#
+# LUIGI_CONFIG_PATH is required, not optional: Luigi resolves the bare
+# 'luigi.cfg' entry in its default search path relative to the process CWD, and
+# the Compose service sets working_dir: /app/apps/pipeline, so the image's own
+# apps/pipeline/luigi.cfg wins and the file mounted at /app/luigi.cfg is never
+# read. LUIGI_CONFIG_PATH goes through add_config_path(), which APPENDS to the
+# search path rather than replacing it, so the image's [core]/[resources]/
+# [worker] settings still apply and [retcode] is layered on top.
+cat >> temp_luigi.cfg <<'EOF'
+
+[retcode]
+unhandled_exception = 4
+missing_data = 5
+task_failed = 1
+already_running = 6
+scheduling_error = 7
+not_run = 8
+EOF
+LUIGI_RETCODE_DOCKER_ARGS=(-e LUIGI_CONFIG_PATH=/app/luigi.cfg)
+
 # Run the daily maintenance workflow with ML concurrency limited to 3
 docker compose -f bin/docker-compose-luigi.yml run \
     -v $(pwd)/temp_luigi.cfg:/app/luigi.cfg \
+    ${LUIGI_RETCODE_DOCKER_ARGS[@]+"${LUIGI_RETCODE_DOCKER_ARGS[@]}"} \
     --user root \
     --rm \
     daily-maintenance
+COMPOSE_STATUS=$?
 
 echo "| Daily maintenance task submitted to Luigi daemon"
 echo "| Check progress at: http://localhost:${LUIGI_SCHEDULER_PORT}"
 
+# COMPOSE_STATUS now reflects Luigi's own outcome (see the [retcode] block
+# above -- without it a failed task would still exit 0). Report it here, but
+# do NOT exit on it: the frontend update below currently runs unconditionally
+# after this step and must keep doing so (INFRA-047) -- an early exit here
+# would silently stop the frontend from being refreshed on every deployment
+# whenever the Luigi step fails.
+if [ "$COMPOSE_STATUS" -eq 0 ]; then
+    echo "| Daily maintenance (Luigi): SUCCESS."
+else
+    echo "| Daily maintenance (Luigi): FAILED (exit ${COMPOSE_STATUS})."
+fi
+
 # --- Frontend update (runs on host, not in Luigi DAG) ---
+# Always run this, regardless of COMPOSE_STATUS above -- see the comment
+# there. Its own status is captured immediately and aggregated below (sticky
+# aggregate, same pattern as bin/initialize_site_backfill.sh's
+# `overall_exit`, main() :594-608): the wrapper exits 0 only if BOTH the
+# Luigi step and the frontend update succeeded. No `set -e`, no early exit.
 echo "| Updating frontend dashboard..."
 bash bin/daily_update_sapphire_frontend.sh "$1"
-echo "| Frontend update completed"
+FRONTEND_STATUS=$?
+if [ "$FRONTEND_STATUS" -eq 0 ]; then
+    echo "| Frontend update completed"
+else
+    echo "| Frontend update FAILED (exit ${FRONTEND_STATUS})"
+fi
+
+OVERALL_STATUS=0
+if [ "$COMPOSE_STATUS" -ne 0 ] || [ "$FRONTEND_STATUS" -ne 0 ]; then
+    OVERALL_STATUS=1
+fi
+exit "$OVERALL_STATUS"
