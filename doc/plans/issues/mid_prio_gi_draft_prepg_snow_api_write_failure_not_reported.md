@@ -93,7 +93,61 @@ to close "the last silent-success hole in the snow path" is **false as scoped**.
   long-term models are real consumers, which raises the stakes of a silent publication failure
   rather than lowering them.
 
-### Decisions now needed from the owner
+### Minimal design — owner instruction 2026-09-08: "keep changes minimal"
+
+This supersedes the four questions below; they are kept as the record of what was asked. The
+outcome-enum idea is **rejected** as too large: it would change a public return type, two production
+call sites and seven test files.
+
+**Two production lines change.**
+
+1. `dg_utils.write_snow_to_api` — the readiness-check failure at `:1134-1141` **raises
+   `SapphireAPIError`** instead of returning `False`. This is the one genuine delivery failure that
+   is currently indistinguishable from the benign cases; raising separates it without touching the
+   meaning of the other seven `False` returns, which all stay benign.
+2. `snow_data_operational.py:773-775` — the existing `except SapphireAPIError` logs as it does now
+   and then **`return False`** instead of continuing.
+
+**Why this is enough.** The plan's concrete failure is "the API is unreachable for all six
+HRU/variable calls". Unreachable means `readiness_check()` is false, so today it returns `False` and
+is silently indistinguishable from "the flag is off". After (1) it raises, and after (2) the task
+reports failure and PREPG-009 turns it into a non-zero exit. Fixing only the `except` clause would
+be a one-line change that leaves the reported bug unfixed.
+
+**Why it breaks nothing.**
+
+- `SAPPHIRE_API_ENABLED=false` (`:1126`), client absent (`:1122`), empty input (`:1143`), quiet sync
+  window (`:1184`), no publishable values (`:1270`, `:1337`) all still return `False` and still exit
+  0. The first contract holds.
+- The result is a falsey **task result**, not an escaping exception, so PREPG-009's
+  run-all-then-aggregate survives (Review finding 2).
+- `SnowPreservationReadError` is caught earlier at `:764-772` and still re-raises (PREPG-020).
+- `snow_data_renalysis.py:366-387` catches `SapphireAPIError` and continues, so its behaviour is
+  **unchanged**: today readiness-false returns `False` and it returns `True`; after this change it
+  catches the raise and still returns `True`. The blast radius stays inside the operational path.
+- `extend_era5_reanalysis.py` does not use this writer.
+
+**Test work.** Four tests assert readiness-false returns `False`
+(`test_api_integration.py:70, :279, :664, :1222`) and must be deliberately inverted to expect the
+raise. One existing test is **vacuous and must be fixed either way**:
+`test_api_failure_non_fatal_csv_still_written` (`:911-935`) sets `get_operational` to raise, so the
+function returns at the fetch stage and never reaches the API write — the `SapphireAPIError` it
+mocks never fires, and it therefore pins nothing. New tests: API unreachable exits non-zero; flag
+off exits 0; client absent exits 0; and **all six tasks are still attempted after the first one
+fails its write**.
+
+**Deliberately not done, on the same instruction:**
+
+- **Partial writes** (Review finding 3) keep today's behaviour. Still a real hole; needs its own
+  decision.
+- **The consistency check** keeps today's behaviour — warn only, operational window only (Review
+  findings 4). No path is made to fail on it.
+- **`snow_data_renalysis.py`** (Review finding 5) is left alone and should be filed separately: it
+  needs the PREPG-009 treatment (failure list, `sys.exit(main())`) more than it needs this change.
+  **Until that is done, this issue does not close "the last silent-success hole in the snow path"**
+  — it closes the operational one.
+
+### Decisions originally raised (superseded by the minimal design above)
 
 1. How should each of the eight `False` reasons be classified — failure, benign skip, or benign
    no-op? (This is the blocking one; nothing can be built without it.)
