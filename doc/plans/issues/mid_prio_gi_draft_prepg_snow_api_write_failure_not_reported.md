@@ -1,6 +1,11 @@
 ## A failed snow API write does not fail the task (PREPG-026)
 
-**Status**: Draft (2026-09-05)
+**Status**: Draft (2026-09-05) — **REVIEWED 2026-09-08, NOT safe to implement as written.** An
+out-of-loop `codex exec` pass plus an in-loop pass agree: the central instruction below ("a `False`
+from `write_snow_to_api` means delivery failed") is **false about the code**, and following it
+literally would break this issue's own first contract. Five confirmed defects in the plan are
+recorded under "Review findings" before the § Problem section stands as a work order. **Do not
+implement until the owner answers the decisions listed there.**
 **Module**: `apps/preprocessing_gateway` (`snow_data_operational.py`)
 **Priority**: **Medium** — the preprocessing API can go entirely stale while every run reports
 success. Not data corruption: the CSV is still written, so nothing is lost, only unpublished.
@@ -10,6 +15,93 @@ Reported as pre-existing, correctly — it is the deliberate scope boundary reco
 filed here rather than widened into that issue.
 **Related**: **PREPG-009** (made task *fetch* failures exit non-zero; explicitly left API delivery
 alone). Same silent-success family as PP-051 / PP-054 / LR-010.
+
+---
+
+## Review findings (2026-09-08) — read before the rest of this document
+
+Verified against the code at trunk `dd30c568`. Every finding below was checked at file:line; the
+line references are current.
+
+**1. The proposed failure signal does not exist. (Blocking.)** The decision table further down says
+a `False` from `write_snow_to_api` means "delivery genuinely failed". It does not. `False` is
+returned for **eight** distinct conditions, most of which are not failures:
+
+| `dg_utils.py` | Condition | Delivery failure? |
+|---|---|---|
+| `:1122-1124` | `sapphire-api-client` not installed | **No** — the one skip CLAUDE.md sanctions |
+| `:1126-1129` | `SAPPHIRE_API_ENABLED=false` | **No** — deliberately not writing |
+| `:1134-1141` | readiness check failed | **Yes** |
+| `:1143-1145` | input frame empty | **No** |
+| `:1184-1204` | no rows inside the selected sync window | **No** — normal on a quiet operational run |
+| `:1270-1273`, `:1337-1339` | no rows carrying publishable values | **No** |
+
+The docstring (`:1105`) promises only "True if records were written, False otherwise" — a
+description, not a failure signal. Propagating the bare boolean would fail the task whenever the API
+is deliberately disabled, whenever the client is absent, and on every quiet operational window —
+**directly contradicting this issue's first "contract not to break"**. Any implementation must first
+make the outcomes distinguishable (an outcome enum, or raising on genuine failure); that is a
+prerequisite this plan did not state.
+
+**2. The obvious implementation of "fail the task" silently breaks PREPG-009. (Blocking.)**
+`main()` has **no exception boundary** around the task call (`snow_data_operational.py:856-866`). If
+"fail on `SapphireAPIError`" is implemented by removing the `except` at `:773` or by re-raising, the
+first API rejection aborts the loop and the remaining five HRU/variable tasks never run — they do
+not even fetch or write their CSVs. PREPG-009's contract is run-all-then-aggregate. The fix must
+convert the error into a falsey **task result**, never an escaping exception — while preserving the
+deliberate immediate re-raise of `SnowPreservationReadError` at `:764-772` (PREPG-020).
+
+**3. A partial publication still reports success, and says so out loud.** `write_snow_to_api` calls
+`count = client.write_snow(records)` and returns `True` for any returned count without ever
+comparing it to `len(records)` (`dg_utils.py:1329-1339`). It then **prints** "Successfully wrote
+{count} snow records". Under `SAPPHIRE_SYNC_MODE=initial`, 2000 records selected and 1000 written
+is a green run with a success message. This plan asks whether partial writes should fail but records
+no decision, so as written it would leave the reported problem half-fixed.
+
+**4. The consistency check verifies the wrong window in two of three sync modes.**
+`_check_snow_consistency` hard-codes a `date >= yesterday` window (`snow_data_operational.py:111-126`)
+and never consults `SAPPHIRE_SYNC_MODE`. Under `maintenance` or `initial` the writer selects a
+historical window the check then finds empty, logs "nothing to verify", and returns `True`. A
+missing historical publication therefore *cannot* produce the consistency failure this plan proposes
+to handle. Any consistency-related acceptance criterion must either cover all three modes or say
+explicitly that the contract is operational-mode-only.
+
+Related: the check also returns `False` when the readback request itself **raises**
+(`snow_data_operational.py:180-182`). That is "verification unavailable", not "readback disagrees" —
+a third meaning the plan's table does not distinguish.
+
+**5. The same hole exists in `snow_data_renalysis.py`, and it is worse there. (Scope decision.)**
+That script shares the writer and repeats the pattern exactly — `False` discarded, `SapphireAPIError`
+caught and logged, consistency result dropped, `return True` (`snow_data_renalysis.py:366-387`).
+Worse, **it is also PREPG-009 before the fix**: its `main()` logs failures but builds no failure
+list, ends with `logger.info("Snow reanalysis processing complete (%d tasks)", total)` counting
+*attempted* (`:501`) — the exact wording PREPG-009 identified as the defect — returns nothing, and
+is invoked as bare `main()` with no `sys.exit()`. It exits 0 unconditionally. So this issue's claim
+to close "the last silent-success hole in the snow path" is **false as scoped**.
+
+### Corrections to this document's own framing
+
+- **`SAPPHIRE_API_ENABLED=false` is no longer "a documented supported mode".** The owner's INFRA-049
+  decision deprecates it: the API is the only supported sink, and a missing API is an error. The
+  *contract* below is still right for this issue — INFRA-049's P1 deliberately keeps the disabled
+  path exiting 0 and flips it in P4 — but the stated reason must not be "it is supported".
+- The "6/6 succeeded" example is configuration-dependent, not a constant: the task count is
+  `len(SNOW_HRUS) * len(SNOW_VARS)` (`snow_data_operational.py:844`).
+- **Rejected, on verification:** the reviewer stated that no production forecast model consumes the
+  published snow rows, having checked `machine_learning` only. `apps/long_term_forecasting/data_interface.py:230`
+  (`get_snow_data`) reads snow **from the database**, and is called at `:308` and `:1103`. The
+  long-term models are real consumers, which raises the stakes of a silent publication failure
+  rather than lowering them.
+
+### Decisions now needed from the owner
+
+1. How should each of the eight `False` reasons be classified — failure, benign skip, or benign
+   no-op? (This is the blocking one; nothing can be built without it.)
+2. Should a **partial** batch write fail the task?
+3. Is the consistency contract operational-mode-only, or must it follow `SAPPHIRE_SYNC_MODE`?
+4. Does this issue also fix `snow_data_renalysis.py` — including giving it the PREPG-009 treatment —
+   or does that become its own issue? (Fixing only the operational path leaves the reanalysis path
+   green while stale.)
 
 ---
 
@@ -51,7 +143,7 @@ So this needs its own decision, not a widened scope on an issue that had already
 
 | Path | Meaning | Suggested |
 |---|---|---|
-| `write_snow_to_api` returns `False` | delivery genuinely failed | should fail the task |
+| `write_snow_to_api` returns `False` | **eight different conditions — see Review finding 1; this row is wrong as written** | must be split before any decision is possible |
 | `SapphireAPIError` caught | delivery genuinely failed | should fail the task |
 | consistency check `False` | written, but readback disagrees | probably warn, not fail — different condition |
 
@@ -60,12 +152,16 @@ batch write count as failure?
 
 ## Contract not to break
 
-- **`SAPPHIRE_API_ENABLED=false` must still exit 0.** It is a supported mode; breaking it would
-  turn every CSV-only deployment red.
+- **`SAPPHIRE_API_ENABLED=false` must still exit 0 — for now.** Not because it is supported: the
+  owner's INFRA-049 decision deprecates it. It stays exit-0 here because INFRA-049 sequences this
+  issue as its P1 and flips the disabled path to an error in its P4. Turning it red here would
+  land that change out of order, ahead of the policy documents.
 - **Do not stop writing the CSV.** The CSV write happens before the API write and must continue to,
   so a delivery failure never costs data — only publication.
 - **Do not weaken PREPG-009 or PREPG-025.** A fetch failure must still fail the task, and an
-  incomplete fallback window must still write nothing.
+  incomplete fallback window must still write nothing. Specifically: **all six tasks must still
+  run even when one fails its API write** — see Review finding 2, which is the trap in the
+  obvious implementation.
 - Keep the three paths distinguishable in the log; an operator needs to know whether the API was
   unreachable, rejected the payload, or disagreed on readback.
 
@@ -76,4 +172,8 @@ batch write count as failure?
 - The CSV is still written in both cases.
 - Whichever paths the owner decides should fail are pinned by tests that fail if the change is
   reverted; whichever should only warn are pinned as *not* failing.
+- **All tasks still run after one fails its API write** — a test asserting six attempts, not one.
+- With `sapphire-api-client` absent, the run still exits 0 (the dependency-gated skip CLAUDE.md
+  sanctions), distinct from "the API was reachable and refused".
+- Whatever is decided for partial writes and for the reanalysis path is pinned by a test either way.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_gateway` green, zero skips.
