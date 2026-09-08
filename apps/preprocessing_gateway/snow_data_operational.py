@@ -772,7 +772,11 @@ def get_snow_data_operational(client, hru, variable, date, dg_path, save_path):
         raise
     except SapphireAPIError as e:
         logger.error("Error writing snow data to API (HRU %s, %s): %s", hru, variable, e)
-        # Continue - CSV write succeeded, API failure is not fatal
+        # PREPG-026: the CSV is still written, so no data is lost -- only
+        # unpublished. But the API delivery genuinely failed, so this task
+        # must report failure so PREPG-009's aggregate turns it into a
+        # non-zero exit instead of silently reporting success.
+        return False
 
     return True
 

@@ -1118,6 +1118,11 @@ def write_snow_to_api(
             (i.e. more than a day has passed) is permanently outside
             every future operational run's window and will not be
             picked up automatically.
+        SapphireAPIError: The readiness check failed (API unreachable
+            or not ready) (PREPG-026). Unlike this function's other
+            ``False`` returns, this is the one genuine delivery
+            failure, so it is raised rather than returned to let the
+            caller distinguish it and fail the task.
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping snow API write")
@@ -1132,13 +1137,15 @@ def write_snow_to_api(
     client = SapphirePreprocessingClient(base_url=api_url)
 
     if not client.readiness_check():
-        logger.warning(
-            "SAPPHIRE API at %s is not ready, skipping snow write (HRU %s, %s)",
-            api_url,
-            hru_code,
-            snow_type,
+        # PREPG-026: unlike this function's other `False` returns (client
+        # absent, API disabled, no data, empty sync window, no publishable
+        # values -- all benign), an unreachable/not-ready API is the one
+        # genuine delivery failure. Raise so the caller can tell it apart
+        # and fail the task instead of silently reporting success.
+        raise SapphireAPIError(
+            f"SAPPHIRE API at {api_url} is not ready, failed to deliver snow "
+            f"write (HRU {hru_code}, {snow_type})"
         )
-        return False
 
     if data.empty:
         logger.info("No snow data to write to API (%s, HRU %s)", snow_type, hru_code)

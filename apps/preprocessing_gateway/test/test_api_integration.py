@@ -59,8 +59,11 @@ class TestWriteSnowToApi:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_api_not_ready_returns_false(self, mock_client_class):
-        """When API health check fails, should return False (non-blocking)."""
+    def test_api_not_ready_raises_sapphire_api_error(self, mock_client_class):
+        """PREPG-026: when API health check fails, write_snow_to_api must
+        raise SapphireAPIError (a genuine delivery failure), not return
+        False -- False is reserved for the function's other, benign
+        no-write conditions."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -78,8 +81,8 @@ class TestWriteSnowToApi:
                 }
             )
 
-            result = dg_utils.write_snow_to_api(data, "SWE", "test_hru")
-            assert result is False
+            with pytest.raises(dg_utils.SapphireAPIError):
+                dg_utils.write_snow_to_api(data, "SWE", "test_hru")
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -268,8 +271,11 @@ class TestWriteSnowToApiMaintenance:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("dg_utils.SapphirePreprocessingClient")
-    def test_api_not_ready_returns_false(self, mock_client_class):
-        """When API health check fails, should return False (non-blocking)."""
+    def test_api_not_ready_raises_sapphire_api_error(self, mock_client_class):
+        """PREPG-026: when API health check fails, write_snow_to_api must
+        raise SapphireAPIError (a genuine delivery failure), not return
+        False -- False is reserved for the function's other, benign
+        no-write conditions."""
         if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -287,14 +293,14 @@ class TestWriteSnowToApiMaintenance:
                 }
             )
 
-            result = dg_utils.write_snow_to_api(
-                data,
-                "SWE",
-                "test_hru",
-                mode="maintenance",
-                reference_date="2024-01-01",
-            )
-            assert result is False
+            with pytest.raises(dg_utils.SapphireAPIError):
+                dg_utils.write_snow_to_api(
+                    data,
+                    "SWE",
+                    "test_hru",
+                    mode="maintenance",
+                    reference_date="2024-01-01",
+                )
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -908,13 +914,36 @@ class TestSnowDataOperationalIntegration:
 
     @patch("snow_data_operational._check_snow_consistency")
     @patch("dg_utils.write_snow_to_api")
-    def test_api_failure_non_fatal_csv_still_written(self, mock_write_api, mock_check):
-        """When API write raises SapphireAPIError, CSV is still written."""
+    @patch("snow_data_operational.pd.read_csv")
+    @patch("snow_data_operational.dg_utils.transform_snow_data")
+    def test_api_write_failure_returns_false_but_csv_still_written(
+        self, mock_transform, mock_read_csv, mock_write_api, mock_check
+    ):
+        """PREPG-026: when the DG fetch succeeds but the API write raises
+        SapphireAPIError (e.g. an unreachable API), the task must report
+        failure (return False) so PREPG-009's aggregate turns it into a
+        non-zero exit -- while the CSV, which was already written before
+        the API call, is not lost.
+
+        Rewritten from the previous (vacuous) version of this test, which
+        made ``get_operational`` raise instead, so the function returned
+        False at the DG-fetch stage and never reached the API write --
+        the mocked SapphireAPIError never fired and the test pinned
+        nothing about the API-failure path it claimed to cover.
+        """
+        mock_transform.return_value = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"]),
+                "code": [12345],
+                "SWE": [100.0],
+            }
+        )
+        mock_read_csv.return_value = pd.DataFrame({"raw": ["data"]})
         mock_write_api.side_effect = sdo.SapphireAPIError("API down")
         mock_check.return_value = True
 
         mock_client = Mock()
-        mock_client.get_operational.side_effect = Exception("DG error")
+        mock_client.get_operational.return_value = "/tmp/fake.csv"
 
         import tempfile
 
@@ -922,8 +951,6 @@ class TestSnowDataOperationalIntegration:
             swe_dir = os.path.join(tmpdir, "SWE")
             os.makedirs(swe_dir, exist_ok=True)
 
-            # DG fails so CSV is not written either, but the point is
-            # the function handles the exception gracefully
             result = sdo.get_snow_data_operational(
                 client=mock_client,
                 hru="12345",
@@ -932,7 +959,26 @@ class TestSnowDataOperationalIntegration:
                 dg_path="/tmp/dg",
                 save_path=tmpdir,
             )
+
             assert result is False
+            mock_write_api.assert_called_once()
+            # The API write raised before the "written" flag could be
+            # set, so the consistency check (which only runs after a
+            # successful write) must not have been called.
+            mock_check.assert_not_called()
+
+            csv_path = os.path.join(tmpdir, "SWE", "12345_SWE.csv")
+            assert os.path.exists(csv_path), "CSV must still be written despite the API failure"
+            # Read the raw file contents directly rather than via
+            # pd.read_csv: `pd` here is the same module object as
+            # `snow_data_operational.pd`, which this test patches
+            # `.read_csv` on for the duration of the test, so
+            # `pd.read_csv` would return the mocked DataFrame instead
+            # of the file's real contents.
+            with open(csv_path) as f:
+                written_csv = f.read()
+            assert "12345" in written_csv
+            assert "SWE" in written_csv
 
     @patch("snow_data_operational._check_snow_consistency")
     @patch("dg_utils.write_snow_to_api")
