@@ -195,6 +195,31 @@ still records a `FAIL` row for this case), or **5** if an API read/write
 failure also occurred (which takes precedence over both) — to surface the
 failure without withholding the station's otherwise-computable data.
 
+**Status-code grading of a raised norm lookup (2026-09-08, INFRA-044
+follow-up).** A raised exception is no longer *always* `SDK_FAILED`. When the
+SDK's `get_norm_for_site` call itself returns a non-200 (as opposed to the
+site-UUID lookup failing beforehand), its message embeds the HTTP status
+code — `"Could not retrieve {norm_type} norm for site {site_code}, got
+status code {code}"`. `_lookup_monthly_norms` parses that code and grades
+it: **404** ("no norm exists for this station") is reclassified
+`NORM_ABSENT` — it does *not* count toward `sdk_failed` and cannot drive
+exit 6 — while any other status code, or no parseable status code at all
+(e.g. the `_get_site_uuid_for_site_code` failure, whose message is
+`"No path provided or the provided path is None"` and carries no code, or a
+timeout/connection error), stays `SDK_FAILED` as before. This exists because
+a deployment with **zero monthly norms entered** would otherwise 404 on
+every station, drive `sdk_failed == total_attempted` on every run, and
+false-alarm exit 6 permanently — the exact failure this issue's exit
+taxonomy exists to avoid.
+
+**Caution when reading `norm_absent`**: it now also covers "the norms
+endpoint answered 404 for this station," which can mean either "no norm was
+entered for this station" (the common, benign case above) or "iEH HF does
+not recognise this *site* at all" — a configuration problem, not a data
+gap. The status code alone cannot distinguish the two, so `norm_absent`
+means "no norm was obtained," never a confirmation that the site is known
+to iEH HF with a norm simply missing.
+
 **Predecessor:** The old `sync_monthly_norms.py` script
 (yearly-cron-launched via the retired Luigi task
 `YearlyMonthlyNormsRecalculation`) only wrote the norm column

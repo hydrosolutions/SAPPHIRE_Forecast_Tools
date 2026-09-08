@@ -1,6 +1,7 @@
 # INFRA-044: a known upstream data gap is reported as a failure
 
-**Status**: Review (2026-09-07)
+**Status**: Review (2026-09-07; refined 2026-09-08 — see "Follow-up: 2026-09-08 owner
+decision" below)
 **Module**: `apps/run_locally.sh` + `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
 **Priority**: **High** — blocking. A developer bringing up a dev machine sees
 `Modules: 1 passed, 1 failed` and a red `preprocessing_runoff (long-horizon sync): FAIL` on a run
@@ -82,6 +83,13 @@ from "iEH HF answered 401/500/502": `_lookup_monthly_norms` catches bare `Except
 `ValueError: No path provided or the provided path is None` for **any** non-200
 (`ieasyhydro_sdk/sdk_endpoint_definitions.py:90-109` → `sdk_base.py:64`). Three attempts to grade
 that exception were made and refuted (PREPQ-014).
+
+*(2026-09-08 note: this paragraph describes the `_get_site_uuid_for_site_code` failure shape
+specifically — no status code is available there, and it is still treated conservatively as
+`SDK_FAILED`, unchanged. A **different**, narrower call site — `get_norm_for_site`'s own non-200
+response — DOES embed a status code in its message and is now gradeable. See "Follow-up:
+2026-09-08 owner decision" below; it does not reopen or contradict PREPQ-014's refutations, which
+were about this exact ungraded exception.)*
 
 So making exit 4 informational removes the *graded* signal for a possible service-wide iEH-HF
 outage on this path. **C1's exit 6 is therefore not optional** — it is the fatal classification
@@ -404,3 +412,91 @@ Line numbers are as of 2026-09-03; re-derive them with `grep -n` at implementati
 - Classifying any other module's outcome as DEGRADED (C5).
 - Adding a `SKIP` state (INFRA-030) — this issue only unblocks it.
 - Anything about *why* the SDK raises (PREPQ-014, upstream).
+
+## Follow-up: 2026-09-08 owner decision — grade norm-lookup failures by HTTP status code
+
+**Why this was needed.** The owner identified a deployment (Tajik Hydromet) that has entered **no
+monthly discharge norms at all**. On that deployment, if iEH HF answers a monthly-norm request with
+a non-200 for a station with no norm on file (observed shape: HTTP 404), **every** attempted
+station's `_lookup_monthly_norms` call raises. That makes `sdk_failed == total_attempted > 0` on
+every single run — the exact TOTAL-outage shape C1 built exit 6 for — so this issue's own fix would
+have reintroduced the false alarm it exists to remove: a red `FAIL` row and a non-zero exit code on
+a deployment that is behaving correctly (no norms is expected there, not a fault).
+
+**Owner decision (2026-09-08)**: grade the raised exception by its HTTP status code —
+"there is no norm here" (404) must stay informational (`NORM_ABSENT`, unchanged exit-code
+consequences); "the service answered with something else" (401/403/400/5xx/etc.) or "no status
+code could be recovered at all" must still be fatal-eligible (`SDK_FAILED`, unchanged from before
+this refinement).
+
+**Why this is now possible when PREPQ-014's three attempts were refuted.** Those refutations (see
+the 2026-09-08 note earlier in this file, and PREPQ-014/PREPQ-015 in
+`doc/plans/module_issues.md`) were all about grading the `_get_site_uuid_for_site_code` failure
+shape — `ValueError: No path provided or the provided path is None`, raised by
+`sdk_base.py`'s `_call_api` when `relative_url is None` — which carries **no status code at all**
+and was graded against out-of-band signals (a local config list, the SDK's own
+`get_virtual_sites()` list) that were each shown to be unsafe or stale. This refinement does not
+revisit that shape; it stays `SDK_FAILED` exactly as before, conservatively.
+
+What changed is a **different** call site: `IEasyHydroHFSDK.get_norm_for_site`
+(`ieasyhydro_sdk/sdk.py`, verified at the installed package's line ~245) raises
+`ValueError(f"Could not retrieve {norm_type} norm for site {site_code}, got status code
+{norm_response.status_code}")` when the norm endpoint itself (reached *after* the site UUID
+resolves successfully) returns non-200. That message embeds the actual status code, so — unlike
+the ungraded shape — it can be parsed directly from the exception's own text with no out-of-band
+lookup, and PREPQ-014's refutations (which targeted an inference from a *different* signal) do not
+apply to it.
+
+**Implementation** (`apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`):
+
+- `_SDK_STATUS_CODE_PATTERN = re.compile(r"status code (\d{3})")` — module-level regex matching
+  the `get_norm_for_site` message shape above.
+- `_extract_sdk_status_code(exc)` — searches `str(exc)` for the pattern; returns the matched
+  3-digit code as `int`, or `None` if no match. Wrapped in `try/except Exception: return None` so a
+  malformed or unexpected exception can never propagate out of the classifier — parsing failure
+  always falls back to the conservative branch.
+- `_lookup_monthly_norms` — on a caught exception, calls `_extract_sdk_status_code`:
+  - status code `404` → `_NormClassification.NORM_ABSENT` (logged at INFO, naming the station and
+    the original exception, so an operator can see why a station was counted as absent rather than
+    failed).
+  - any other status code, or `None` (no parseable code — the `_get_site_uuid_for_site_code`
+    shape, a timeout, a connection error, or anything unrecognised) → `_NormClassification.
+    SDK_FAILED` (logged at DEBUG with the parsed `status_code`, which is `None` when unparseable).
+    Unknown is treated as broken, not absent — the conservative default the task required.
+
+**What did NOT change**: `_classify_monthly_norms` (the successful-response classifier),
+`_exit_code_for_long_horizon_summary`, the exit-4/exit-6 semantics, `write_station_monthly_hydrograph`'s
+read-merge behaviour, or any writer/API behaviour. A 404-raising station now lands in the same
+`NORM_ABSENT` bucket a 200-with-empty-payload station already used — this is a reclassification of
+which bucket some previously-`SDK_FAILED` stations fall into, not a new bucket or a new code path
+downstream of classification.
+
+**Consequence to document, not hide**: `norm_absent` (both the `LONG-HORIZON RUN SUMMARY` counts
+line and the `DEGRADED:` line) now also counts "the norms endpoint answered 404 for this station".
+A 404 can mean either "this station genuinely has no norm entered" (the motivating case above) or
+"iEH HF does not recognise this *site* at all" — a configuration problem, not a data gap — and the
+status code alone cannot distinguish the two. Operators must not read `norm_absent` as strict
+confirmation "site exists, norm missing"; a station worth investigating can hide in that bucket.
+Documented in the `_NormClassification` enum docstring, `apps/preprocessing_runoff/README.md`, and
+`doc/prod/kghm_pipeline_handover.md` §4.
+
+**Tests added** (`apps/preprocessing_runoff/test/test_sync_long_horizon_hydrograph.py`):
+regex-parsing unit tests (`_extract_sdk_status_code`, including the no-match and malformed-input
+cases); `_lookup_monthly_norms` classification tests for 404, 401, 500, the ungraded "No path
+provided" message, and a non-`ValueError` exception; and three orchestrator-level end-to-end tests
+using `write_long_horizon_hydrograph` — all-404 (the motivating case: `sdk_failed == 0`,
+`norm_absent == total_attempted`, exit 0, empty `failed_station_codes`), all-500 (still exit 6,
+proving the alarm was not silenced), and a 404/500 mix (only the 500 drives `sdk_failed`; exit 4
+because it does not account for every attempted station). All new tests were mutation-verified:
+disabling the 404 branch, over-widening it to match any status code, and disabling status-code
+parsing entirely each broke the tests written to catch exactly that regression, then were
+restored.
+
+**Files touched by this refinement** (same allowed-files boundary as the rest of this issue):
+`apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`,
+`apps/preprocessing_runoff/test/test_sync_long_horizon_hydrograph.py`, this issue file,
+`doc/prod/kghm_pipeline_handover.md`, `apps/preprocessing_runoff/README.md`. `run_locally.sh`,
+the short-horizon sync, and every other module are untouched — the exit-4/exit-6 shell routing (C4)
+and taxonomy (C1/C1a) this issue already shipped are unaffected; this refinement only changes which
+raised exceptions are classified `SDK_FAILED` vs. `NORM_ABSENT` before either of those ever sees the
+result.

@@ -667,6 +667,177 @@ def test_classifies_sdk_exception_as_failed():
     assert isinstance(result.exception, ConnectionError)
 
 
+# INFRA-044 C2 (2026-09-08 owner decision): grade a raised norm-lookup
+# exception by the HTTP status code embedded in its message. 404 ("no norm
+# here") must be NORM_ABSENT, not SDK_FAILED, so a deployment with zero
+# monthly norms entered does not false-alarm on every run.
+@pytest.mark.parametrize(
+    ("message", "expected_status_code"),
+    [
+        ("Could not retrieve discharge norm for site 19999, got status code 404", 404),
+        ("Could not retrieve discharge norm for site 19999, got status code 500", 500),
+        ("No path provided or the provided path is None", None),
+        ("connection reset by peer", None),
+        ("status code abc", None),
+    ],
+)
+def test_extract_sdk_status_code_parses_defensively(message, expected_status_code):
+    assert sync_lhh._extract_sdk_status_code(ValueError(message)) == expected_status_code
+
+
+def test_lookup_monthly_norms_status_code_404_classifies_norm_absent():
+    # The exact iEH HF SDK message shape from get_norm_for_site() when the
+    # norm endpoint itself returns 404 for a station with no norm entered.
+    result = sync_lhh._lookup_monthly_norms(
+        TEST_CODE,
+        FakeSDK(
+            ValueError(
+                f"Could not retrieve discharge norm for site {TEST_CODE}, got status code 404"
+            )
+        ),
+    )
+
+    assert result.classification is sync_lhh._NormClassification.NORM_ABSENT
+    assert isinstance(result.exception, ValueError)
+
+
+@pytest.mark.parametrize("status_code", [401, 500])
+def test_lookup_monthly_norms_non_404_status_code_classifies_sdk_failed(status_code):
+    result = sync_lhh._lookup_monthly_norms(
+        TEST_CODE,
+        FakeSDK(
+            ValueError(
+                f"Could not retrieve discharge norm for site {TEST_CODE}, got status code "
+                f"{status_code}"
+            )
+        ),
+    )
+
+    assert result.classification is sync_lhh._NormClassification.SDK_FAILED
+
+
+def test_lookup_monthly_norms_no_status_code_in_message_classifies_sdk_failed():
+    # The exact message _get_site_uuid_for_site_code's failure produces
+    # (sdk_base.py's _call_api when relative_url is None) -- no status code
+    # is available, so this must stay conservative (SDK_FAILED), not become
+    # NORM_ABSENT.
+    result = sync_lhh._lookup_monthly_norms(
+        TEST_CODE,
+        FakeSDK(ValueError("No path provided or the provided path is None")),
+    )
+
+    assert result.classification is sync_lhh._NormClassification.SDK_FAILED
+
+
+def test_lookup_monthly_norms_non_valueerror_exception_still_classifies_sdk_failed():
+    # A non-ValueError exception (e.g. a raw connection error) never carries
+    # a parseable status code either; pins that the new grading doesn't
+    # change this pre-existing path.
+    result = sync_lhh._lookup_monthly_norms(TEST_CODE, FakeSDK(ConnectionError("tunnel down")))
+
+    assert result.classification is sync_lhh._NormClassification.SDK_FAILED
+
+
+def test_orchestrator_every_station_404_is_norm_absent_not_sdk_failed_and_exits_zero():
+    # INFRA-044 C2 motivating case: a deployment (e.g. Tajik Hydromet) with
+    # NO monthly norms entered at all gets a 404 for every station. Before
+    # this grading, sdk_failed == total_attempted > 0 on every single run,
+    # which reintroduced the exact false alarm INFRA-044 removed. After
+    # grading: norm_absent absorbs the 404s, sdk_failed stays 0, and the
+    # run exits 0 with no failed/API-failure row.
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+    sdk = FakeSDK(
+        ValueError("Could not retrieve discharge norm for site 19999, got status code 404"),
+        ValueError("Could not retrieve discharge norm for site 19998, got status code 404"),
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=["19999", "19998"],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert records.station_statuses == [
+        ("19999", sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+    ]
+    assert records.failed_station_codes == []
+    assert records.completed_station_codes == ["19999", "19998"]
+
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED] == 0
+    assert (
+        summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT]
+        == summary.total_attempted
+    )
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 0
+
+
+def test_orchestrator_every_station_500_still_exits_six():
+    # The alarm this issue must NOT silence: a genuine service-wide outage
+    # (every station's norm lookup 500s) still exits 6.
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+    sdk = FakeSDK(
+        ValueError("Could not retrieve discharge norm for site 19999, got status code 500"),
+        ValueError("Could not retrieve discharge norm for site 19998, got status code 500"),
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=["19999", "19998"],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED] == 2
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT] == 0
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 6
+
+
+def test_orchestrator_mixed_404_and_500_only_500s_drive_sdk_failed_and_exit_four():
+    # A mix must not be graded as "any failure -> fatal": the 404 station
+    # becomes norm_absent, the 500 station alone drives sdk_failed, and
+    # since that 500 does not account for every attempted station the run
+    # stays a PARTIAL failure (exit 4), not a TOTAL one (exit 6).
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+    sdk = FakeSDK(
+        ValueError("Could not retrieve discharge norm for site 19999, got status code 404"),
+        ValueError("Could not retrieve discharge norm for site 19998, got status code 500"),
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=["19999", "19998"],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT] == 1
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED] == 1
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 4
+
+
 def test_norm_absent_without_prior_norms_writes_all_horizons_and_local_values(monkeypatch):
     monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
     previous_values = {month: month * 10.0 for month in range(1, 13)}

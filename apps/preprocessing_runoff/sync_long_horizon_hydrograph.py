@@ -15,6 +15,7 @@ import logging
 import math
 import numbers
 import os
+import re
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -57,6 +58,15 @@ if SapphireAPIError is not None:
 
 
 class _NormClassification(Enum):
+    """NORM_ABSENT covers a 200-with-empty/invalid payload AND (as of the
+    2026-09-08 status-code grading in ``_lookup_monthly_norms``) an SDK
+    exception whose message reports HTTP 404. A 404 can mean either "this
+    station genuinely has no norm entered" or "iEH HF does not recognise
+    this site at all" (a configuration problem) -- the status code alone
+    cannot tell the two apart, so treat NORM_ABSENT as "no norm was
+    obtained", never as confirmation that the site exists.
+    """
+
     VALID = "valid"
     NORM_ABSENT = "norm_absent"
     SDK_FAILED = "sdk_failed"
@@ -108,6 +118,13 @@ VALUE_FIELD = "discharge"
 MONTHS = tuple(range(1, 13))
 MID_MONTH_DOY = (15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349)
 QUARTER_MONTHS = {1: (1, 2, 3), 2: (4, 5, 6), 3: (7, 8, 9), 4: (10, 11, 12)}
+
+# Matches the iEH HF SDK's `get_norm_for_site` failure message, e.g.
+# "Could not retrieve discharge norm for site 19999, got status code 404".
+# `_get_site_uuid_for_site_code` failures ("No path provided or the
+# provided path is None") and connection-level errors carry no status
+# code and never match.
+_SDK_STATUS_CODE_PATTERN = re.compile(r"status code (\d{3})")
 
 
 def _json_safe(value: Any) -> Any:
@@ -292,11 +309,71 @@ def _classify_monthly_norms(norms: Any) -> _NormClassification:
     return _NormClassification.VALID
 
 
+def _extract_sdk_status_code(exc: Exception) -> int | None:
+    """Best-effort extraction of an HTTP status code embedded in an SDK exception message.
+
+    Parses defensively: any failure to match or convert returns ``None``
+    rather than raising, so a malformed or unexpected exception always
+    falls back to the conservative (SDK_FAILED) path in
+    ``_lookup_monthly_norms``.
+    """
+    try:
+        match = _SDK_STATUS_CODE_PATTERN.search(str(exc))
+        if match is None:
+            return None
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
 def _lookup_monthly_norms(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult:
-    """Fetch and classify the SDK monthly norms, capturing any raised exception."""
+    """Fetch and classify the SDK monthly norms, capturing any raised exception.
+
+    A raised exception is graded by the HTTP status code embedded in its
+    message, when one is present:
+
+    - 404 -> NORM_ABSENT. The norm endpoint says there is no norm for this
+      station -- treated the same as a 200 response with an empty/invalid
+      payload (see ``_classify_monthly_norms``): it does not count toward
+      ``sdk_failed`` and cannot drive the fatal (exit 6) path. Caution: a
+      404 here can also mean iEH HF does not recognise the *site* at all
+      (a configuration problem), not that the site exists but lacks a
+      norm -- the status code alone cannot distinguish the two, so
+      NORM_ABSENT means "no norm was obtained", not "confirmed site,
+      absent norm".
+    - Any other status code (401, 403, 400, 5xx, ...) -> SDK_FAILED, same
+      as before this grading existed.
+    - No parseable status code at all (e.g. the SDK's own
+      "No path provided or the provided path is None" when the site UUID
+      lookup itself fails, a timeout, a connection error) -> SDK_FAILED.
+      Unknown is treated as broken, not absent -- this is the conservative
+      default.
+    """
     try:
         norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
     except Exception as exc:
+        status_code = _extract_sdk_status_code(exc)
+        if status_code == 404:
+            logger.info(
+                "_lookup_monthly_norms: site %s norm lookup raised with HTTP 404 (no "
+                "norm available); classifying NORM_ABSENT, not SDK_FAILED. Error: %s: %s",
+                code,
+                type(exc).__name__,
+                exc,
+            )
+            return _MonthlyNormLookupResult(
+                classification=_NormClassification.NORM_ABSENT,
+                norms=None,
+                exception=exc,
+            )
+        logger.debug(
+            "_lookup_monthly_norms: site %s norm lookup raised (status_code=%s); "
+            "classifying SDK_FAILED. Error: %s: %s",
+            code,
+            status_code,
+            type(exc).__name__,
+            exc,
+        )
         return _MonthlyNormLookupResult(
             classification=_NormClassification.SDK_FAILED,
             norms=None,

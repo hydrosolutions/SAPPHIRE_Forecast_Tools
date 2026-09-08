@@ -217,12 +217,37 @@ failure is the known condition or a real outage, not merely useful context.
   502, or a service-wide iEH-HF outage all raise the same way — the writer cannot tell them apart from
   each other, only from the PARTIAL case (which it can, via the `sdk_failed == total_attempted` guard).
 
+  **Updated by the INFRA-044 follow-up (2026-09-08).** The statement above is no longer complete: a
+  raised exception whose message embeds an HTTP status code (the `get_norm_for_site` non-200 shape —
+  see `apps/preprocessing_runoff/README.md`'s "Status-code grading" paragraph) is graded before it
+  ever reaches `sdk_failed`. A **404** ("no norm exists for this station") is now reclassified
+  `NORM_ABSENT` and does not count toward `sdk_failed` at all, so it can never drive exit 6 by itself.
+  Reaching exit 6 now specifically means every attempted station either raised with a **non-404**
+  status code (401/403/400/5xx/etc.) or with **no parseable status code** at all (the
+  `_get_site_uuid_for_site_code` shape — `"No path provided or the provided path is None"` — a
+  timeout, or a connection error). This exists because a deployment that has entered **zero monthly
+  norms at all** (e.g. Tajik Hydromet) would otherwise 404 on every station and false-alarm exit 6 on
+  every single run — the same false-alarm failure mode INFRA-044 exists to remove, just triggered by
+  a different upstream shape than the one INFRA-044 originally fixed. It does **not** change what to
+  do when you actually see exit 6: it is still every-station-failed and still worth investigating —
+  it is now simply a narrower, more meaningful signal than before, since the common "no norms entered"
+  case is filtered out ahead of it.
+
+  **Caution for the guidance above**: with this grading in place, a station landing in `norm_absent`
+  is not proof the station is known to iEH HF with a norm simply missing — a 404 for an unrecognised
+  *site* looks identical to a 404 for "no norm on file." Treat `norm_absent` as "no norm was
+  obtained," and if a specific station's absence is surprising, check whether iEH HF recognises the
+  site at all before assuming the norm alone is missing.
+
 - **That exit-6 FAIL row would recur indefinitely for as long as the outage lasts.** Reclassifying it
   into a passing status was proposed and deliberately rejected — three separate grading approaches were
   each shown to be able to mask a genuine outage as success (see PREPQ-014 in
   `doc/plans/module_issues.md`). Unlike the PARTIAL case above (which the owner decided is simply not
   our failure, see INFRA-044), a TOTAL outage staying loud is accepted as the cost of not building that
-  blind spot.
+  blind spot. *(2026-09-08: this still holds — those three refuted approaches, and the "outage stays
+  loud" acceptance, were about the ungraded `_get_site_uuid_for_site_code` exception shape, which is
+  unchanged by the status-code grading above. The new grading only reclassifies the narrower,
+  independently-gradeable 404 shape; it does not reopen PREPQ-014.)*
 
 - **New `WARNING` log lines**, one per failing station, naming the station code and the SDK exception.
   These are new only because the message was moved from `DEBUG` to `WARNING` — the root logger caps at
