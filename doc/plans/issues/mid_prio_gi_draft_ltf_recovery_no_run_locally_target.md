@@ -235,13 +235,28 @@ itself, that is a new issue, not a widening of this one.
 
 ## Tests
 
-Follow the existing pattern in `test_run_locally_orchestration.py`: fake `.venv/bin/<exe>` stubs
-that record their argv and exit with a chosen code.
+Follow the existing pattern: fake `.venv/bin/<exe>` stubs that record their argv and exit with a
+chosen code.
 
-**The harness needs a change first.** The fake venv Python currently records
-`SAPPHIRE_PREDICTION_MODE` but **not** `lt_forecast_mode` (`test_run_locally_orchestration.py:121`),
-so test 6 cannot be written against it as-is. Extend the stub to record `lt_forecast_mode` as part of
-this issue's work.
+**The harness moved, and the prerequisite is now half-done — read this before grepping.** PR #491
+extracted the stub out of `test_run_locally_orchestration.py` into
+**`apps/pipeline/tests/conftest.py`**. In that file `lt_forecast_mode` now appears in
+`_ISOLATE_ENV_VARS` (`:256`), so it is **cleared** before every subprocess — good, and not something
+to redo.
+
+But the stub template (`:269`) still logs only `SAPPHIRE_PREDICTION_MODE`:
+
+```
+printf 'CALL module=@MODULE@ script=%s args=%s mode=%s\n' \
+    "$script" "$*" "${SAPPHIRE_PREDICTION_MODE:-}" >> "@CALL_LOG@"
+```
+
+So the variable **is isolated but is not recorded**, and test 6 still cannot be written as-is.
+Extend the template to log `lt_forecast_mode` too. A `grep lt_forecast_mode conftest.py` returns a
+hit and looks like the work is already done — it is not.
+
+*(Corrected 2026-09-07. The original text cited `test_run_locally_orchestration.py:121`, which no
+longer exists.)*
 
 1. **Happy path**: `lt_forecast_mode=month_0 LT_RECOVERY_DATE=2026-08-01`, stub exits 0 → the stub
    was invoked with `run_forecast.py --today 2026-08-01 --recover`, the summary row is `PASS`,

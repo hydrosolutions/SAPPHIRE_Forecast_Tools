@@ -254,6 +254,7 @@ _ISOLATE_ENV_VARS = [
     "SAPPHIRE_CONSISTENCY_CHECK",
     "ieasyhydroforecast_START_DATE",
     "lt_forecast_mode",
+    "LT_RECOVERY_DATE",
 ]
 
 # A fake `python` stub: logs its invocation to a call log, then lets a
@@ -262,11 +263,21 @@ _ISOLATE_ENV_VARS = [
 # with plain str.replace() (not str.format()/f-string) because the template
 # is full of literal bash `${...}` expansions that would otherwise have to
 # be brace-escaped.
+#
+# `lt_forecast_mode` is logged as its own field, placed BEFORE the trailing
+# `mode=%s` (SAPPHIRE_PREDICTION_MODE) field deliberately: the substring
+# "mode=" also occurs inside the literal text "lt_forecast_mode=", and
+# test_run_locally_orchestration.py's `_mode_of()` helper extracts
+# SAPPHIRE_PREDICTION_MODE via `call_line.rsplit("mode=", 1)[-1]` -- the
+# LAST occurrence of that substring in the line. Putting lt_forecast_mode
+# after mode= would make its value shadow _mode_of()'s result for every
+# existing caller. Keeping mode=%s last preserves that helper unchanged;
+# LTF-010's own tests parse the lt_forecast_mode= field by name instead.
 _STUB_TEMPLATE = """#!/usr/bin/env bash
 script="$1"
 shift || true
-printf 'CALL module=@MODULE@ script=%s args=%s mode=%s\\n' \\
-    "$script" "$*" "${SAPPHIRE_PREDICTION_MODE:-}" >> "@CALL_LOG@"
+printf 'CALL module=@MODULE@ script=%s args=%s lt_forecast_mode=%s mode=%s\\n' \\
+    "$script" "$*" "${lt_forecast_mode:-}" "${SAPPHIRE_PREDICTION_MODE:-}" >> "@CALL_LOG@"
 @LT_STUB@
 @DECISION@
 exit 0

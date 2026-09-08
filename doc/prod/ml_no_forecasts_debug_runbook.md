@@ -315,13 +315,27 @@ grep -n "Skipping machine_learning\|Module: machine_learning\|SAPPHIRE_PREDICTIO
   means ML never ran. Re-run with the mode set (Step 2a).
 
 **If there is no banner and no skip line at all:** ML was skipped by organisation
-(Step 1.1), or the run aborted earlier (Step 7). On `daily` the org-skip branch is
-a bare `:` (`run_daily_pipeline`, `run_locally.sh:1556`) that logs *nothing*, so silence is the
-expected signature of an org skip there.
+(Step 1.1), or the run aborted earlier (Step 7). On `daily` the org-skip branch
+(`run_daily_pipeline`, `run_locally.sh:1700` Phase 3 / `:1717` Phase 4) still
+calls `record_skip` directly with no matching `log INFO` line, so this grep still
+finds nothing for an org skip on `daily` — silence in the *live log stream* is
+still the expected signature there. **But now check `PIPELINE SUMMARY` as well:**
+it names the skip explicitly, once per phase/mode combination —
+`machine_learning: SKIP (not required for <org> org, mode=PENTAD)` and the
+matching DECAD and `(maintenance)` rows — which is a more reliable confirmation
+than a grep that was never going to match for this branch.
 
-> **The summary does not report skips.** A skipped module records no result, so
-> `PIPELINE SUMMARY` can read "2 passed, 0 failed" for a run where ML never
-> executed (INFRA-030). Trust the banner, not the counts.
+> **The summary now reports skips (INFRA-030, fixed).** Every explicit neutral
+> gating branch — an org-level skip, an ML mode mismatch, or the long-term
+> schedule gate finding no active window — records a `SKIP` row: each prints as
+> `<module>: SKIP (<reason>)` in `PIPELINE SUMMARY`, counted separately from
+> pass/fail, and the totals line grows a `, N skipped` suffix whenever N > 0
+> (e.g. `Modules: 2 passed, 0 failed, 1 skipped`). Automated coverage:
+> `apps/pipeline/tests/test_run_locally_orchestration.py::TestSkipSummaryRows`.
+> **If your checkout predates this fix**, the old behaviour still applies: a
+> skipped module recorded no result at all, so `PIPELINE SUMMARY` could read "2
+> passed, 0 failed" for a run where ML never executed — on that checkout, trust
+> the banner and this step's grep, not the counts.
 
 ### Step 2a — running ML by hand
 
@@ -723,5 +737,5 @@ Step 3 and Step 5 output — that combination is not a known failure mode.
 | PREPG-016 | A partial ensemble is accepted as success — Step 7 |
 | PREPG-015 | Data Gateway API key reachable in logs — the redaction rules above |
 | INFRA-029 | Root logger capped at WARNING; why two Step 4 causes are invisible |
-| INFRA-030 | Skipped modules leave no summary line — Step 2 |
+| INFRA-030 | Skipped modules used to leave no summary line — fixed (implemented and confirmed; automated coverage in `TestSkipSummaryRows`): `PIPELINE SUMMARY` now records a `<module>: SKIP (<reason>)` row per explicit skip site and adds `, N skipped` to the totals line — Step 2 |
 | INFRA-037 | A `sync_long_horizon_hydrograph.py` exit-4 (SDK norm lookup) failure in the Phase 2 maintenance sub-step used to abort the whole `daily` run before ML ran — fixed (implemented and confirmed: full apps test suite green — 16/16 modules and services, zero failures, no skips introduced by this branch; multiple rounds of out-of-loop review): exit 4 now continues but still exits non-zero and records a separate FAIL row; exits 1/3/5 remain fatal — why you are here, and see Step 5 |

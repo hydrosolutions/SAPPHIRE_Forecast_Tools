@@ -219,6 +219,11 @@ services:
     container_name: sapphire-dashboard
     working_dir: /app/apps/forecast_dashboard
     init: true
+    # Linux does not provide host.docker.internal by default. The dashboard is
+    # the only bridge-networked container here, so it needs an explicit route to
+    # the host, where the iEasyHydro HF SSH tunnel listens.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
@@ -230,6 +235,11 @@ services:
       - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url_pentad}
       - sapphire_forecast_horizon=pentad
       - API_GATEWAY_URL=${API_GATEWAY_URL}
+      # Per-deployment override for this bridge-networked container only: the
+      # shared .env value (localhost) is correct for host-networked pipeline
+      # containers but not here. Falls back to the .env value when unset, so
+      # deployments that do not set it are unaffected.
+      - IEASYHYDROHF_HOST=${ieasyhydroforecast_dashboard_iehhf_host:-${IEASYHYDROHF_HOST}}
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&

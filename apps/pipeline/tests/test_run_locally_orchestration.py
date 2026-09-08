@@ -61,7 +61,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from conftest import _ISOLATE_ENV_VARS, APPS_DIR, SynthTree, run_main
+from conftest import _ISOLATE_ENV_VARS, APPS_DIR, RUN_LOCALLY_SH, SynthTree, run_main
 
 REAL_LOG_DIR = APPS_DIR / "logs"
 
@@ -945,7 +945,14 @@ class TestLongHorizonSyncExitCodeHandling:
             "only maintenance's postprocessing_maintenance.py appeared, meaning Phase 3 "
             "was skipped and only Phase 4 executed"
         )
-        assert any("module=linear_regression" in ln and "args= mode=" in ln for ln in calls), (
+        # "args= lt_forecast_mode=" (empty args, immediately followed by the
+        # next logged field) rather than "args= mode=" -- the stub template
+        # now logs lt_forecast_mode between args= and the trailing mode=
+        # field (LTF-010), so the old "args= mode=" adjacency no longer
+        # holds for ANY call, operational or maintenance.
+        assert any(
+            "module=linear_regression" in ln and "args= lt_forecast_mode=" in ln for ln in calls
+        ), (
             "Phase 3's operational linear_regression call (no --hindcast argument) never "
             "ran -- only the maintenance call (args=--hindcast) appeared, meaning Phase 3 "
             "was skipped and only Phase 4 executed"
@@ -1574,3 +1581,489 @@ class TestModeDomainRegressionGuards:
         calls = [ln for ln in synth_tree.calls() if "module=linear_regression" in ln]
         assert calls, "linear_regression stub was never invoked"
         assert [_mode_of(ln) for ln in calls] == [""]
+
+
+def _lt_forecast_mode_of(call_line: str) -> str:
+    """Extract the `lt_forecast_mode=<value>` field from a call-log line.
+
+    Unlike `_mode_of`, this cannot use rsplit("mode=", 1) -- the literal
+    text "lt_forecast_mode=" itself contains "mode=" as a substring, and
+    the stub template places this field BEFORE the trailing mode= field
+    precisely so `_mode_of` keeps working unchanged. Split on the full key
+    instead, and stop at the next space (the following ` mode=...` field).
+    """
+    return call_line.split("lt_forecast_mode=", 1)[1].split(" ", 1)[0]
+
+
+class TestMaintenanceLongTermForecasting:
+    """LTF-010: `maintenance:long_term_forecasting`, the local entry point
+    for the operator-invoked long-term recovery (LTF-009 Stage A --
+    `run_forecast.py --today <date> --recover`, run directly in the
+    long_term_forecasting venv; no Luigi, no Docker).
+
+    Both `lt_forecast_mode` and `LT_RECOVERY_DATE` are mandatory -- there is
+    no default mode or date for a recovery -- and that check must fire
+    ahead of --dry-run's early return in main() (validate_env runs before
+    that return). The exit taxonomy is post-LTF-011 (PR #493, merged on
+    trunk the same day this target was written): 0 -> PASS, 2 (REFUSED,
+    declined -- nothing written by this run) -> FAIL labelled distinctly so
+    it reads as different from 1 (FAILED -- could not be attempted, or
+    started and failed partway) -> plain FAIL. Both 1 and 2 keep the
+    process exit non-zero; REFUSED is not proof the month is complete
+    (the existing-row guard can decline on a single row).
+    """
+
+    TARGET = "maintenance:long_term_forecasting"
+
+    # All six aggregates named in the issue -- C3 requires every one of
+    # them, not just the obvious three, to never dispatch the recovery.
+    AGGREGATE_TARGETS = [
+        "maintenance",
+        "daily",
+        "all",
+        "long-term",
+        "long-term-operational",
+        "yearly",
+    ]
+
+    RECOVERY_ENV = {"lt_forecast_mode": "month_0", "LT_RECOVERY_DATE": "2026-08-01"}
+
+    @staticmethod
+    def _recover_calls(synth_tree):
+        """Calls that are specifically the guarded recovery invocation.
+
+        Filtered on "--recover" in the args, not just the script name --
+        `long-term-operational` (and `daily` when a long-term window is
+        active) also call run_forecast.py, with --all/--today instead of
+        --recover, and must not be mistaken for a recovery call.
+        """
+        return [
+            ln for ln in synth_tree.calls() if "script=run_forecast.py" in ln and "--recover" in ln
+        ]
+
+    def test_happy_path_invokes_recover_and_reports_pass(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, extra_env=self.RECOVERY_ENV)
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        calls = self._recover_calls(synth_tree)
+        assert len(calls) == 1, synth_tree.calls()
+        assert "args=--today 2026-08-01 --recover" in calls[0], calls[0]
+        assert "long_term_forecasting (recovery): PASS" in out, out
+
+    def test_refused_exit_2_is_labelled_distinctly_and_stays_nonzero(self, synth_tree):
+        synth_tree.override(
+            "long_term_forecasting",
+            'if [ "$script" = "run_forecast.py" ]; then exit 2; fi',
+        )
+        result = run_main(synth_tree, self.TARGET, extra_env=self.RECOVERY_ENV)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert len(self._recover_calls(synth_tree)) == 1, synth_tree.calls()
+        assert "REFUSED" in out, out
+        # Distinguishable from a plain exit-1 FAIL row -- this is the test
+        # that pins "exit 2 is not benign": it must fail if REFUSED is ever
+        # rendered identically to a plain FAIL (or to PASS) without first
+        # splitting the refusal classes inside lt_recovery.py.
+        assert "long_term_forecasting (recovery): FAIL (REFUSED)" in out, out
+        # A REFUSED row must still get a MODULE ERROR DETAILS log tail, not
+        # just a distinct summary label -- print_error_details' has_failures
+        # scan and per-module loop both need to treat "FAIL (REFUSED)" as a
+        # failure. Reverting either of those two conditionals back to a
+        # literal `= "FAIL"` match (while keeping the summary-label change)
+        # leaves every other new test in this class passing, so this is the
+        # only assertion in the file that pins the log-tail half.
+        assert "MODULE ERROR DETAILS" in out, out
+        assert "--- long_term_forecasting (recovery) ---" in out, out
+
+    def test_failed_exit_1_reports_plain_fail(self, synth_tree):
+        synth_tree.override(
+            "long_term_forecasting",
+            'if [ "$script" = "run_forecast.py" ]; then exit 1; fi',
+        )
+        result = run_main(synth_tree, self.TARGET, extra_env=self.RECOVERY_ENV)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert len(self._recover_calls(synth_tree)) == 1, synth_tree.calls()
+        assert "long_term_forecasting (recovery): FAIL" in out, out
+        assert "long_term_forecasting (recovery): FAIL (REFUSED)" not in out, out
+        assert "REFUSED" not in out, out
+
+    def test_missing_mode_refuses_before_invoking_anything(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, extra_env={"LT_RECOVERY_DATE": "2026-08-01"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "lt_forecast_mode" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_missing_date_refuses_before_invoking_anything(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, extra_env={"lt_forecast_mode": "month_0"})
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "LT_RECOVERY_DATE" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_missing_both_names_both_and_invokes_nothing(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "lt_forecast_mode" in out, out
+        assert "LT_RECOVERY_DATE" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    @pytest.mark.parametrize("target", AGGREGATE_TARGETS)
+    def test_not_part_of_any_aggregate(self, synth_tree, target):
+        run_main(synth_tree, target, extra_env=self.RECOVERY_ENV)
+        assert not self._recover_calls(synth_tree), (
+            f"target {target!r} invoked the recovery stub: {synth_tree.calls()}"
+        )
+
+    def test_dry_run_with_missing_parameters_still_fails(self, synth_tree):
+        result = run_main(synth_tree, self.TARGET, dry_run=True)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "lt_forecast_mode" in out, out
+        assert "LT_RECOVERY_DATE" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_mode_passthrough_not_defaulted(self, synth_tree):
+        result = run_main(
+            synth_tree,
+            self.TARGET,
+            extra_env={"lt_forecast_mode": "quarter", "LT_RECOVERY_DATE": "2026-08-01"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        calls = self._recover_calls(synth_tree)
+        assert len(calls) == 1, calls
+        assert _lt_forecast_mode_of(calls[0]) == "quarter", calls[0]
+
+    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    def test_skipped_organisations_refuse_and_name_the_org(self, synth_tree, org):
+        result = run_main(
+            synth_tree,
+            self.TARGET,
+            extra_env={**self.RECOVERY_ENV, "ieasyhydroforecast_organization": org},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "not available for this deployment" in out, out
+        assert org in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_child_always_receives_in_docker_false(self, synth_tree):
+        """run_in_venv inherits the ambient environment, so an operator's
+        shell exporting IN_DOCKER=True must not leak into the child --
+        data_interface.py:65 selects the database hostname from this var.
+        """
+        synth_tree.override(
+            "long_term_forecasting",
+            'if [ "$script" = "run_forecast.py" ]; then '
+            'if [ "${IN_DOCKER:-}" = "False" ]; then exit 0; else exit 9; fi; '
+            "fi",
+        )
+        result = run_main(
+            synth_tree,
+            self.TARGET,
+            extra_env={**self.RECOVERY_ENV, "IN_DOCKER": "True"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "exited unexpectedly" not in out, out
+        assert len(self._recover_calls(synth_tree)) == 1, synth_tree.calls()
+
+
+class TestSkipSummaryRows:
+    """INFRA-030: a skipped module must appear in PIPELINE SUMMARY as a SKIP
+    row (module, reason), counted separately from pass/fail, kept out of the
+    red MODULE ERROR DETAILS block, and must not change the exit code. See
+    doc/plans/issues -- these tests drive the real should_skip_module /
+    should_skip_ml_for_mode / LT-schedule gates end to end through main(),
+    the same synthetic-venv harness every other class in this file uses.
+    """
+
+    def test_operational_schedule_gate_records_skip_row(self, synth_tree):
+        """long-term-operational with the schedule query returning no
+        active window: Phase 1 preprocessing still runs (shared, runs
+        before the schedule check), but the headline operational runner
+        must never be invoked, and its absence must show up as a SKIP row
+        -- not as silence, which is the whole defect this issue fixes.
+        """
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "long_term_forecasting (operational): SKIP (no modes active today)" in out, out
+        assert "Modules: 2 passed, 0 failed, 1 skipped" in out, out
+
+        # The only long_term_forecasting call allowed is the schedule query
+        # itself (query_lt_schedule, which runs unconditionally to decide
+        # whether anything is active today) -- the headline operational
+        # runner (run_forecast.py) and everything downstream of it
+        # (postprocessing_forecasts) must never be invoked.
+        lt_calls = [ln for ln in synth_tree.calls() if "module=long_term_forecasting" in ln]
+        assert lt_calls, "expected the schedule query to have been invoked"
+        assert all("script=lt_schedule_query.py" in ln for ln in lt_calls), lt_calls
+        assert not any("module=postprocessing_forecasts" in ln for ln in synth_tree.calls()), (
+            synth_tree.calls()
+        )
+
+    def test_maintenance_ml_mode_mismatch_now_prints_a_summary_at_all(self, synth_tree):
+        """maintenance:machine_learning with SAPPHIRE_PREDICTION_MODE unset
+        and ML_MODE=DECAD: before this fix, RESULTS_MODULE stayed empty and
+        main() printed no PIPELINE SUMMARY whatsoever (it is gated on
+        RESULTS_MODULE being non-empty). Recording a SKIP row here is what
+        makes the summary appear at all for a run that does nothing.
+        """
+        result = run_main(
+            synth_tree,
+            "maintenance:machine_learning",
+            extra_env={"ML_MODE": "DECAD"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "PIPELINE SUMMARY" in out, out
+        assert "machine_learning (maintenance): SKIP (ML_MODE=DECAD, mode=PENTAD)" in out, out
+        assert "Modules: 0 passed, 0 failed, 1 skipped" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_short_term_both_mode_org_skip_records_one_row_per_horizon(self, synth_tree):
+        """D2's no-dedup accounting, pinned end to end: uzhm skips
+        machine_learning at the org level, and SAPPHIRE_PREDICTION_MODE=BOTH
+        drives run_short_term_pipeline's per-mode loop over PENTAD and
+        DECAD. An enabled run_machine_learning would record one PASS row
+        per horizon here, so a skipped one must record one SKIP row per
+        horizon too -- not a single deduplicated row. Vacuous unless the
+        target genuinely loops two modes, which is why BOTH is used rather
+        than a single mode.
+        """
+        result = run_main(
+            synth_tree,
+            "short-term",
+            extra_env={
+                "SAPPHIRE_PREDICTION_MODE": "BOTH",
+                "ieasyhydroforecast_organization": "uzhm",
+            },
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "machine_learning: SKIP (not required for uzhm org, mode=PENTAD)" in out, out
+        assert "machine_learning: SKIP (not required for uzhm org, mode=DECAD)" in out, out
+        assert out.count("machine_learning: SKIP (not required for uzhm org") == 2, out
+        assert "Modules: 5 passed, 0 failed, 3 skipped" in out, out
+        assert not any("module=machine_learning" in ln for ln in synth_tree.calls()), (
+            synth_tree.calls()
+        )
+
+    def test_one_fail_and_one_skip_fail_count_is_one_not_two(self, synth_tree):
+        """Anti-vacuity pin for D3: a run with one real FAIL and one SKIP
+        must count fail_count as 1 (not 2), keep the SKIP row out of MODULE
+        ERROR DETAILS, and still exit 1. Fails if someone folds SKIP into
+        `_is_fail_status` or drops the third `elif` branch in print_summary.
+
+        `yearly` under org=demo gives exactly one SKIP (the snow-norm org
+        gate) and, with recalculate_skill_metrics.py forced to fail, exactly
+        one FAIL -- a minimal two-row mix instead of the larger short-term
+        run above.
+        """
+        synth_tree.override(
+            "postprocessing_forecasts",
+            'if [ "$script" = "recalculate_skill_metrics.py" ]; then exit 1; fi',
+        )
+        result = run_main(
+            synth_tree, "yearly", extra_env={"ieasyhydroforecast_organization": "demo"}
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 1, out
+        assert "preprocessing_gateway (snow norms): SKIP (not required for demo org)" in out, out
+        assert "postprocessing_forecasts (recalculate): FAIL" in out, out
+        assert "Modules: 0 passed, 1 failed, 1 skipped" in out, out
+
+        assert "MODULE ERROR DETAILS" in out, out
+        details = out.split("MODULE ERROR DETAILS", 1)[1]
+        assert "postprocessing_forecasts (recalculate)" in details, details
+        assert "preprocessing_gateway (snow norms)" not in details, details
+
+    def test_no_skip_baseline_totals_line_is_byte_identical_to_today(self, synth_tree):
+        """Invariant 5: a target with no skips at all must produce the exact
+        pre-fix totals-line shape, with no ", 0 skipped" suffix and no
+        occurrence of the word "skipped" anywhere in the output. Without
+        this, an implementation that unconditionally appends ", N skipped"
+        (N possibly 0) would pass every other test in this class.
+
+        Anchored to the complete counts section of the totals line, not
+        just its "Modules: 1 passed, 0 failed" prefix -- the prefix alone
+        would still match a line that grew an extra suffix after "0
+        failed" (e.g. a stray ", 0 skipped"), which is exactly the
+        regression this test exists to catch. The totals line is built as
+        `"${summary} | $(format_duration ...) elapsed"`, so pinning
+        "Modules: 1 passed, 0 failed |" proves nothing was appended between
+        the counts and the pipe.
+        """
+        result = run_main(synth_tree, "maintenance:linear_regression")
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "Modules: 1 passed, 0 failed |" in out, out
+        assert "skipped" not in out, out
+
+    def test_unknown_status_is_still_counted_as_a_failure(self, tmp_path):
+        """Invariant 4: print_summary has no producer for an unknown status
+        via main(), so this test sources run_locally.sh directly (permitted
+        by its own BASH_SOURCE guard, same technique run_main uses) and
+        calls record_result/print_summary with a synthetic "WEIRD" status.
+        The row must still be rendered, counted as exactly one failure, and
+        print_summary must still return 1. Without this, a renderer that
+        closed the failure branch to a known set (PASS/SKIP only) would
+        silently drop the row from all three counts and pass everything
+        else in this class.
+        """
+        log_file = tmp_path / "run.log"
+        # run_locally.sh runs under `set -e`, so calling print_summary as a
+        # bare statement would abort the script the instant it returns 1
+        # (it is a FAIL row) -- before the echo below ever ran. `|| rc=$?`
+        # is the standard idiom to capture a nonzero return without -e
+        # firing, since the failure is "handled" by the `||` list.
+        script = textwrap.dedent(f"""
+            source "{RUN_LOCALLY_SH}"
+            LOG_FILE="{log_file}"
+            record_result "synthetic" "WEIRD" 1 ""
+            rc=0
+            print_summary 1 || rc=$?
+            echo "PRINT_SUMMARY_RC=${{rc}}"
+            """)
+
+        env = os.environ.copy()
+        for var in _ISOLATE_ENV_VARS:
+            env.pop(var, None)
+
+        result = subprocess.run(
+            ["bash", "-c", script],
+            cwd=str(APPS_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        out = result.stdout + result.stderr
+
+        assert "synthetic: WEIRD" in out, out
+        assert "Modules: 0 passed, 1 failed" in out, out
+        assert "PRINT_SUMMARY_RC=1" in out, out
+
+    def test_resolve_ml_bare_target_modes_skip_site(self, synth_tree):
+        """Coverage for the `:551`-shaped site inside
+        resolve_ml_bare_target_modes, distinct from the per-mode-loop shape
+        exercised above: the bare `machine_learning` target with
+        SAPPHIRE_PREDICTION_MODE=BOTH and ML_MODE=PENTAD runs PENTAD for
+        real and records a SKIP for DECAD from inside resolve_ml_bare_
+        target_modes's own BOTH-loop, not from a should_skip_module call
+        site in one of the pipeline runners.
+        """
+        result = run_main(
+            synth_tree,
+            "machine_learning",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH", "ML_MODE": "PENTAD"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "machine_learning: SKIP (ML_MODE=PENTAD, mode=DECAD)" in out, out
+        # Exactly one SKIP row -- would still pass with only the substring
+        # check above if the DECAD record_skip fired twice (e.g. a
+        # duplicated call site or a loop that iterates DECAD twice).
+        assert out.count("machine_learning: SKIP (ML_MODE=PENTAD, mode=DECAD)") == 1, out
+        assert "machine_learning: PASS" in out, out
+        assert "Modules: 1 passed, 0 failed, 1 skipped" in out, out
+        modes_called = [
+            _mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln
+        ]
+        assert modes_called == ["PENTAD"], synth_tree.calls()
+
+    def test_org_skip_short_circuits_resolve_ml_bare_target_modes(self, synth_tree):
+        """Exclusivity seam between the org-level `machine_learning` skip
+        and `resolve_ml_bare_target_modes`: the `machine_learning` dispatch
+        arm checks `should_skip_module machine_learning` *first* (run_locally.sh,
+        the `machine_learning)` case in main()) and only calls
+        resolve_ml_bare_target_modes -- which does its own per-mode
+        should_skip_ml_for_mode SKIPping -- when that org-level check
+        passes. For an org that skips machine_learning outright (demo, via
+        DEMO_SKIP_MODULES), the resolver must never run at all.
+
+        Same env as test_resolve_ml_bare_target_modes_skip_site
+        (SAPPHIRE_PREDICTION_MODE=BOTH, ML_MODE=PENTAD) except for the org,
+        so a resolver that ran anyway would produce the same DECAD
+        "ML_MODE=PENTAD, mode=DECAD" SKIP row seen there -- this test proves
+        that row does NOT appear here, only the single org-level one does.
+        """
+        result = run_main(
+            synth_tree,
+            "machine_learning",
+            extra_env={
+                "SAPPHIRE_PREDICTION_MODE": "BOTH",
+                "ML_MODE": "PENTAD",
+                "ieasyhydroforecast_organization": "demo",
+            },
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "machine_learning: SKIP (not required for demo org)" in out, out
+        # Exactly one SKIP row for machine_learning -- the resolver's own
+        # per-mode skip (PENTAD or DECAD) must not also fire.
+        assert out.count("machine_learning: SKIP") == 1, out
+        # The reason is the org-level string verbatim, with no mode suffix
+        # appended by the resolver's per-mode branch.
+        assert "mode=" not in out.split("machine_learning: SKIP", 1)[1].split("\n", 1)[0], out
+        # The resolver's own skip shape must never appear.
+        assert "ML_MODE=" not in out, out
+        assert "Modules: 0 passed, 0 failed, 1 skipped" in out, out
+        assert not any("module=machine_learning" in ln for ln in synth_tree.calls()), (
+            synth_tree.calls()
+        )
+
+    def test_direct_dispatch_arm_skip_site(self, synth_tree):
+        """Coverage for a single-target dispatch-arm skip site (D6's
+        `recalculate_snow_norms` example), distinct from the whole-pipeline
+        org gate exercised below.
+        """
+        result = run_main(
+            synth_tree,
+            "recalculate_snow_norms",
+            extra_env={"ieasyhydroforecast_organization": "demo"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "preprocessing_gateway (snow norms): SKIP (not required for demo org)" in out, out
+        assert "Modules: 0 passed, 0 failed, 1 skipped" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
+
+    def test_whole_pipeline_org_gate_skip_site(self, synth_tree):
+        """Coverage for a whole-pipeline org gate (`long-term` -> run_long_
+        term_pipeline's should_skip_module check), distinct from the
+        dispatch-arm and resolve_ml_bare_target_modes shapes above.
+        """
+        result = run_main(
+            synth_tree,
+            "long-term",
+            extra_env={"ieasyhydroforecast_organization": "demo"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode == 0, out
+        assert "long_term_forecasting: SKIP (not required for demo org)" in out, out
+        assert "Modules: 0 passed, 0 failed, 1 skipped" in out, out
+        assert not synth_tree.calls(), synth_tree.calls()
