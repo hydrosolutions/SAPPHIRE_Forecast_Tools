@@ -1,6 +1,6 @@
 ## The canonical forecast cron wrappers exit 0 on failure (INFRA-047)
 
-**Status**: **Review** — implemented, tests green, PR open. Filed 2026-09-05; rescoped
+**Status**: **Complete** — merged 2026-09-08 in **PR #499**. Filed 2026-09-05; rescoped
 2026-09-05 against the installed-crontab survey (three of the five wrappers are installed on the
 surveyed deployments, and **no cron line consumes an exit code today** — this is groundwork for
 alerting, not a live-outage fix).
