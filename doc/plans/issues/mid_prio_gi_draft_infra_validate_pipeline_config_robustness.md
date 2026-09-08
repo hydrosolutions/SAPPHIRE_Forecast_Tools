@@ -41,8 +41,9 @@ semantics and false passes) and **INFRA-024** (exit-code attribution). This issu
 
 ### Findings re-verified against trunk, 2026-09-08
 
-Every finding below was re-checked after INFRA-030 (#497) and INFRA-044 (#498) merged. All are
-still live. Line numbers move constantly in these two files — the citations here were re-derived on
+Every finding below was re-checked after INFRA-030 (#497) and INFRA-044 (#498) merged. All seven
+were live at that point; **F4 and F6 were subsequently withdrawn by owner decision**, so five are
+active — see the two `WITHDRAWN` rows in the table. Line numbers move constantly in these two files — the citations here were re-derived on
 that date and must be re-derived again with `grep -n` at implementation time.
 
 | | still live? | evidence on trunk |
@@ -233,9 +234,14 @@ defensible; a *present but unrecognised* one is not — it is a typo the operato
 
 > **Corrected 2026-09-08**: the earlier clause "unset still defaults to pentad **for every target
 > except `daily`**" is **false** — `long-term` resolves to month, and an explicit `--horizon`
-> bypasses mode resolution entirely. State the default-preservation requirement as: *no target's
-> horizon resolution changes except `daily`'s*, and test that rather than asserting a blanket pentad
-> default.
+> bypasses mode resolution entirely.
+>
+> **Refined again (third review): "no target's horizon resolution changes except `daily`'s" is also
+> wrong** — it contradicts F3 itself, which deliberately makes a *junk* mode FAIL where it currently
+> resolves to pentad. State the requirement as: **no target's resolution changes for a VALID or
+> UNSET mode**; a junk mode newly FAILs for every target that resolves from the mode, while `daily`,
+> `long-term` and an explicit `--horizon` bypass mode resolution and are unaffected by the junk
+> case.
 
 **Plus, per owner decision D1**: `--target daily` resolves `["pentad", "decade"]` from the target
 itself regardless of the ambient mode.
@@ -424,22 +430,35 @@ wrong.
 
 > **Serialisation corrected 2026-09-08.** P1–P4 were all marked "Depends on: none" while editing
 > **the same two files** (`validate_pipeline.py` and `test_validate_pipeline.py`). Running them
-> concurrently would collide. **After the F4/F6 withdrawals the issue is three phases in two
+> concurrently would collide. **After the F4/F6 withdrawals the issue is four phases in two
 > workstreams**: P1 → P3 → P6 on the validator and the documentation its decisions require, and P5
 > on the launcher (genuinely independent). "Two phases" in earlier revisions miscounted, and no
 > phase owned the documentation at all until 2026-09-08. Run the
 > **full** `run_tests.sh` after **each** phase, not once at the end (CLAUDE.md).
 
-- **P1 — malformed config values (F2, F3) + the D1 `daily` horizon derivation.** Files:
-  `validate_pipeline.py`, test file. Depends on: none. Agents: 1. Accept: F2 and F3 tests pass, each
-  proven by its own subprocess assertion (exit code + message), not a repo-wide traceback grep; and
-  `--target daily` runs decade checks with the mode unset. **This phase now carries a
-  which-checks-run change (D1), so its review must confirm no other target's horizon set moved.**
+- **P1 — malformed config values (F2, F3), the D1 `daily` horizon derivation, and the D4 baseline
+  horizon metadata.** Files: `validate_pipeline.py`, test file. Depends on: none. Agents: 1.
+  Accept — **the full contract, not a subset** (an earlier revision listed only the unset-mode case,
+  which would have let a partial implementation pass):
+  - F2 and F3 tests pass, each proven by its own subprocess assertion (exit code + message), not a
+    repo-wide traceback grep, **including the Tier-1-produced-no-rows case and `-1`**;
+  - `--target daily` runs decade checks for **all five ambient mode cases** (unset, PENTAD, DECAD,
+    BOTH, junk);
+  - an explicit `--horizon pentad` **still overrides** the `daily` derivation;
+  - `--target daily --module <m>` filters across **both** derived horizons;
+  - **no target's resolution changes for a valid or unset mode** (see F3's refined wording);
+  - **D4**: the baseline records its resolved horizons, and a legacy horizonless baseline is refused
+    with a retake message — proven by a `daily` pre/post pair across the change.
+  **This phase carries a which-checks-run change (D1) and a baseline-format change (D4), so its
+  review must confirm no other target's horizon set moved and that a matching baseline still loads.**
 - ~~**P2 — malformed API response (F4).**~~ **WITHDRAWN** with F4 (owner, 2026-09-08). Note this
   means `test_check_presence_valueerror_not_mislabelled_though_still_propagates` is **not** touched
   by this issue at all — it stays as written.
 - **P3 — path collision (F1, both phases) and the exit-contract docstrings (F5).** Files:
-  `validate_pipeline.py`, test file. **Depends on: P1** (P2 withdrawn; same files as P1). Agents: 1. Accept: collision rejected under
+  `validate_pipeline.py`, test file. **Depends on: P1** (P2 withdrawn; same files as P1). Agents: 1.
+  Accept additionally: **F5's regression test** pinning that an *ordinary* FAIL row under
+  `--phase pre` still returns 0 and writes the baseline (only the critical-row path is tested today),
+  and the stated exit codes — malformed config **1**, parse-time path collision **2**. Accept: collision rejected under
   `--phase pre` *and* `--phase post`, alias detection via `samefile()`, and the docstrings cover
   exit 2 as well as 0/1.
 - ~~**P4 — non-vacuous isolation tests (F6).**~~ **WITHDRAWN** with F6 (owner, 2026-09-08).
@@ -469,7 +488,7 @@ wrong.
 }
 ```
 
-## Owner decisions — these block `Ready` (raised by out-of-loop review, 2026-09-08)
+## Owner decisions — all resolved 2026-09-08 (raised across three out-of-loop review rounds)
 
 **D1 — DECIDED 2026-09-08: yes, `target=daily` derives both horizons.**
 `daily` runs PENTAD then DECAD, restores the original mode (`run_locally.sh:1750`, normally unset),
@@ -531,6 +550,16 @@ baseline and refuse a baseline whose horizon set does not match the current run,
 telling the operator to retake it. This expands baseline semantics, which is why it was an owner
 call. Test a `daily` pre/post pair across the change.
 
+> **Owned by P1** (assigned 2026-09-08 after the third review found no phase implemented it).
+>
+> **One point still needs your call before P1 starts**: D4's heading is `daily`-specific, but
+> "refuse a baseline whose horizon set does not match" as written would reject **every** legacy
+> horizonless baseline, on every target — because none of them records horizons. Decide: (a) reject
+> only where it can actually mislead, i.e. `daily`, and accept a horizonless baseline for
+> single-horizon targets; or (b) reject all legacy baselines and have every deployment retake them
+> once. (a) is narrower and matches the defect; (b) is simpler to implement and reason about but
+> invalidates baselines for targets whose behaviour did not change.
+
 **D5 — DECIDED 2026-09-08: `SAPPHIRE_API_ENABLED` is left alone; the acceptance criterion is
 narrowed instead.** Today anything but the literal `"false"` counts as enabled
 (`validate_pipeline.py:1743`). That stays. **F2 covers `FRESHNESS_THRESHOLD_DAYS` and
@@ -549,8 +578,16 @@ findings.
 **D7 — DECIDED 2026-09-08: the broken operator procedure is fixed as part of this issue.**
 `doc/dev/review_checklist_local_template.md:188` tells an operator to run
 `bash apps/run_locally.sh validate --phase …`. **There is no `validate` target** (`run_locally.sh:2375`)
-and the launcher does not parse validator flags, so anyone following it fails immediately. Replace
-it with a working direct invocation of the validator and note there that `daily` now covers decade.
+and the launcher does not parse validator flags, so anyone following it fails immediately.
+
+> **Third review: there are THREE such invocations, not one** —
+> `doc/dev/review_checklist_local_template.md:196` (pre), `:1898` (post) and `:1915` (JSON output).
+> P6 must replace **all three** and execute-check each; fixing only the one this section originally
+> cited would leave the procedure broken two-thirds of the way through, which is the partial-fix
+> shape this issue has already hit twice.
+
+Replace them with working direct invocations of the validator and note there that `daily` now covers
+decade.
 
 **Recommendation on a further point — SUPERSEDED by D5, kept for the trail:** `SAPPHIRE_API_ENABLED`
 should get domain validation. Today anything except the literal `"false"` counts as enabled

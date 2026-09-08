@@ -41,18 +41,28 @@ raises `OSError`, which escapes to the CLI.
 
 **Fix**: catch and convert to a `[FAIL]` row naming the path and the OS error, exit 1.
 
+**Read side too (added 2026-09-08 after review — it was omitted from the first draft).**
+`Path.read_text()` at `:278` can raise `PermissionError`, `IsADirectoryError` and other `OSError`s,
+while the post-phase catch handles only `FileNotFoundError` and `ValueError` (`:1567`). Same family,
+same fix.
+
 ## F2 — a syntactically valid but wrong-shaped baseline raises `AttributeError`
 
 `baseline.get(...)` at `:278` assumes the parsed JSON is an object. A baseline file containing a
 valid JSON *array* — `[]` — parses fine and then raises `AttributeError`, **outside** the
 post-phase catch.
 
-**Reachable how**: a truncated, hand-edited, or wrong-file baseline. Note INFRA-045's F1 shows one
+**Reachable how**: a hand-edited or wrong-file baseline. (**Not** an ordinarily truncated file —
+that raises `JSONDecodeError`, which is already caught as `ValueError`. The gap is JSON that parses
+successfully but is not an object.) Note INFRA-045's F1 shows one
 way to produce a corrupted baseline in the first place (`--output-json` and `--baseline` pointing at
 the same path), so these two interact.
 
-**Fix**: validate the parsed baseline is a mapping with the expected keys before use; a malformed
-baseline becomes a `[FAIL]` naming the file and what was wrong with it, exit 1.
+**Fix**: validate the parsed baseline's **shape at every level it is indexed**, not just the top —
+checking only that the top level is a mapping still leaves `_meta=[]` failing at `meta.get`, and a
+per-check entry such as `"Runoff (day)": []` failing in `compute_deltas` (`:309`). State and test
+the required shape for the top level, for `_meta`, and for each result entry. A malformed baseline
+becomes a `[FAIL]` naming the file and what was wrong with it, exit 1.
 
 ## Tests
 
@@ -61,6 +71,21 @@ baseline becomes a `[FAIL]` naming the file and what was wrong with it, exit 1.
 - A valid baseline still loads and compares unchanged.
 - Each proven by its own subprocess assertion over combined stdout+stderr with the exact exit code —
   not a repo-wide traceback grep, which cannot show the intended validation actually ran.
+
+## Sequencing — depends on INFRA-045
+
+INFRA-045's **D4** adds resolved-horizon metadata to the baseline and refuses a baseline whose
+horizons do not match. That changes the same serialisation and loading path this issue guards, so
+**do this after INFRA-045's P1, or rebase onto its horizon-metadata contract**. Doing them
+independently risks two incompatible baseline-shape validators.
+
+## Open decision for the owner
+
+**Appending a `[FAIL]` row is not sufficient to make these exit 1.** `exit_code` is computed before
+the output/baseline writes happen, and `--phase pre` then returns 0 unconditionally. So a write
+failure would be reported and still exit 0. Decide: recompute the exit code after the writes, or
+exit immediately at the failure — and decide whether a baseline should still be written when
+`--output-json` fails during `pre`.
 
 ## Files that may be modified
 
