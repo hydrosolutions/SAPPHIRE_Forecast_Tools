@@ -163,7 +163,17 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad, 
         api_data: Data to write to API. If None, uses
             forecast_pentad. For operational mode, this should be
             today's forecasts only.
+
+    Returns:
+        bool: False if the API delivery failed (ML-021 truth table: the
+            readiness check failed, the write call raised, or the API
+            accepted the request but stored zero records). True
+            otherwise — including benign no-op outcomes (API disabled,
+            client not installed, nothing to send) and a successful
+            write. The CSV write below always runs regardless of this
+            return value.
     """
+    api_write_ok = True
     # --- 1. Write to SAPPHIRE API (primary path, clean data) ---
     if SAPPHIRE_API_AVAILABLE:
         try:
@@ -173,6 +183,7 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad, 
         except Exception as e:
             logger.error(f"Failed to write pentad forecast to API: {e}")
             # Don't fail the whole process - continue to CSV
+            api_write_ok = False
 
     # --- 2. Write to CSV (archive/fallback) ---
     try:
@@ -198,6 +209,8 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad, 
     except Exception as e:
         logger.error(f"Failed to write pentad forecast to CSV: {e}")
 
+    return api_write_ok
+
 
 def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, api_data=None):
     """Save decad forecast data to API (primary) and CSV (archive).
@@ -214,7 +227,17 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
         api_data: Data to write to API. If None, uses
             forecast_decad. For operational mode, this should be
             today's forecasts only.
+
+    Returns:
+        bool: False if the API delivery failed (ML-021 truth table: the
+            readiness check failed, the write call raised, or the API
+            accepted the request but stored zero records). True
+            otherwise — including benign no-op outcomes (API disabled,
+            client not installed, nothing to send) and a successful
+            write. The CSV write below always runs regardless of this
+            return value.
     """
+    api_write_ok = True
     # --- 1. Write to SAPPHIRE API (primary path, clean data) ---
     if SAPPHIRE_API_AVAILABLE:
         try:
@@ -224,6 +247,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
         except Exception as e:
             logger.error(f"Failed to write decad forecast to API: {e}")
             # Don't fail the whole process - continue to CSV
+            api_write_ok = False
 
     # --- 2. Write to CSV (archive/fallback) ---
     try:
@@ -248,6 +272,8 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
         forecast_combined.to_csv(forecast_file_path, index=False)
     except Exception as e:
         logger.error(f"Failed to write decad forecast to CSV: {e}")
+
+    return api_write_ok
 
 
 def prepare_forecast_data(
@@ -301,8 +327,14 @@ def prepare_forecast_data(
     logger.info(
         "[code=%s] discharge input window (last %d d): %d/%d NaN (%d interior, %d trailing) "
         "| thresholds: total>%d skips, trailing>=%d skips",
-        code, input_chunk_length, total_nans, len(window), interior_nans, nans_at_end,
-        threshold_missing_days, threshold_missing_days_end,
+        code,
+        input_chunk_length,
+        total_nans,
+        len(window),
+        interior_nans,
+        nans_at_end,
+        threshold_missing_days,
+        threshold_missing_days_end,
     )
 
     # 3: Check the conditions
@@ -310,7 +342,10 @@ def prepare_forecast_data(
         logger.warning(
             "[code=%s] SKIP: too many discharge gaps (total NaN exceeds threshold=%s, or trailing NaN=%d >= %d) "
             "-> forecast will be NaN (missing discharge)",
-            code, missing_values["exceeds_threshold"], nans_at_end, threshold_missing_days_end,
+            code,
+            missing_values["exceeds_threshold"],
+            nans_at_end,
+            threshold_missing_days_end,
         )
         return discharge_df, 1
 
@@ -349,7 +384,8 @@ def prepare_forecast_data(
 
         logger.info(
             "[code=%s] step 4: %d discharge NaN days targeted for replacement from previous forecast",
-            code, len(days_with_nan),
+            code,
+            len(days_with_nan),
         )
 
     # 5: Interpolate missing values and ffill missing values at the end
@@ -361,7 +397,10 @@ def prepare_forecast_data(
         logger.warning(
             "[code=%s] SKIP: still too many discharge gaps after imputation (total NaN exceeds threshold=%s, "
             "or trailing NaN=%d >= %d) -> forecast will be NaN (missing discharge)",
-            code, missing_values["exceeds_threshold"], nans_at_end, threshold_missing_days_end,
+            code,
+            missing_values["exceeds_threshold"],
+            nans_at_end,
+            threshold_missing_days_end,
         )
         return discharge_df, 1
 
@@ -380,7 +419,9 @@ def prepare_forecast_data(
     else:
         logger.warning(
             "[code=%s] %d NaN remain in discharge input window after imputation "
-            "-> model will output NaN (missing discharge)", code, remaining,
+            "-> model will output NaN (missing discharge)",
+            code,
+            remaining,
         )
     return discharge_df, 0
 
@@ -776,13 +817,18 @@ def make_ml_forecast():
         cov_nans = {c: int(cov_window[c].isna().sum()) for c in cov_cols}
         logger.info(
             "[code=%s] ERA5 covariates over model window [%s..%s]: %s (rows=%d)",
-            code, (today - pd.Timedelta(days=input_chunk_length)).date(),
-            (today + pd.Timedelta(days=forecast_horizon)).date(), cov_nans, len(cov_window),
+            code,
+            (today - pd.Timedelta(days=input_chunk_length)).date(),
+            (today + pd.Timedelta(days=forecast_horizon)).date(),
+            cov_nans,
+            len(cov_window),
         )
         if any(v > 0 for v in cov_nans.values()):
             logger.warning(
                 "[code=%s] NaN present in ERA5 covariates over model window %s "
-                "-> model may output NaN (missing meteo)", code, cov_nans,
+                "-> model may output NaN (missing meteo)",
+                code,
+                cov_nans,
             )
 
         # prepare the data
@@ -857,7 +903,9 @@ def make_ml_forecast():
         forecast.to_csv(forecast_today_path, index=False)
         # Append the new forecast to the existing forecast file
         # Pass forecast as api_data for operational mode (today's forecasts only)
-        write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast, api_data=forecast)
+        api_write_ok = write_pentad_forecast(
+            OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast, api_data=forecast
+        )
     else:
         forecast_today_path = os.path.join(
             OUTPUT_PATH_DISCHARGE, f"decad_{MODEL_TO_USE}_forecast_latest.csv"
@@ -867,10 +915,23 @@ def make_ml_forecast():
             os.makedirs(OUTPUT_PATH_DISCHARGE)
         forecast.to_csv(forecast_today_path, index=False)
         # Pass forecast as api_data for operational mode (today's forecasts only)
-        write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast, api_data=forecast)
+        api_write_ok = write_decad_forecast(
+            OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast, api_data=forecast
+        )
 
     logger.info("Forecast saved successfully. Exiting make_forecast.py\n")
     logger.info("--------------------------------------------------------------------")
+
+    if not api_write_ok:
+        # ML-021: exit 5 means "the forecast was computed and its CSV was
+        # written, but the database save failed" -- both CSV writes above
+        # (today-latest and the archive append inside write_*_forecast)
+        # have already run, so a delivery failure never costs the CSV
+        # fallback. Mirrors sync_long_horizon_hydrograph.py, which already
+        # uses exit code 5 for an API read/write failure. Any other
+        # failure keeps today's behaviour (an uncaught exception propagates
+        # and the process exits non-zero as before).
+        sys.exit(5)
 
 
 if __name__ == "__main__":

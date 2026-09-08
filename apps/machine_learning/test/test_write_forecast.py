@@ -20,6 +20,7 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 
 # ---------------------------------------------------------------------------
 # Mock heavy dependencies before importing make_forecast
@@ -151,7 +152,13 @@ class TestWriteDecadForecast:
         mock_api_write.assert_called_once_with(new_data, "decade", "TFT")
 
     def test_api_failure_does_not_block_csv(self, tmp_path):
-        """If API write fails, CSV should still be written."""
+        """If API write fails (helper raises, e.g. SapphireAPIError), CSV
+        should still be written AND the wrapper must return False.
+
+        ML-021 Change 2: pins that write_decad_forecast's `except Exception`
+        now records the failure (api_write_ok = False) instead of silently
+        discarding it, while the CSV write below still runs unconditionally.
+        """
         out_dir = str(tmp_path)
         new_data = _new_forecast_df()
 
@@ -168,12 +175,28 @@ class TestWriteDecadForecast:
                 MagicMock(),
             ),
         ):
-            make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+            result = make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        assert result is False
 
         csv_path = os.path.join(out_dir, "decad_TFT_forecast.csv")
         assert os.path.exists(csv_path)
-        result = pd.read_csv(csv_path)
-        assert len(result) == 3
+        result_df = pd.read_csv(csv_path)
+        assert len(result_df) == 3
+
+    def test_api_success_returns_true(self, tmp_path):
+        """When the API write succeeds, write_decad_forecast must return True."""
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=True),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", MagicMock()),
+        ):
+            result = make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        assert result is True
 
     def test_no_existing_csv(self, tmp_path):
         """Works when no prior CSV exists on disk."""
@@ -181,11 +204,61 @@ class TestWriteDecadForecast:
         new_data = _new_forecast_df()
 
         with patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", False):
-            make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+            result = make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        # SAPPHIRE_API_AVAILABLE=False means the API block never runs, so
+        # this is a benign no-op per the truth table -- the wrapper must
+        # still report success (True).
+        assert result is True
 
         csv_path = os.path.join(out_dir, "decad_TFT_forecast.csv")
-        result = pd.read_csv(csv_path)
-        assert len(result) == 3
+        result_df = pd.read_csv(csv_path)
+        assert len(result_df) == 3
+
+    def test_pentad_api_failure_does_not_affect_independent_decad_write(self, tmp_path):
+        """ML-021: a pentad write's API failure must not leak into (or
+        block) an independent decad write's own API delivery and CSV
+        write -- the two wrapper functions share no state. Calls
+        write_pentad_forecast (API raises) and then write_decad_forecast
+        (API succeeds) against separate output directories in the same
+        test, and checks both return values and both CSVs independently."""
+        pentad_dir = str(tmp_path / "pentad")
+        decad_dir = str(tmp_path / "decad")
+        os.makedirs(pentad_dir)
+        os.makedirs(decad_dir)
+        new_data = _new_forecast_df()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(
+                make_forecast,
+                "_write_ml_forecast_to_api",
+                side_effect=RuntimeError("API down"),
+            ),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", MagicMock()),
+        ):
+            pentad_result = make_forecast.write_pentad_forecast(
+                pentad_dir, "TFT", new_data, api_data=new_data
+            )
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=True),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", MagicMock()),
+        ):
+            decad_result = make_forecast.write_decad_forecast(
+                decad_dir, "TFT", new_data, api_data=new_data
+            )
+
+        assert pentad_result is False
+        assert decad_result is True
+
+        pentad_csv = os.path.join(pentad_dir, "pentad_TFT_forecast.csv")
+        decad_csv = os.path.join(decad_dir, "decad_TFT_forecast.csv")
+        assert os.path.exists(pentad_csv)
+        assert os.path.exists(decad_csv)
+        assert len(pd.read_csv(pentad_csv)) == 3
+        assert len(pd.read_csv(decad_csv)) == 3
 
 
 class TestWritePentadForecast:
@@ -230,6 +303,47 @@ class TestWritePentadForecast:
             make_forecast.write_pentad_forecast(out_dir, "TFT", new_data, api_data=new_data)
 
         mock_api_write.assert_called_once_with(new_data, "pentad", "TFT")
+
+    def test_api_failure_returns_false_but_still_writes_csv(self, tmp_path):
+        """ML-021 Change 2: if the API helper raises, write_pentad_forecast
+        must return False (recording the failure) while the CSV write
+        still runs unconditionally below it."""
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(
+                make_forecast,
+                "_write_ml_forecast_to_api",
+                side_effect=RuntimeError("API down"),
+            ),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", MagicMock()),
+        ):
+            result = make_forecast.write_pentad_forecast(
+                out_dir, "TFT", new_data, api_data=new_data
+            )
+
+        assert result is False
+        csv_path = os.path.join(out_dir, "pentad_TFT_forecast.csv")
+        assert os.path.exists(csv_path)
+        assert len(pd.read_csv(csv_path)) == 3
+
+    def test_api_success_returns_true(self, tmp_path):
+        """When the API write succeeds, write_pentad_forecast must return True."""
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=True),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", MagicMock()),
+        ):
+            result = make_forecast.write_pentad_forecast(
+                out_dir, "TFT", new_data, api_data=new_data
+            )
+
+        assert result is True
 
     def test_csv_output_has_only_canonical_columns(self, tmp_path):
         """When the old CSV contains API-only columns, the output must strip them.
@@ -482,3 +596,100 @@ class TestOldForecastApiRead:
             f"start_date {start} is {delta} days from expected {expected}; "
             "the lookback should be approximately 60 days"
         )
+
+
+# ---------------------------------------------------------------------------
+# ML-021 Change 2: make_ml_forecast() must sys.exit(5) when the API delivery
+# for the model's forecast failed, but only AFTER both CSV writes (the
+# "-latest" snapshot and the archive append inside write_*_forecast) have
+# run. These tests exercise make_ml_forecast() itself (not just the two
+# wrapper functions) with MODEL_TO_USE=ARIMA to skip all real model/scaler
+# loading, an empty rivers_to_predict/codes_to_use to skip the prediction
+# loop entirely, and write_pentad_forecast/write_decad_forecast patched
+# directly so the test isolates the aggregation-and-exit logic in
+# make_ml_forecast() from the wrapper internals already covered above.
+# ---------------------------------------------------------------------------
+
+
+def _prime_make_ml_forecast_env(monkeypatch, tmp_path, prediction_mode):
+    """Set every env var make_ml_forecast() reads before it would otherwise
+    fail on a missing/invalid value, and create the on-disk paths that get
+    an os.path.exists() check (PATH_TO_SCALER, PATH_TO_MODEL)."""
+    models_and_scalers = tmp_path / "models_and_scalers"
+    scaler_dir = models_and_scalers / "scaler_arima"
+    scaler_dir.mkdir(parents=True)
+    (scaler_dir / "arima_model.pkl").write_text("placeholder")
+
+    monkeypatch.setenv("SAPPHIRE_MODEL_TO_USE", "ARIMA")
+    monkeypatch.setenv("SAPPHIRE_PREDICTION_MODE", prediction_mode)
+    monkeypatch.setenv("ieasyforecast_intermediate_data_path", str(tmp_path))
+    monkeypatch.setenv("ieasyhydroforecast_models_and_scalers_path", str(models_and_scalers))
+    monkeypatch.setenv("ieasyhydroforecast_PATH_TO_STATIC_FEATURES", "static_features.csv")
+    monkeypatch.setenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE", "output_discharge")
+    monkeypatch.setenv("ieasyhydroforecast_PATH_TO_QMAPPED_ERA5", "qmapped_era5.csv")
+    monkeypatch.setenv("ieasyhydroforecast_HRU_CONTROL_MEMBER", "dummy")
+    monkeypatch.setenv("ieasyhydroforecast_PATH_TO_SCALER_ARIMA", "scaler_arima")
+    monkeypatch.setenv("ieasyhydroforecast_PATH_TO_ARIMA", "arima_model.pkl")
+    monkeypatch.setenv("ieasyhydroforecast_THRESHOLD_MISSING_DAYS_ARIMA", "5")
+    monkeypatch.setenv("ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END", "5")
+
+
+class TestMakeMlForecastApiExitCode:
+    """Tests for the ML-021 `if not api_write_ok: sys.exit(5)` aggregation
+    added at the end of make_ml_forecast(), after both CSV writes."""
+
+    def _run(self, monkeypatch, tmp_path, prediction_mode, write_wrapper_name, wrapper_return):
+        """Run make_ml_forecast() end to end with everything upstream of
+        the SAVE FORECAST section mocked out, and the write_*_forecast
+        wrapper for `prediction_mode` patched to return `wrapper_return`
+        directly (bypassing its internals, which are covered by the
+        TestWritePentadForecast / TestWriteDecadForecast classes above)."""
+        _prime_make_ml_forecast_env(monkeypatch, tmp_path, prediction_mode)
+
+        with (
+            patch.object(make_forecast, "get_predictor_class", return_value=MagicMock()),
+            patch.object(make_forecast, "get_rivers_to_predict", return_value=([], pd.DataFrame())),
+            patch.object(
+                make_forecast.fl,
+                "read_daily_discharge_data",
+                return_value=pd.DataFrame({"code": []}),
+            ),
+            patch.object(make_forecast, "prepare_forcing_data", return_value=pd.DataFrame()),
+            patch.object(make_forecast, "prepare_static_data", return_value=pd.DataFrame()),
+            patch.object(make_forecast.utils_ml_forecast, "get_codes_to_use", return_value=[]),
+            patch.object(
+                make_forecast.utils_ml_forecast, "fill_forcing_gaps", return_value=pd.DataFrame()
+            ),
+            patch.object(make_forecast, "_read_ml_forecasts_from_api", return_value=pd.DataFrame()),
+            patch.object(make_forecast, write_wrapper_name, return_value=wrapper_return),
+        ):
+            make_forecast.make_ml_forecast()
+
+    def test_pentad_api_failure_exits_5_after_csv_writes(self, monkeypatch, tmp_path):
+        """Pins the `if not api_write_ok: sys.exit(5)` guard: when
+        write_pentad_forecast reports a delivery failure (False), the run
+        must exit with code 5. Reverting the sys.exit(5) addition makes
+        make_ml_forecast() return normally instead, and this test fails."""
+        with pytest.raises(SystemExit) as exc_info:
+            self._run(monkeypatch, tmp_path, "PENTAD", "write_pentad_forecast", False)
+        assert exc_info.value.code == 5
+
+        # The "-latest" CSV snapshot (written before write_pentad_forecast
+        # is even called) must exist -- the exit happens strictly after it.
+        out_dir = os.path.join(str(tmp_path), "output_discharge", "ARIMA")
+        assert os.path.exists(os.path.join(out_dir, "pentad_ARIMA_forecast_latest.csv"))
+
+    def test_decad_api_failure_exits_5_after_csv_writes(self, monkeypatch, tmp_path):
+        """Same guard, exercised on the DECAD branch (write_decad_forecast)."""
+        with pytest.raises(SystemExit) as exc_info:
+            self._run(monkeypatch, tmp_path, "DECAD", "write_decad_forecast", False)
+        assert exc_info.value.code == 5
+
+        out_dir = os.path.join(str(tmp_path), "output_discharge", "ARIMA")
+        assert os.path.exists(os.path.join(out_dir, "decad_ARIMA_forecast_latest.csv"))
+
+    def test_successful_api_write_does_not_exit(self, monkeypatch, tmp_path):
+        """When write_pentad_forecast reports success (True), make_ml_forecast()
+        must return normally -- no sys.exit(5), i.e. exit code 0."""
+        # Should not raise SystemExit at all.
+        self._run(monkeypatch, tmp_path, "PENTAD", "write_pentad_forecast", True)

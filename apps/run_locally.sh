@@ -769,18 +769,41 @@ run_machine_learning() {
     local start
     start=$(get_timestamp)
     local rc=0
+    # ML-021 decision 3: exit 5 from a script means "forecast computed and
+    # its CSV was written, but the database save failed" (make_forecast.py,
+    # mirroring sync_long_horizon_hydrograph.py's existing use of 5). That
+    # must not stop the remaining models from computing and writing their
+    # own CSV backups -- record it and keep going. Every other non-zero
+    # code keeps today's break-2 fail-fast within this model x script loop.
+    local db_save_failed=false
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning.log"
     > "$CURRENT_MODULE_LOG"
     for model in "${ML_MODELS[@]}"; do
         log INFO "  Model: ${model}"
         for script in "${ML_SCRIPTS[@]}"; do
-            run_in_venv machine_learning "$script" \
+            local script_rc=0
+            if run_in_venv machine_learning "$script" \
                 "SAPPHIRE_MODEL_TO_USE=${model}" \
-                "SAPPHIRE_CONSISTENCY_CHECK=${SAPPHIRE_CONSISTENCY_CHECK:-false}" \
-                || { rc=$?; break 2; }
+                "SAPPHIRE_CONSISTENCY_CHECK=${SAPPHIRE_CONSISTENCY_CHECK:-false}"; then
+                script_rc=0
+            else
+                script_rc=$?
+            fi
+
+            if [ $script_rc -eq 5 ]; then
+                log ERROR "  ${model}/${script}: database save failed (exit 5); CSV backup was still written -- continuing with remaining models"
+                db_save_failed=true
+            elif [ $script_rc -ne 0 ]; then
+                rc=$script_rc
+                break 2
+            fi
         done
     done
+
+    if [ $rc -eq 0 ] && [ "$db_save_failed" = true ]; then
+        rc=5
+    fi
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
@@ -1535,7 +1558,24 @@ run_short_term_pipeline() {
             log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
             record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
-            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+            run_machine_learning || {
+                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
+                # default), an ML failure in one horizon (e.g. PENTAD) must
+                # no longer stop the next horizon (DECAD) from running --
+                # run_machine_learning already recorded the FAIL row via
+                # record_result, so skip the rest of *this* horizon's steps
+                # (LR, postprocessing below) and move on to the next mode.
+                # PIPELINE_ABORTED is deliberately NOT set here: it only
+                # gates emit_continue_on_error_hint ("stopped -- here's how
+                # to run past it"), and the pipeline no longer stops on an
+                # ML failure, so there is nothing to run past. With
+                # --continue-on-error (CONTINUE_ON_ERROR=true), fall
+                # through instead -- LR and postprocessing below still run
+                # for this horizon exactly as before this change; the
+                # flag's whole purpose is to keep going, and an ML failure
+                # must not take that away from the modules after it.
+                [ "$CONTINUE_ON_ERROR" = false ] && continue
+            }
         fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
@@ -1672,7 +1712,18 @@ run_maintenance_pipeline() {
             log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
             record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
-            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+            run_maintenance_machine_learning || {
+                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
+                # default), an ML maintenance failure in one horizon must
+                # no longer stop the next horizon from running -- already
+                # recorded via record_result inside
+                # run_maintenance_machine_learning, so skip the rest of
+                # this horizon's steps (LR, postprocessing below) and move
+                # on. With --continue-on-error (CONTINUE_ON_ERROR=true),
+                # fall through instead -- LR and postprocessing below still
+                # run for this horizon exactly as before this change.
+                [ "$CONTINUE_ON_ERROR" = false ] && continue
+            }
         fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
@@ -1723,7 +1774,18 @@ run_daily_pipeline() {
             log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
             record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
-            run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+            run_machine_learning || {
+                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
+                # default), an ML failure in one horizon (e.g. PENTAD) must
+                # no longer stop the next horizon (DECAD) from running --
+                # already recorded via record_result inside
+                # run_machine_learning, so skip the rest of this horizon's
+                # steps (LR, postprocessing below) and move on. With
+                # --continue-on-error (CONTINUE_ON_ERROR=true), fall
+                # through instead -- LR and postprocessing below still run
+                # for this horizon exactly as before this change.
+                [ "$CONTINUE_ON_ERROR" = false ] && continue
+            }
         fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
@@ -1740,7 +1802,18 @@ run_daily_pipeline() {
             log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
             record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
         else
-            run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+            run_maintenance_machine_learning || {
+                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
+                # default), an ML maintenance failure in one horizon must
+                # no longer stop the next horizon from running -- already
+                # recorded via record_result inside
+                # run_maintenance_machine_learning, so skip the rest of
+                # this horizon's steps (LR, postprocessing below) and move
+                # on. With --continue-on-error (CONTINUE_ON_ERROR=true),
+                # fall through instead -- LR and postprocessing below still
+                # run for this horizon exactly as before this change.
+                [ "$CONTINUE_ON_ERROR" = false ] && continue
+            }
         fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
@@ -2491,7 +2564,11 @@ main() {
                 fi
                 export SAPPHIRE_PREDICTION_MODE="$mode"
                 log INFO "Running ML maintenance for mode: ${mode}"
-                run_maintenance_machine_learning || { exit_code=$?; break; }
+                # ML-021 decision 4: an ML maintenance failure in one
+                # horizon must no longer stop the next horizon from
+                # running (no `break` here). Already recorded via
+                # record_result inside run_maintenance_machine_learning.
+                run_maintenance_machine_learning || { exit_code=$?; }
             done
             export SAPPHIRE_PREDICTION_MODE="$original_mode"
             fi
@@ -2570,16 +2647,22 @@ main() {
                     export SAPPHIRE_PREDICTION_MODE="$mode"
                     log INFO "Running machine_learning for mode: ${mode}"
                     ran_modes+=("$mode")
-                    run_machine_learning || { exit_code=$?; break; }
+                    # ML-021 decision 4: a PENTAD failure must no longer
+                    # stop DECAD from running (no `break` here). Already
+                    # recorded via record_result inside run_machine_learning.
+                    run_machine_learning || { exit_code=$?; }
                 done
-                # Validate only the mode(s) actually attempted, each under
-                # its own mode -- validating the pre-loop original_mode
-                # would check a horizon ML did not necessarily produce, and
-                # a mode that never ran (loop broke early) must not be
-                # validated either. Pass the mode as run_module_validation's
-                # label suffix (INFRA-037) so PENTAD/DECAD each get their
-                # own log file and summary row instead of the second call
-                # truncating the first's log and reusing its label.
+                # Validate every mode actually attempted, each under its
+                # own mode -- validating the pre-loop original_mode would
+                # check a horizon ML did not necessarily produce. Since
+                # ML-021 decision 4, the loop above no longer breaks early
+                # on failure, so ran_modes now always equals
+                # ML_BARE_RESOLVED_MODES; the "attempted, not resolved" set
+                # is kept deliberately in case that ever changes again.
+                # Pass the mode as run_module_validation's label suffix
+                # (INFRA-037) so PENTAD/DECAD each get their own log file
+                # and summary row instead of the second call truncating the
+                # first's log and reusing its label.
                 for mode in ${ran_modes[@]+"${ran_modes[@]}"}; do
                     export SAPPHIRE_PREDICTION_MODE="$mode"
                     run_module_validation "machine_learning" "$mode"

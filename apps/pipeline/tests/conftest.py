@@ -396,6 +396,7 @@ def run_main(
     dry_run: bool = False,
     extra_env: dict[str, str] | None = None,
     cwd: Path | None = None,
+    ml_models: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Source run_locally.sh, override data-only globals, and call main().
 
@@ -409,6 +410,16 @@ def run_main(
     single entry each purely to keep runtime down -- they are plain
     configuration data iterated by run_machine_learning /
     run_maintenance_machine_learning, not logic under test.
+
+    `ml_models`, when given, replaces the single-entry ML_MODELS default
+    with the given list (e.g. ["TFT", "TIDE", "TSMIXER"]) -- ML-021's
+    per-model exit-5 continuation tests need more than one model to prove
+    "the remaining models still ran". A stub's `decision` snippet can
+    branch on `$SAPPHIRE_MODEL_TO_USE` (set by run_in_venv's extra_env,
+    same as `$SAPPHIRE_PREDICTION_MODE`) to script a specific model's exit
+    code. Names are interpolated directly into the sourced bash array, so
+    callers must only pass simple identifiers (as every existing ML model
+    name is) -- never untrusted input.
 
     `cwd` defaults to APPS_DIR (matching every existing caller). A test that
     needs to prove behaviour of a RELATIVE ieasyhydroforecast_env_file_path
@@ -425,12 +436,14 @@ def run_main(
     flag = "--continue-on-error " if continue_on_error else ""
     flag += "--dry-run " if dry_run else ""
 
+    ml_models_literal = " ".join(ml_models) if ml_models else "TFT"
+
     script = textwrap.dedent(f"""
         source "{RUN_LOCALLY_SH}"
         SCRIPT_DIR="{tree.script_dir}"
         LOG_DIR="{tree.log_dir}"
         LOG_FILE="{log_file}"
-        ML_MODELS=(TFT)
+        ML_MODELS=({ml_models_literal})
         ML_SCRIPTS=(recalculate_nan_forecasts.py)
         ML_MAINTENANCE_SCRIPTS=(recalculate_nan_forecasts.py)
         main {flag}{target}
