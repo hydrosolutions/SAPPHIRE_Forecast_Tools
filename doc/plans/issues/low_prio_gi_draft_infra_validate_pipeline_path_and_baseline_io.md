@@ -79,13 +79,21 @@ horizons do not match. That changes the same serialisation and loading path this
 **do this after INFRA-045's P1, or rebase onto its horizon-metadata contract**. Doing them
 independently risks two incompatible baseline-shape validators.
 
-## Open decision for the owner
+## Control flow — DECIDED 2026-09-08
 
 **Appending a `[FAIL]` row is not sufficient to make these exit 1.** `exit_code` is computed before
-the output/baseline writes happen, and `--phase pre` then returns 0 unconditionally. So a write
-failure would be reported and still exit 0. Decide: recompute the exit code after the writes, or
-exit immediately at the failure — and decide whether a baseline should still be written when
-`--output-json` fails during `pre`.
+the output/baseline writes happen, and `--phase pre` then returns 0 unconditionally, so a write
+failure would be printed and the process would still exit 0.
+
+**Owner decision: fail fast.** On a write or read failure, report what went wrong and **exit
+non-zero at that point** — do not continue and recompute the exit code at the end. One place decides
+the outcome, so a later step cannot overwrite it. Consequence to state in the implementing PR: when
+`--output-json` fails during `--phase pre`, the baseline is **not** written either, because the run
+stops at the failure. That is intended — a run that could not produce its output should not leave a
+baseline implying it succeeded.
+
+**Test it**: an unwritable `--output-json` under `--phase pre` exits non-zero **and** leaves no new
+baseline behind.
 
 ## Files that may be modified
 

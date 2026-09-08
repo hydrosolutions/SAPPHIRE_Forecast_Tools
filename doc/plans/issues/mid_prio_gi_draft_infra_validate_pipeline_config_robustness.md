@@ -552,13 +552,15 @@ call. Test a `daily` pre/post pair across the change.
 
 > **Owned by P1** (assigned 2026-09-08 after the third review found no phase implemented it).
 >
-> **One point still needs your call before P1 starts**: D4's heading is `daily`-specific, but
-> "refuse a baseline whose horizon set does not match" as written would reject **every** legacy
-> horizonless baseline, on every target — because none of them records horizons. Decide: (a) reject
-> only where it can actually mislead, i.e. `daily`, and accept a horizonless baseline for
-> single-horizon targets; or (b) reject all legacy baselines and have every deployment retake them
-> once. (a) is narrower and matches the defect; (b) is simpler to implement and reason about but
-> invalidates baselines for targets whose behaviour did not change.
+> **Scope DECIDED 2026-09-08: option (a) — refuse only where it can mislead.** A legacy
+> horizonless baseline is rejected **for `daily` only**, with a retake message. For every other
+> target a horizonless baseline is still accepted and behaves exactly as today — their horizon
+> resolution did not change, so invalidating their baselines would be churn for no safety gain.
+>
+> Implementation note: this means the check is "if the run is `daily` **and** the baseline records
+> no horizons (or a set that does not match), refuse" — not a blanket horizon-equality check, which
+> would reject everything. Test both halves: `daily` with a legacy baseline is refused; a
+> single-horizon target with a legacy baseline still loads and compares.
 
 **D5 — DECIDED 2026-09-08: `SAPPHIRE_API_ENABLED` is left alone; the acceptance criterion is
 narrowed instead.** Today anything but the literal `"false"` counts as enabled
