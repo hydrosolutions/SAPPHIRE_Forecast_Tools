@@ -1,6 +1,10 @@
 # ML-021: `make_forecast.py` exits 0 after writing no forecasts to the API
 
-**Status**: Draft (2026-08-20; revised same day after two independent out-of-loop reviews)
+**Status**: Draft — **REVIEWED 2026-09-08 (third out-of-loop pass, against trunk `ebe422fc`). NOT
+safe to implement as written.** The defect is confirmed still live. But the proposed direction does
+**not** fix the headline scenario, and one of its steps is not achievable in the scope it claims.
+See "Review 2026-09-08" before treating anything below as a work order. Originally Draft 2026-08-20,
+revised same day after two independent out-of-loop reviews.
 **Module**: `apps/machine_learning` (`make_forecast.py`, `scr/utils_ml_forecast.py`)
 **Priority**: High — an operational ML run can report success on every layer
 (`make_forecast.py` exit 0, `run_locally.sh` `PASS`) while writing **nothing** to
@@ -176,6 +180,90 @@ the reporting half is done, the exit-code half is not. Extend this shape.
    `print_summary` force a final exit 1 for a different reason.
 
 ---
+
+## Review 2026-09-08 — the plan does not fix the bug it describes
+
+Third out-of-loop pass, verified at file:line against trunk. **The defect is still live**:
+`make_forecast.py:171` and `:222` call the writer bare, `:173-175`/`:224-226` catch and continue, and
+there is no `sys.exit` (`:876`).
+
+### Two blocking findings
+
+**1. The proposed `WROTE(n)` cannot be produced by a wrapper-only change, and the exact reported
+failure survives the fix.** `_write_ml_forecast_to_api` does `count = client.write_forecasts(records)`
+and then `return True` **regardless of count** (`utils_ml_forecast.py:805-813`) — it also *prints*
+"Successfully wrote 0 ML forecast records". So an API that accepts the call and stores nothing is
+reported as success, and no wrapper-level change can see it. **The plan's own headline scenario —
+"exits 0 after writing no forecasts" — is therefore still reachable after implementing the plan.**
+
+Smallest correction: keep the helper's boolean and make a zero count return `False`, or have it
+return the count. **Do not give the helper an enum** — every `Enum` member is truthy, so the six
+caller modules that currently do `if api_ok:`/`if ok:` would silently treat a failure member as
+success.
+
+**2. "Aggregate after the model loop" is not achievable inside `make_forecast.py`.** The `break 2`
+lives in the shell (`run_locally.sh:775-783`), so the loop that must not be broken is *outside* the
+process whose exit code we are changing. A Python-side aggregate cannot span three separate
+processes. **`run_locally.sh` must be in scope**, and it must distinguish "API delivery failed after
+the CSV fallback succeeded — continue, remember it" from an ordinary computation failure that should
+still fail fast. A dedicated exit code is the minimal mechanism; a blanket "continue on any non-zero"
+would silently discard the existing fail-fast contract. Also decide whether the guarantee extends to
+`ML_MODE=BOTH`, whose outer loop currently stops DECAD after a PENTAD failure and is **test-pinned**
+at `test_run_locally_orchestration.py:713-725`.
+
+### Two further defects in the plan text
+
+**3. Acceptance criterion 1 is self-contradictory.** "Every outcome except `DISABLED` … is treated as
+a failure" classifies a successful `WROTE` as a failure. It also leaves "the required CSV write"
+undefined while the script writes **two** files (`*_forecast_latest.csv` and the archive
+`*_forecast.csv`), and swallows archive failures separately (`:178-199`, `:228-250`). This needs an
+explicit truth table.
+
+**4. `NOTHING_TO_WRITE` and `DISABLED` need a precedence rule.** With `SAPPHIRE_API_ENABLED=false`
+*and* zero eligible rivers, returning only `DISABLED` exits 0 having produced no fresh forecast;
+treating `NOTHING_TO_WRITE` as always-fatal makes a legitimately-zero-station model an operational
+failure. The wrapper also **cannot** distinguish "zero rivers selected" from "rivers selected but
+every predictor returned an empty frame" — both arrive as an empty frame.
+
+### Corrections to this document's factual claims
+
+- **"A missing client is a third completely invisible cause"** — **wrong end-to-end.** With API mode
+  on, the run fails earlier: `read_daily_discharge_data` selects the API
+  (`forecast_library.py:2514-2521`) and raises for a missing client (`:2334`). Invisible only if a
+  wrapper is called directly. The claim holds at wrapper level, not operationally.
+- **"Empty `rivers_to_predict` is effectively the only source of an empty record set"** — **wrong.**
+  With rivers selected, every predictor can still return an empty frame; `:806-829` assigns `flag=2`
+  but appends no rows.
+- **"A short `codes_to_use` necessarily produces degraded rows rather than zero rows"** — **wrong.**
+  Missing enrichment can make the predictor raise or return empty, which appends nothing.
+- **PP-051's shipped shape is NOT the enum proposed here.** It is `WROTE`, `SKIPPED_BY_CONFIG`,
+  `SKIPPED_NO_RECORDS`, `SKIPPED_NOT_DEPLOYED`, `FAILED` (`postprocessing_forecasts/src/api_writer.py:67-83`),
+  and its doctrine is explicit: **only `FAILED` is a failure**, so `SKIPPED_NO_RECORDS` is benign.
+  That directly contradicts acceptance criterion 1 here. Since this issue says not to diverge from
+  PP-051's settled shape, the divergence must be resolved deliberately, not by accident.
+- **`recalculate_nan_forecasts.py` is a weaker precedent than claimed.** It captures the bool but
+  collapses disabled, missing client, no-replacements, readiness failure and exceptions into one
+  generic warning (`:455-459`), and calls deliberate CSV-only mode "unsuccessful".
+- The **ML-016** note is stale: the bare target now resolves and validates modes
+  (`run_locally.sh:529-580`). Does not affect this issue's reasoning.
+
+### Decisions required before implementation
+
+1. **The success/failure truth table**, explicitly: which outcomes fail, whether a zero API count
+   fails, and which of the two CSV writes is "required".
+2. **Is `SKIPPED_NO_RECORDS` benign (PP-051's doctrine) or fatal here?** They cannot both be true.
+3. **Is `run_locally.sh` in scope?** If not, finding 2 says the fix cannot be done without making
+   things worse, and this issue should be reduced to reporting-only.
+4. Does the "other models still run" guarantee extend to `ML_MODE=BOTH`?
+
+### Note on scope, given the standing "keep changes minimal" instruction
+
+`make_forecast.py` is the **only** one of nine call sites that discards the helper's return; the
+other six modules already capture it (`ok`, `api_ok`, `api_write_ok`). Combined with finding 1's
+minimal correction, a much smaller fix than the proposed enum appears available: make the helper
+report a zero count as failure, capture the boolean in the two wrappers, aggregate within
+`make_ml_forecast`, and add one dedicated exit code in `run_locally.sh`. That is a direction, not a
+decision — it still depends on answers 1-4.
 
 ## Proposed direction (needs owner sign-off — do not implement from this draft)
 
