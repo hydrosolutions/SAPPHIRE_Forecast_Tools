@@ -16,7 +16,7 @@ The C4 exit-code invariant guard (test 6) lives in
 ``test_short_horizon_write_failure_visibility.py`` instead, next to the other
 ``_write_short_horizon_hydrograph_records`` tests it protects.
 
-See ``doc/plans/issues/high_prio_gi_draft_prepq_short_horizon_norm_drops_rows.md``.
+See ``doc/plans/issues/review_gi_draft_prepq_short_horizon_norm_drops_rows.md``.
 
 Fake station codes '19999' / '19998' only; no real station codes or
 discharge values.
