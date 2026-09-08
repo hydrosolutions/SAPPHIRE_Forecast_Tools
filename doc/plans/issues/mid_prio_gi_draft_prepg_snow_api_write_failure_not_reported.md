@@ -127,9 +127,11 @@ be a one-line change that leaves the reported bug unfixed.
   catches the raise and still returns `True`. The blast radius stays inside the operational path.
 - `extend_era5_reanalysis.py` does not use this writer.
 
-**Test work.** Four tests assert readiness-false returns `False`
-(`test_api_integration.py:70, :279, :664, :1222`) and must be deliberately inverted to expect the
-raise. One existing test is **vacuous and must be fixed either way**:
+**Test work.** **Two** tests assert readiness-false returns `False` for *this* writer and must be
+deliberately inverted to expect the raise: `test_api_integration.py:62` and `:271`. **Four** tests
+share the name `test_api_not_ready_returns_false`; the other two (`:656`, `:1214`) exercise
+`extend_era5_reanalysis._write_meteo_to_api` and `Quantile_Mapping_OP._write_meteo_to_api` — the
+meteo writers, which this change does not touch. **Do not modify those two.** One existing test is **vacuous and must be fixed either way**:
 `test_api_failure_non_fatal_csv_still_written` (`:911-935`) sets `get_operational` to raise, so the
 function returns at the fetch stage and never reaches the API write — the `SapphireAPIError` it
 mocks never fires, and it therefore pins nothing. New tests: API unreachable exits non-zero; flag
