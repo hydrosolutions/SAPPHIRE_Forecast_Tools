@@ -416,12 +416,29 @@ Line numbers are as of 2026-09-03; re-derive them with `grep -n` at implementati
 ## Follow-up: 2026-09-08 owner decision — grade norm-lookup failures by HTTP status code
 
 **Why this was needed.** The owner identified a deployment (Tajik Hydromet) that has entered **no
-monthly discharge norms at all**. On that deployment, if iEH HF answers a monthly-norm request with
-a non-200 for a station with no norm on file (observed shape: HTTP 404), **every** attempted
-station's `_lookup_monthly_norms` call raises. That makes `sdk_failed == total_attempted > 0` on
-every single run — the exact TOTAL-outage shape C1 built exit 6 for — so this issue's own fix would
-have reintroduced the false alarm it exists to remove: a red `FAIL` row and a non-zero exit code on
-a deployment that is behaving correctly (no norms is expected there, not a fault).
+monthly discharge norms at all**, and asked whether this issue's own fix would then print a red
+`FAIL` on every run. The hazard is real in principle: *if* an iEH HF deployment answers a
+monthly-norm request for a station with no norm on file with a non-200, every attempted station's
+`_lookup_monthly_norms` call raises, `sdk_failed == total_attempted > 0`, and the run takes the
+exact TOTAL-outage shape C1 built exit 6 for — reintroducing the false alarm this issue exists to
+remove, on a deployment that is behaving correctly.
+
+> **MEASURED 2026-09-08 — the hazard is not live on either current deployment.** Live
+> `run_locally.sh maintenance:preprocessing_runoff` runs against both env files, tunnels open:
+>
+> | deployment | counts | exit |
+> |---|---|---|
+> | kyg | `total_attempted=62 written=53 norm_absent=5 norm_absent_via_404=0 sdk_failed=4 api_failed=0` | 0 |
+> | taj | `total_attempted=17 written=0 norm_absent=17 norm_absent_via_404=0 sdk_failed=0 api_failed=0` | 0 |
+>
+> Both answer **200-with-empty**, not 404, for a station without norms — so nothing raises, the
+> stations classify `NORM_ABSENT` through the pre-existing `_classify_monthly_norms` path, and
+> `norm_absent` has never affected the exit code. **taj passes because of that, NOT because of the
+> 404 grading below**, whose branch is unexercised there (`norm_absent_via_404=0` on both).
+> The grading is therefore **defensive insurance** against a deployment or API version that answers
+> 404 — worth having, but do not describe it as what rescued taj. That was checked and is false.
+> taj's short-horizon block on the same run: `pentad_written=0 pentad_norm_absent=17
+> pentad_sdk_failed=0`, also exit 0 — the short-horizon path never fails on norms.
 
 **Owner decision (2026-09-08)**: grade the raised exception by its HTTP status code —
 "there is no norm here" (404) must stay informational (`NORM_ABSENT`, unchanged exit-code
@@ -481,7 +498,7 @@ downstream of classification.
 
 **Consequence to document, not hide**: `norm_absent` (both the `LONG-HORIZON RUN SUMMARY` counts
 line and the `DEGRADED:` line) now also counts "the norms endpoint answered 404 for this station".
-A 404 can mean either "this station genuinely has no norm entered" (the motivating case above) or
+A 404 can mean either "this station genuinely has no norm entered" (the case this grading exists for) or
 "iEH HF does not recognise this *site* at all" — a configuration problem, not a data gap — and the
 status code alone cannot distinguish the two. Operators must not read `norm_absent` as strict
 confirmation "site exists, norm missing"; a station worth investigating can hide in that bucket.
@@ -492,7 +509,8 @@ Documented in the `_NormClassification` enum docstring, `apps/preprocessing_runo
 regex-parsing unit tests (`_extract_sdk_status_code`, including the no-match and malformed-input
 cases); `_lookup_monthly_norms` classification tests for 404, 401, 500, the ungraded "No path
 provided" message, and a non-`ValueError` exception; and three orchestrator-level end-to-end tests
-using `write_long_horizon_hydrograph` — all-404 (the motivating case: `sdk_failed == 0`,
+using `write_long_horizon_hydrograph` — all-404 (the defensive case; not observed on any current
+deployment, see the measured signatures above: `sdk_failed == 0`,
 `norm_absent == total_attempted`, exit 0, empty `failed_station_codes`), all-500 (still exit 6,
 proving the alarm was not silenced), and a 404/500 mix (only the 500 drives `sdk_failed`; exit 4
 because it does not account for every attempted station). All new tests were mutation-verified:

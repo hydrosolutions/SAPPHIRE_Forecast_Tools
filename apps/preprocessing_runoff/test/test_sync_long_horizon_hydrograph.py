@@ -942,6 +942,57 @@ def test_orchestrator_mixed_404_and_500_only_500s_drive_sdk_failed_and_exit_four
     assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 4
 
 
+# Second out-of-loop cross-check (2026-09-08), Finding 1: the anchor used `$`
+# and `\d`. In Python (non-MULTILINE), `$` also matches immediately before a
+# trailing newline, and `\d` matches any Unicode decimal digit, not just
+# ASCII 0-9. The reviewer's two concrete probes -- a message with a trailing
+# newline, and one using Arabic-Indic digits for "404" -- both extracted 404
+# under the old `$`/`\d{3}` pattern despite being a DIFFERENT message shape
+# than the SDK's own. A line-terminated or transcoded wrapper message must
+# not be graded as the SDK's genuine 404. `_SDK_NORM_LOOKUP_FAILURE_PATTERN`
+# now anchors with `\A`/`\Z` and restricts digits to `[0-9]{3}`.
+def test_extract_sdk_status_code_rejects_message_with_trailing_newline():
+    exc = ValueError("Could not retrieve discharge norm for site 19999, got status code 404\n")
+    assert sync_lhh._extract_sdk_status_code(exc) is None
+
+
+def test_extract_sdk_status_code_rejects_unicode_digits():
+    # U+0664 U+0660 U+0664 is the Arabic-Indic rendering of "404". `\d{3}`
+    # would match it; `[0-9]{3}` does not.
+    exc = ValueError("Could not retrieve discharge norm for site 19999, got status code ٤٠٤")
+    assert sync_lhh._extract_sdk_status_code(exc) is None
+
+
+def test_extract_sdk_status_code_still_matches_genuine_sdk_message():
+    # Companion to the two rejection tests above: the tightened anchor must
+    # not over-reject the SDK's own real message, which is plain ASCII with
+    # no trailing newline. (Also covered by
+    # test_extract_sdk_status_code_parses_defensively; asserted again here,
+    # explicitly, alongside its two rejected near-miss shapes.)
+    exc = ValueError("Could not retrieve discharge norm for site 19999, got status code 404")
+    assert sync_lhh._extract_sdk_status_code(exc) == 404
+
+
+# Second out-of-loop cross-check (2026-09-08), Finding 2: every existing
+# ConnectionError test above (e.g.
+# test_lookup_monthly_norms_connectionerror_with_404_phrase_classifies_sdk_failed)
+# uses "proxy returned status code 404", a message the ANCHOR already
+# rejects -- so those tests stay green even if the `isinstance(exc,
+# ValueError)` type gate in `_extract_sdk_status_code` were deleted entirely.
+# They guard the anchor, not the type gate. This test uses the exact
+# SDK-shaped message text (which the anchor WOULD match) but raises it as a
+# ConnectionError instead of a ValueError: only the type gate can reject
+# this one, so it is the shape that starts failing if that check is removed.
+def test_lookup_monthly_norms_non_valueerror_with_exact_sdk_message_still_classifies_sdk_failed():
+    exc = ConnectionError("Could not retrieve discharge norm for site 19999, got status code 404")
+    assert sync_lhh._extract_sdk_status_code(exc) is None
+
+    result = sync_lhh._lookup_monthly_norms(TEST_CODE, FakeSDK(exc))
+
+    assert result.classification is sync_lhh._NormClassification.SDK_FAILED
+    assert isinstance(result.exception, ConnectionError)
+
+
 def test_norm_absent_without_prior_norms_writes_all_horizons_and_local_values(monkeypatch):
     monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
     previous_values = {month: month * 10.0 for month in range(1, 13)}
@@ -1436,16 +1487,47 @@ def test_run_summary_artifact_norm_absent_via_404_counts_only_the_404_subset():
     # a SUBSET of norm_absent, not a replacement for it or a separate
     # population -- a mixed batch (one 404, one plain 200-empty-payload
     # absence) must report norm_absent=2 but norm_absent_via_404=1.
-    records = sync_lhh._LongHorizonWriteResult()
-    records.station_statuses = [
+    #
+    # Second out-of-loop cross-check (2026-09-08), Finding 3: the original
+    # version of this test manually set
+    # `records.norm_absent_via_404_station_codes = ["19999"]` instead of
+    # driving the real producer, so a writer bug that marked EVERY
+    # NORM_ABSENT result as "via 404" would still pass every assertion here
+    # -- it exercised only the summarizer/artifact formatting, not the thing
+    # that's supposed to be under test. Drive it through
+    # write_long_horizon_hydrograph with a real FakeSDK instead: one
+    # station's norm lookup raises the SDK's exact 404 ValueError, the other
+    # returns an empty ([]) payload -- a plain 200-with-nothing absence, no
+    # exception at all.
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+    sdk = FakeSDK(
+        ValueError("Could not retrieve discharge norm for site 19999, got status code 404"),
+        [],
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=["19999", "19998"],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert records.station_statuses == [
         ("19999", sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
         ("19998", sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
     ]
-    records.norm_absent_via_404_station_codes = ["19999"]
-    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    assert records.norm_absent_via_404_station_codes == ["19999"]
 
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
     artifact = sync_lhh._format_long_horizon_run_summary_artifact(summary)
 
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT] == 2
     assert summary.norm_absent_via_404 == 1
     assert "norm_absent=2" in artifact
     assert "norm_absent_via_404=1" in artifact

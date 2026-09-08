@@ -127,7 +127,20 @@ echo "===== 8. LONG-HORIZON HYDROGRAPH SYNC (INFRA-037/INFRA-044, degraded not f
 # NEVER show up here even on an all-404 deployment. DEGRADED:/norm_absent/
 # LONG-HORIZON RUN SUMMARY are the signals that survive that cap; use those,
 # not the per-station text, to see the aggregate 404 picture.
-grep -n "SDK call failed for site\|long-horizon sync\|Long-horizon hydrograph sync had\|DEGRADED:\|LONG-HORIZON RUN SUMMARY\|norm_absent" "$RUN" | head -20
+#
+# NOTE (2026-09-08, second cross-check finding): the per-station
+# "SDK call failed for site" lines are written DURING the run, before the
+# aggregate summary lines below -- a single grep piped into `head -20` can
+# fill its 20 lines with per-station noise on a run with 20+ such stations
+# and never reach DEGRADED:/LONG-HORIZON RUN SUMMARY/norm_absent at all,
+# hiding exactly the aggregate this section tells you to read. Grep the
+# per-station and aggregate lines separately: bound only the per-station
+# one, and leave the aggregate one unbounded (it is always a handful of
+# lines regardless of station count).
+echo "--- per-station (bounded to 20) ---"
+grep -n "SDK call failed for site" "$RUN" | head -20
+echo "--- aggregate summary (unbounded) ---"
+grep -n "long-horizon sync\|Long-horizon hydrograph sync had\|DEGRADED:\|LONG-HORIZON RUN SUMMARY\|norm_absent" "$RUN"
 } 2>&1 | tee /tmp/ml_round1.txt
 ```
 

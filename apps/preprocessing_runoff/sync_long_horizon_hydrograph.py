@@ -158,7 +158,7 @@ QUARTER_MONTHS = {1: (1, 2, 3), 2: (4, 5, 6), 3: (7, 8, 9), 4: (10, 11, 12)}
 # the provided path is None") and connection-level errors carry no status
 # code and never match either.
 _SDK_NORM_LOOKUP_FAILURE_PATTERN = re.compile(
-    r"^Could not retrieve \S+ norm for site .+, got status code (\d{3})$"
+    r"\ACould not retrieve \S+ norm for site .+, got status code ([0-9]{3})\Z"
 )
 
 
