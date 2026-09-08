@@ -83,12 +83,25 @@ class LongHorizonStationWriteStatus(Enum):
 class LongHorizonStationWriteResult:
     status: LongHorizonStationWriteStatus
     records: list[dict[str, Any]]
+    # True only when `status` is NORM_ABSENT *and* it was reached via a raised
+    # SDK exception graded HTTP 404 (as opposed to a 200 response with an
+    # empty/invalid payload). Default False keeps every existing positional/
+    # keyword construction of this dataclass unaffected.
+    norm_absent_via_404: bool = False
 
 
 @dataclass(frozen=True)
 class LongHorizonRunSummary:
     status_counts: dict[LongHorizonStationWriteStatus, int]
     total_attempted: int
+    # Subset of status_counts[NORM_ABSENT]: how many of those stations were
+    # specifically a graded-404 SDK exception, rather than a 200-with-empty/
+    # invalid-payload response. Additive alongside the existing counts, not a
+    # replacement for any of them -- see write_station_monthly_hydrograph and
+    # _summarize_long_horizon_station_statuses. Default 0 keeps the two
+    # existing direct constructions of this dataclass in the test suite
+    # unaffected.
+    norm_absent_via_404: int = 0
 
 
 @dataclass(frozen=True)
@@ -105,6 +118,10 @@ class _LongHorizonWriteResult(list):
         self.completed_station_codes: list[str] = []
         self.failed_station_codes: list[str] = []
         self.station_statuses: list[tuple[str, LongHorizonStationWriteStatus]] = []
+        # Subset of the NORM_ABSENT station codes in `station_statuses` whose
+        # absence was reached via a graded-404 SDK exception rather than a
+        # 200-with-empty/invalid-payload response. See LongHorizonRunSummary.
+        self.norm_absent_via_404_station_codes: list[str] = []
 
 
 logging.basicConfig(
@@ -119,12 +136,30 @@ MONTHS = tuple(range(1, 13))
 MID_MONTH_DOY = (15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349)
 QUARTER_MONTHS = {1: (1, 2, 3), 2: (4, 5, 6), 3: (7, 8, 9), 4: (10, 11, 12)}
 
-# Matches the iEH HF SDK's `get_norm_for_site` failure message, e.g.
-# "Could not retrieve discharge norm for site 19999, got status code 404".
-# `_get_site_uuid_for_site_code` failures ("No path provided or the
-# provided path is None") and connection-level errors carry no status
-# code and never match.
-_SDK_STATUS_CODE_PATTERN = re.compile(r"status code (\d{3})")
+# Matches the iEH HF SDK's `get_norm_for_site` failure message IN FULL,
+# anchored start-to-end -- not a loose substring search -- e.g.
+# "Could not retrieve discharge norm for site 19999, got status code 404"
+# (confirmed against the installed SDK,
+# ieasyhydro_sdk.sdk.IEasyHydroHFSDK.get_norm_for_site, which raises exactly
+# `ValueError(f"Could not retrieve {norm_type} norm for site {site_code}, got
+# status code {norm_response.status_code}")` on a non-200 response).
+#
+# A loose `"status code (\d{3})"` search over-matches two real shapes:
+#   - requests.exceptions.ConnectionError("proxy returned status code 404")
+#     -- a genuine connection failure that happens to mention "404" in its
+#     own text, misread as NORM_ABSENT.
+#   - a chained/composite message with more than one status code, e.g.
+#     "retry history: upstream status code 404; final response got status
+#     code 503" -- the *first* match (404) hides the real (503) failure.
+# Anchoring to the exact SDK shape, and requiring the exception be a
+# ValueError (see `_extract_sdk_status_code`), rules out both: neither
+# example matches this pattern, so both correctly fall through to
+# SDK_FAILED. `_get_site_uuid_for_site_code` failures ("No path provided or
+# the provided path is None") and connection-level errors carry no status
+# code and never match either.
+_SDK_NORM_LOOKUP_FAILURE_PATTERN = re.compile(
+    r"^Could not retrieve \S+ norm for site .+, got status code (\d{3})$"
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -310,15 +345,26 @@ def _classify_monthly_norms(norms: Any) -> _NormClassification:
 
 
 def _extract_sdk_status_code(exc: Exception) -> int | None:
-    """Best-effort extraction of an HTTP status code embedded in an SDK exception message.
+    """Extract the HTTP status code from a genuine iEH HF SDK norm-lookup failure.
 
-    Parses defensively: any failure to match or convert returns ``None``
-    rather than raising, so a malformed or unexpected exception always
-    falls back to the conservative (SDK_FAILED) path in
-    ``_lookup_monthly_norms``.
+    Returns a status code ONLY when ``exc`` is a ``ValueError`` AND its message
+    matches ``_SDK_NORM_LOOKUP_FAILURE_PATTERN`` in full (anchored start-to-end,
+    not a loose search) -- the exact shape ``get_norm_for_site`` raises on a
+    non-200 response. Any other exception type (e.g. a ``ConnectionError``
+    whose text happens to contain "status code 404"), or any ``ValueError``
+    whose message does not match that full shape (e.g. a chained/composite
+    message embedding more than one status code), returns ``None``.
+
+    Parses defensively: any failure to match or convert also returns ``None``
+    rather than raising. In every ``None`` case the caller
+    (``_lookup_monthly_norms``) falls back to the conservative SDK_FAILED
+    path -- failing closed is intentional here: an unrecognised message means
+    "broken", never "absent".
     """
+    if not isinstance(exc, ValueError):
+        return None
     try:
-        match = _SDK_STATUS_CODE_PATTERN.search(str(exc))
+        match = _SDK_NORM_LOOKUP_FAILURE_PATTERN.match(str(exc))
         if match is None:
             return None
         return int(match.group(1))
@@ -330,7 +376,9 @@ def _lookup_monthly_norms(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult
     """Fetch and classify the SDK monthly norms, capturing any raised exception.
 
     A raised exception is graded by the HTTP status code embedded in its
-    message, when one is present:
+    message, ONLY when the exception is a ``ValueError`` whose message
+    matches the exact ``get_norm_for_site`` failure shape, anchored in full
+    (see ``_SDK_NORM_LOOKUP_FAILURE_PATTERN`` / ``_extract_sdk_status_code``):
 
     - 404 -> NORM_ABSENT. The norm endpoint says there is no norm for this
       station -- treated the same as a 200 response with an empty/invalid
@@ -343,11 +391,21 @@ def _lookup_monthly_norms(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult
       absent norm".
     - Any other status code (401, 403, 400, 5xx, ...) -> SDK_FAILED, same
       as before this grading existed.
-    - No parseable status code at all (e.g. the SDK's own
-      "No path provided or the provided path is None" when the site UUID
-      lookup itself fails, a timeout, a connection error) -> SDK_FAILED.
-      Unknown is treated as broken, not absent -- this is the conservative
-      default.
+    - No parseable status code at all -- e.g. the SDK's own "No path
+      provided or the provided path is None" when the site UUID lookup
+      itself fails, a timeout, a ``ConnectionError`` (even one whose text
+      happens to mention "status code 404" -- not a ``ValueError``, so
+      never graded), or a ``ValueError`` whose message doesn't match the
+      exact SDK shape (e.g. a chained/composite message with more than one
+      embedded status code) -> SDK_FAILED. Unknown is treated as broken,
+      not absent -- this is the conservative, fail-closed default.
+
+    The per-station INFO log line below naming the 404 is emitted for
+    completeness, but is NOT a reliable operator-visible signal: the root
+    logger is capped at WARNING in production (``setup_library``,
+    INFRA-029), so this line never appears in a production log. The
+    aggregate ``norm_absent_via_404`` count in the run summary (see
+    ``LongHorizonRunSummary``) is what actually survives that cap.
     """
     try:
         norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
@@ -489,7 +547,16 @@ def write_station_monthly_hydrograph(
         status = LongHorizonStationWriteStatus.SDK_FAILED
     else:
         status = LongHorizonStationWriteStatus.NORM_ABSENT
-    return LongHorizonStationWriteResult(status=status, records=records)
+    # NORM_ABSENT arises two ways: a 200 response with an empty/invalid
+    # payload (norm_lookup.exception is None), or a raised exception graded
+    # HTTP 404 (norm_lookup.exception is set -- see _lookup_monthly_norms).
+    # Only the latter is "via 404".
+    norm_absent_via_404 = (
+        norm_classification is _NormClassification.NORM_ABSENT and norm_lookup.exception is not None
+    )
+    return LongHorizonStationWriteResult(
+        status=status, records=records, norm_absent_via_404=norm_absent_via_404
+    )
 
 
 def _seasonal_field_mean(monthly_records: list[dict[str, Any]], field: str) -> float | None:
@@ -666,6 +733,8 @@ def write_long_horizon_hydrograph(
             )
             all_records.completed_station_codes.append(code_str)
             all_records.station_statuses.append((code_str, monthly_result.status))
+            if monthly_result.norm_absent_via_404:
+                all_records.norm_absent_via_404_station_codes.append(code_str)
         except _API_READ_WRITE_ERRORS as exc:
             all_records.failed_station_codes.append(code_str)
             all_records.station_statuses.append(
@@ -697,9 +766,11 @@ def _summarize_long_horizon_station_statuses(
     station_statuses = getattr(records, "station_statuses", [])
     for _code, status in station_statuses:
         status_counts[status] += 1
+    norm_absent_via_404_codes = getattr(records, "norm_absent_via_404_station_codes", [])
     return LongHorizonRunSummary(
         status_counts=status_counts,
         total_attempted=len(station_statuses),
+        norm_absent_via_404=len(norm_absent_via_404_codes),
     )
 
 
@@ -754,13 +825,23 @@ def _log_degraded_long_horizon_summary(summary: LongHorizonRunSummary) -> None:
 
 
 def _format_long_horizon_run_summary_artifact(summary: LongHorizonRunSummary) -> str:
-    """Format the counts-only maintenance summary block captured by the yearly service log."""
+    """Format the counts-only maintenance summary block captured by the yearly service log.
+
+    ``norm_absent_via_404`` is a subset breakdown of ``norm_absent`` (not a
+    separate population, and not a rename of it): how many of the
+    ``norm_absent`` stations were specifically a graded-HTTP-404 SDK
+    exception, as opposed to a 200 response with an empty/invalid payload.
+    This is the only 404 provenance available at default (WARNING-capped)
+    production log level -- the per-station INFO log naming the site is not
+    (see ``_lookup_monthly_norms``).
+    """
     degraded_line = _degraded_long_horizon_summary_line(summary)
     lines = [
         "LONG-HORIZON RUN SUMMARY",
         f"total_attempted={summary.total_attempted}",
         f"written={summary.status_counts[LongHorizonStationWriteStatus.WRITTEN]}",
         f"norm_absent={summary.status_counts[LongHorizonStationWriteStatus.NORM_ABSENT]}",
+        f"norm_absent_via_404={summary.norm_absent_via_404}",
         f"sdk_failed={summary.status_counts[LongHorizonStationWriteStatus.SDK_FAILED]}",
         f"api_failed={summary.status_counts[LongHorizonStationWriteStatus.API_FAILED]}",
     ]

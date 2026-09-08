@@ -447,18 +447,26 @@ the ungraded shape — it can be parsed directly from the exception's own text w
 lookup, and PREPQ-014's refutations (which targeted an inference from a *different* signal) do not
 apply to it.
 
-**Implementation** (`apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`):
+**Implementation** (`apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`; regex and
+grading tightened 2026-09-08 by the out-of-loop cross-check below — this section describes the
+**current** shape, not the as-first-implemented one):
 
-- `_SDK_STATUS_CODE_PATTERN = re.compile(r"status code (\d{3})")` — module-level regex matching
-  the `get_norm_for_site` message shape above.
-- `_extract_sdk_status_code(exc)` — searches `str(exc)` for the pattern; returns the matched
-  3-digit code as `int`, or `None` if no match. Wrapped in `try/except Exception: return None` so a
-  malformed or unexpected exception can never propagate out of the classifier — parsing failure
-  always falls back to the conservative branch.
+- `_SDK_NORM_LOOKUP_FAILURE_PATTERN = re.compile(r"^Could not retrieve \S+ norm for site .+, got
+  status code (\d{3})$")` — module-level regex matching the `get_norm_for_site` message shape
+  above **in full, anchored start-to-end** (originally a loose `"status code (\d{3})"` substring
+  search; widened to anchored after the cross-check found it over-matched — see "Corrections
+  applied after the out-of-loop cross-check" below).
+- `_extract_sdk_status_code(exc)` — returns a status code ONLY when `exc` is a `ValueError` AND
+  `str(exc)` matches the anchored pattern in full; any other exception type, or any message that
+  merely *contains* a matching phrase, returns `None`. Wrapped in `try/except Exception: return
+  None` so a malformed or unexpected exception can never propagate out of the classifier — parsing
+  failure always falls back to the conservative branch.
 - `_lookup_monthly_norms` — on a caught exception, calls `_extract_sdk_status_code`:
-  - status code `404` → `_NormClassification.NORM_ABSENT` (logged at INFO, naming the station and
-    the original exception, so an operator can see why a station was counted as absent rather than
-    failed).
+  - status code `404` → `_NormClassification.NORM_ABSENT`. Logged at INFO, naming the station and
+    the original exception — but this line is **not** an operator-visible signal in production:
+    the root logger is capped at WARNING (`setup_library`, INFRA-029), so it never appears in a
+    production log (this was the original, incorrect claim in this section — see "Corrections
+    applied" below for what actually surfaces).
   - any other status code, or `None` (no parseable code — the `_get_site_uuid_for_site_code`
     shape, a timeout, a connection error, or anything unrecognised) → `_NormClassification.
     SDK_FAILED` (logged at DEBUG with the parsed `status_code`, which is `None` when unparseable).
@@ -491,6 +499,77 @@ because it does not account for every attempted station). All new tests were mut
 disabling the 404 branch, over-widening it to match any status code, and disabling status-code
 parsing entirely each broke the tests written to catch exactly that regression, then were
 restored.
+
+**Superseded by the 2026-09-08 out-of-loop cross-check below** — the regex-parsing description
+above and the INFO-visibility claim in the `_lookup_monthly_norms` bullet were both found
+inaccurate by that review; see "Corrections applied after the out-of-loop cross-check" for what
+changed and why, and the additional regression test it added.
+
+## Corrections applied after the out-of-loop cross-check (2026-09-08)
+
+An out-of-loop cross-check of the 2026-09-08 status-code grading above found three issues; all
+three were fixed on `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py` /
+`test_sync_long_horizon_hydrograph.py` in the same branch (`fix_infra044_degraded_state`).
+
+- **Finding 1 (Important) — the original regex over-matched, and could silence a real outage.**
+  `_SDK_STATUS_CODE_PATTERN = re.compile(r"status code (\d{3})")` searched *any* exception's text
+  for the *first* occurrence. Two concrete failures: a `ConnectionError("proxy returned status
+  code 404")` (a genuine connection failure, not a norm-lookup 404) would have been misclassified
+  `NORM_ABSENT` — if every station raised that, the run would exit **0** instead of the correct
+  fatal exit, a real outage reported as success; and a chained/composite message embedding more
+  than one status code (e.g. "... upstream status code 404; final response got status code 503")
+  would have had its *first* match (404) extracted, hiding the real (503) failure. **Fixed**:
+  renamed to `_SDK_NORM_LOOKUP_FAILURE_PATTERN`, anchored start-to-end to the *exact*
+  `get_norm_for_site` message shape (confirmed against the installed SDK source), and
+  `_extract_sdk_status_code` now additionally requires `isinstance(exc, ValueError)`. Anything
+  that doesn't match that exact shape — including both cases above — now falls through to
+  `SDK_FAILED`, which is the fail-closed default this issue's own taxonomy already relies on.
+  Verified: mutating the pattern back to the loose search reproduces both failures and is caught
+  by four new tests (`test_extract_sdk_status_code_does_not_match_connectionerror_with_status_
+  phrase`, `test_extract_sdk_status_code_does_not_match_composite_chained_message`,
+  `test_lookup_monthly_norms_connectionerror_with_404_phrase_classifies_sdk_failed`,
+  `test_orchestrator_every_station_connectionerror_with_404_phrase_still_exits_six`).
+- **Finding 2 (Important) — the operator could not see *why*, because INFO is invisible.** The
+  root logger is capped at WARNING in production (`setup_library`, INFRA-029), so the per-station
+  `logger.info` line this section originally claimed made the 404 reason "see[able]" **never
+  appears** in a production log — that claim above was false and has been corrected in the
+  "Implementation" section. The per-station message is deliberately **not** promoted to WARNING
+  (on an all-absent deployment that would be one warning per station on every run — exactly the
+  noise this issue removes). **Fixed instead by making the aggregate carry the provenance**: a new
+  `norm_absent_via_404` count, printed alongside the existing `norm_absent` / `sdk_failed` /
+  `api_failed` counts in the `LONG-HORIZON RUN SUMMARY` block (which uses `print(...)`, so it
+  always survives the WARNING cap). It is a **subset** breakdown of `norm_absent` — how many of
+  those stations were specifically a graded-404 SDK exception, as opposed to a 200 response with
+  an empty/invalid payload — not a rename or a replacement of any existing count. Also corrected:
+  `doc/prod/ml_no_forecasts_debug_runbook.md` (Section 8's grep only searched text that never
+  appears on an all-404 deployment; now also searches the aggregate signals and states the
+  visibility limit plainly) and `apps/preprocessing_runoff/README.md` (added the
+  `norm_absent_via_404` count and the INFO-invisibility caveat next to the existing status-code
+  grading section).
+- **Finding 3 (Minor) — the highest-stakes preservation case had no direct test.** Existing
+  preservation tests covered `NORM_ABSENT` with no exception (a 200-with-empty-payload, e.g.
+  `test_norm_absent_preserves_existing_month_norms_and_derives_rollups`) and `SDK_FAILED` with an
+  exception — but not `NORM_ABSENT` **with** an exception, which is exactly what a 404 now
+  produces. **Fixed**: added
+  `test_norm_absent_via_404_preserves_existing_month_norms_and_write_payloads`, which writes valid
+  norms for a station, re-runs with the SDK 404ing, and asserts all 12 stored monthly norms
+  survive, the derived seasonal/quarterly rollups are unchanged, and the actual write payloads
+  sent to the client (not just the in-memory records returned to the caller) carry the preserved
+  norms. Verified: mutating `write_station_monthly_hydrograph` to blank norms specifically for
+  "NORM_ABSENT reached via an exception" (leaving the no-exception NORM_ABSENT and the SDK_FAILED
+  read-merge paths untouched) is caught by this test and no other. The reviewer also flagged four
+  existing tests as legitimate-but-revert-insensitive widening guards (they pass against the
+  pre-Finding-1 "every exception is SDK_FAILED" behaviour too, so they would not by themselves
+  catch this feature being reverted): `test_lookup_monthly_norms_non_404_status_code_classifies_
+  sdk_failed`, `test_lookup_monthly_norms_no_status_code_in_message_classifies_sdk_failed`,
+  `test_lookup_monthly_norms_non_valueerror_exception_still_classifies_sdk_failed`, and
+  `test_orchestrator_every_station_500_still_exits_six` — each now carries a comment saying so, so
+  nobody later mistakes them for regression coverage.
+
+All 109 tests in `test_sync_long_horizon_hydrograph.py` pass (103 before this cross-check + 6
+new), `ruff check` / `ruff format --check` are clean, and the full `apps` suite
+(`SAPPHIRE_TEST_ENV=True bash run_tests.sh`) is green with the pre-existing two `@pytest.mark.skip`
+placeholders in `test_src.py` the only skips.
 
 **Files touched by this refinement** (same allowed-files boundary as the rest of this issue):
 `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`,

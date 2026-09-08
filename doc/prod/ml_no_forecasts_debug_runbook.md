@@ -120,8 +120,14 @@ grep -E "^(ieasyforecast_intermediate_data_path|ieasyhydroforecast_models_and_sc
 echo "===== 7. PREPROCESSING_RUNOFF FAILURE ====="
 grep -n "preprocessing_runoff failed\|Traceback" "$RUN" | head -5
 
-echo "===== 8. LONG-HORIZON HYDROGRAPH SYNC (INFRA-037, degraded not fatal) ====="
-grep -n "SDK call failed for site\|long-horizon sync\|Long-horizon hydrograph sync had" "$RUN" | head -10
+echo "===== 8. LONG-HORIZON HYDROGRAPH SYNC (INFRA-037/INFRA-044, degraded not fatal) ====="
+# NOTE (2026-09-08): the first pattern below (SDK_FAILED) is a per-station
+# WARNING and will show up. A 404 (NORM_ABSENT) is logged per-station at
+# INFO, which the root logger drops in production (INFRA-029) -- it will
+# NEVER show up here even on an all-404 deployment. DEGRADED:/norm_absent/
+# LONG-HORIZON RUN SUMMARY are the signals that survive that cap; use those,
+# not the per-station text, to see the aggregate 404 picture.
+grep -n "SDK call failed for site\|long-horizon sync\|Long-horizon hydrograph sync had\|DEGRADED:\|LONG-HORIZON RUN SUMMARY\|norm_absent" "$RUN" | head -20
 } 2>&1 | tee /tmp/ml_round1.txt
 ```
 
@@ -181,6 +187,22 @@ and you run via Docker, you have no ML image.
 >   1, 3, 5, or any of the four reachable `preprocessing_runoff.py`
 >   `sys.exit(1)` sites) are still fatal to `daily` — this fix narrowly
 >   targets the one degraded-but-partial-success case.
+>
+>   **The `SDK call failed for site` WARNING above only covers a genuine
+>   `SDK_FAILED` station (exits 4/6) — it does NOT fire for a 404/`NORM_ABSENT`
+>   station (exit 0, the common "no norm entered for this station" case).**
+>   That per-station reason is logged separately, at INFO, by
+>   `_lookup_monthly_norms` — and INFO **never appears** in a production log,
+>   because the root logger is capped at WARNING (`setup_library`,
+>   INFRA-029). Do not search `$RUN` for it; it will not be there even on a
+>   deployment where every station 404s. What *does* survive the cap: the
+>   `DEGRADED:` warning line and the `LONG-HORIZON RUN SUMMARY` counts block
+>   (both `print`/`logger.warning`, Section 8 above), which as of 2026-09-08
+>   includes `norm_absent_via_404` — a subset count of how many `norm_absent`
+>   stations were specifically a 404 (vs. a 200 response with an
+>   empty/invalid payload). That aggregate count is as much per-station
+>   provenance as the default log level gives you; it cannot tell you
+>   *which* stations without raising the module's own log level.
 > - **ML-016 — `run_locally.sh machine_learning` on its own used to crash**
 >   with `ValueError: Prediction mode %s is not supported` unless you exported
 >   `SAPPHIRE_PREDICTION_MODE` yourself. **Fixed**: the bare target now

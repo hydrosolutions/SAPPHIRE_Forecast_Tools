@@ -685,6 +685,75 @@ def test_extract_sdk_status_code_parses_defensively(message, expected_status_cod
     assert sync_lhh._extract_sdk_status_code(ValueError(message)) == expected_status_code
 
 
+# Out-of-loop cross-check Finding 1 (2026-09-08, important): a loose
+# "status code (\d{3})" substring search over-matches exceptions that merely
+# CONTAIN that phrase, silencing a real outage. These two cases are the
+# reviewer's concrete examples of the over-match; the anchored,
+# ValueError-only pattern in _SDK_NORM_LOOKUP_FAILURE_PATTERN must reject
+# both and fall through to SDK_FAILED.
+def test_extract_sdk_status_code_does_not_match_connectionerror_with_status_phrase():
+    # A ConnectionError from a misbehaving proxy that happens to mention
+    # "status code 404" in its own text is NOT the SDK's norm-lookup failure
+    # shape and must never be read as "no norm here". Guards against
+    # reintroducing a loose (non-anchored, non-type-gated) search.
+    exc = ConnectionError("proxy returned status code 404")
+    assert sync_lhh._extract_sdk_status_code(exc) is None
+
+
+def test_extract_sdk_status_code_does_not_match_composite_chained_message():
+    # A chained/composite ValueError message embedding more than one status
+    # code must not have its FIRST occurrence (404) extracted, which would
+    # hide the real failure (503). The anchored full-shape match rejects
+    # this message entirely rather than picking any one embedded code.
+    exc = ValueError("retry history: upstream status code 404; final response got status code 503")
+    assert sync_lhh._extract_sdk_status_code(exc) is None
+
+
+def test_lookup_monthly_norms_connectionerror_with_404_phrase_classifies_sdk_failed():
+    # The concrete over-match case: before the anchored fix, this ConnectionError
+    # would have been misclassified NORM_ABSENT (informational, cannot drive exit
+    # 6) purely because its text contains "status code 404". It must classify
+    # SDK_FAILED, same as any other connection-level failure.
+    result = sync_lhh._lookup_monthly_norms(
+        TEST_CODE,
+        FakeSDK(ConnectionError("proxy returned status code 404")),
+    )
+
+    assert result.classification is sync_lhh._NormClassification.SDK_FAILED
+    assert isinstance(result.exception, ConnectionError)
+
+
+def test_orchestrator_every_station_connectionerror_with_404_phrase_still_exits_six():
+    # Full-flow version of the case above: if every attempted station's norm
+    # lookup raises a ConnectionError whose text happens to contain "status
+    # code 404", that must still be a TOTAL SDK outage (exit 6), not silently
+    # absorbed into norm_absent/exit 0. This is the "silence a real outage"
+    # failure mode the over-matching regex created.
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+    )
+    sdk = FakeSDK(
+        ConnectionError("proxy returned status code 404"),
+        ConnectionError("proxy returned status code 404"),
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=["19999", "19998"],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED] == 2
+    assert summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT] == 0
+    assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 6
+
+
 def test_lookup_monthly_norms_status_code_404_classifies_norm_absent():
     # The exact iEH HF SDK message shape from get_norm_for_site() when the
     # norm endpoint itself returns 404 for a station with no norm entered.
@@ -703,6 +772,14 @@ def test_lookup_monthly_norms_status_code_404_classifies_norm_absent():
 
 @pytest.mark.parametrize("status_code", [401, 500])
 def test_lookup_monthly_norms_non_404_status_code_classifies_sdk_failed(status_code):
+    # Out-of-loop cross-check note (2026-09-08): this test also passes against
+    # the OLD "every raised exception is SDK_FAILED, unconditionally" behaviour
+    # (i.e. it is revert-insensitive -- it would not catch the 404-grading
+    # feature being reverted entirely). It is a legitimate widening guard --
+    # pinning that grading a non-404 status code must NOT become NORM_ABSENT --
+    # not a regression detector for the 404 feature itself; that role belongs
+    # to test_lookup_monthly_norms_status_code_404_classifies_norm_absent and
+    # the orchestrator-level 404 tests above/below.
     result = sync_lhh._lookup_monthly_norms(
         TEST_CODE,
         FakeSDK(
@@ -721,6 +798,12 @@ def test_lookup_monthly_norms_no_status_code_in_message_classifies_sdk_failed():
     # (sdk_base.py's _call_api when relative_url is None) -- no status code
     # is available, so this must stay conservative (SDK_FAILED), not become
     # NORM_ABSENT.
+    #
+    # Out-of-loop cross-check note (2026-09-08): also revert-insensitive --
+    # this message never contained a status code even under the old loose
+    # regex, so it passes with or without the 404-grading feature present. A
+    # legitimate widening guard (pins the "no code -> SDK_FAILED" default),
+    # not a detector for the 404 feature being reverted.
     result = sync_lhh._lookup_monthly_norms(
         TEST_CODE,
         FakeSDK(ValueError("No path provided or the provided path is None")),
@@ -733,6 +816,14 @@ def test_lookup_monthly_norms_non_valueerror_exception_still_classifies_sdk_fail
     # A non-ValueError exception (e.g. a raw connection error) never carries
     # a parseable status code either; pins that the new grading doesn't
     # change this pre-existing path.
+    #
+    # Out-of-loop cross-check note (2026-09-08): also revert-insensitive --
+    # "tunnel down" contains no status-code-shaped text at all, so this test
+    # passes with or without the 404-grading feature present, and would not
+    # catch it being reverted. A legitimate widening guard, not a regression
+    # detector; see test_lookup_monthly_norms_connectionerror_with_404_phrase_
+    # classifies_sdk_failed above for the ConnectionError case that DOES
+    # exercise the over-match guard.
     result = sync_lhh._lookup_monthly_norms(TEST_CODE, FakeSDK(ConnectionError("tunnel down")))
 
     assert result.classification is sync_lhh._NormClassification.SDK_FAILED
@@ -777,12 +868,25 @@ def test_orchestrator_every_station_404_is_norm_absent_not_sdk_failed_and_exits_
         summary.status_counts[sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT]
         == summary.total_attempted
     )
+    # Finding 2 (out-of-loop cross-check, 2026-09-08): both stations' absence
+    # is specifically 404-caused, so the new provenance count matches
+    # norm_absent exactly here -- this is the aggregate signal an operator
+    # can actually see at default (WARNING-capped) log level.
+    assert summary.norm_absent_via_404 == 2
     assert sync_lhh._exit_code_for_long_horizon_summary(summary) == 0
 
 
 def test_orchestrator_every_station_500_still_exits_six():
     # The alarm this issue must NOT silence: a genuine service-wide outage
     # (every station's norm lookup 500s) still exits 6.
+    #
+    # Out-of-loop cross-check note (2026-09-08): also revert-insensitive --
+    # a 500 was already SDK_FAILED under the old "every exception is
+    # SDK_FAILED" behaviour, so this test passes with or without the
+    # 404-grading feature present and would not catch it being reverted. A
+    # legitimate widening guard, not a regression detector; see
+    # test_orchestrator_every_station_connectionerror_with_404_phrase_still_
+    # exits_six above for the case that DOES exercise the over-match guard.
     client = FakeHydrographClient(
         runoff_by_year={
             2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
@@ -923,6 +1027,84 @@ def test_norm_absent_preserves_existing_month_norms_and_derives_rollups():
         quarter = quarter_record["horizon_value"]
         expected = sum(100.0 + month for month in sync_lhh.QUARTER_MONTHS[quarter]) / 3
         assert quarter_record["norm"] == pytest.approx(expected)
+
+
+def test_norm_absent_via_404_preserves_existing_month_norms_and_write_payloads():
+    # Out-of-loop cross-check Finding 3 (2026-09-08, minor): the test above,
+    # test_norm_absent_preserves_existing_month_norms_and_derives_rollups,
+    # covers NORM_ABSENT with NO exception (a 200-with-empty-payload,
+    # FakeSDK(None)). Other tests cover SDK_FAILED WITH an exception. Neither
+    # covers the combination that a real 404 now produces: NORM_ABSENT WITH an
+    # exception. A future change that special-cased "NORM_ABSENT reached via a
+    # raised exception" to blank norms instead of read-merging them would
+    # overwrite stored norms on every 404 deployment while every other test in
+    # this file -- including every new 404-grading test -- kept passing.
+    #
+    # Write valid norms first, then re-run with the SDK 404ing for every
+    # month, and assert all 12 stored monthly norms survive, the derived
+    # seasonal/quarterly rollups are unchanged, AND the actual write payloads
+    # sent to the client (not just the derived in-memory records) carry the
+    # preserved norms.
+    existing_months = [
+        {
+            "horizon_type": "month",
+            "code": TEST_CODE,
+            "date": f"2026-{month:02d}-01",
+            "day_of_year": sync_lhh.MID_MONTH_DOY[month - 1],
+            "horizon_value": month,
+            "horizon_in_year": month,
+            "norm": 100.0 + month,
+            "previous": None,
+            "current": None,
+        }
+        for month in range(1, 13)
+    ]
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
+            2026: _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
+        },
+        existing_hydrograph=existing_months,
+    )
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK(
+            ValueError(
+                f"Could not retrieve discharge norm for site {TEST_CODE}, got status code 404"
+            )
+        ),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert records.station_statuses == [
+        (TEST_CODE, sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT)
+    ]
+
+    monthly_records = _records_by_horizon(records, "month")
+    quarter_records = _records_by_horizon(records, "quarter")
+    season = _records_by_horizon(records, "season")[0]
+
+    # All 12 stored monthly norms survive the 404.
+    for month in range(1, 13):
+        assert _record_for_month(monthly_records, month)["norm"] == 100.0 + month
+    # Derived rollups still match the preserved norms.
+    assert season["norm"] == pytest.approx(sum(100.0 + month for month in range(4, 10)) / 6)
+    for quarter_record in quarter_records:
+        quarter = quarter_record["horizon_value"]
+        expected = sum(100.0 + month for month in sync_lhh.QUARTER_MONTHS[quarter]) / 3
+        assert quarter_record["norm"] == pytest.approx(expected)
+
+    # And the actual write payload sent to the client -- not just the
+    # in-memory records returned to the caller -- carries the preserved norms.
+    monthly_write_calls = [
+        call for call in client.write_calls if call and call[0]["horizon_type"] == "month"
+    ]
+    assert len(monthly_write_calls) == 1
+    written_norms = {record["horizon_value"]: record["norm"] for record in monthly_write_calls[0]}
+    assert written_norms == {month: 100.0 + month for month in range(1, 13)}
 
 
 def test_continues_station_when_sdk_raises(caplog):
@@ -1238,9 +1420,35 @@ def test_run_summary_artifact_is_counts_only():
     ) in artifact
     assert "written=1" in artifact
     assert "norm_absent=1" in artifact
+    # Finding 2 (out-of-loop cross-check, 2026-09-08): the new count field is
+    # additive -- this synthetic result never set
+    # norm_absent_via_404_station_codes, so it defaults to 0 even though
+    # norm_absent=1, proving the new field doesn't repurpose or infer from
+    # the existing NORM_ABSENT count.
+    assert "norm_absent_via_404=0" in artifact
     assert "sdk_failed=1" in artifact
     assert "api_failed=0" in artifact
     assert TEST_CODE not in artifact
+
+
+def test_run_summary_artifact_norm_absent_via_404_counts_only_the_404_subset():
+    # Finding 2 (out-of-loop cross-check, 2026-09-08): norm_absent_via_404 is
+    # a SUBSET of norm_absent, not a replacement for it or a separate
+    # population -- a mixed batch (one 404, one plain 200-empty-payload
+    # absence) must report norm_absent=2 but norm_absent_via_404=1.
+    records = sync_lhh._LongHorizonWriteResult()
+    records.station_statuses = [
+        ("19999", sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+        ("19998", sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT),
+    ]
+    records.norm_absent_via_404_station_codes = ["19999"]
+    summary = sync_lhh._summarize_long_horizon_station_statuses(records)
+
+    artifact = sync_lhh._format_long_horizon_run_summary_artifact(summary)
+
+    assert summary.norm_absent_via_404 == 1
+    assert "norm_absent=2" in artifact
+    assert "norm_absent_via_404=1" in artifact
 
 
 def test_api_failed_station_counts_in_summary_denominator_and_artifact():
