@@ -46,6 +46,8 @@ import pathlib
 import stat
 import subprocess
 
+import pytest
+
 
 def _find_repo_root() -> pathlib.Path:
     """Locate the repo root from any CWD by finding the wrapper script."""
@@ -185,13 +187,15 @@ class TestYearlyRunoffHydrographAggregationWrapperExitCode:
         result = _run_wrapper(tmp_path, fake_exit_code=1)
         assert result.returncode == 1, result.stdout + result.stderr
 
-    def test_wrapper_forwards_the_exact_container_exit_code(self, tmp_path):
+    @pytest.mark.parametrize("writer_exit_code", [4, 5, 6])
+    def test_wrapper_forwards_the_exact_container_exit_code(self, tmp_path, writer_exit_code):
         """The wrapper forwards the container's own exit code value,
-        not just a generic non-zero status. 4/5 are the writer's own
-        SDK_FAILED / write-failure codes (see the module docstring in
+        not just a generic non-zero status. 4/5/6 are the writer's own
+        SDK_FAILED (PARTIAL) / write-failure / SDK_FAILED (TOTAL, INFRA-044)
+        codes respectively (see the module docstring in
         bin/yearly_runoff_hydrograph_aggregation.sh)."""
-        result = _run_wrapper(tmp_path, fake_exit_code=4)
-        assert result.returncode == 4, result.stdout + result.stderr
+        result = _run_wrapper(tmp_path, fake_exit_code=writer_exit_code)
+        assert result.returncode == writer_exit_code, result.stdout + result.stderr
 
     def test_wrapper_exits_nonzero_when_container_fails_and_inspect_also_fails(self, tmp_path):
         """INFRA-023: docker run's exit status is piped through `tee`,

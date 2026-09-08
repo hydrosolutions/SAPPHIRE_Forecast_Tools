@@ -184,9 +184,68 @@ constituent monthly norms is absent this run, the rollup is rewritten to
 `None`. No station's data is dropped by either classification; the run
 summary still distinguishes the two so an operator can tell "SDK returned
 but no usable norm" from "the SDK call itself failed," and any `SDK_FAILED`
-station keeps the run's exit code non-zero (4, unless an API read/write
-failure also occurred, which takes precedence at 5) to surface the failure
-without withholding the station's otherwise-computable data.
+station keeps the run's exit code non-zero: **4** if some (but not all)
+attempted stations' SDK norm lookup failed (PARTIAL — a known,
+station-level upstream condition; `apps/run_locally.sh` logs this at INFO
+and records no result row, INFRA-044), **6** if EVERY attempted station's
+SDK norm lookup failed (TOTAL — all attempted norm lookups failed; possible
+service-wide iEH HF outage on this path, not proven, since one attempted
+station whose lookup structurally fails looks identical; `apps/run_locally.sh`
+still records a `FAIL` row for this case), or **5** if an API read/write
+failure also occurred (which takes precedence over both) — to surface the
+failure without withholding the station's otherwise-computable data.
+
+**Status-code grading of a raised norm lookup (2026-09-08, INFRA-044
+follow-up).** A raised exception is no longer *always* `SDK_FAILED`. When the
+SDK's `get_norm_for_site` call itself returns a non-200 (as opposed to the
+site-UUID lookup failing beforehand), its message embeds the HTTP status
+code — `"Could not retrieve {norm_type} norm for site {site_code}, got
+status code {code}"`. `_lookup_monthly_norms` parses that code and grades
+it: **404** ("no norm exists for this station") is reclassified
+`NORM_ABSENT` — it does *not* count toward `sdk_failed` and cannot drive
+exit 6 — while any other status code, or no parseable status code at all
+(e.g. the `_get_site_uuid_for_site_code` failure, whose message is
+`"No path provided or the provided path is None"` and carries no code, or a
+timeout/connection error), stays `SDK_FAILED` as before. This exists because
+a deployment with **zero monthly norms entered** would otherwise 404 on
+every station, drive `sdk_failed == total_attempted` on every run, and
+false-alarm exit 6 permanently — the exact failure this issue's exit
+taxonomy exists to avoid.
+
+**Grading is exact-shape-only, not a loose text search (2026-09-08, out-of-loop
+cross-check).** The status code is extracted only when the raised exception is a
+`ValueError` AND its message matches the `get_norm_for_site` shape above **in full**
+(anchored start-to-end). A `ConnectionError` whose text happens to contain the phrase
+"status code 404" (e.g. from a misbehaving proxy), or a chained/composite message
+that embeds more than one status code, is never reclassified `NORM_ABSENT` by this —
+it falls through to `SDK_FAILED` like any other unrecognised failure. An earlier,
+looser version of this regex (a plain `"status code (\d{3})"` substring search) could
+misread either of those as a 404 and, in the worst case, turn a real service-wide
+outage into a silent exit 0; failing closed on anything not exactly matching the
+known SDK shape is intentional.
+
+**Caution when reading `norm_absent`**: it now also covers "the norms
+endpoint answered 404 for this station," which can mean either "no norm was
+entered for this station" (the common, benign case above) or "iEH HF does
+not recognise this *site* at all" — a configuration problem, not a data
+gap. The status code alone cannot distinguish the two, so `norm_absent`
+means "no norm was obtained," never a confirmation that the site is known
+to iEH HF with a norm simply missing.
+
+**What an operator actually sees for a 404 (2026-09-08).** `_lookup_monthly_norms`
+logs the per-station reason — naming the site and the raised exception — at **INFO**.
+That line is not visible in production: the root logger is capped at WARNING
+(`setup_library`, INFRA-029), so it never appears in a production log, even on a
+deployment where every station 404s. It is deliberately *not* promoted to WARNING —
+on a deployment with no norms entered, that would be one warning per station on every
+single run, exactly the noise this issue exists to remove. What an operator can
+actually rely on: the `LONG-HORIZON RUN SUMMARY` counts block (printed with
+`print(...)`, so it always survives the WARNING cap) includes a `norm_absent_via_404`
+count alongside `norm_absent` / `sdk_failed` / `api_failed` — a subset of
+`norm_absent` counting specifically how many stations' absence was a graded 404 (as
+opposed to a 200 response with an empty/invalid payload). That aggregate count is as
+much per-station provenance as the default log level provides; recovering *which*
+stations requires raising this module's own log level above the production default.
 
 **Predecessor:** The old `sync_monthly_norms.py` script
 (yearly-cron-launched via the retired Luigi task

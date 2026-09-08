@@ -77,7 +77,12 @@ a claim that PREPQ-015 created the gap.
 ## Not silent, not data loss — get the framing right
 
 Exit 3 is fatal. `run_locally.sh`'s generic `elif [ $lt_rc -ne 0 ]` branch sets `rc`, the module is
-recorded FAIL, and the pipeline aborts — the same abort behavior INFRA-037 documents for exit 4/5.
+recorded FAIL, and the pipeline aborts — the same abort behavior INFRA-037 documents for exit 5.
+(**Superseded by INFRA-044, 2026-09-07**: exit 4 no longer shares this abort behavior at all — it is
+now informational and does not touch `rc`. Exit 6, new since INFRA-044, has its own explicit branch
+placed *ahead of* this catch-all specifically so it does NOT fall through here — see C4 in
+`high_prio_gi_draft_infra_run_locally_degraded_state.md`. Only exits 1/3/5 still reach this
+catch-all.)
 The cost here is narrower than a silent-success defect: a **wrong exit code** (3 instead of 5,
 losing the specific "API failure" signal in favor of a generic "unexpected exception" one) and
 **one missing station status** in `station_statuses` relative to `attempted_station_codes` (so the

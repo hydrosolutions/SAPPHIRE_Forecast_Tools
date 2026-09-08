@@ -24,9 +24,18 @@
 # previously stored rollup norm can still be rewritten to null if one of
 # its constituent months is absent this run. The run summary and exit code
 # still distinguish the two --
-# any SDK_FAILED station keeps the run's exit code non-zero (4, or 5
-# if an API read/write failure also occurred) so the failure stays
-# visible without withholding otherwise-computable data.
+# any SDK_FAILED station keeps the run's exit code non-zero: 4 if some
+# (but not all) attempted stations' SDK norm lookup failed (PARTIAL -- a
+# known, station-level upstream condition, INFRA-044), 6 if EVERY
+# attempted station's SDK norm lookup failed (TOTAL -- consistent with,
+# but not proof of, a service-wide iEH HF outage on this path, not
+# station-level norm absence; a single-station run with a structural,
+# station-level lookup failure looks identical), or 5 if an API
+# read/write failure also occurred -- so the failure stays visible
+# without withholding otherwise-computable data.
+# This script itself does not branch on the exact code (see its generic
+# non-zero handling below); it is `apps/run_locally.sh` that treats 4
+# and 6 differently.
 #
 # Usage:
 #   bash bin/yearly_runoff_hydrograph_aggregation.sh <env_file_path> [--target-year YYYY]

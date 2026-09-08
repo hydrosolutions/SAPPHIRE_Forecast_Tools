@@ -12,12 +12,15 @@ a SAPPHIRE defect. See "Open decisions for the owner" 1 and 2, both resolved.
 **Found**: 2026-08-14, reconfirmed 2026-08-15, local kghm review on `maxat_sapphire_2` @
 `8e3fc1bc`.
 **Related**: PREPQ-009 (long-horizon hydrograph norm decouple — Complete). PREPG-009 (same
-question of how a module should report partial sub-task failure). **PREPQ-015** (High, Draft) —
+question of how a module should report partial sub-task failure). **PREPQ-015** (High, Review) —
 this issue explains *why* the SDK raises; PREPQ-015 is what stops that raise from discarding a
-station's data. As of PREPQ-015's 2026-08-21 second revision, it does **not** stop the permanent
+station's data. As of PREPQ-015's 2026-08-21 second revision, it did **not** stop the permanent
 false alarm (exit 4 on every run) for stations this issue's cause structurally can never resolve —
-three designs to reclassify that raise were reviewed and refuted, and the persistent FAIL row is now
-an accepted, documented limitation, not a fix. See "Third confirmation" below.
+three designs to reclassify that raise were reviewed and refuted, and the persistent FAIL row was
+then an accepted, documented limitation, not a fix. **Superseded by INFRA-044 (2026-09-07, High,
+Review)**: the owner later reversed that acceptance for `run_locally.sh` — exit 4 (this issue's own
+condition) is now informational (INFO log, no result row, exit 0), not a permanent alarm. See
+"Third confirmation" below for the pre-INFRA-044 history.
 
 > **Provenance correction (2026-08-16).** The checkout moved from `maxat_sapphire_2` to
 > `fix_lr010_lr011_write_contract` at **2026-08-14 16:00** (git reflog), so every run from the
@@ -86,6 +89,15 @@ Consequence: any CI gate, cron alert, or wrapper reasoning on `$?` cannot distin
 failure" from "API failure" (5, which still sets `rc=$lt_rc` at `:920`) from "no records" (2).
 Independently found by an out-of-loop review during PREPQ-014 investigation and re-verified here
 by direct code reading.
+
+**Superseded again by INFRA-044 (2026-09-07).** `lt_rc==4` no longer records a FAIL row at all — it
+is now the PARTIAL-only case (`sdk_failed >= 1` but not all attempted stations), logged at INFO with
+**no result row**, and `run_locally.sh` exits **0** for it. A new `lt_rc==6` (TOTAL — every attempted
+station's SDK lookup failed) is what now gets the FAIL-row-plus-nonzero-exit behaviour this
+correction describes for "4". So as of this deployment: `$?` from `run_locally.sh` distinguishes
+"no failure at all, including a PARTIAL SDK condition" (exit 0) from "TOTAL SDK outage" (exit 6's
+FAIL row → non-zero) from "API failure" (5) from "no records" (2) — the CI-gate consequence above no
+longer applies to the PARTIAL case, only to a genuine TOTAL outage.
 
 ## Why (a) is likely a real defect and (b) likely is not
 
@@ -357,7 +369,10 @@ Two corrections, one to this issue's Observation and one to its "Contract not to
 and returns `[]` (`sync_short_horizon_hydrograph.py:632-641`); short-horizon `main()` exits 0 unless
 *every* attempted station failed. Exit 4 originates in the **long-horizon** module:
 `_exit_code_for_long_horizon_summary` returns 4 when any station is `SDK_FAILED`
-(`sync_long_horizon_hydrograph.py:639-645`).
+(`sync_long_horizon_hydrograph.py:639-645`). **Superseded by INFRA-044 (2026-09-07)**: that function
+now returns 4 only for the PARTIAL case (`sdk_failed >= 1` but not every attempted station) and a new
+6 when *every* attempted station is `SDK_FAILED` (a TOTAL outage) — "any station is `SDK_FAILED`"
+no longer maps to a single code.
 
 **But "the same 4 sites, for the same reason" is inference, not proof.**
 `_lookup_monthly_norms` catches bare `Exception` (`:295-304`) and maps *every* failure to
@@ -388,6 +403,17 @@ branching and logging, not for the final exit status.
 Anyone changing the exit-code mapping should add a shell-level test of the *final* exit contract;
 the existing test inspects only the function body
 (`apps/preprocessing_runoff/test/test_run_locally_long_horizon_wiring.py`).
+
+**Superseded by INFRA-044 (2026-09-07) — the process-exits-1 claim above no longer holds for exit
+4.** As of INFRA-044, `lt_rc==4` records **no** FAIL row at all: the inner function logs an INFO
+line instead of the ERROR diagnostic quoted above, and `run_locally.sh` exits **0**. A new
+`lt_rc==6` (TOTAL outage) is what now gets the FAIL-row-plus-exit-1 treatment this section
+describes. **The shell-level test this section called for was added**:
+`apps/pipeline/tests/test_run_locally_orchestration.py::TestLongHorizonSyncExitCodeHandling` now
+drives `run_main()` end to end for both codes (including
+`test_all_stations_sdk_failure_exits_nonzero_end_to_end`, the regression guard for a TOTAL outage,
+and `test_partial_sdk_failure_exits_zero_end_to_end` for the PARTIAL case) — it is no longer true
+that the existing coverage "inspects only the function body".
 
 **Net operator-visible effect at the time this was written**, and a reportability defect filed
 independently of the virtual-station question: the operator saw short-horizon WARNINGs that were
@@ -511,7 +537,11 @@ superseded (`bin/README.md:44,173`).
 
 **Therefore the headline symptom of this issue — "`maintenance:preprocessing_runoff` reports FAIL on
 every run" — cannot occur in scheduled production.** It is specific to the local `run_locally.sh`
-target. **Priority drops accordingly** (see the status block at the top).
+target. **Priority drops accordingly** (see the status block at the top). **Superseded by INFRA-044
+(2026-09-07)**: the symptom no longer occurs on the local target either, for this issue's own
+PARTIAL condition — `run_locally.sh` now records no row and exits 0 for `lt_rc=4`. It would still
+occur if the condition escalated to a TOTAL outage (`lt_rc=6`), which is a materially different
+(and rarer) situation than the one this issue documents.
 
 The genuine production exposure is the **yearly 01 Jan** job, once per year. That wrapper handles
 the exit code correctly: it reads the container's real status via
@@ -603,6 +633,17 @@ What that does and does not settle:
 degraded success alongside `norm_absent`, and keep exit 4 for a genuine SDK/transport failure.
 That needs a way to identify virtual sites at that call site, which is the same lookup item 2
 requires — so items 2 and 3 are one piece of work, not two.
+
+**Superseded by INFRA-044 (2026-09-07) — partially applied, on a different axis.** The owner later
+made a related but distinct call: rather than identifying *which* stations are virtual (this
+recommendation's axis), `run_locally.sh` now treats a **PARTIAL** SDK norm-lookup failure
+(`sdk_failed >= 1` but not every attempted station — this section's own 4/62 case) as informational
+with no result row at all, full stop, regardless of *why* the lookup raised. A **TOTAL** outage
+(every attempted station, a new exit 6) is still treated as fatal. The table row above ("SDK norm
+lookup failed | 4 | ERROR → exit 4 → module FAIL") and the "non-zero exit masks that success" claim
+two paragraphs up are both now stale for `run_locally.sh`: exit 4 no longer produces a FAIL row, an
+ERROR log, or a non-zero exit there — see the exit-code correction earlier in this file ("Root
+cause" section) for the current contract.
 
 **Reportability, worse than recorded at the time this was written.** Item 3 noted that `SDK_FAILED`
 was logged at DEBUG and so was invisible at default level. **INFRA-029** showed the effective level
@@ -723,24 +764,34 @@ left to the owner; this file's Status is unchanged here.
   three proposed designs were reviewed and refuted (see its "Grading mechanisms considered and
   rejected"). The 4 sites keep contributing to `SDK_FAILED`'s exit-4 count on every run,
   indefinitely — an accepted, documented limitation (PREPQ-015's "Accepted cost"), not a resolution
-  of this criterion. This issue's own acceptance criterion stays open.
+  of this criterion. This issue's own acceptance criterion stays open. **Still open after INFRA-044
+  (2026-09-07), on its own narrow terms** — INFRA-044 did not identify virtual/not-applicable sites
+  per-station; it made *any* PARTIAL SDK failure informational regardless of cause. So the specific
+  ask here (explicit per-station not-applicable classification) remains unmet, but the *consequence*
+  this criterion was written to prevent — the 4 sites' `SDK_FAILED` status driving a reported
+  failure — no longer happens for `run_locally.sh` either way.
 - Path-unset and data-absent conditions are reported distinctly — already true in code
   (`NORM_ABSENT` vs `SDK_FAILED`/exit 4 vs exit 2). **True again as of PREPQ-015's 2026-08-21 second
   revision**: with reclassification dropped, PREPQ-015 keeps `SDK_FAILED` and `NORM_ABSENT` fully
   separate outcomes — it does not collapse one into the other for any station, virtual or not.
+  **Still true after INFRA-044**: the codes are now `NORM_ABSENT`/exit 0, `SDK_FAILED`/exit 4
+  (PARTIAL) or 6 (TOTAL), and exit 2 (no records) — the statuses stay distinct, INFRA-044 only
+  changed how `run_locally.sh` reports 4.
 - A run whose primary gap-fill succeeded is distinguishable from one where it did not — unaffected
   by PREPQ-015, which only changes long-horizon's own status handling.
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff` green.
 
 ## Contract not to break
 
-- Exit codes 2 / 4 / 5 are already consumed by `run_locally.sh`
-  (`run_maintenance_preprocessing_runoff`); do not renumber without updating that mapping.
-  **Qualified 2026-08-17, re-verified 2026-08-21 after INFRA-037 shipped:** they are consumed for
-  *inner branching and logging* only — the wrapper's final process status is 1 whenever any FAIL row
-  is present, because `print_summary`'s return overwrites it (`run_locally.sh:1823-1826,2270`; the
-  `lt_rc==4` branch itself no longer assigns `rc` at all — see the exit-code correction in "Root
-  cause"). A change here needs a shell-level test of the final exit contract; the existing test
-  inspects only the function body.
+- Exit codes 2 / 4 / 5 (**and 6, added by INFRA-044, 2026-09-07**) are already consumed by
+  `run_locally.sh` (`run_maintenance_preprocessing_runoff`); do not renumber without updating that
+  mapping. **Qualified 2026-08-17, re-verified 2026-08-21 after INFRA-037 shipped, re-verified again
+  2026-09-07 after INFRA-044 shipped:** codes 1/3/5/6 are consumed for inner branching, logging, AND
+  the final process status — for these, the wrapper's final status is 1 whenever any FAIL row is
+  present, because `print_summary`'s return overwrites it (`run_locally.sh:1823-1826,2270`). **Code 4
+  is now the exception**: the `lt_rc==4` branch records no result row at all (not just no `rc`
+  assignment) and `run_locally.sh` exits 0 for it — see the exit-code correction in "Root cause". A
+  shell-level test of the final exit contract now exists (it did not when this bullet was written):
+  `apps/pipeline/tests/test_run_locally_orchestration.py::TestLongHorizonSyncExitCodeHandling`.
 - The 30-day gap-fill must keep running to completion regardless of hydrograph norm failures —
   it did here, and that ordering is what saved the review.
