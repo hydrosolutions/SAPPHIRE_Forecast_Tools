@@ -60,7 +60,11 @@ must be gated on deployment-level ML enablement (**M2.6**, new) or M2.5 makes th
 `:1504`, invoking it at `:1530`) and from `apps/run_validation.sh`, which describes itself as the
 pre-commit / pre-merge workflow (`:7-8`) and drives `run_locally.sh` (`:187`, `:213`). Luigi never
 calls it, and the pipeline image cannot — it copies only `apps/iEasyHydroForecast` and `apps/pipeline`
-(`apps/pipeline/Dockerfile:20`, `:23-24`). The full sweep and its evidence table are in **INFRA-031**.
+(`apps/pipeline/Dockerfile:20`, `:23-24`). One more consumer was *intended* and does not work:
+`doc/dev/review_checklist_local_template.md:190`, `:1892` tell a reviewer to run
+`bash apps/run_locally.sh validate --phase …`, but there is no `validate` target (the dispatch
+`case "$target" in` is `run_locally.sh:2532`) — **INFRA-045** repairs those commands. The full
+sweep and its evidence table are in **INFRA-031**.
 
 **This does not change what this plan should do** — a review gate that cannot fail is still
 worthless — but it does mean *"expect some currently-green runs to turn red"* costs reviewer time,
@@ -186,8 +190,10 @@ review. M1 must hold with it restored.
    > failures are swallowed"*. **That is no longer true. ML-021 shipped 2026-09-09 (PR #503,
    > merged):** `_write_ml_forecast_to_api` now raises for a genuine delivery failure (readiness
    > false, or zero rows stored) and returns `False` only for benign no-ops;
-   > `write_pentad_forecast` / `write_decad_forecast` capture that outcome and return it
-   > (`make_forecast.py:151`, `:234`), and `make_ml_forecast` exits **5** (`:972`). A failed write is
+   > `write_pentad_forecast` (`make_forecast.py:151`) and `write_decad_forecast` (`:234`) capture
+   > that outcome in `api_write_ok` — set at `:180`/`:263`, cleared to `False` in the `except` at
+   > `:191`/`:274`, returned at `:231`/`:314` — and `make_ml_forecast` exits **5** (`:972`).
+   > *(Endpoints corrected 2026-09-09: `:151` and `:234` are only the `def` lines.)* A failed write is
    > no longer silent at the module boundary, so **this step is no longer a fix for a live silent
    > failure — it is optional hardening of what the check may claim.**
 

@@ -48,19 +48,20 @@ path-by-path. Outside `doc/plans/` and `apps/validate_pipeline/` itself, the tra
 | `.github/dependabot.yml:62` | a dependency-update directory, not an invocation |
 | `CLAUDE.md:127`, `:489`; `.claude/skills/issue-planning/SKILL.md:137` | project description and an abbreviation table |
 | `doc/configuration.md:266` | documents the `FRESHNESS_THRESHOLD_DAYS` env var |
-| **`doc/dev/review_checklist_local_template.md:190`, `:1892`** | the **local review checklist** tells a developer to run the validator by hand in `--phase pre` / `--phase post` mode. **A manual developer step, and another consumer of the dev gate** |
+| **`doc/dev/review_checklist_local_template.md:190`, `:1892`** | the local review checklist tells a developer to run the validator by hand — but **the commands it gives do not work.** Both invoke `bash apps/run_locally.sh validate --phase …`, and `run_locally.sh` has **no `validate` target**: its dispatch `case "$target" in` at `:2532` has no such branch. This is an **intended-but-broken invocation**, recorded as such under **INFRA-045**, which repairs these commands. It is evidence that a dev-gate consumer was *intended*, not that one works today |
 | **`doc/dev/update_dev_deployment.md:58`, `:64`, `:409`** | lists `validate_pipeline` among the module venvs to `uv sync` when refreshing a **dev** deployment. It syncs the module; it does not run it |
 
 > *(Corrected 2026-09-09. An earlier version of this section listed a "complete set" that omitted the
 > two `doc/dev/` files, because the sweep that produced it filtered `doc/` out wholesale. The
-> omission did not affect the finding — **neither file is a production invoker**; the checklist is a
-> manual developer step and the deployment doc only syncs the venv — but the completeness claim was
-> false as written, and a false completeness claim is what stops the next person re-checking.)*
+> omission did not affect the finding — **neither file is a production invoker**: the checklist's
+> commands do not run at all (no `validate` target exists), and the deployment doc only syncs the
+> venv — but the completeness claim was false as written, and a false completeness claim is what
+> stops the next person re-checking.)*
 
 | Path | Runs the validator? | Verifies produced data? |
 |---|---|---|
 | Production cron → `bin/run_pentadal_forecasts.sh`, `run_decadal_forecasts.sh`, `run_long_term_forecasts.sh`, `run_daily_maintenance.sh` → Luigi (`doc/deployment.md:970`, `:973`, `:983`, `:997`) | **No** | **No** |
-| `RunLongTermWorkflow` (`apps/pipeline/pipeline_docker.py:2399`, `run()` from `:2440`) | **No** | **No** — resolves active modes, yields forecast tasks, writes a completion marker (`output()` at `:2437`) |
+| `RunLongTermWorkflow` (`apps/pipeline/pipeline_docker.py:2399`, `run()` from `:2440`) | **No** | **No** — resolves active modes, yields forecast tasks, then writes a completion marker. `output()` at `:2437` only declares the `LocalTarget`; the marker is actually written at `:2479-2480` (the no-active-modes early return) and `:2526-2527` (the normal path). *(Endpoints corrected 2026-09-09.)* |
 | Every other `bin/` script (46 `.sh` files, 50 entries) | **No** | no reference to `validate_pipeline` anywhere in `bin/` |
 | The pipeline image | **Cannot** | it copies only `apps/iEasyHydroForecast` and `apps/pipeline` (`apps/pipeline/Dockerfile:20`, `:23-24`); `validate_pipeline` is not in it |
 | GitHub workflows | **No** | `.github/workflows/deploy_production.yml` runs pytest and import checks; no workflow in `.github/workflows/` references the validator |
@@ -122,8 +123,11 @@ Both halves are load-bearing, and neither is optional:
 The scheduler admits a long-term mode as active up to **10** days from its issue day
 (`apps/long_term_forecasting/lt_schedule_query.py:52`, `ISSUE_DAY_TOLERANCE = 10`, applied at
 `:103` and `:119`), while model execution refuses to run at more than **5**
-(`apps/long_term_forecasting/lt_utils.py:202`, `if abs(day_offset) > 5:` → `return None`, an
-`logger.info` "not scheduled … skipping", not an error). Verified on trunk 2026-09-09.
+(`apps/long_term_forecasting/lt_utils.py`: the guard `if abs(day_offset) > 5:` is `:202`, and it
+logs `logger.info("Model %s not scheduled: %d days from issue date %s — skipping", …)` at
+`:203-208` then `return None` at `:209` — a graceful skip, not an error). Verified on trunk
+2026-09-09. *(Endpoints corrected: an earlier version cited `:202` for the logging and the
+return, which are on the lines after the guard.)*
 
 So a mode can be scheduled, dispatched, and produce nothing because every model declined — and
 because the decline is a graceful `return None`, the run exits 0 with a marker file. This is not a

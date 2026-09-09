@@ -258,7 +258,7 @@ findings, not decisions.
 | `test_validate_pipeline.py:131` `test_api_unavailable_exits_zero` *(re-derived 2026-09-09)* | client absent → exit 0 | the zero-match guard must not fire here — see C2 |
 | `test_validate_pipeline.py:137` `test_api_disabled_exits_zero` *(re-derived 2026-09-09)* | `SAPPHIRE_API_ENABLED=false` → exit 0 | same |
 
-Note separately that the *generic* NaN check returns WARN, not FAIL (`check_no_nan_in_forecasts`, `validate_pipeline.py:705`) *(re-derived 2026-09-09)*.
+Note separately that the *generic* NaN check returns WARN, not FAIL — `check_no_nan_in_forecasts` is defined at `validate_pipeline.py:705` and its `if nan_count > 0:` branch returns `status="WARN"` at `:725-730` *(endpoint corrected 2026-09-09: `:705` alone is only the `def`)*.
 Whether the new ML null-check FAILs where the generic one WARNs is a deliberate choice to state in
 the plan — the two can differ, but the difference must be intentional and explained.
 

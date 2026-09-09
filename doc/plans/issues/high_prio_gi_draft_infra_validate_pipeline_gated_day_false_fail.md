@@ -10,11 +10,28 @@ INFRA-021, not a follow-on; see below)*
 "Blocked behind INFRA-021". That is now wrong in one direction and produced a circular dependency
 once INFRA-021 was rescoped. The accurate statement:
 
-- **Observability** runs one way: this defect is only *visible* after INFRA-021's crash is fixed,
-  because the process currently dies before Tier 1 emits anything.
+- **Observability** ran one way: this defect was only *visible* once INFRA-021's crash was fixed,
+  because the process used to die before Tier 1 emitted anything.
 - **Delivery** runs the other way: INFRA-021 must **not ship without this gating**, because fixing
   the crash alone converts one traceback into recurring false FAILs on every legitimately gated day
   and on every deployment that does not run long-term at all.
+
+> **Updated 2026-09-09 — the crash half has shipped, so read the first bullet in the past tense.**
+> `_load_deployment_env()` now exists (`validate_pipeline.py:1580`) and `main()` calls it before any
+> config access, returning 1 if it fails (`:1724`); the quarter and seasonal horizon resolutions are
+> additionally guarded and append a `critical=True` FAIL row instead of raising (the `try`/`except`
+> around `:555` and around `:594`). That landed in **PR #486, merged**, and
+> `doc/plans/working/validate_pipeline_repair_plan.md` records the same in its § 5
+> INFRA-021 / INFRA-022 row.
+>
+> **What that changes for this issue:** the false FAILs described below are **live and observable
+> today** — no longer hidden behind a traceback, and no longer waiting on INFRA-021 to become
+> visible. The atomic-landing argument in the second bullet still holds for what INFRA-021 still
+> owns (forecast-date propagation), but nothing in this issue is blocked on the crash any more.
+>
+> *(INFRA-021's own issue file and its tracker row still describe the crash as live. Both are out of
+> scope here and are recorded as a follow-up — do not read their staleness as contradicting this
+> note.)*
 
 So the two are **one atomic change**, not a queue. Neither blocks the other; they land together.
 **Related**:
@@ -126,8 +143,11 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
 
 ## Why it matters
 
-- A correct, quiet day produces FAIL lines. Combined with INFRA-021's non-zero exit,
-  the long-term target looks broken on every ordinary day.
+- A correct, quiet day produces FAIL lines, and `print_summary` turns any FAIL into a non-zero exit
+  (`validate_pipeline.py:1327`), so the long-term target looks broken on every ordinary day.
+  *(Reworded 2026-09-09: this read "Combined with INFRA-021's non-zero exit…", which described the
+  pre-PR-#486 crash as the source of the non-zero exit. The crash is fixed; the non-zero exit these
+  false FAILs produce is this issue's own, and it does not depend on INFRA-021 at all.)*
 - **A check that is always red certifies nothing.** Once the long-term tier FAILs on every ordinary
   day, its verdict carries no information: a genuine long-term outage is indistinguishable from the
   normal case, and the reviewer or developer reading the run learns to discount the whole section.

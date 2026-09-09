@@ -12,8 +12,9 @@ the top, under a `## YYYY-MM-DD` heading.
 
 ## 2026-09-09
 
-**Salvage of the abandoned `docs_infra_validation_reframe` branch** (4 commits, 2026-08-19, 203
-commits behind trunk). Two new rows: **INFRA-031** (nothing verifies that a production forecast run
+**Salvage of the abandoned `docs_infra_validation_reframe` branch** (4 commits, 2026-08-19; **203
+commits behind `e09d48d5`**, the trunk it was measured against — 207 behind `3791fa31`, the trunk
+this work was finally rebased onto). Two new rows: **INFRA-031** (nothing verifies that a production forecast run
 produced the data it owed — `validate_pipeline` has no production invoker) and **INFRA-052** (an
 explicit **alternative** to INFRA-028: an in-memory `--active-modes` CLI argument instead of a
 persisted run manifest). The "(INFRA-031 is reserved on the `docs_infra_validation_reframe` branch.)"
