@@ -1,13 +1,16 @@
 # ML-021: `make_forecast.py` exits 0 after writing no forecasts to the API
 
-**Status**: **Ready** — reviewed 2026-09-08 (third out-of-loop pass, trunk `ebe422fc`) and
-**unblocked 2026-09-08 by owner decisions**; see "Owner decisions taken 2026-09-08" for the settled
-truth table, which supersedes acceptance criterion 1. The review found the original proposal did
-**not** fix the headline scenario and that one step was out of its claimed scope; both are resolved
-below. The original text was **NOT safe to implement as written** — The defect is confirmed still live. But the proposed direction does
-**not** fix the headline scenario, and one of its steps is not achievable in the scope it claims.
-See "Review 2026-09-08" before treating anything below as a work order. Originally Draft 2026-08-20,
-revised same day after two independent out-of-loop reviews.
+**Status**: Review (2026-09-09 — implemented; see "Implemented 2026-09-09" below). Reviewed
+2026-09-08 (third out-of-loop pass, trunk `ebe422fc`) and **unblocked 2026-09-08 by owner
+decisions**; see "Owner decisions taken 2026-09-08" for the settled truth table, which
+**supersedes acceptance criterion 1** — this review history stays below and is not restated here.
+That review found the original proposal did **not** fix the headline scenario and that one step
+was out of its claimed scope; both are resolved below. The original text was **NOT safe to
+implement as written** — the defect was confirmed still live, but the proposed direction did not
+fix the headline scenario, and one of its steps was not achievable in the scope it claimed.
+See "Review 2026-09-08" and "Owner decisions taken 2026-09-08" before treating the superseded
+proposal below as a work order. Originally Draft 2026-08-20, revised same day after two
+independent out-of-loop reviews.
 **Module**: `apps/machine_learning` (`make_forecast.py`, `scr/utils_ml_forecast.py`)
 **Priority**: High — an operational ML run can report success on every layer
 (`make_forecast.py` exit 0, `run_locally.sh` `PASS`) while writing **nothing** to
@@ -421,6 +424,95 @@ not LR.
 5. The chosen semantics for `NOTHING_TO_WRITE` is recorded here before implementation.
 6. `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero failures, zero
    unexpected skips.
+
+---
+
+## Implemented 2026-09-09
+
+Implements the truth table and the four owner decisions above. Commits `685016e5` (the fix) and
+`1bded0cb` (two review-found corrections, same PR) on branch `docs_close_out_499_500`.
+
+- **`_write_ml_forecast_to_api`** (`apps/machine_learning/scr/utils_ml_forecast.py:713-859`) now
+  matches the truth table: it **raises `SapphireAPIError`** for a genuine delivery failure —
+  `readiness_check()` false (`:781-785`), or `client.write_forecasts()` returning a falsy/zero
+  count (`:850-855`, the reported bug: the code no longer logs "Successfully wrote 0…"). It
+  **returns `False` without raising** for the benign no-ops decision 2 covers — empty input
+  (`:757-763`), the client library not installed (`:765-767`), `SAPPHIRE_API_ENABLED=false`
+  (`:770-773`), and an empty record set after dedup/build (`:837-844`). Emptiness is checked first
+  (`:757`), before client construction or the readiness check, matching the precedence rule the
+  confirm pass added.
+- **`write_pentad_forecast` / `write_decad_forecast`** (`make_forecast.py:151-231`, `:234-318`)
+  catch that exception, log it, and return `api_write_ok=False` — `True` for every other outcome,
+  including the benign no-ops. The CSV writes (today-latest and the archive append) run
+  unconditionally either way, matching the "CSV is out of scope" decision.
+- **`make_ml_forecast`** (`make_forecast.py:968-972`) calls `sys.exit(5)` when `api_write_ok` is
+  `False` — the dedicated exit code decision 3 required, chosen because
+  `sync_long_horizon_hydrograph.py` already uses 5 for an API read/write failure (INFRA-044
+  precedent).
+- **`run_locally.sh`** (`run_machine_learning`, `:767-833`) treats `script_rc == 5` as
+  "computed and CSV-written, but the database save failed": it logs an ERROR, sets
+  `db_save_failed=true`, and continues the `model x script` loop instead of `break 2`-ing —
+  so an ML failure for one model, or one horizon under `ML_MODE=BOTH`, no longer stops the
+  remaining models or the other horizon from computing and writing their CSV backups (decisions 3
+  and 4). Every other non-zero `script_rc` still `break 2`s exactly as before. If nothing else
+  failed, the module's own `rc` is set to 5 at the end (`:816-818`) so the row is still recorded
+  `FAIL` and the overall run still exits non-zero — decision 3 changes *what continues*, not
+  *whether the run is reported as failing*.
+- **Two defects found by the post-implementation out-of-loop review and fixed in the same PR**
+  (commit `1bded0cb`):
+  - (a) The post-write `_check_ml_forecast_consistency` call shared a `try` block with the API
+    write (`make_forecast.py:184-205`), so an exception raised by the consistency check itself was
+    caught by the same `except Exception` and mislabelled `api_write_ok=False` → exit 5. Concrete
+    case: `SAPPHIRE_CONSISTENCY_CHECK=true` with nothing to send — `_check_ml_forecast_consistency`
+    does `csv_data["forecast_date"] = pd.to_datetime(csv_data["forecast_date"])`
+    (`utils_ml_forecast.py:992`) outside its own `try`, which raises `KeyError` on an empty frame,
+    making a legitimately-nothing-to-do run (decision 2: success) claim a save failure. Fixed by
+    giving the consistency check its own `try`/`except`, run only when the write itself succeeded,
+    that can no longer touch `api_write_ok`.
+  - (b) `run_machine_learning` wrote every invocation's log to the same fixed path
+    (`${ERROR_DIR}/machine_learning.log`, truncated with `>` on every call). Once decision 4
+    (commit `685016e5` — the `continue` that replaced the aborting `return 1`) let a second
+    (DECAD) invocation run after a failed PENTAD one under `ML_MODE=BOTH`, DECAD's successful output
+    overwrote the log PENTAD's `FAIL` row pointed at, so `MODULE ERROR DETAILS` showed the wrong
+    horizon's output. Fixed by suffixing the log filename with `SAPPHIRE_PREDICTION_MODE`
+    (`run_locally.sh:790-795`, falling back to the unsuffixed name when unset) — the same shape as
+    `run_module_validation`'s `LABEL_SUFFIX` (INFRA-037). The recorded row label stays
+    `"machine_learning"` either way; only the log file path changed.
+- **Verification.** `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` is green across all 16
+  modules/services with zero unexpected skips (re-run in this review session: `machine_learning`
+  161 passed, `pipeline` 407 passed — both figures re-verified directly, not carried over from the
+  implementer's report). Ten tests were added in the second commit (`1bded0cb`) — 8 in
+  `apps/machine_learning/test/test_write_forecast.py`, 2 in
+  `apps/pipeline/tests/test_run_locally_orchestration.py` — each mutation-verified against a
+  revert of the line it guards, per the commit message.
+
+### Deliberately not addressed
+
+Three **pre-existing** defects surfaced by the reviews are not fixed by this PR and need their own
+issues:
+
+1. **The consistency check is a no-op for pentad/decad.** `_write_ml_forecast_to_api` stores every
+   record with `"horizon_type": "day"` regardless of the caller's horizon
+   (`utils_ml_forecast.py:717-721` docstring, `:806-818` the actual write), but
+   `_check_ml_forecast_consistency` reads back with `horizon=horizon_type` where `horizon_type` is
+   literally `"pentad"` or `"decade"` (`:1002-1003`/`:1016-1017`), so it always finds nothing, logs
+   "No API data found for consistency check" (`:1027`), and returns `True`. With
+   `SAPPHIRE_CONSISTENCY_CHECK=true`, the check therefore verifies nothing while reporting
+   consistency.
+2. **`apps/machine_learning/locally_run_ml_forecasts.sh:78`** pipes `make_forecast.py` through
+   `tee` with no `pipefail`/`PIPESTATUS` anywhere in the script (verified: neither appears in the
+   file), so the new exit 5 is discarded, the script continues, and it still prints "All runs
+   completed. Check logs/summary.log for the last 10 lines of each run." (`:127`) reporting
+   success.
+3. **`apps/machine_learning/make_forecast.py`'s outer `if SAPPHIRE_API_AVAILABLE:` guard**
+   (`:182`/`:265`) bypasses `_write_ml_forecast_to_api` entirely when the client is absent — the
+   supported CSV-only mode. With the client absent and nothing to forecast, no "no records" warning
+   is emitted at all, because the function that would emit it is never called.
+
+**Open design question for the owner**: whether a genuine consistency *mismatch* (as opposed to
+the no-op above) should fail the run. Today `_check_ml_forecast_consistency`'s return value is
+discarded by both callers (`make_forecast.py:201`/`:284` — the return value is not captured), and
+this PR deliberately preserved that; only the exception path was touched (defect (a) above).
 
 ---
 
