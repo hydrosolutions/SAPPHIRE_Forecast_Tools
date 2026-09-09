@@ -17,7 +17,17 @@ once INFRA-021 was rescoped. The accurate statement:
   and on every deployment that does not run long-term at all.
 
 So the two are **one atomic change**, not a queue. Neither blocks the other; they land together.
-**Related**: **INFRA-020** (false-PASS counterpart — same class of defect, opposite sign).
+**Related**:
+- **INFRA-020** — false-PASS counterpart; same class of defect, opposite sign.
+- **INFRA-028** — the standing design for telling the validator what the run resolved. This issue
+  consumes it.
+- **INFRA-052** — an **alternative** to INFRA-028 (an in-memory `--active-modes` CLI argument rather
+  than a persisted manifest). Filed so both designs are visible; **the 2026-08-18 manifest decision
+  currently stands.** This issue's dependency is on the *content* — which modes were active — and is
+  unaffected by which transport the owner picks.
+- **INFRA-031** — nothing verifies production forecast runs. Relevant to how this issue's cost is
+  priced: `validate_pipeline` has no production invoker, so a false FAIL here is seen by a developer
+  running the pipeline, not by an operator.
 
 ---
 
@@ -46,9 +56,30 @@ So the module behaved correctly and the validator called it a failure.
 
 ## Root cause (CONFIRMED by source inspection — not a hypothesis)
 
+> **Still live on trunk — re-verified 2026-09-09.** *(Citations in this section re-derived; the rest
+> of the file's `:NNN` citations date from 2026-08-18 and have drifted — re-derive before acting.)*
+>
+> - `run_tier1_long_term` (`validate_pipeline.py:518`) emits the month presence check at `:526`, the
+>   quarter checks from `:555` and the seasonal checks from `:594`, **none of them gated** on whether
+>   the mode ran.
+> - `_apply_non_forecast_day_skip` (`:1352`) still hard-codes `"long-term": True` at `:1374`, and
+>   returns immediately at `:1378-1379` when the horizon maps to `True`.
+> - `long_term_forecasting` is still absent from `FORECAST_DAY_MODULES` (`:116-120`), so even
+>   reaching the downgrade loop at `:1380-1389` would not help — the loop only touches modules in
+>   that set.
+> - The behaviour is still locked by `test_long_term_never_skipped`
+>   (`apps/validate_pipeline/test/test_validate_pipeline.py:965-985`; note the directory is `test/`,
+>   not `tests/`), whose own in-body comment at `:984` names the reason —
+>   *"long_term_forecasting is not in FORECAST_DAY_MODULES"* — immediately above its assertion
+>   `assert results[0].status == "FAIL"` at `:985`. *(Range widened 2026-09-09: an earlier `:965-983`
+>   stopped short of both, so the claim about the comment could not be checked at the cited lines.)*
+>
+> **Two independent mechanisms** therefore keep long-term FAILs from being downgraded. A fix that
+> addresses only one of them changes nothing.
+
 `_apply_non_forecast_day_skip()` maps the long-term horizon to a constant `True`,
 i.e. "always treat as a forecast day", so long-term FAILs are **never** downgraded
-(`validate_pipeline.py:1325`):
+(`validate_pipeline.py:1374`):
 
 ```python
 is_forecast_day = {
@@ -97,8 +128,17 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
 
 - A correct, quiet day produces FAIL lines. Combined with INFRA-021's non-zero exit,
   the long-term target looks broken on every ordinary day.
-- Alarm fatigue: once operators learn the long-term validation "is always red", a
-  genuine long-term outage will not be noticed.
+- **A check that is always red certifies nothing.** Once the long-term tier FAILs on every ordinary
+  day, its verdict carries no information: a genuine long-term outage is indistinguishable from the
+  normal case, and the reviewer or developer reading the run learns to discount the whole section.
+  That is the same defect as INFRA-020's false PASS, with the sign reversed.
+
+  > *Rewritten 2026-09-09.* The previous wording here was **"alarm fatigue: once operators learn
+  > the long-term validation is always red, a genuine outage will not be noticed."* That
+  > contradicts the finding recorded in **INFRA-031**: `validate_pipeline` has no production
+  > invoker, so no operator ever sees this output. The cost is real but it lands on the developer
+  > review gate, not on operations — and stating it as an operational risk would misprice the
+  > issue. **The operational counterpart is INFRA-031, and it is a separate, unbuilt thing.**
 
 ## Proposed fix (to be planned)
 
@@ -106,7 +146,16 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
    **separately for every checked mode/horizon** and tag each result with its owning mode — do not
    collapse to one deployment-level gate.
 
-   > **OPEN DECISION — which schedule authority? (raised 2026-08-18, third out-of-loop pass.)**
+   > **SETTLED — which schedule authority? (raised 2026-08-18, third out-of-loop pass; decided the
+   > same day — see "DECIDED 2026-08-18: option (d)" below.)**
+   >
+   > *(Marker corrected 2026-09-09: this block opened with "**OPEN DECISION**" while its own body
+   > records the answer. A reader scanning for blockers saw an open decision that had already been
+   > made. The narrative is kept as posed, because the options explain why (d) was chosen — but
+   > **nothing in this block is awaiting an answer.** The one thing still open in this issue is which
+   > **transport** carries the resolved mode list, INFRA-028 or INFRA-052; see the transport note
+   > further down.)*
+   >
    > This step originally said to use `long_term_horizon_resolver`. **That resolver is not
    > sufficient on its own.** It exposes mode, lead time and issue day (`:33-49`, `:112-155`), but
    > the *real* operational schedule adds two things it does not model:
@@ -155,6 +204,24 @@ repo-verifiable — the only `operational_issue_day` tracked in this repo is
    > output was actually written under (late forecasts snap back, `lt_utils.py:211-217`). **Gating
    > therefore consumes a run manifest, filed as INFRA-028, which this issue depends on.**
    >
+   > **Transport note, added 2026-09-09 — the dependency is on the *content*, not the file.**
+   > What this issue needs is a trustworthy statement of **which modes the run actually resolved**.
+   > **INFRA-028's persisted run manifest is the standing design** and the owner decision behind it
+   > (2026-08-18: *a missing manifest is a validation-infrastructure FAIL, and validation never
+   > re-derives the schedule* —
+   > `doc/plans/working/lt_schedule_authority_extraction_plan.md:61-63`) is unchanged.
+   > **INFRA-052** proposes a cheaper alternative transport for the same content — an in-memory
+   > `--active-modes` CLI argument passed by the caller — and is filed so the two can be compared;
+   > it is **not** a decision, and it does not supersede INFRA-028.
+   > Wherever this draft says "manifest" below, read it as *"whichever record of what the run
+   > resolved is finally adopted"*. Nothing in this issue's design changes with the choice; only the
+   > residual gaps differ, and INFRA-052 lists the ones its transport would knowingly accept.
+   >
+   > *(Note also that INFRA-052 records a gap in its own proposal that INFRA-028 does not have: two
+   > of the three `run_locally.sh` paths that validate the long-term tier —
+   > `run_long_term_pipeline` and `run_all` — never resolve the mode list at all, so the caller has
+   > nothing to pass. Weigh that when the choice is made.)*
+   >
    > *Corrected 2026-08-18 (plan rev 4):* an earlier version of this block implied gating would call
    > the extracted predicates. It will not. Validation needs *which modes to check* (the manifest)
    > and *the horizon value to query* — and the latter already comes from
@@ -186,14 +253,17 @@ downgraded.
   kyg 10/25) — a fixture per convention, placeholder station codes only.
 - A mode that is configured but **not scheduled in the current month** reports SKIP, not FAIL, and
   a day inside the **issue-day tolerance window** is treated as an issue day. *(Updated 2026-08-18:
-  these come from **INFRA-028's manifest**, which records what the run actually resolved. They are
+  these come from the record of **what the run actually resolved** — INFRA-028's manifest under the
+  standing design, or INFRA-052's `--active-modes` if that alternative is adopted. They are
   not re-derived here — neither is achievable from `long_term_horizon_resolver`, and re-deriving
   them would miss manual overrides regardless.)*
 - A mode admitted by the scheduler whose models all refused to execute (**LTF-007**, the 10-vs-5
   band) reports **FAIL**, not SKIP — output was expected and is absent. Gating must not be built to
   excuse it.
 - A deployment that runs **no** long-term modes at all (demo, uzhm) produces no long-term FAILs,
-  including via `run_all`'s unconditional `--target all` (`run_locally.sh:1228-1238`).
+  including via `run_all`'s unconditional `--target all`. *(Citation re-derived 2026-09-09:
+  `run_all` is `run_locally.sh:1685`; it skips the long-term pipeline for those orgs at `:1690-1695`
+  but still calls `run_api_validation "all"` at `:1697`, which runs the long-term tier.)*
 - `test_long_term_never_skipped` is **intentionally superseded**: it locks the current
   premise and must be replaced (not deleted silently) by tests asserting per-mode
   gating, so the behaviour change is explicit and reviewed.

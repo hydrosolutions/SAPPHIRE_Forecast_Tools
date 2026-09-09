@@ -1,8 +1,41 @@
 ## `validate_pipeline --module machine_learning` matches zero checks and reports PASS on no evidence (INFRA-020)
 
-**Status**: Draft (2026-07-23) — **diagnosis confirmed, proposed fix blocked on two owner decisions
-**READY TO PLAN** — C3, C4 and C5 resolved by the owner 2026-08-18 after five out-of-loop review
-passes; C5's partial-write detection is deliberately deferred to a follow-up issue**
+**Status**: **Draft** (2026-07-23; last revised 2026-09-09). Diagnosis confirmed and independently
+reproduced; the implementation plan exists and is named below. **No owner decision blocks this
+issue.** One owner-facing question *is* still open — the plan's **M2.4**, headed `OPEN QUESTION
+(owner)` — but it is explicitly non-blocking: M2 may ship under its option (ii) without an answer,
+and M2.4 governs only how much the check may *claim*.
+
+> *(Corrected 2026-09-09: this line previously read "**no owner decision is outstanding**", which
+> contradicted the fourth bullet below and M2.4's own heading in the repair plan. Something **is**
+> outstanding; it simply does not gate anything. The distinction is the point — "nothing
+> outstanding" would have told a reader not to look.)*
+
+> *(Status line repaired 2026-09-09. It previously carried two contradictory halves — "proposed fix
+> blocked on two owner decisions" run straight into "READY TO PLAN", with unbalanced bold markers
+> joining them. The first half was left in place when the second was appended. **Neither claim is
+> made any more**, for the reasons below.)*
+>
+> - **"Blocked on two owner decisions" was stale.** Every owner decision this file raises was settled
+>   on 2026-08-18 after five out-of-loop review passes, and each records its own resolution in place:
+>   **C3** (*"RESOLVED 2026-08-18 (owner)"*) — ML runs daily and the only gate is org-level
+>   enablement, so this issue needs no manifest; **C4** (*"RESOLVED 2026-08-18 (owner)"*) — no
+>   provenance change; leave the write path and the service contract alone; **C5** (*"DECIDED
+>   2026-08-18 (owner): defer C5 to a follow-up issue"*) — partial-write detection is deliberately
+>   out of scope, which the Acceptance criteria now state explicitly. **C7** was likewise decided as
+>   context to record rather than a defect to file. Nothing here waits on the owner.
+> - **"READY TO PLAN" was stale in the opposite direction** — the planning it was waiting for has
+>   since happened. The fix is **M2** of `doc/plans/working/validate_pipeline_repair_plan.md` (rev 4);
+>   see § "Proposed fix — the implementation plan lives elsewhere" below.
+> - **Why `Draft` and not `Ready`.** Per [`doc/plans/README.md`](../README.md), `Ready` means *"plan
+>   reviewed, ready for implementation"*. Repair-plan **rev 4 has not had an out-of-loop review
+>   pass**, which CLAUDE.md requires before implementation, so that promotion is not yet earned.
+>   `doc/plans/module_issues.md` carries the same `Draft` status; the two agree deliberately.
+>   Promote both together once rev 4 is reviewed.
+> - **One open question remains, and it does not block.** The plan's **M2.4** asks whether to print a
+>   mode-provenance caveat. That is optional hardening, not a correctness fix — M2 may ship under
+>   option (ii) without it. It is **not** an owner decision this issue is waiting on.
+
 **Module**: `apps/validate_pipeline` (+ `apps/run_locally.sh` summary reporting)
 **Priority**: **High** (silent false assurance on the module with the most silent-write history)
 **Labels**: `infra`, `validation`, `false-pass`, `machine_learning`, `observability`
@@ -12,6 +45,21 @@ passes; C5's partial-write detection is deliberately deferred to a follow-up iss
 - **ML-015** — operational ML NaN never remediated. INFRA-020 is *why nobody notices*; the
   2026-07-23 tjhm recurrence recorded in ML-015 § Field evidence (4) was reported `PASS`.
 - **ML-002** — hindcast subprocess root cause (silent per-model failures).
+- **INFRA-031** — nothing verifies production forecast runs. This issue's false assurance is given
+  to a developer running the pipeline by hand; INFRA-031 records that production has no data
+  verification at all. Read it before pricing this one.
+- **INFRA-045** — validator config robustness. Its owner decision **D1** and this issue's **M2.5**
+  edit adjacent halves of the same guard; see § "Sequencing against INFRA-045 D1" below.
+
+> **Citation freshness — read before trusting a line number in this file.**
+> The `:NNN` citations below were last verified in bulk on **2026-08-18**. `validate_pipeline.py` and
+> `run_locally.sh` have both moved substantially since (PR #486 alone inserted
+> `_load_deployment_env`), and spot checks on 2026-09-09 confirmed **systematic drift**: e.g. `:1284`
+> is cited for `print_summary`'s return, which is now `validate_pipeline.py:1327`; `run_locally.sh:173-174`
+> is cited for the skip-module arrays, which are now `:224-225`. **Re-derive with `grep -n` before
+> acting on any citation here.**
+> The 2026-09-09 salvage pass re-derived only the citations in the passages it edited — those are
+> marked *(re-derived 2026-09-09)*. A full sweep of the rest is separate, unfinished work.
 
 ---
 
@@ -73,7 +121,72 @@ trusting `run_locally.sh` output is being told ML is healthy on **no evidence**.
 
 This is a **pre-existing** defect, independent of the lead-aware flag work.
 
-## Proposed fix (to be planned)
+## Proposed fix — **the implementation plan lives elsewhere**
+
+> **This issue is already planned.** The fix is **M2** in
+> [`doc/plans/working/validate_pipeline_repair_plan.md`](../working/validate_pipeline_repair_plan.md)
+> (rev 4), alongside M1 (INFRA-025) and M3 (INFRA-026). That plan carries a governing constraint this
+> issue does not state and which shapes any fix here: **do not add new statuses.** `print_summary`
+> returns non-zero only for `FAIL` (`validate_pipeline.py:1327`), `run_locally.sh` consumes only the
+> process exit code, and the tests recognise exactly four statuses
+> (`test_validate_pipeline.py:1083`) — so a new `ERROR` status would render **green**.
+> *(Citations re-derived 2026-09-09.)*
+>
+> **Division of labour**: this issue states the problem and the constraints (C1-C7 below); the plan
+> states the fix. Rev 4 of the plan folds in C1's add-don't-retag finding, C4's dissolution of the
+> provenance concern, and C3a's `FORECAST_DAY_MODULES` defect as **M2.5**, plus a deployment-level
+> ML-enablement gate as **M2.6**. Where the two disagree, the plan wins — **except where this issue
+> cites a locked test, which always wins.**
+>
+> **M2.5 and M2.6 are not optional halves of one change.** M2.5 removes `machine_learning` from
+> `FORECAST_DAY_MODULES` so the new daily checks are not downgraded to SKIP on ~24 days a month
+> (C3a). M2.6 then gates the ML checks on deployment-level ML enablement, because without it M2.5
+> leaves unconditional ML checks running on deployments that do not run ML at all. **Landing M2.5
+> without M2.6 makes things worse than the current defect** — it converts a false PASS into a
+> recurring false FAIL on demo and uzhm.
+>
+> **M2.6's motivating example is half stale — corrected 2026-09-09.** `machine_learning` is in both
+> `DEMO_SKIP_MODULES` and `UZHM_SKIP_MODULES` (`run_locally.sh:224-225`). Of the two paths that used
+> to reach validation after skipping the module:
+> - **The bare `machine_learning` target is already guarded.** `run_module_validation
+>   "machine_learning"` (`:2693`) sits inside the `else` of `if should_skip_module machine_learning`
+>   (`:2664`), so on demo/uzhm the module is recorded as a skip and validation never runs. *(Verified
+>   2026-09-09. `git log -L` attributes the guard itself to the original org-aware filtering commit
+>   `d81adb68` and its `record_skip` line to INFRA-030 (`bf311583`); **this pass could not confirm
+>   the attribution to INFRA-039** that an earlier draft asserted. The guard's existence is verified;
+>   which issue closed it is not.)*
+> - **The pipeline path is still live.** `run_short_term_pipeline` skips ML at `:1580` but then calls
+>   `run_api_validation "short-term"` at `:1612` with **no module filter** — so ML-tagged checks
+>   would run on a deployment that never ran ML. `run_all` (`:1685`) does the same at `:1697`, and
+>   `run_daily_pipeline` at `:1872`.
+>
+> So M2.6 remains necessary, but its justification is the **unfiltered pipeline-level validation**,
+> not the bare target.
+
+### Sequencing against INFRA-045 D1
+
+**These two must not be landed blind to each other.** *(Added 2026-09-09.)*
+
+INFRA-045's owner decision **D1** makes `--target daily` derive `["pentad", "decade"]` from the
+target, and its stated operator consequence depends on `_apply_non_forecast_day_skip()`
+(`validate_pipeline.py:1352`) downgrading **absent decade data to SKIP** away from decade forecast
+days. **M2.5 changes `FORECAST_DAY_MODULES` (`:116-120`) — the very set that same function consults
+at `:1385`.** They edit adjacent halves of one guard: D1 changes *which horizons reach it*, M2.5
+changes *which modules it downgrades*.
+
+Both paths also run through the same locked test: **`test_all_forecast_modules_affected`**
+(`test_validate_pipeline.py:937-963`, class `TestNonForecastDaySkip` at `:849`), which pins
+`machine_learning` to SKIP.
+
+**Whoever lands second must:**
+1. re-derive the line numbers above — both will have moved;
+2. re-check the other issue's **stated operator consequence** still holds after their change, and
+   correct it in the other issue's file if it does not (INFRA-045's D1 text has already been
+   corrected once for overstating an operator-visible effect);
+3. reconcile `test_all_forecast_modules_affected` deliberately, not by letting it fail and then
+   "fixing" it.
+
+*(Retained below: the fix direction as originally stated, which the plan implements.)*
 
 1. **Add ML-attributed Tier-1 presence checks** that query the horizon ML actually
    writes (`horizon_type="day"`), per model (TFT / TiDE / TSMixer), tagged
@@ -90,9 +203,13 @@ This is a **pre-existing** defect, independent of the lead-aware flag work.
    **(b)** registered checks could not *execute* because a dependency (e.g. the
    postprocessing API) was unavailable — the latter must keep reporting the primary
    readiness failure.
-4. Respect the forecast-day gate: on a non-forecast day the correct verdict is SKIP
-   with the gate reason, not PASS-on-nothing (cf. INFRA-022).
-   **Not achievable with the existing gate** — see Constraint C4 below.
+4. ~~Respect the forecast-day gate: on a non-forecast day the correct verdict is SKIP with the gate
+   reason, not PASS-on-nothing (cf. INFRA-022).~~ **Superseded — inverted by C3.** ML runs **daily**,
+   so for ML there is no such thing as a non-forecast day: `machine_learning` must come *out* of
+   `FORECAST_DAY_MODULES` (C3a / plan M2.5), or the gate would downgrade genuine failures to SKIP on
+   ~24 days a month. The gate stays correct for `linear_regression` and `postprocessing_forecasts`,
+   whose products really are boundary-day only. The separate observation that the existing helper
+   cannot produce SKIP for a *populated* dataset is preserved as **C4a** below.
 
 ---
 
@@ -101,32 +218,47 @@ This is a **pre-existing** defect, independent of the lead-aware flag work.
 Two independent read-only `codex exec` passes reviewed this draft as an implementer's brief. Both
 confirmed the **diagnosis** (no check is tagged `machine_learning`; raw day output is queried by
 nothing). Both found the *proposed fix* not implementable as written. These constraints are
-findings, not decisions — the ones marked **OWNER DECISION** need sign-off before planning.
+findings, not decisions.
 
-### C1 — One test must change; four others are compatible **if** the fix is shaped correctly
+> *(Corrected 2026-09-09.)* This preamble used to end *"— the ones marked **OWNER DECISION** need
+> sign-off before planning."* **No constraint below is marked `OWNER DECISION` any more, and none
+> needs sign-off.** C3, C4, C5 and C7 were all settled by the owner on 2026-08-18 and each heading
+> now says so; C5's heading was the last one still carrying the old marker over a body that already
+> read `DECIDED 2026-08-18`. Read C1, C2, C4a and C6 as design constraints on the fix, and C3, C4,
+> C5 and C7 as recorded decisions.
+
+### C1 — **Two** tests must change; four others are compatible **if** the fix is shaped correctly
 
 > **Corrected 2026-08-18 (third review pass).** An earlier version of this section listed five tests
 > as contradictions requiring renegotiation. That was an overcorrection and would have told an
-> implementer to break four working contracts. Only the count assertion necessarily changes. The
-> distinction below is the useful part: each of the other four is a *design constraint on the shape
-> of the fix*, not a contract to rewrite.
+> implementer to break four working contracts. The distinction below is the useful part: each of
+> the "must NOT be broken" four is a *design constraint on the shape of the fix*, not a contract to
+> rewrite.
+>
+> **Count corrected 2026-09-09 — this section said "one".** It missed
+> `test_all_forecast_modules_affected`, which **C3a below invalidates**: that test pins
+> `machine_learning` to SKIP through `_apply_non_forecast_day_skip`, and C3a's fix removes
+> `machine_learning` from `FORECAST_DAY_MODULES`. Two locked contracts change, not one. The
+> Acceptance criteria list has been corrected to match.
 
-**Must change (1):**
+**Must change (2)** *(line numbers re-derived 2026-09-09; note the test directory is
+`apps/validate_pipeline/test/`, not `tests/`)*:
 
 | Test | Asserts today | Why it must change |
 |---|---|---|
-| `test_validate_pipeline.py:302-332` `test_tier1_short_term_returns_expected_check_count` | `assert len(results) == 13` | any added ML check changes the count; update deliberately, with a comment naming this issue |
+| `test_validate_pipeline.py:304-334` `test_tier1_short_term_returns_expected_check_count` | `assert len(results) == 13` (`:333`) | any added ML check changes the count; update deliberately, with a comment naming this issue |
+| `test_validate_pipeline.py:937-963` `test_all_forecast_modules_affected` (class `TestNonForecastDaySkip`, `:849`) | `machine_learning` **must** become SKIP on a non-forecast day — `assert all(r.status == "SKIP" ...)` at `:963` | **invalidated by C3a** — ML runs daily, so this downgrade is what would reintroduce the false-green. Replace it deliberately; do not let it fail and then "fix" it |
 
 **Must NOT be broken (4) — each constrains the fix:**
 
 | Test | Asserts today | Constraint it imposes |
 |---|---|---|
-| `test_validate_pipeline.py:1512-1523` `test_ml_flag_distribution_warn_stuck_flag` | all `flag=1` with **finite** values → WARN | this is *not* the all-NaN case. An all-NaN FAIL check must be a **separate** check, leaving the finite stuck-flag WARN intact. Do not repurpose `check_ml_flag_distribution` |
-| `test_validate_pipeline.py:376-416` | the six period-forecast checks are tagged `postprocessing_forecasts` | **add** raw-day ML checks; do **not** retag the existing six, which would strip processed-output coverage from postprocessing validation |
-| `test_validate_pipeline.py:129-133` `test_api_unavailable_exits_zero` | client absent → exit 0 | the zero-match guard must not fire here — see C2 |
-| `test_validate_pipeline.py:135-140` `test_api_disabled_exits_zero` | `SAPPHIRE_API_ENABLED=false` → exit 0 | same |
+| `test_validate_pipeline.py:1514-1525` `test_ml_flag_distribution_warn_stuck_flag` *(re-derived 2026-09-09; the function under test is `check_ml_flag_distribution`, `validate_pipeline.py:905`)* | all `flag=1` with **finite** values → WARN | this is *not* the all-NaN case. An all-NaN FAIL check must be a **separate** check, leaving the finite stuck-flag WARN intact. Do not repurpose `check_ml_flag_distribution` |
+| `test_validate_pipeline.py:378-418` `test_tier1_short_term_module_mapping` (class `TestModuleAttribution`, `:375`; assertions `:409-414`) *(re-derived 2026-09-09)* | the six period-forecast checks are tagged `postprocessing_forecasts` | **add** raw-day ML checks; do **not** retag the existing six, which would strip processed-output coverage from postprocessing validation |
+| `test_validate_pipeline.py:131` `test_api_unavailable_exits_zero` *(re-derived 2026-09-09)* | client absent → exit 0 | the zero-match guard must not fire here — see C2 |
+| `test_validate_pipeline.py:137` `test_api_disabled_exits_zero` *(re-derived 2026-09-09)* | `SAPPHIRE_API_ENABLED=false` → exit 0 | same |
 
-Note separately that the *generic* NaN check returns WARN, not FAIL (`validate_pipeline.py:662-692`).
+Note separately that the *generic* NaN check returns WARN, not FAIL (`check_no_nan_in_forecasts`, `validate_pipeline.py:705`) *(re-derived 2026-09-09)*.
 Whether the new ML null-check FAILs where the generic one WARNs is a deliberate choice to state in
 the plan — the two can differ, but the difference must be intentional and explained.
 
@@ -193,21 +325,32 @@ reduced verdict. A raw-ML check is mode-agnostic **by design**, not as a disclai
 also means `test_api_integration.py:329-337`, which locks day-storage for a decade call, stays
 untouched.
 
-### C4 — **OWNER DECISION**: mode provenance, or an explicitly weaker verdict
+*(A second, contradictory copy of C4 stood here until 2026-09-09 — the original **unresolved**
+version, left in place when the resolved one above was added. It demanded durable provenance or an
+explicitly reduced verdict, which the resolved C4 above and the repair plan both reject, so the file
+told an implementer two opposite things. Removed. The part of it that is independently true is
+preserved as **C4a** below; the residual mode-overlap concern is the plan's **M2.4 open question**
+— optional hardening that explicitly does **not** block M2 — not a requirement here.)*
 
-Both callers store `horizon_type="day"` with no source-mode field (`utils_ml_forecast.py:788-800`;
-the unique key omits mode at `:760-766`), and `test_api_integration.py:329-337` **locks** day
-storage even for decade. On the 10th, 20th and month-end — dates in both calendars — a DECAD
-validation can pass on PENTAD rows. The draft's "either add provenance or document the limitation"
-is not a real option pair: documenting it means the module verdict is knowingly unsound on shared
-dates. Choose durable provenance, a run-scoped write receipt, or an explicitly reduced claim.
+### C4a — the non-forecast-day gate cannot deliver "SKIP on a quiet day"
 
-Related: the existing non-forecast-day gate only converts **zero-record FAIL → SKIP**
-(`:1333-1340`). It cannot turn PASS into SKIP, and short-term checks query from the most recent
-boundary through today (`:459-481`), so on the 23rd after a run on the 20th, leftovers read as
-fresh and PASS. Point 4 of the proposed fix is therefore not achievable by reusing the gate.
+Kept from the removed text because it is independently true and still constrains the fix.
+*(Citations re-derived 2026-09-09.)*
 
-### C5 — **OWNER DECISION**: presence alone cannot detect a partial write, and the coverage universe is undefined
+The existing gate only converts a **zero-record FAIL → SKIP**: `_apply_non_forecast_day_skip`
+(`validate_pipeline.py:1352`) downgrades only results that are `not r.critical`, `status == "FAIL"`,
+`record_count == 0` **and** whose module is in `FORECAST_DAY_MODULES` (`:1380-1389`). It cannot turn
+a PASS into a SKIP.
+
+And short-term presence checks query **from the most recent boundary through today** —
+`run_tier1_short_term` (`:381`) computes `boundary` at `:396-403` and passes `start_date=bd`,
+`end_date=fd` to the per-model checks (`:477-489`). So on the 23rd, after a run on the 20th,
+leftovers read as fresh and the check PASSes.
+
+Any "quiet day ⇒ SKIP" requirement therefore needs the check itself gated; reusing the existing
+helper cannot deliver it.
+
+### C5 — **DECIDED 2026-08-18 (owner): partial-write detection is deferred to a follow-up issue** — presence alone cannot detect a partial write, and the coverage universe is undefined
 
 `check_presence` passes any non-empty frame (`:349-367`), and one surviving station or target row
 satisfies it. An expected **station × target coverage** contract is required before acceptance
@@ -281,21 +424,37 @@ the fix depends on.
   mutating live API data. *Implemented as a **new** check: per C1, the existing finite stuck-flag
   WARN (`check_ml_flag_distribution`) stays as it is. If the new ML null-check FAILs where the
   generic NaN check WARNs, say so explicitly in the plan.*
-- Partial writes fail: an expected station × target coverage contract is asserted, not mere
-  presence, and the read is paginated or proven to fit under `READ_LIMIT`. *Depends on C5.*
-- Mode attribution is **sound** (durable provenance or a run-scoped write receipt), or the check
-  reports a deliberately reduced status rather than PASS. *Per C4, a `detail`-string disclaimer
-  alone is not sufficient — a PASS that is known to be unsound on shared dates is the defect this
-  issue exists to remove.*
-  *Depends on C4.*
+- **Partial writes are NOT in scope.** *(Corrected 2026-09-09 — this criterion previously demanded a
+  station × target coverage contract while **C5 above defers exactly that work to a follow-up issue**.
+  The two could not both be satisfied.)* INFRA-020 ships **without** partial-write detection: a write
+  that lands one station's rows and drops the rest still PASSes, and **that limitation must be stated
+  in the fix**, not left implicit. File the follow-up when this lands.
+- **Mode attribution: see the plan's M2.4 open question, not this list.** *(Corrected 2026-09-09 —
+  this criterion previously required durable provenance or a reduced status, which the **resolved C4
+  above** and the repair plan both reject.)* What survives is narrower than either: PENTAD writes a
+  6-day span and DECAD an 11-day span from the same issue date
+  (`machine_learning/make_forecast.py:611-614`), and both are stored as `horizon_type="day"`
+  (`scr/utils_ml_forecast.py:818`), so a mode-agnostic day check cannot prove *which* mode produced
+  overlapping rows. Whether to disclaim that, detect it via the 7-11 day span, or accept it is an
+  **open question recorded in the plan's M2.4** — optional hardening that does not block M2, and
+  **not** an owner decision this issue waits on — rather than an acceptance criterion here.
+  *(Citations re-derived 2026-09-09.)*
 - A `--module` value for which **no checks are registered** exits non-zero with an explicit
   "no checks registered for module X" message, while API-absent / API-disabled / API-unready
   invocations keep their current exit-0 or readiness-FAIL behavior. *Per C2.*
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh validate_pipeline` green, with new tests
-  covering: zero-registration filter, all-NaN ML rows, partial write, `BOTH`-mode duplicate naming,
-  and the non-forecast-day gate. The single contract change in C1 (the Tier-1 count) is updated in
-  the same commit,
-  each with a comment naming this issue.
+  covering: zero-**registration** filter, all-NaN ML rows, `BOTH`-mode single emission, and an
+  ML-disabled deployment. *(Partial write removed — out of scope per C5.)*
+- **Two** locked test contracts are changed deliberately, in the same commit, each with a comment
+  naming this issue. *(Corrected 2026-09-09 — this list previously said "the single contract change
+  in C1", which undercounts.)* *(Line numbers re-derived 2026-09-09 against
+  `apps/validate_pipeline/test/test_validate_pipeline.py` — note the directory is `test/`, not
+  `tests/`.)*
+
+  | Test | Where | Asserts today | Why it must change |
+  |---|---|---|---|
+  | `test_tier1_short_term_returns_expected_check_count` | `:304-334`, assertion `assert len(results) == 13` at `:333` | the exact Tier-1 short-term check count | any added ML check changes the count |
+  | `test_all_forecast_modules_affected` | `:937-963` (class `TestNonForecastDaySkip`, `:849`), assertion `assert all(r.status == "SKIP" ...)` at `:963` | `machine_learning` **must** become SKIP on a non-forecast day | invalidated by **C3a** — ML runs daily, so this downgrade is what reintroduces the false-green |
 
 ## Reproduction
 
