@@ -777,7 +777,22 @@ run_machine_learning() {
     # code keeps today's break-2 fail-fast within this model x script loop.
     local db_save_failed=false
 
-    CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning.log"
+    # ML-021 made a second, DECAD invocation of this function possible in
+    # the same run (ML_MODE=BOTH no longer breaks the horizon loop on a
+    # PENTAD failure). Without a mode-suffixed log path, that second call
+    # would truncate and overwrite the first call's log file, so a FAIL row
+    # recorded for PENTAD would end up displaying DECAD's (successful)
+    # output. Same shape as run_module_validation's LABEL_SUFFIX (INFRA-037):
+    # derive the suffix from the horizon and fall back to the unsuffixed
+    # name when SAPPHIRE_PREDICTION_MODE is unset/empty. Only the log FILE
+    # path is affected -- the row label recorded below stays
+    # "machine_learning" either way.
+    local ml_log_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+    if [ -n "$ml_log_mode" ]; then
+        CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_${ml_log_mode}.log"
+    else
+        CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning.log"
+    fi
     > "$CURRENT_MODULE_LOG"
     for model in "${ML_MODELS[@]}"; do
         log INFO "  Model: ${model}"
@@ -1095,7 +1110,17 @@ run_maintenance_machine_learning() {
     start=$(get_timestamp)
     local rc=0
 
-    CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_maintenance.log"
+    # Same fix as run_machine_learning above, for the maintenance
+    # invocation: derive the log suffix from the horizon so a second
+    # (DECAD) call under ML_MODE=BOTH can't truncate and overwrite the
+    # first (PENTAD) call's log. Only the log FILE path changes -- the row
+    # label stays "machine_learning (maintenance)".
+    local ml_log_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+    if [ -n "$ml_log_mode" ]; then
+        CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_maintenance_${ml_log_mode}.log"
+    else
+        CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_maintenance.log"
+    fi
     > "$CURRENT_MODULE_LOG"
     for model in "${ML_MODELS[@]}"; do
         log INFO "  Model: ${model}"

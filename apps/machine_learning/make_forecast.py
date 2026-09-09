@@ -170,20 +170,39 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad, 
             accepted the request but stored zero records). True
             otherwise — including benign no-op outcomes (API disabled,
             client not installed, nothing to send) and a successful
-            write. The CSV write below always runs regardless of this
-            return value.
+            write. The post-write consistency check
+            (`_check_ml_forecast_consistency`) does not affect this
+            return value: a mismatch or an exception raised while
+            reading back from the API is logged but never turns a
+            successful write into a False return. The CSV write below
+            always runs regardless of this return value.
     """
     api_write_ok = True
     # --- 1. Write to SAPPHIRE API (primary path, clean data) ---
     if SAPPHIRE_API_AVAILABLE:
+        write_succeeded = False
         try:
             data_for_api = api_data if api_data is not None else forecast_pentad
             _write_ml_forecast_to_api(data_for_api, "pentad", MODEL_TO_USE)
-            _check_ml_forecast_consistency(forecast_pentad, "pentad", MODEL_TO_USE)
+            write_succeeded = True
         except Exception as e:
             logger.error(f"Failed to write pentad forecast to API: {e}")
             # Don't fail the whole process - continue to CSV
             api_write_ok = False
+
+        # Post-write read-back verification, run only when the write
+        # above actually succeeded (same condition as before). Kept in
+        # its own try/except so that a failure here (e.g. an empty
+        # forecast DataFrame tripping a KeyError inside the consistency
+        # check) is never mislabelled as an API-write failure -- it does
+        # not touch api_write_ok.
+        if write_succeeded:
+            try:
+                _check_ml_forecast_consistency(forecast_pentad, "pentad", MODEL_TO_USE)
+            except Exception as e:
+                logger.error(
+                    f"Pentad forecast consistency check failed (write outcome unaffected): {e}"
+                )
 
     # --- 2. Write to CSV (archive/fallback) ---
     try:
@@ -234,20 +253,39 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
             accepted the request but stored zero records). True
             otherwise — including benign no-op outcomes (API disabled,
             client not installed, nothing to send) and a successful
-            write. The CSV write below always runs regardless of this
-            return value.
+            write. The post-write consistency check
+            (`_check_ml_forecast_consistency`) does not affect this
+            return value: a mismatch or an exception raised while
+            reading back from the API is logged but never turns a
+            successful write into a False return. The CSV write below
+            always runs regardless of this return value.
     """
     api_write_ok = True
     # --- 1. Write to SAPPHIRE API (primary path, clean data) ---
     if SAPPHIRE_API_AVAILABLE:
+        write_succeeded = False
         try:
             data_for_api = api_data if api_data is not None else forecast_decad
             _write_ml_forecast_to_api(data_for_api, "decade", MODEL_TO_USE)
-            _check_ml_forecast_consistency(forecast_decad, "decade", MODEL_TO_USE)
+            write_succeeded = True
         except Exception as e:
             logger.error(f"Failed to write decad forecast to API: {e}")
             # Don't fail the whole process - continue to CSV
             api_write_ok = False
+
+        # Post-write read-back verification, run only when the write
+        # above actually succeeded (same condition as before). Kept in
+        # its own try/except so that a failure here (e.g. an empty
+        # forecast DataFrame tripping a KeyError inside the consistency
+        # check) is never mislabelled as an API-write failure -- it does
+        # not touch api_write_ok.
+        if write_succeeded:
+            try:
+                _check_ml_forecast_consistency(forecast_decad, "decade", MODEL_TO_USE)
+            except Exception as e:
+                logger.error(
+                    f"Decad forecast consistency check failed (write outcome unaffected): {e}"
+                )
 
     # --- 2. Write to CSV (archive/fallback) ---
     try:

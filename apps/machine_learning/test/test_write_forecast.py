@@ -260,6 +260,123 @@ class TestWriteDecadForecast:
         assert len(pd.read_csv(pentad_csv)) == 3
         assert len(pd.read_csv(decad_csv)) == 3
 
+    def test_consistency_check_exception_does_not_flip_success_to_failure(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """ML-021 defect fix: `_check_ml_forecast_consistency` is a
+        post-write read-back check, not part of the write. If the write
+        itself succeeded but the consistency check raises (e.g. a
+        KeyError from an empty/columnless forecast DataFrame with
+        SAPPHIRE_CONSISTENCY_CHECK=true), the wrapper must still report
+        success (True), and the error must be logged as a consistency
+        check failure -- not mislabelled as a database-save failure."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=True),
+            patch.object(
+                make_forecast,
+                "_check_ml_forecast_consistency",
+                side_effect=KeyError("forecast_date"),
+            ),
+            caplog.at_level(logging.ERROR, logger="make_ml_forecast"),
+        ):
+            result = make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        assert result is True
+        error_messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("consistency" in msg.lower() for msg in error_messages), error_messages
+        assert not any("api" in msg.lower() and "write" in msg.lower() for msg in error_messages)
+
+    def test_consistency_check_still_invoked_on_success_path(self, tmp_path, monkeypatch):
+        """The consistency check must still run after a successful write
+        -- proves it was moved into its own try/except, not deleted."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+        mock_consistency = MagicMock(return_value=True)
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=True),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", mock_consistency),
+        ):
+            result = make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        assert result is True
+        mock_consistency.assert_called_once_with(new_data, "decade", "TFT")
+
+    def test_genuine_write_failure_still_returns_false_with_consistency_check_enabled(
+        self, tmp_path, monkeypatch
+    ):
+        """A genuine API write failure must still return False even with
+        SAPPHIRE_CONSISTENCY_CHECK enabled -- the consistency check must
+        not mask a real write failure, and must not even run since the
+        write path did not succeed."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+        mock_consistency = MagicMock()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(
+                make_forecast,
+                "_write_ml_forecast_to_api",
+                side_effect=RuntimeError("API down"),
+            ),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", mock_consistency),
+        ):
+            result = make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        assert result is False
+        mock_consistency.assert_not_called()
+
+    def test_benign_no_op_write_still_runs_consistency_check_and_reports_success(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """Pins the real reported ML-021 scenario end to end:
+        `_write_ml_forecast_to_api` signals a genuine delivery failure by
+        RAISING, and returns False WITHOUT raising for benign no-ops
+        (empty data, client not installed, API disabled, no records -- see
+        its Returns doc). write_decad_forecast only branches on whether
+        the call raised, not on its return value, so `write_succeeded` is
+        still set True on a benign no-op, and the post-write consistency
+        check still runs -- against an effectively empty forecast, which
+        is exactly what makes `_check_ml_forecast_consistency` raise
+        KeyError in production. That KeyError must be logged as a
+        consistency-check failure, not a database-save failure, and must
+        not turn the benign no-op into a reported failure (the wrapper
+        must still return True, so the caller does not exit 5).
+
+        Unlike test_consistency_check_exception_does_not_flip_success_to_failure
+        above (which uses `return_value=True`, a genuine successful
+        write), this drives the same assertions through the return-False
+        no-op branch specifically -- the exact production path of the bug
+        this fix round exists for. Also asserts the consistency check WAS
+        invoked, proving it is not skipped after a benign no-op."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+        mock_consistency = MagicMock(side_effect=KeyError("forecast_date"))
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=False),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", mock_consistency),
+            caplog.at_level(logging.ERROR, logger="make_ml_forecast"),
+        ):
+            result = make_forecast.write_decad_forecast(out_dir, "TFT", new_data, api_data=new_data)
+
+        assert result is True
+        mock_consistency.assert_called_once_with(new_data, "decade", "TFT")
+        error_messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("consistency" in msg.lower() for msg in error_messages), error_messages
+        assert not any("api" in msg.lower() and "write" in msg.lower() for msg in error_messages)
+
 
 class TestWritePentadForecast:
     """Tests for write_pentad_forecast."""
@@ -416,6 +533,124 @@ class TestWritePentadForecast:
         ]
         assert len(row) == 1
         assert row.iloc[0]["Q50"] == 30.0
+
+    def test_consistency_check_exception_does_not_flip_success_to_failure(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """ML-021 defect fix: `_check_ml_forecast_consistency` is a
+        post-write read-back check, not part of the write. If the write
+        itself succeeded but the consistency check raises (e.g. a
+        KeyError from an empty/columnless forecast DataFrame with
+        SAPPHIRE_CONSISTENCY_CHECK=true), the wrapper must still report
+        success (True), and the error must be logged as a consistency
+        check failure -- not mislabelled as a database-save failure."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=True),
+            patch.object(
+                make_forecast,
+                "_check_ml_forecast_consistency",
+                side_effect=KeyError("forecast_date"),
+            ),
+            caplog.at_level(logging.ERROR, logger="make_ml_forecast"),
+        ):
+            result = make_forecast.write_pentad_forecast(
+                out_dir, "TFT", new_data, api_data=new_data
+            )
+
+        assert result is True
+        error_messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("consistency" in msg.lower() for msg in error_messages), error_messages
+        assert not any("api" in msg.lower() and "write" in msg.lower() for msg in error_messages)
+
+    def test_consistency_check_still_invoked_on_success_path(self, tmp_path, monkeypatch):
+        """The consistency check must still run after a successful write
+        -- proves it was moved into its own try/except, not deleted."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+        mock_consistency = MagicMock(return_value=True)
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=True),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", mock_consistency),
+        ):
+            result = make_forecast.write_pentad_forecast(
+                out_dir, "TFT", new_data, api_data=new_data
+            )
+
+        assert result is True
+        mock_consistency.assert_called_once_with(new_data, "pentad", "TFT")
+
+    def test_genuine_write_failure_still_returns_false_with_consistency_check_enabled(
+        self, tmp_path, monkeypatch
+    ):
+        """A genuine API write failure must still return False even with
+        SAPPHIRE_CONSISTENCY_CHECK enabled -- the consistency check must
+        not mask a real write failure, and must not even run since the
+        write path did not succeed."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+        mock_consistency = MagicMock()
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(
+                make_forecast,
+                "_write_ml_forecast_to_api",
+                side_effect=RuntimeError("API down"),
+            ),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", mock_consistency),
+        ):
+            result = make_forecast.write_pentad_forecast(
+                out_dir, "TFT", new_data, api_data=new_data
+            )
+
+        assert result is False
+        mock_consistency.assert_not_called()
+
+    def test_benign_no_op_write_still_runs_consistency_check_and_reports_success(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """Pentad counterpart of
+        TestWriteDecadForecast.test_benign_no_op_write_still_runs_consistency_check_and_reports_success
+        above -- same scenario, same reasoning, driven through
+        write_pentad_forecast instead. `_write_ml_forecast_to_api`
+        returning False WITHOUT raising (the benign no-op: empty data,
+        client not installed, API disabled, no records) must still let
+        the post-write consistency check run (write_pentad_forecast only
+        branches on whether the call raised, not on its return value),
+        and a KeyError from that check (what it really raises against an
+        empty forecast) must be logged as a consistency-check failure --
+        not a database-save failure -- without turning the benign no-op
+        into a reported failure (the wrapper must still return True, so
+        the caller does not exit 5)."""
+        monkeypatch.setenv("SAPPHIRE_CONSISTENCY_CHECK", "true")
+        out_dir = str(tmp_path)
+        new_data = _new_forecast_df()
+        mock_consistency = MagicMock(side_effect=KeyError("forecast_date"))
+
+        with (
+            patch.object(make_forecast, "SAPPHIRE_API_AVAILABLE", True),
+            patch.object(make_forecast, "_write_ml_forecast_to_api", return_value=False),
+            patch.object(make_forecast, "_check_ml_forecast_consistency", mock_consistency),
+            caplog.at_level(logging.ERROR, logger="make_ml_forecast"),
+        ):
+            result = make_forecast.write_pentad_forecast(
+                out_dir, "TFT", new_data, api_data=new_data
+            )
+
+        assert result is True
+        mock_consistency.assert_called_once_with(new_data, "pentad", "TFT")
+        error_messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("consistency" in msg.lower() for msg in error_messages), error_messages
+        assert not any("api" in msg.lower() and "write" in msg.lower() for msg in error_messages)
 
 
 # ---------------------------------------------------------------------------

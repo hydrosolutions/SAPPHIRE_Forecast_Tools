@@ -1014,6 +1014,117 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
             synth_tree.calls()
         )
 
+    def test_pentad_failure_log_is_not_overwritten_by_decad_success(self, synth_tree):
+        """Regression pin for the log-truncation defect ML-021 introduced:
+        run_machine_learning sets CURRENT_MODULE_LOG to a FIXED path
+        (`machine_learning.log`) and truncates it on every call. Since
+        decision 4 lets DECAD run after a PENTAD failure, both invocations
+        in one `ML_MODE=BOTH` run used to share that one file -- DECAD's
+        (successful) output would truncate and overwrite PENTAD's, so
+        print_summary's MODULE ERROR DETAILS block would tail DECAD's
+        output underneath the PENTAD FAIL row, hiding the actual failure
+        cause.
+
+        The stub echoes a distinctive marker per horizon before deciding
+        the exit code, so the two invocations' captured output is
+        distinguishable regardless of which log file each one lands in.
+        MODULE ERROR DETAILS must show the PENTAD failure marker and must
+        NOT show the DECAD success marker. Reverting the per-invocation log
+        suffix (back to the fixed `machine_learning.log` path) makes this
+        fail: DECAD's marker would appear in (and PENTAD's would vanish
+        from) the details tail.
+        """
+        synth_tree.override(
+            "machine_learning",
+            (
+                'if [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then\n'
+                "    echo PENTAD_ML_FAILURE_MARKER_c9f3\n"
+                "    exit 1\n"
+                'elif [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
+                "    echo DECAD_ML_SUCCESS_MARKER_a716\n"
+                "fi"
+            ),
+        )
+        result = run_main(
+            synth_tree,
+            "short-term",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH", "ML_MODE": "BOTH"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        # Sanity: both horizons actually ran (decision 4).
+        ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert ml_modes == ["PENTAD", "DECAD"]
+
+        assert "MODULE ERROR DETAILS" in out, out
+        details = out.split("MODULE ERROR DETAILS", 1)[1]
+        assert "PENTAD_ML_FAILURE_MARKER_c9f3" in details, details
+        assert "DECAD_ML_SUCCESS_MARKER_a716" not in details, details
+
+    def test_pentad_maintenance_failure_log_is_not_overwritten_by_decad_success(self, synth_tree):
+        """Maintenance-path counterpart to
+        test_pentad_failure_log_is_not_overwritten_by_decad_success above:
+        the same log-truncation defect was fixed independently in
+        run_maintenance_machine_learning's own CURRENT_MODULE_LOG path
+        (``${ERROR_DIR}/machine_learning_maintenance_${mode}.log``,
+        unsuffixed -- ``machine_learning_maintenance.log`` -- before the
+        fix).
+
+        Driven through the standalone ``maintenance:machine_learning``
+        target (run_locally.sh's own dispatch case, not ``maintenance`` or
+        ``daily``) because it is the target that loops
+        run_maintenance_machine_learning over both PENTAD and DECAD by
+        itself (its own local ``modes_to_run`` array, built from
+        SAPPHIRE_PREDICTION_MODE=BOTH -- see run_locally.sh's `case "$1"`
+        block) without also requiring run_maintenance_linear_regression /
+        run_maintenance_postprocessing_forecasts to run, which keeps this
+        test focused on exactly the function under test -- the same way
+        the sibling test above isolates run_machine_learning via
+        `short-term`. ML_MODE=BOTH is required alongside
+        SAPPHIRE_PREDICTION_MODE=BOTH because should_skip_ml_for_mode is
+        still consulted per mode inside that loop (default ML_MODE=DECAD
+        would skip PENTAD's ML step entirely).
+
+        The stub echoes a distinctive marker per horizon before deciding
+        the exit code, so the two invocations' captured output is
+        distinguishable regardless of which log file each one lands in.
+        MODULE ERROR DETAILS must show the PENTAD maintenance failure
+        marker and must NOT show the DECAD maintenance success marker.
+        Reverting the per-invocation log suffix in
+        run_maintenance_machine_learning (back to the fixed
+        `machine_learning_maintenance.log` path) makes this fail: DECAD's
+        marker would appear in (and PENTAD's would vanish from) the
+        details tail.
+        """
+        synth_tree.override(
+            "machine_learning",
+            (
+                'if [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then\n'
+                "    echo PENTAD_ML_MAINTENANCE_FAILURE_MARKER_e214\n"
+                "    exit 1\n"
+                'elif [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
+                "    echo DECAD_ML_MAINTENANCE_SUCCESS_MARKER_b58a\n"
+                "fi"
+            ),
+        )
+        result = run_main(
+            synth_tree,
+            "maintenance:machine_learning",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH", "ML_MODE": "BOTH"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        # Sanity: both horizons actually ran.
+        ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert ml_modes == ["PENTAD", "DECAD"]
+
+        assert "MODULE ERROR DETAILS" in out, out
+        details = out.split("MODULE ERROR DETAILS", 1)[1]
+        assert "PENTAD_ML_MAINTENANCE_FAILURE_MARKER_e214" in details, details
+        assert "DECAD_ML_MAINTENANCE_SUCCESS_MARKER_b58a" not in details, details
+
 
 # ---------------------------------------------------------------------------
 # Group C -- the long-horizon sync exit-4 (informational)/exit-6 (fatal but
