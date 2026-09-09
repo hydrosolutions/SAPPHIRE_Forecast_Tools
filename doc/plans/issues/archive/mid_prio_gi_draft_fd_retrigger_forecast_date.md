@@ -331,4 +331,4 @@ Note: `run_docker_pipeline` calls the **outer** `run_docker_container` (line 415
 - `apps/forecast_dashboard/src/vizualization.py:4006` — `run_docker_pipeline`
 - `apps/iEasyHydroForecast/tag_library.py:672` — `get_date_for_pentad` (returns first day, not boundary)
 - FD-007: `doc/plans/issues/mid_prio_gi_draft_fd_docker_dataflows_update.md`
-- FD-008: `doc/plans/issues/low_prio_gi_draft_fd_inner_run_docker_error_handling.md`
+- FD-008: `doc/plans/issues/high_prio_gi_draft_fd_inner_run_docker_error_handling.md`

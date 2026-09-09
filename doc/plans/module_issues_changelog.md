@@ -15,18 +15,95 @@ the top, under a `## YYYY-MM-DD` heading.
 **LR-012** filed — `linear_regression.py` exits 0 having written nothing when
 `SAPPHIRE_PREDICTION_MODE` is unrecognised (`:646-647` derives both horizon flags by exact-string
 membership with no `else` or domain check). Salvaged from a draft filed 2026-08-24 on the
-abandoned branch `docs_infra040_lr012_followups`, corrected against trunk `e09d48d5`: the
-production-cron hardcoded-mode citation moved from `:68` to the verified `:92` in both
+abandoned branch `docs_infra040_lr012_followups`, corrected against trunk `e09d48d5` (first pass):
+the production-cron hardcoded-mode citation moved from `:68` to the verified `:92` in both
 `bin/run_pentadal_forecasts.sh` and `bin/run_decadal_forecasts.sh`, and the original's "every
-other invocation path is exposed" claim was narrowed to the directly-verified set (latent, not
-live — reachable only via direct Luigi task invocation, the deprecated
-`bin/locally_run_forecast_tools.sh`, or direct module invocation), while also adding a previously
-undocumented second latent path through `PostProcessingForecasts`. **Owner decision recorded in
-the issue: `ALL` is aliased to `BOTH`** in `linear_regression.py`, resolving the standing conflict
-between `doc/configuration.md:870` (documents `ALL` as valid) and
-`pipeline_docker.py:639` (`LinearRegression` Luigi task defaults to `prediction_mode="ALL"`)
-without changing either of those files. Also newly documented: the same case-sensitivity gap as
-INFRA-038 (lowercase `pentad`/`decad`/`both`/`all` fail the same silent way).
+other invocation path is exposed" claim was narrowed to the directly-verified set, plus a
+previously undocumented second latent path through `PostProcessingForecasts`. **Owner decision:
+`ALL` is aliased to `BOTH`** in `linear_regression.py`, resolving the standing conflict between
+`doc/configuration.md:870` (documents `ALL` as valid) and `pipeline_docker.py:639`
+(`LinearRegression` Luigi task defaults to `prediction_mode="ALL"`) without changing either of
+those files. Also newly documented: the same case-sensitivity gap as INFRA-038 (lowercase
+`pentad`/`decad`/`both`/`all` fail the same silent way). **Second out-of-loop pass, same day,
+corrected the headline conclusion**: the defect is **not latent-only** — the forecast dashboard's
+"Save Changes" and "Trigger forecasts" buttons build `SAPPHIRE_PREDICTION_MODE` from the horizon
+selector's own `"decade"` value via `.upper()` (`widgets.py:99`,
+`vizualization.py:3449/:4080/:4131/:4355/:4400`), producing `DECADE` on every decade-horizon
+click — a live, deterministic trigger on two real, currently-shipped buttons, not a
+misconfiguration. Repriced **Medium → High** as a direct result. **New owner decision: `DECADE`
+is aliased to `DECAD`**, a stopgap so LR-012 can ship without waiting on the dashboard's own fix
+and without turning today's silent no-op into a new hard failure on a live path; the dashboard's
+root-cause spelling mismatch is filed separately as **FD-026**. Three previously-missed direct-Luigi
+routes (`LinRegMaintenance`, `LinRegInitial`, `SkillMetricsInitial`) were added to the (still
+accurate) latent-exposure list; a self-contradiction about which shell scripts are exposed and a
+misquoted precedent (`postprocessing_maintenance.py` vs. `postprocessing_operational.py`'s error
+message) were both fixed; the two separate `:54`/`:216` docstring/epilog locations are now
+distinguished rather than treated as one. Rebased onto trunk `3791fa31` (PR #504, docs-only —
+INFRA-051, ML-024/025/026 — no code citation affected).
+
+**FD-026** filed — the forecast dashboard's horizon selector uses the internal value `"decade"`
+(`widgets.py:99`) where every module-side consumer's `SAPPHIRE_PREDICTION_MODE` domain expects
+`DECAD`. The "Save Changes" and "Trigger forecasts" button handlers both forward
+`horizon.upper()` into container environments (`vizualization.py:4080`/`:4355`), producing
+`DECADE`; `linear_regression.py` silently no-ops on it (LR-012), while `machine_learning`'s
+`make_forecast.py:605-608` raises `ValueError` on the same value, corroborating the mismatch.
+Found while verifying LR-012's exposure claim. Root cause of LR-012's live path; LR-012's
+`DECADE`→`DECAD` alias is a stopgap in LR only. Two fix options recorded, not decided: rename the
+widget's internal value to `"decad"` (touches ~9 other comparison sites), or translate
+`"decade"`→`DECAD` only at each container-environment build site.
+
+**Owner override, same day, on LR-012 and FD-026**: both per-value aliasing decisions above
+(`ALL`→`BOTH`, `DECADE`→`DECAD`) are superseded by one governing rule — **normalize spelling and
+case; keep each module's own domain.** Case-insensitive comparison everywhere; `decade`≡`decad`
+in every module whose domain includes the decad horizon; `ALL`≡`BOTH` within
+`linear_regression.py`'s own domain only (not a global equivalence); exit 1 only on a value still
+unrecognised after normalization; nothing that succeeds today may start failing. **Critical scope
+correction, verified directly**: fixing `linear_regression.py` alone does not fix the dashboard —
+`save_to_database` and `run_pipeline` both run `mabesa/sapphire-postprocessing:latest`
+(→ `postprocessing_operational.py`) with the same environment immediately after the LR container
+(`vizualization.py:4137-4138`, `:4432`), and `postprocessing_operational.py:245-251` already
+rejects `DECADE` today, independent of LR-012. **Full chain mapped**: both dashboard buttons feed
+this variable to four modules total — `linear_regression.py` (LR-012), `postprocessing_operational.py`
+and `recalculate_skill_metrics.py` (both via "Save Changes", the latter non-fatal by design), and
+`make_forecast.py` (via "Trigger forecasts", ML on by default) — each keeping its own domain
+(`make_forecast.py` must not gain `BOTH`/`ALL`; `postprocessing_operational.py`'s wider `ALL`/`MONTHLY`
+and `recalculate_skill_metrics.py`'s `VALID_MODES` must not change). Rewrote FD-026 into the
+umbrella issue for the three non-LR modules. **A third, previously-undiscovered defect explains
+why none of this has been visible**: the dashboard's two independent `run_docker_container`
+implementations both swallow a failed container's exit status — the nested one
+(`save_to_database`, `:3858`) raises `ContainerError` only to have its own `except Exception`
+catch it (`:3949-3971`); the module-level one (`run_pipeline`, `:4491`) never raises at all on a
+non-zero exit code (`:4559-4560`), just prints and continues. Same shape as **P-007**, already
+fixed once in the Luigi pipeline. This was already filed as **FD-008** (originally Low, scoped
+only to "Save Changes"), whose own "Out of Scope" section incorrectly claimed "Trigger forecasts"
+does not have the bug — corrected and **repriced Low → High**. FD-008 is not a blocking
+dependency of LR-012/FD-026: once every module's domain is normalized, none of them fail on
+`DECADE` any more, which makes the swallow moot for this specific value even before FD-008 ships.
+**Deployment note added to both LR-012 and FD-026**: shipping the normalization means the
+dashboard's decade actions will, for the first time, actually write forecasts and recalculate
+skill metrics — new data appearing where operators may believe the button already worked: call
+this out in the release note, and consider whether stations "corrected" via the dashboard before
+this ships need a one-time backfill.
+
+**Blast-radius correction, same day (owner-reported and verified)**: the owner reported still
+seeing decadal forecasts in the dashboard, and was right — **operational decadal forecasting is
+completely unaffected** by any of the above. `bin/run_decadal_forecasts.sh:92` sets
+`SAPPHIRE_PREDICTION_MODE=DECAD` and Luigi's `RunDecadalWorkflow` instantiates
+`LinearRegression`, `RunMLModel`, and `PostProcessingForecasts` all with `prediction_mode="DECAD"`
+(`pipeline_docker.py:1542`, `:1549`, `:1557`) — verified directly. Decadal forecasts, ML runs,
+postprocessing and skill metrics from the operational cron/Luigi pipeline are produced, stored,
+and displayed normally, on schedule, today. The entire defect (LR-012 + FD-026 + FD-008) is
+confined to the forecast dashboard's two **manual** re-run buttons ("Save Changes", "Trigger
+forecasts") and only when an operator has the decade horizon selected — not to decadal
+forecasting itself. LR-012's and FD-026's titles, opening summaries, and tracker rows were
+rewritten to lead with this distinction rather than bury it; a new "What is NOT affected" section
+was added to FD-026 with the full citation chain. The earlier deployment-note wording ("decade
+actions will... start producing... forecasts... new data appearing") was corrected: the affected
+population is only the specific station/period combinations an operator manually re-ran via
+these two buttons — not "all decade forecasts," which the operational pipeline already produces
+correctly — and that population **cannot be bounded from the repository** (no log of past manual
+dashboard actions exists here); each deployment must judge for itself whether a one-time review
+of past manual decade corrections is warranted, rather than being given an estimated count.
 
 ## 2026-08-21
 
