@@ -10,6 +10,24 @@ the top, under a `## YYYY-MM-DD` heading.
 
 ---
 
+## 2026-09-09
+
+**LR-012** filed — `linear_regression.py` exits 0 having written nothing when
+`SAPPHIRE_PREDICTION_MODE` is unrecognised (`:646-647` derives both horizon flags by exact-string
+membership with no `else` or domain check). Salvaged from a draft filed 2026-08-24 on the
+abandoned branch `docs_infra040_lr012_followups`, corrected against trunk `e09d48d5`: the
+production-cron hardcoded-mode citation moved from `:68` to the verified `:92` in both
+`bin/run_pentadal_forecasts.sh` and `bin/run_decadal_forecasts.sh`, and the original's "every
+other invocation path is exposed" claim was narrowed to the directly-verified set (latent, not
+live — reachable only via direct Luigi task invocation, the deprecated
+`bin/locally_run_forecast_tools.sh`, or direct module invocation), while also adding a previously
+undocumented second latent path through `PostProcessingForecasts`. **Owner decision recorded in
+the issue: `ALL` is aliased to `BOTH`** in `linear_regression.py`, resolving the standing conflict
+between `doc/configuration.md:870` (documents `ALL` as valid) and
+`pipeline_docker.py:639` (`LinearRegression` Luigi task defaults to `prediction_mode="ALL"`)
+without changing either of those files. Also newly documented: the same case-sensitivity gap as
+INFRA-038 (lowercase `pentad`/`decad`/`both`/`all` fail the same silent way).
+
 ## 2026-08-21
 
 **INFRA-038** filed — `connect_to_iEH` and `ssh_to_iEH` are parsed **four incompatible ways across
