@@ -2,8 +2,10 @@
 
 **Status**: Draft (2026-09-09)
 **Module**: `apps/machine_learning` (`locally_run_ml_forecasts.sh`)
-**Priority**: Low — real defect, but confirmed developer-only tooling with no
-live invoker anywhere in the deployed pipeline (see Reachability below).
+**Priority**: Low — real defect, but developer-only tooling with no
+repository-wired production invocation found anywhere in this repo (see
+Reachability below; external or manual invocation cannot be excluded from
+repository evidence alone).
 **Labels**: `ml`, `run-script`, `exit-code`, `dev-tooling`
 **Found**: 2026-09-08/09, out-of-loop review of ML-021 (PR #503). Listed as
 "deliberately not addressed" defect 2 in
@@ -41,24 +43,37 @@ each run."` (`:127`) regardless of what any of the four scripts did.
 second `tee` occurrence — it is a plain `echo` after the loop. The four `tee`
 sites above are the complete list.
 
-## Reachability — confirmed developer-only, not a production or crontab path
+## Reachability — no repository-wired production invocation found
 
-Three independent facts, checked directly against this worktree:
+Four independent facts, checked directly against this worktree:
 
 1. **The script says so itself.** Line 4: `# Note that this script is not used
    in operational mode.`
-2. **Its only caller in the repository is itself deprecated and non-functional.**
-   `bin/locally_run_forecast_tools.sh:170` calls `bash locally_run_ml_forecasts.sh`
-   from inside `run_machine_learning_models()`, but that wrapper's own header
-   (`:3-16`) reads: `"DEPRECATED: Use apps/run_locally.sh instead... This script
-   is outdated — it uses hardcoded paths and conda environments that no longer
-   exist."` It also prints a deprecation `WARNING` at every invocation
-   (`:18-19`). It is not installed in any crontab this repository documents —
-   `grep -rn locally_run_forecast_tools doc/` matches only two unrelated issue
-   drafts discussing it as an example, not a deployment or scheduling doc.
-3. **`grep -rn locally_run_ml_forecasts doc/` returns nothing** except this
-   issue's own source (`review_gi_draft_ml_forecast_api_write_silent_success.md`).
-   No runbook, deployment doc, or crontab reference invokes it.
+2. **Its only reference in the repository sits inside a wrapper function whose
+   own invocation is commented out — there is no active repository caller at
+   all.** `bin/locally_run_forecast_tools.sh:170` calls
+   `bash locally_run_ml_forecasts.sh` from inside `run_machine_learning_models()`
+   (defined at `:154`), but that function's own call site,
+   `#run_machine_learning_models` at `:264` (in the script's executable section,
+   `:252-267`), is commented out — so even the deprecated wrapper never reaches
+   this line when run as-is. Reaching `locally_run_ml_forecasts.sh` today
+   requires an operator to manually uncomment that line, or to call the function
+   directly.
+3. **The wrapper is separately marked deprecated.** Its own header (`:3-16`)
+   reads: `"DEPRECATED: Use apps/run_locally.sh instead... This script is
+   outdated — it uses hardcoded paths and conda environments that no longer
+   exist."` (a claim about the wrapper's own state, per the wrapper's own
+   comment — not independently re-verified here). It also prints a deprecation
+   `WARNING` at every invocation (`:18-19`). It is not installed in any crontab
+   this repository documents — `grep -rn locally_run_forecast_tools doc/`
+   matches only issue-tracking documents discussing it as an example (including
+   this one), not a deployment or scheduling doc.
+4. **`grep -rn locally_run_ml_forecasts doc/` matches only issue-tracking
+   documents** (this issue and the source review it was split from) — no
+   runbook, deployment doc, or crontab reference invokes it. This grep result
+   will also match this issue's own file and its `module_issues.md` tracker
+   row going forward; the claim is about the absence of non-issue-tracking
+   (runbook/deployment/crontab) matches, not a literal match count.
 
 **Does INFRA-023 cover this?** No. INFRA-023 (Complete, PR #494) is scoped to
 `run_periodic_maintenance.sh` and `yearly_runoff_hydrograph_aggregation.sh` — a

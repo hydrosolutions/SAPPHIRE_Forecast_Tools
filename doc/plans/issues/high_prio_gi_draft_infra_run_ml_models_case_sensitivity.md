@@ -56,15 +56,16 @@ genuinely set `false`.
 **`RunAllMLModels` (`:776-799`) does not consult `RUN_ML_MODELS` at all** — confirmed by reading
 its `requires()`, which yields `RunMLModel` for every model × both prediction modes
 unconditionally. This is a real gap in the code (if this task is ever invoked, the flag is
-ignored entirely), but **it is not wired to any current production entrypoint**: neither
+ignored entirely), but **no repository-wired production entrypoint was found for it**: neither
 `apps/pipeline/Dockerfile:38`'s `CMD` nor any `command:` in `bin/docker-compose-luigi.yml` (which
 invoke `PreprocessingRunoff`, `RunPreprocessingGatewayWorkflow`, `RunPreprocessingRunoffWorkflow`,
 `RunPentadalWorkflow`, `RunDecadalWorkflow`, the maintenance workflows, or the long-term workflow)
 names `RunAllMLModels`. Its only other repository references are two test files and one cosmetic
 string inside a notification-message body (`pipeline_docker.py:1397`, `"- RunAllMLModels\n"`)
-that lists a task name for an email and does not instantiate the class. Record this as a latent
-inconsistency to close (a manual `luigi --module ... RunAllMLModels` invocation would silently
-ignore the flag) rather than a demonstrated production gap.
+that lists a task name for an email and does not instantiate the class. External or manual Luigi
+invocation (e.g. an operator running `luigi --module ... RunAllMLModels` by hand) cannot be
+excluded from repository evidence alone. Record this as a latent inconsistency to close rather
+than a demonstrated production gap.
 
 ### `apps/iEasyHydroForecast/setup_library.py:4352-4358`, `:4522-4533` — legacy, not on the live
 read path; an earlier note about its effect was wrong
@@ -93,13 +94,19 @@ Two corrections here:
    misleading log message. A lowercase `"false"` or `"true"` both land here and both skip the
    read. This function does **not** make "the dashboard proceed to read ML results" under the
    documented lowercase schema.
-2. **These two functions are legacy and not called from production code.** Confirmed by grep:
-   their only references outside their own definitions are comments in
-   `apps/postprocessing_forecasts/tests/test_workflow_integration.py` and
-   `test_monthly_workflow_integration.py` describing "the old" equivalent, and a docstring in
-   `apps/postprocessing_forecasts/src/data_reader.py:2755-2756` naming
-   `read_observed_and_modelled_data()` as the "API-first reader that replaces" them. They are not
-   part of the live dashboard-read path.
+2. **These two functions are legacy, with no active production caller found — but they are not
+   dead code with zero references.** They are actually called (not merely mentioned in comments)
+   by test helpers: `apps/postprocessing_forecasts/tests/test_workflow_integration.py:158-172`
+   and `test_monthly_workflow_integration.py:221-223` monkeypatch
+   `data_reader.read_observed_and_modelled_data` to delegate to
+   `real_sl.read_observed_and_modelled_data_pentade()` / `_decade()`, exercising the real legacy
+   functions against test-CSV fixtures. They are also still called from the deprecated module
+   `apps/postprocessing_forecasts/postprocessing_forecasts.py.deprecated:126,166`. A docstring in
+   `apps/postprocessing_forecasts/src/data_reader.py:2755-2756` names
+   `read_observed_and_modelled_data()` as the "API-first reader that replaces" them, confirming
+   they are superseded — but "superseded, with test and deprecated-module references" is more
+   precise than "not called from production code," and is what this issue means by "legacy": they
+   are not part of the live dashboard-read path, not that they are unreferenced anywhere.
 
 ### Live consumers found beyond the ones above (all case-insensitive, and correct)
 
@@ -145,20 +152,26 @@ value that silently disables Luigi's four ML-scheduling gates.
 
 ## Reachability — cannot be confirmed from this repository
 
-Real deployment env files live outside this repository. `.gitignore:185` excludes
-`apps/config/.env_develop_kghm` by name, and the pattern covers the other per-org files the same
-way — none of them are in the repo to inspect. This issue cannot state which live deployments are
-affected. An operator must inspect each live `.env_develop_<org>` file's literal value (`True` vs
-`true`) against the gates above. Do not treat any specific deployment as confirmed broken from
-this issue alone.
+Real deployment env files live outside this repository. `.gitignore:185` is a single **literal
+path**, `apps/config/.env_develop_kghm` — not a wildcard or pattern. `git check-ignore` confirms it
+does not match the tjhm or uzhm equivalents (`apps/config/.env_develop_tjhm`,
+`apps/config/.env_develop_uzhm`); those files are simply not tracked in this repository at all
+(never committed), for the same reason real per-org env files generally aren't — not because a
+`.gitignore` rule excludes them. Either way, none of the real per-org files are in the repo to
+inspect, and this issue cannot state which live deployments are affected or infer how other org
+env files are managed from this one literal exclusion. An operator must inspect each live
+`.env_develop_<org>` file's literal value (`True` vs `true`) against the gates above. Do not treat
+any specific deployment as confirmed broken — or confirmed fine — from this issue alone.
 
 **Do not start with uzhm.** An earlier draft of this issue named it as the deployment to check
 first; that is wrong. `apps/run_locally.sh:225` lists `machine_learning` in `UZHM_SKIP_MODULES`,
 so uzhm does not run ML by design and the value of this flag is moot there. Check the
-**ML-enabled** deployments instead — kghm and tjhm — which do produce ML forecasts today and
-therefore presumably already carry the capitalised literal. The population genuinely at risk is a
-**new** ML-enabled deployment configured from `doc/configuration.md`, which instructs the
-lowercase value.
+**ML-enabled** deployments instead — kghm and tjhm — which do produce ML forecasts today. This
+issue does not know, and does not claim to know, what literal value either deployment's live env
+file currently carries; that requires direct inspection of the live `.env_develop_kghm` /
+`.env_develop_tjhm` files, which are outside this repository. The population genuinely at risk
+independent of that inspection is a **new** ML-enabled deployment configured from
+`doc/configuration.md`, which instructs the lowercase value.
 
 ## Why this is silent, and where the asymmetry actually is
 
@@ -221,10 +234,12 @@ Either way, decide:
   shape (`:827`, `:1491`, `:1553`) and is already tracked as newly-reachable drift under
   INFRA-048's note and related to INFRA-038 — not duplicated here.
 - `apps/iEasyHydroForecast/setup_library.py`'s legacy `read_observed_and_modelled_data_pentade`/
-  `_decade` functions themselves — dead code, not read by any production path; noted only to
-  correct the earlier claim about their effect, not proposed for cleanup here.
+  `_decade` functions themselves — legacy, with no active production caller found (still called by
+  test helpers and a deprecated module, see the correction above); noted only to correct the
+  earlier claim about their effect, not proposed for cleanup here.
 - `RunAllMLModels`'s missing gate — recorded above as a latent inconsistency to fix alongside the
-  rest, not escalated as a standalone production incident since no entrypoint currently reaches it.
+  rest, not escalated as a standalone production incident since no repository-wired entrypoint was
+  found for it.
 
 ## Acceptance criteria
 
