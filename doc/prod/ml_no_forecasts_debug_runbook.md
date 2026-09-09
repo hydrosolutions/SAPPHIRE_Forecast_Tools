@@ -205,12 +205,14 @@ and you run via Docker, you have no ML image.
 >   *which* stations without raising the module's own log level.
 > - **ML-016 — `run_locally.sh machine_learning` on its own used to crash**
 >   with `ValueError: Prediction mode %s is not supported` unless you exported
->   `SAPPHIRE_PREDICTION_MODE` yourself. **Fixed**: the bare target now
->   resolves its own mode (from `ML_MODE` if `SAPPHIRE_PREDICTION_MODE` is
->   unset, with a `WARN`) instead of forwarding an empty value, and the `%s`
->   in the error message now shows the actual offending value if it is ever
->   hit. See Step 2a — the manual export is no longer required, though it
->   still works if you want to force a specific mode.
+>   `SAPPHIRE_PREDICTION_MODE` yourself. **Fixed, then tightened**: the bare
+>   target resolves its own mode via `resolve_ml_bare_target_modes` instead
+>   of forwarding an empty value, and the `%s` in the error message now shows
+>   the actual offending value if it is ever hit. As of the per-mode ML
+>   override variable's removal (see Step 2a), `SAPPHIRE_PREDICTION_MODE` is
+>   **required** for this target — leaving it unset is a `run_locally.sh`-level
+>   error naming the variable and its valid values, not a silent default.
+>   See Step 2a.
 >
 > Between them these two used to fully account for "the daily run does not
 > produce ML" and "running ML by hand does not work either" with no further
@@ -269,9 +271,14 @@ head -20 "$(ls -t apps/logs/run_locally_*.log | head -1)"
 [2026-08-20 09:14:02] [INFO] Organization: <your org>   ← or "<not set, running all modules>"
 [2026-08-20 09:14:02] [INFO] Continue on error: false
 [2026-08-20 09:14:02] [INFO] Dry run: false
-[2026-08-20 09:14:02] [INFO] ML mode: DECAD
 [2026-08-20 09:14:02] [INFO] Log file: .../run_locally_20260820_091402.log
 ```
+
+> The `ML mode: DECAD` line above the log file line is **gone** on a fixed
+> checkout — it belonged to the removed per-mode ML override variable (see
+> Step 2a). If your log still has it, you are on an older checkout; the rest
+> of this runbook still applies but Step 2/2a's "healthy" descriptions do
+> not.
 
 1. **`Organization:` — check this first, it is the single most decisive value.**
    Machine learning is only ever *expected* to run for two organisations:
@@ -313,14 +320,13 @@ head -20 "$(ls -t apps/logs/run_locally_*.log | head -1)"
    `ieasyhydroforecast_organization` (`iEasyHydroForecast/forecast_library.py`
    tests for `kghm`/`tjhm`), and a typo silently takes neither branch.
 
-2. **`ML mode:`** — defaults to `DECAD` (`run_locally.sh:194`). ML runs for DECAD
-   only; PENTAD uses linear regression. Intended, not a bug.
-
-3. **`Target:`** —
+2. **`Target:`** —
    - `daily` runs **both** PENTAD and DECAD explicitly (`run_daily_pipeline`,
      `:1552`), so an unset `SAPPHIRE_PREDICTION_MODE` does not stop ML here.
    - `short-term`, `all`, `maintenance` default to **PENTAD** when the mode is
-     unset (`:1366`/`:1498`, with a WARN) — and PENTAD + `ML_MODE=DECAD` skips ML entirely.
+     unset (`:1366`/`:1498`, with a WARN), and ML now runs for whichever
+     mode(s) that loop resolves — there is no second, per-mode filter that
+     can silently drop it any more (see Step 2a's history note).
 
 ---
 
@@ -333,14 +339,19 @@ grep -n "Skipping machine_learning\|Module: machine_learning\|SAPPHIRE_PREDICTIO
 
 **Healthy depends on your target — read carefully:**
 
-- **On `daily`:** **two** skip lines plus a `Module: machine_learning` banner is
-  the **normal, healthy** result — `daily` loops PENTAD/DECAD in both the
-  operational and the maintenance phase, so you get
-  `Skipping machine_learning for PENTAD (ML_MODE=DECAD)` **and**
-  `Skipping machine_learning maintenance for PENTAD (ML_MODE=DECAD)`. Skip lines
-  alone are not a problem; a missing banner is.
-- **On `short-term`/`all`/`maintenance`:** a skip line with **no banner anywhere**
-  means ML never ran. Re-run with the mode set (Step 2a).
+- **On `daily`:** ML now runs unconditionally for both PENTAD and DECAD, in
+  both the operational and the maintenance phase (`run_daily_pipeline`
+  hardcodes the loop over both, `:1552`) — so on a checkout where your
+  organisation is not skipped (Step 1.1), you should see **no** skip line for
+  `machine_learning` at all, just a `Module: machine_learning` banner for
+  each of the four calls (operational PENTAD/DECAD + maintenance
+  PENTAD/DECAD). A skip line here now means the org skip fired, not a
+  per-mode filter — check Step 1.1.
+- **On `short-term`/`all`/`maintenance`:** with an unset `SAPPHIRE_PREDICTION_MODE`
+  these default to PENTAD (a WARN, not a skip) and ML now runs for it — a
+  skip line with **no banner anywhere** means ML was skipped by organisation
+  (Step 1.1), not by mode. If you still see no banner and no skip line at
+  all, the run aborted earlier (Step 7).
 
 **If there is no banner and no skip line at all:** ML was skipped by organisation
 (Step 1.1), or the run aborted earlier (Step 7). On `daily` the org-skip branch
@@ -348,17 +359,30 @@ grep -n "Skipping machine_learning\|Module: machine_learning\|SAPPHIRE_PREDICTIO
 calls `record_skip` directly with no matching `log INFO` line, so this grep still
 finds nothing for an org skip on `daily` — silence in the *live log stream* is
 still the expected signature there. **But now check `PIPELINE SUMMARY` as well:**
-it names the skip explicitly, once per phase/mode combination —
-`machine_learning: SKIP (not required for <org> org, mode=PENTAD)` and the
-matching DECAD and `(maintenance)` rows — which is a more reliable confirmation
-than a grep that was never going to match for this branch.
+its row label depends on which target you ran:
+
+- On the outer-loop targets (`daily`, `short-term`, `all`, `maintenance` —
+  each resolves a horizon per loop iteration before deciding whether to
+  dispatch ML), the SKIP row carries the horizon suffix and a `mode=` reason,
+  once per phase/mode combination — e.g. `machine_learning (PENTAD): SKIP
+  (not required for <org> org, mode=PENTAD)`, with matching `(DECAD)` and
+  `(maintenance) (PENTAD)`/`(maintenance) (DECAD)` rows.
+- On the standalone `machine_learning` / `maintenance:machine_learning`
+  targets, the org check short-circuits *before* any horizon is resolved, so
+  you get exactly **one** unsuffixed row instead, with no `mode=` in the
+  reason: `machine_learning: SKIP (not required for <org> org)` (or
+  `machine_learning (maintenance): SKIP (not required for <org> org)` for the
+  maintenance target).
+
+Either shape is a more reliable confirmation than a grep that was never going
+to match for the `daily` branch.
 
 > **The summary now reports skips (INFRA-030, fixed).** Every explicit neutral
-> gating branch — an org-level skip, an ML mode mismatch, or the long-term
-> schedule gate finding no active window — records a `SKIP` row: each prints as
-> `<module>: SKIP (<reason>)` in `PIPELINE SUMMARY`, counted separately from
-> pass/fail, and the totals line grows a `, N skipped` suffix whenever N > 0
-> (e.g. `Modules: 2 passed, 0 failed, 1 skipped`). Automated coverage:
+> gating branch — an org-level skip, or the long-term schedule gate finding no
+> active window — records a `SKIP` row: each prints as `<module>: SKIP
+> (<reason>)` in `PIPELINE SUMMARY`, counted separately from pass/fail, and
+> the totals line grows a `, N skipped` suffix whenever N > 0 (e.g. `Modules:
+> 2 passed, 0 failed, 1 skipped`). Automated coverage:
 > `apps/pipeline/tests/test_run_locally_orchestration.py::TestSkipSummaryRows`.
 > **If your checkout predates this fix**, the old behaviour still applies: a
 > skipped module recorded no result at all, so `PIPELINE SUMMARY` could read "2
@@ -368,17 +392,12 @@ than a grep that was never going to match for this branch.
 ### Step 2a — running ML by hand
 
 **On a fixed checkout (implemented and confirmed — ML-016):** the bare
-`machine_learning` target now resolves its own prediction mode via
-`resolve_ml_bare_target_modes` instead of crashing on an empty mode. You no
-longer need to export `SAPPHIRE_PREDICTION_MODE` by hand — leaving it unset
-derives the mode from `ML_MODE` (default `DECAD`) with a `WARN`, and
-`ML_MODE=BOTH` now runs both PENTAD and DECAD in one invocation instead of
-being silently ignored. **`SAPPHIRE_PREDICTION_MODE=BOTH` by itself does
-NOT** — it still loops PENTAD and DECAD internally, but each pass is
-filtered against `ML_MODE` (default `DECAD`), so with `ML_MODE` unset only
-DECAD actually runs. To run both horizons, set `ML_MODE=BOTH` (with or
-without `SAPPHIRE_PREDICTION_MODE=BOTH` — `ML_MODE=BOTH` alone is
-sufficient). You can still force a specific mode explicitly:
+`machine_learning` target resolves its own prediction mode via
+`resolve_ml_bare_target_modes` instead of crashing on an empty mode.
+`SAPPHIRE_PREDICTION_MODE` is **required**: `PENTAD`/`DECAD` runs once for
+that horizon, `BOTH` runs PENTAD then DECAD, and leaving it unset/empty is
+now a `run_locally.sh`-level error (exit non-zero, naming the variable and
+its valid values) rather than a silently-picked default:
 
 ```bash
 cd apps
@@ -386,12 +405,21 @@ SAPPHIRE_PREDICTION_MODE=DECAD ieasyhydroforecast_env_file_path="$ENVFILE" \
   bash run_locally.sh machine_learning 2>&1 | tee /tmp/ml_run.log
 ```
 
+> **History note.** An earlier revision of this fix let an unset mode fall
+> back to a second, per-mode override variable's own default (which was
+> DECAD) — so `SAPPHIRE_PREDICTION_MODE=BOTH` alone did not actually run
+> both horizons unless that second variable was also set to its own BOTH
+> value. That variable and its filter were removed entirely (it existed
+> nowhere outside `run_locally.sh`, and production always dispatches ML for
+> both PENTAD and DECAD — see `apps/pipeline/pipeline_docker.py:1487`/`:1549`).
+> There is nothing left to set beyond `SAPPHIRE_PREDICTION_MODE` itself.
+
 **On an unfixed checkout**, the old behaviour still applies: the bare target
 does not resolve a prediction mode and crashes with `ValueError: Prediction
 mode %s is not supported` (the literal un-substituted `%s` is also fixed on
 this branch — an unfixed checkout still prints it) unless you export the mode
-as shown above, and it silently ignores `ML_MODE`. Check Step 0's commit
-against this fix's branch before assuming which behaviour you have.
+as shown above. Check Step 0's commit against this fix's branch before
+assuming which behaviour you have.
 
 ---
 
@@ -758,7 +786,7 @@ Step 3 and Step 5 output — that combination is not a known failure mode.
 
 | ID | Relevance |
 |---|---|
-| ML-016 | Bare `run_locally.sh machine_learning` used to crash on empty `SAPPHIRE_PREDICTION_MODE` and ignore `ML_MODE` — fixed (implemented and confirmed): now resolves its own mode — Step 2a |
+| ML-016 | Bare `run_locally.sh machine_learning` used to crash on empty `SAPPHIRE_PREDICTION_MODE` and ignore a since-removed per-mode ML override variable — fixed (implemented and confirmed): now resolves its own mode via `resolve_ml_bare_target_modes`, and `SAPPHIRE_PREDICTION_MODE` is required (unset is a loud error, not a default) — Step 2a |
 | ML-017 | A single missing ERA5 day cascades to NaN across all short-term ML — Step 6 |
 | ML-021 | `make_forecast.py` exits 0 after writing no forecasts — the defect Steps 3–4 detect |
 | PREPG-010 | Transient transport fault killed the whole gateway run; fixed on trunk 2026-08-20 13:06 CEST, too recent for any deployed image — Step 7 |

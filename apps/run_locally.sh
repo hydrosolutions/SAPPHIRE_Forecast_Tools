@@ -93,21 +93,22 @@
 #
 # machine_learning mode resolution (bare target vs. maintenance/daily):
 #   The bare `machine_learning` target has no outer per-mode loop, so it
-#   resolves SAPPHIRE_PREDICTION_MODE/ML_MODE itself, via
-#   resolve_ml_bare_target_modes: unset derives the mode from ML_MODE (WARN);
-#   SAPPHIRE_PREDICTION_MODE=BOTH loops over PENTAD and DECAD, but each pass
-#   is still filtered through should_skip_ml_for_mode against ML_MODE
-#   (default DECAD) -- so SAPPHIRE_PREDICTION_MODE=BOTH alone only runs
-#   DECAD. To actually run both horizons, ALSO set ML_MODE=BOTH (which by
-#   itself, even with SAPPHIRE_PREDICTION_MODE unset, is sufficient to run
-#   both); an explicit single-valued SAPPHIRE_PREDICTION_MODE that conflicts
-#   with a single-valued ML_MODE errors out naming both variables rather than
-#   silently picking one. `maintenance:machine_learning`, `daily`, `all` and
-#   `maintenance` instead resolve the mode via their own outer per-mode loop
-#   (which also honours ML_MODE) before calling into machine_learning, so an
-#   operator moving between the bare target and these should not assume the
-#   two resolve a given SAPPHIRE_PREDICTION_MODE/ML_MODE combination the same
-#   way.
+#   resolves SAPPHIRE_PREDICTION_MODE itself, via resolve_ml_bare_target_modes:
+#   PENTAD or DECAD resolves to itself; BOTH resolves to (PENTAD DECAD), run
+#   in that order; unset/empty is an error (exit 1) naming
+#   SAPPHIRE_PREDICTION_MODE and its valid values -- there is no silent
+#   default here. `maintenance:machine_learning`, `all` and `maintenance`
+#   instead resolve the mode via their own outer per-mode loop before
+#   calling into machine_learning; those loops still default an unset mode
+#   to PENTAD with a WARN rather than erroring, so an operator moving
+#   between the bare target and these should not assume the two resolve a
+#   given SAPPHIRE_PREDICTION_MODE the same way. `daily` is different again:
+#   run_daily_pipeline ignores SAPPHIRE_PREDICTION_MODE for its own dispatch
+#   and always runs PENTAD then DECAD regardless of the incoming value (it
+#   only captures/restores the operator's original value around the loop,
+#   for emit_continue_on_error_hint's retry command) -- it neither defaults
+#   nor errors on an unset mode, because it never consults it in the first
+#   place.
 #
 # Prerequisites:
 #   - Bash 4.4+ (macOS ships 3.2; install via: brew install bash)
@@ -136,14 +137,12 @@ DRY_RUN=false
 # continue-on-error hint.
 PIPELINE_ABORTED=false
 
-# Invocation-time mode env vars, captured before anything in main() (the
-# per-mode dispatch loops, or the default applied to ML_MODE below) can
-# mutate/resolve them, so emit_continue_on_error_hint can reproduce the
-# operator's original horizon in its printed retry command. Read-only after
-# capture; never used for pipeline logic itself -- see the capture sites
-# (main()'s first line, and just above ML_MODE's default below).
+# Invocation-time mode env var, captured before anything in main() (the
+# per-mode dispatch loops) can mutate/resolve it, so
+# emit_continue_on_error_hint can reproduce the operator's original horizon
+# in its printed retry command. Read-only after capture; never used for
+# pipeline logic itself -- see the capture site (main()'s first line).
 INVOCATION_SAPPHIRE_PREDICTION_MODE=""
-INVOCATION_ML_MODE=""
 
 # Error capture
 ERROR_TAIL_LINES=30
@@ -196,15 +195,6 @@ ML_MAINTENANCE_SCRIPTS=(
     fill_ml_gaps.py
     add_new_station.py
 )
-
-# Machine learning only runs for DECAD mode (PENTAD forecasts use LR only).
-# Override with ML_MODE=BOTH to restore old behavior.
-# INVOCATION_ML_MODE captures whether the operator actually set ML_MODE,
-# before this line's own default overwrites it -- ML_MODE is never mutated
-# again after this point, so this is the only place that distinction is
-# still observable. Used only by emit_continue_on_error_hint.
-INVOCATION_ML_MODE="${ML_MODE:-}"
-ML_MODE="${ML_MODE:-DECAD}"
 
 # Modules with maintenance modes
 MAINTENANCE_MODULES=(
@@ -456,15 +446,15 @@ record_validation() {
 # than a literal "apps/run_locally.sh", so the line also works when the
 # operator's shell is not cwd'd at the repo root (finding 1b).
 #
-# SAPPHIRE_PREDICTION_MODE and ML_MODE are included via
-# INVOCATION_SAPPHIRE_PREDICTION_MODE / INVOCATION_ML_MODE -- captured
-# before this run's own dispatch loops could mutate/resolve them (see their
-# declarations near the top of this file) -- so a resumed non-daily target
-# such as `short-term` reruns the SAME horizon the operator originally
-# invoked, not whatever SAPPHIRE_PREDICTION_MODE happens to hold at the
-# moment the aborting phase returned (round-5 review finding 1c). Each is
-# only emitted when the operator actually set it, so an unset mode does not
-# turn into a spurious empty assignment. LT_FORECAST_TODAY remains
+# SAPPHIRE_PREDICTION_MODE is included via
+# INVOCATION_SAPPHIRE_PREDICTION_MODE -- captured before this run's own
+# dispatch loops could mutate/resolve it (see its declaration near the top
+# of this file) -- so a resumed non-daily target such as `short-term`
+# reruns the SAME horizon the operator originally invoked, not whatever
+# SAPPHIRE_PREDICTION_MODE happens to hold at the moment the aborting phase
+# returned (round-5 review finding 1c). It is only emitted when the
+# operator actually set it, so an unset mode does not turn into a spurious
+# empty assignment. LT_FORECAST_TODAY remains
 # deliberately left out -- it is never mutated mid-run the way
 # SAPPHIRE_PREDICTION_MODE is, so omitting it was never the defect; adding
 # it would still turn this into a general-purpose command reconstructor
@@ -487,8 +477,6 @@ emit_continue_on_error_hint() {
     [ -n "$env_file" ] && prefix="ieasyhydroforecast_env_file_path=$(shell_quote "$env_file") "
     [ -n "$INVOCATION_SAPPHIRE_PREDICTION_MODE" ] && \
         prefix="${prefix}SAPPHIRE_PREDICTION_MODE=$(shell_quote "$INVOCATION_SAPPHIRE_PREDICTION_MODE") "
-    [ -n "$INVOCATION_ML_MODE" ] && \
-        prefix="${prefix}ML_MODE=$(shell_quote "$INVOCATION_ML_MODE") "
     local cmd
     cmd="bash $(shell_quote "${SCRIPT_DIR}/run_locally.sh") --continue-on-error $(shell_quote "$target")"
     log WARN "A pipeline phase stopped at its first failing module because --continue-on-error is not set."
@@ -519,71 +507,45 @@ should_skip_module() {
     return 1
 }
 
-should_skip_ml_for_mode() {
-    local current_mode="$1"
-    # ML_MODE=BOTH means run ML for every mode (legacy behavior)
-    [ "$ML_MODE" = "BOTH" ] && return 1
-    [ "$current_mode" != "$ML_MODE" ]
-}
-
-# resolve_ml_bare_target_modes - Validate SAPPHIRE_PREDICTION_MODE and ML_MODE
-# for the bare `machine_learning` single-module target, then populate the
-# global ML_BARE_RESOLVED_MODES array with the mode(s) to run.
+# resolve_ml_bare_target_modes - Validate SAPPHIRE_PREDICTION_MODE for the
+# bare `machine_learning` single-module target, then populate the global
+# ML_BARE_RESOLVED_MODES array with the mode(s) to run.
 #
 # Unlike the daily/maintenance loops, the bare target has no outer mode loop
-# to resolve SAPPHIRE_PREDICTION_MODE for it, so it must validate and resolve
-# both variables itself instead of silently forwarding an empty mode or
-# silently discarding an explicit request via should_skip_ml_for_mode.
+# to resolve SAPPHIRE_PREDICTION_MODE for it, so it must validate and
+# resolve the variable itself. PENTAD or DECAD resolves to itself; BOTH
+# resolves to (PENTAD DECAD), run in that order. Owner decision
+# (2026-09-09): unset/empty is an error, not a silent default -- there is no
+# horizon that is "correct" to assume for an operator who forgot to set the
+# mode, so this refuses to guess and invokes no module.
 #
-# Exits the script (exit 1) on invalid or mutually inconsistent input, since
-# this is only ever called from that one case branch before anything has run.
+# Exits the script (exit 1) on invalid or missing input, since this is only
+# ever called from that one case branch before anything has run.
 resolve_ml_bare_target_modes() {
     local requested_mode="${SAPPHIRE_PREDICTION_MODE:-}"
 
     case "$requested_mode" in
         ""|PENTAD|DECAD|BOTH) ;;
         *)
-            log ERROR "Invalid SAPPHIRE_PREDICTION_MODE for machine_learning target: '${requested_mode}' (expected unset/empty, PENTAD, DECAD, or BOTH)"
-            exit 1
-            ;;
-    esac
-
-    case "$ML_MODE" in
-        PENTAD|DECAD|BOTH) ;;
-        *)
-            log ERROR "Invalid ML_MODE for machine_learning target: '${ML_MODE}' (expected PENTAD, DECAD, or BOTH)"
+            log ERROR "Invalid SAPPHIRE_PREDICTION_MODE for machine_learning target: '${requested_mode}' (expected PENTAD, DECAD, or BOTH)"
             exit 1
             ;;
     esac
 
     ML_BARE_RESOLVED_MODES=()
 
-    if [ "$requested_mode" = "BOTH" ]; then
-        local mode
-        for mode in PENTAD DECAD; do
-            if should_skip_ml_for_mode "$mode"; then
-                log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
-                record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
-            else
-                ML_BARE_RESOLVED_MODES+=("$mode")
-            fi
-        done
-    elif [ -n "$requested_mode" ]; then
-        if [ "$ML_MODE" = "BOTH" ] || [ "$ML_MODE" = "$requested_mode" ]; then
-            ML_BARE_RESOLVED_MODES=("$requested_mode")
-        else
-            log ERROR "Inconsistent ML mode request for machine_learning target: SAPPHIRE_PREDICTION_MODE=${requested_mode} but ML_MODE=${ML_MODE}"
-            exit 1
-        fi
-    else
-        if [ "$ML_MODE" = "BOTH" ]; then
-            log WARN "SAPPHIRE_PREDICTION_MODE not set for machine_learning target; deriving (PENTAD DECAD) from ML_MODE=BOTH"
+    case "$requested_mode" in
+        BOTH)
             ML_BARE_RESOLVED_MODES=(PENTAD DECAD)
-        else
-            log WARN "SAPPHIRE_PREDICTION_MODE not set for machine_learning target; deriving ${ML_MODE} from ML_MODE=${ML_MODE}"
-            ML_BARE_RESOLVED_MODES=("$ML_MODE")
-        fi
-    fi
+            ;;
+        PENTAD|DECAD)
+            ML_BARE_RESOLVED_MODES=("$requested_mode")
+            ;;
+        "")
+            log ERROR "SAPPHIRE_PREDICTION_MODE is not set for machine_learning target (expected PENTAD, DECAD, or BOTH)"
+            exit 1
+            ;;
+    esac
 }
 
 resolve_org() {
@@ -778,18 +740,33 @@ run_machine_learning() {
     local db_save_failed=false
 
     # ML-021 made a second, DECAD invocation of this function possible in
-    # the same run (ML_MODE=BOTH no longer breaks the horizon loop on a
-    # PENTAD failure). Without a mode-suffixed log path, that second call
-    # would truncate and overwrite the first call's log file, so a FAIL row
-    # recorded for PENTAD would end up displaying DECAD's (successful)
-    # output. Same shape as run_module_validation's LABEL_SUFFIX (INFRA-037):
-    # derive the suffix from the horizon and fall back to the unsuffixed
-    # name when SAPPHIRE_PREDICTION_MODE is unset/empty. Only the log FILE
-    # path is affected -- the row label recorded below stays
-    # "machine_learning" either way.
+    # the same run (SAPPHIRE_PREDICTION_MODE=BOTH no longer breaks the
+    # horizon loop on a PENTAD failure). Without a mode-suffixed log path,
+    # that second call would truncate and overwrite the first call's log
+    # file, so a FAIL row recorded for PENTAD would end up displaying
+    # DECAD's (successful) output. Same shape as run_module_validation's
+    # LABEL_SUFFIX (INFRA-037): derive the suffix from the horizon and
+    # fall back to the unsuffixed name when SAPPHIRE_PREDICTION_MODE is
+    # unset/empty (safe under `set -u` via `${VAR:-}`). Captured once, at
+    # entry, from the ambient variable the caller set for THIS invocation
+    # immediately before calling in -- every call site exports
+    # SAPPHIRE_PREDICTION_MODE to the horizon it wants right before calling
+    # run_machine_learning and never mutates it again before this function
+    # returns, so this reflects the horizon the invocation actually ran
+    # under, not a value that could since have changed.
+    #
+    # Owner decision (2026-09-09): the recorded row LABEL now carries this
+    # same suffix (e.g. "machine_learning (PENTAD)"), not just the log file
+    # path. Before this, `daily`'s Phase 3 called this function twice
+    # (PENTAD then DECAD) and both calls recorded the identical
+    # "machine_learning" label, making the two PASS/FAIL rows in PIPELINE
+    # SUMMARY -- and, on a failure, the MODULE ERROR DETAILS heading, which
+    # reuses this same label -- indistinguishable.
     local ml_log_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+    local ml_row_label="machine_learning"
     if [ -n "$ml_log_mode" ]; then
         CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_${ml_log_mode}.log"
+        ml_row_label="machine_learning (${ml_log_mode})"
     else
         CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning.log"
     fi
@@ -823,10 +800,10 @@ run_machine_learning() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "machine_learning completed in $(format_duration $elapsed)"
-        record_result "machine_learning" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+        record_result "$ml_row_label" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "machine_learning failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "machine_learning" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+        record_result "$ml_row_label" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -1112,12 +1089,27 @@ run_maintenance_machine_learning() {
 
     # Same fix as run_machine_learning above, for the maintenance
     # invocation: derive the log suffix from the horizon so a second
-    # (DECAD) call under ML_MODE=BOTH can't truncate and overwrite the
-    # first (PENTAD) call's log. Only the log FILE path changes -- the row
-    # label stays "machine_learning (maintenance)".
+    # (DECAD) call under SAPPHIRE_PREDICTION_MODE=BOTH can't truncate and
+    # overwrite the first (PENTAD) call's log. Captured once, at entry,
+    # from the ambient variable the caller set for THIS invocation
+    # immediately before calling in -- see run_machine_learning's comment
+    # above for why that reflects the invocation's actual horizon, not a
+    # value that could since have changed. Falls back to the unsuffixed
+    # name when SAPPHIRE_PREDICTION_MODE is unset/empty (safe under
+    # `set -u` via `${VAR:-}`).
+    #
+    # Owner decision (2026-09-09): the recorded row LABEL now carries this
+    # same suffix (e.g. "machine_learning (maintenance) (PENTAD)"), not
+    # just the log file path -- `daily`'s Phase 4 calls this function
+    # twice (PENTAD then DECAD) and both used to record the identical
+    # "machine_learning (maintenance)" label, making the two rows in
+    # PIPELINE SUMMARY -- and the MODULE ERROR DETAILS heading, which
+    # reuses this same label -- indistinguishable.
     local ml_log_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+    local ml_row_label="machine_learning (maintenance)"
     if [ -n "$ml_log_mode" ]; then
         CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_maintenance_${ml_log_mode}.log"
+        ml_row_label="machine_learning (maintenance) (${ml_log_mode})"
     else
         CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_maintenance.log"
     fi
@@ -1135,10 +1127,10 @@ run_maintenance_machine_learning() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "machine_learning maintenance completed in $(format_duration $elapsed)"
-        record_result "machine_learning (maintenance)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+        record_result "$ml_row_label" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "machine_learning maintenance failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "machine_learning (maintenance)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+        record_result "$ml_row_label" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -1499,8 +1491,9 @@ run_api_validation() {
 # When a suffix is given (e.g. a mode name), both the log path and the
 # recorded row label are made unique per suffix, so callers that invoke
 # this once per mode (e.g. the bare `machine_learning` target under
-# ML_MODE=BOTH) don't have each call overwrite the previous call's log
-# file and don't get indistinguishable PASS/FAIL rows in the summary.
+# SAPPHIRE_PREDICTION_MODE=BOTH) don't have each call overwrite the
+# previous call's log file and don't get indistinguishable PASS/FAIL rows
+# in the summary.
 run_module_validation() {
     local module="$1"
     local suffix="${2:-}"
@@ -1523,9 +1516,10 @@ run_module_validation() {
     # run_in_venv would trip `set -e` and kill the whole script on the
     # spot -- before record_validation below ever runs, silently defeating
     # the "don't abort pipeline mid-run" contract this function documents.
-    # (Found while testing INFRA-037 defect 1: with ML_MODE=BOTH, a FAIL
-    # from either mode's validation previously killed run_locally.sh
-    # outright instead of producing a FAIL row.)
+    # (Found while testing INFRA-037 defect 1: with
+    # SAPPHIRE_PREDICTION_MODE=BOTH, a FAIL from either mode's validation
+    # previously killed run_locally.sh outright instead of producing a FAIL
+    # row.)
     local rc=0
     run_in_venv postprocessing_forecasts ../validate_pipeline/validate_pipeline.py \
         -- --module "$module" || rc=$?
@@ -1578,10 +1572,7 @@ run_short_term_pipeline() {
         log INFO "Running forecasting for mode: ${mode}"
 
         if should_skip_module machine_learning; then
-            record_skip "machine_learning" "not required for ${ORG} org, mode=${mode}"
-        elif should_skip_ml_for_mode "$mode"; then
-            log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
-            record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
+            record_skip "machine_learning (${mode})" "not required for ${ORG} org, mode=${mode}"
         else
             run_machine_learning || {
                 # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
@@ -1732,10 +1723,7 @@ run_maintenance_pipeline() {
         log INFO "Running maintenance for mode: ${mode}"
 
         if should_skip_module machine_learning; then
-            record_skip "machine_learning (maintenance)" "not required for ${ORG} org, mode=${mode}"
-        elif should_skip_ml_for_mode "$mode"; then
-            log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
-            record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
+            record_skip "machine_learning (maintenance) (${mode})" "not required for ${ORG} org, mode=${mode}"
         else
             run_maintenance_machine_learning || {
                 # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
@@ -1794,10 +1782,7 @@ run_daily_pipeline() {
         log INFO "Phase 3: ML + linear regression + postprocessing (${mode})"
 
         if should_skip_module machine_learning; then
-            record_skip "machine_learning" "not required for ${ORG} org, mode=${mode}"
-        elif should_skip_ml_for_mode "$mode"; then
-            log INFO "Skipping machine_learning for ${mode} (ML_MODE=${ML_MODE})"
-            record_skip "machine_learning" "ML_MODE=${ML_MODE}, mode=${mode}"
+            record_skip "machine_learning (${mode})" "not required for ${ORG} org, mode=${mode}"
         else
             run_machine_learning || {
                 # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
@@ -1822,10 +1807,7 @@ run_daily_pipeline() {
         log INFO "Phase 4: ML + LR + postprocessing maintenance (${mode})"
 
         if should_skip_module machine_learning; then
-            record_skip "machine_learning (maintenance)" "not required for ${ORG} org, mode=${mode}"
-        elif should_skip_ml_for_mode "$mode"; then
-            log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
-            record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
+            record_skip "machine_learning (maintenance) (${mode})" "not required for ${ORG} org, mode=${mode}"
         else
             run_maintenance_machine_learning || {
                 # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
@@ -1946,34 +1928,44 @@ validate_env() {
             ;;
     esac
 
-    # INFRA-039 Block 1: SAPPHIRE_PREDICTION_MODE domain check.
+    # INFRA-039: SAPPHIRE_PREDICTION_MODE domain check.
     #
     # Scoped to the targets that dispatch linear_regression or
-    # machine_learning -- the two consumers that accept an out-of-domain
-    # value (e.g. ALL, MONTHLY) silently: linear_regression.py disables
-    # both horizons and exits 0, and should_skip_ml_for_mode filters ML out
-    # with only an INFO line. Deliberately narrower than the WARN case
-    # above (e.g. excludes maintenance:postprocessing_forecasts and
-    # recalculate_skill_metrics, whose downstream Python already validates
-    # and exits 1 -- duplicating that domain here would drift). Excludes
-    # daily, which overwrites SAPPHIRE_PREDICTION_MODE itself before
-    # dispatch, and initialize, which forces PENTAD/DECAD per LR call via
-    # run_initialize_deployment regardless of the operator's value (same
-    # rationale as daily). Empty/unset stays legal here -- that's the WARN
-    # case above for every target in this list except bare linear_regression,
-    # which is NOT in the WARN case's target list: for that target an
-    # empty/unset value is simply forwarded, and linear_regression.py
-    # defaults it to BOTH itself (`os.getenv("SAPPHIRE_PREDICTION_MODE", "")
-    # or "BOTH"`, linear_regression.py:634).
+    # machine_learning -- linear_regression.py is the consumer that accepts
+    # an out-of-domain value (e.g. ALL, MONTHLY) silently: it disables both
+    # horizons and exits 0. The bare `machine_learning` target gets its own
+    # arm below (mirroring resolve_ml_bare_target_modes) so --dry-run
+    # reports the same failure a real run would otherwise only hit inside
+    # dispatch; every other target that can reach machine_learning is
+    # already covered below (short-term, all, maintenance,
+    # maintenance:machine_learning), or hardcodes PENTAD/DECAD without
+    # consulting the operator's value at all (daily, initialize). Deliberately
+    # narrower than the WARN case above (e.g. excludes
+    # maintenance:postprocessing_forecasts and recalculate_skill_metrics,
+    # whose downstream Python already validates and exits 1 -- duplicating
+    # that domain here would drift). Excludes daily, which overwrites
+    # SAPPHIRE_PREDICTION_MODE itself before dispatch, and initialize, which
+    # forces PENTAD/DECAD per LR call via run_initialize_deployment
+    # regardless of the operator's value (same rationale as daily).
+    # Empty/unset stays legal here -- that's the WARN case above for every
+    # target in this list except bare linear_regression and bare
+    # machine_learning, which are NOT in the WARN case's target list: for
+    # linear_regression an empty/unset value is simply forwarded, and
+    # linear_regression.py defaults it to BOTH itself
+    # (`os.getenv("SAPPHIRE_PREDICTION_MODE", "") or "BOTH"`,
+    # linear_regression.py:634); for machine_learning, empty/unset is an
+    # error (see its own arm below).
     #
-    # Split into two arms because maintenance:machine_learning is the only
-    # target here that dispatches ONLY machine_learning, not
-    # linear_regression: for demo/uzhm orgs (which skip machine_learning
-    # entirely, :211) that target already no-ops today, so it must be
-    # gated on should_skip_module machine_learning the same way Block 2 is,
-    # or this check would newly reject a currently-harmless invocation. The
-    # other targets all still dispatch linear_regression -- which is not
-    # org-skippable -- so they stay ungated.
+    # Split into three arms: maintenance:machine_learning and bare
+    # machine_learning are the only targets here that dispatch ONLY
+    # machine_learning, not linear_regression -- for demo/uzhm orgs (which
+    # skip machine_learning entirely) both already no-op today, so each
+    # must be gated on should_skip_module machine_learning, or this check
+    # would newly reject a currently-harmless invocation. The other targets
+    # all still dispatch linear_regression -- which is not org-skippable --
+    # so they stay ungated. The bare machine_learning arm additionally
+    # rejects empty/unset (see resolve_ml_bare_target_modes, which it
+    # mirrors) instead of merely checking domain.
     case "$target" in
         short-term|all|maintenance|linear_regression|maintenance:linear_regression)
             if [ -n "${SAPPHIRE_PREDICTION_MODE:-}" ]; then
@@ -1997,25 +1989,26 @@ validate_env() {
                 esac
             fi
             ;;
-    esac
-
-    # INFRA-039 Block 2: ML_MODE domain check.
-    #
-    # Scoped to targets that dispatch machine_learning through the outer
-    # mode loops (should_skip_ml_for_mode compares ML_MODE against the
-    # current mode as plain strings, so an invalid ML_MODE silently
-    # filters every mode). Gated on should_skip_module machine_learning
-    # since demo/uzhm orgs skip machine_learning entirely -- ML_MODE is
-    # irrelevant there and this check must not reject those runs.
-    # ML_MODE is never empty (defaulted to DECAD above), so there is no
-    # unset case and no accompanying "log OK" (main() already logs it).
-    case "$target" in
-        daily|short-term|all|maintenance|maintenance:machine_learning)
+        machine_learning)
+            # Bare target: no outer per-mode loop resolves the mode for it
+            # (see resolve_ml_bare_target_modes, called from dispatch),
+            # so unlike every other arm here, empty/unset is ALSO an
+            # error, not just an out-of-domain value -- there is no
+            # horizon that is correct to assume. Messages match
+            # resolve_ml_bare_target_modes exactly so a real run and a
+            # --dry-run report the same failure the same way. Gated on
+            # should_skip_module the same way maintenance:machine_learning
+            # is, so demo/uzhm orgs (which skip machine_learning entirely)
+            # stay a no-op under --dry-run instead of newly erroring.
             if ! should_skip_module machine_learning; then
-                case "${ML_MODE}" in
+                case "${SAPPHIRE_PREDICTION_MODE:-}" in
                     PENTAD|DECAD|BOTH) ;;
+                    "")
+                        log ERROR "SAPPHIRE_PREDICTION_MODE is not set for machine_learning target (expected PENTAD, DECAD, or BOTH)"
+                        errors=$((errors + 1))
+                        ;;
                     *)
-                        log ERROR "ML_MODE='${ML_MODE}' is not valid for target '${target}' (expected PENTAD, DECAD, or BOTH)"
+                        log ERROR "Invalid SAPPHIRE_PREDICTION_MODE for machine_learning target: '${SAPPHIRE_PREDICTION_MODE}' (expected PENTAD, DECAD, or BOTH)"
                         errors=$((errors + 1))
                         ;;
                 esac
@@ -2285,9 +2278,10 @@ Modules (for single-module operational runs):
   preprocessing_gateway   Quantile mapping, ERA5 extension, snow data
   linear_regression       Linear regression forecasts
   machine_learning        ML forecasts (TFT, TIDE, TSMIXER). Resolves its own
-                          prediction mode(s) via resolve_ml_bare_target_modes
-                          instead of crashing on an empty mode -- see the
-                          SAPPHIRE_PREDICTION_MODE / ML_MODE entries below.
+                          prediction mode(s) via resolve_ml_bare_target_modes;
+                          requires SAPPHIRE_PREDICTION_MODE to be set (see
+                          entry below) -- an unset/empty mode is an error,
+                          not a default.
   postprocessing_forecasts  Post-process forecast outputs
   long_term_forecasting   Long-term monthly forecasts
 
@@ -2301,21 +2295,23 @@ Environment variables:
   SAPPHIRE_PREDICTION_MODE           PENTAD, DECAD, or BOTH (short-term/maintenance).
                                         Three targets resolve this differently, so check
                                         which one you are running:
-                                          - bare `machine_learning`: validates this against
-                                            ML_MODE itself (resolve_ml_bare_target_modes).
-                                            Unset derives the mode from ML_MODE (WARN);
-                                            BOTH loops over PENTAD and DECAD, but each pass
-                                            is still filtered against ML_MODE (default DECAD),
-                                            so SAPPHIRE_PREDICTION_MODE=BOTH alone only runs
-                                            DECAD -- also set ML_MODE=BOTH to run both (which
-                                            by itself is enough, even with this var unset); an
-                                            explicit single value that conflicts with a
-                                            single-valued ML_MODE errors out naming both
-                                            variables instead of silently picking one.
-                                          - `maintenance:machine_learning` / `daily` /
-                                            `all` / `maintenance`: resolved by an outer
-                                            per-mode loop in run_locally.sh itself, which
-                                            also consults ML_MODE via should_skip_ml_for_mode.
+                                          - bare `machine_learning`: resolved by
+                                            resolve_ml_bare_target_modes. PENTAD or DECAD
+                                            runs once for that horizon; BOTH runs PENTAD
+                                            then DECAD; unset/empty is a hard error (exit 1)
+                                            naming this variable and its valid values --
+                                            there is no default horizon for this target.
+                                          - `maintenance:machine_learning` / `all` /
+                                            `maintenance`: resolved by an outer per-mode
+                                            loop in run_locally.sh itself, which defaults
+                                            an unset mode to PENTAD (WARN) rather than
+                                            erroring.
+                                          - `daily`: ignores this variable for its own
+                                            dispatch -- run_daily_pipeline always runs
+                                            PENTAD then DECAD regardless of the incoming
+                                            value (it only captures/restores the
+                                            operator's original value around the loop,
+                                            for the --continue-on-error retry hint).
                                           - every other module target: forwarded as-is to
                                             the module's own venv invocation.
   lt_forecast_mode                   Specific month for long-term (e.g. month_3). MANDATORY
@@ -2337,8 +2333,6 @@ Environment variables:
                                         Defaults to the current calendar year.
   ieasyhydroforecast_organization        Organization name (demo, kghm, tjhm, uzhm).
                                           Demo/uzhm skip: preprocessing_gateway, machine_learning, long_term_forecasting.
-  ML_MODE                                 Which prediction mode ML runs for (default: DECAD).
-                                            Set ML_MODE=BOTH to run ML for all modes.
   ieasyhydroforecast_START_DATE        Hindcast start date for initialize target (YYYY-MM-DD)
   SAPPHIRE_SKILL_LEAD_AWARE               Lead-aware long-term operational selection: per-lead
                                             skill metrics & ensembles, config-driven issuance
@@ -2500,7 +2494,6 @@ main() {
     log INFO "Organization: ${ORG:-<not set, running all modules>}"
     log INFO "Continue on error: ${CONTINUE_ON_ERROR}"
     log INFO "Dry run: ${DRY_RUN}"
-    log INFO "ML mode: ${ML_MODE}"
     log INFO "Log file: ${LOG_FILE}"
 
     if [ "$ORG" = "demo" ]; then
@@ -2582,11 +2575,6 @@ main() {
                 log WARN "SAPPHIRE_PREDICTION_MODE not set, defaulting to PENTAD"
             fi
             for mode in "${modes_to_run[@]}"; do
-                if should_skip_ml_for_mode "$mode"; then
-                    log INFO "Skipping machine_learning maintenance for ${mode} (ML_MODE=${ML_MODE})"
-                    record_skip "machine_learning (maintenance)" "ML_MODE=${ML_MODE}, mode=${mode}"
-                    continue
-                fi
                 export SAPPHIRE_PREDICTION_MODE="$mode"
                 log INFO "Running ML maintenance for mode: ${mode}"
                 # ML-021 decision 4: an ML maintenance failure in one

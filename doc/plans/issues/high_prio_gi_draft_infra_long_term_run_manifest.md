@@ -224,6 +224,9 @@ INFRA-020's constraint C3 needs the same class of input for `machine_learning`: 
 "ML failed" from "ML was never scheduled" (`ML_MODE` defaults, org skips). **Do not fold INFRA-020
 into this issue** — but design the manifest so a second module can be added to it rather than
 inventing a parallel mechanism. A `modules` map keyed by module name would do it.
+(**SUPERSEDED IN PART 2026-09-09**: `ML_MODE` was removed entirely
+(`refactor_run_locally_drop_ml_mode`); the "ML was never scheduled" ambiguity this cites now
+comes from org skips alone.)
 
 ## Acceptance criteria
 

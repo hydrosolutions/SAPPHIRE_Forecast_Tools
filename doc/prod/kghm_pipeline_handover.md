@@ -71,7 +71,7 @@ backfill in §3 is needed.
 | **#468** | INFRA-037 + ML-016 | `run_locally.sh daily` no longer aborts on this condition. Exit 4 from the long-horizon sync is now recorded as its own `preprocessing_runoff (long-horizon sync): FAIL` row instead of failing the maintenance module, so the run continues into Phase 3 — but still exits non-zero overall. The bare `machine_learning` target now resolves its own mode instead of crashing on an unset `SAPPHIRE_PREDICTION_MODE`. **Superseded by INFRA-044 (2026-09-07, see §4):** the FAIL-row-plus-nonzero-exit behaviour described here now applies only to a TOTAL SDK norm-lookup outage (a new exit code, 6). Exit 4 (PARTIAL — the case this deployment's known signature actually is) became informational: no result row, INFO log, exit 0. |
 | **#472** | (docs only, prerequisite for PREPQ-015) | The original PREPQ-015 draft was found **not implementable** — both readings of it *would have* shipped a new bug (one silently erasing the failure signal and exiting 0, the other creating a new partial-write mode). This PR corrected the draft and confirmed the failure's cause with a live probe against kghm's iEH-HF, unblocking #475. No deployment behaviour changed. |
 | **#475** | PREPQ-015 | **The real cure.** A raised SDK lookup keeps the station's `SDK_FAILED` status **and** now also writes its 12 monthly, 1 seasonal and 4 quarterly rows, preserving any previously stored monthly norm. This recovers the discarded observed runoff; it does not fabricate a norm the station never had. |
-| **#477** | INFRA-039 | Closes one silent-no-op path: an out-of-domain `SAPPHIRE_PREDICTION_MODE` or `ML_MODE` passed to the targets that dispatch `linear_regression`/`machine_learning` is now rejected at entry (exit 1) instead of running to completion having written nothing. |
+| **#477** | INFRA-039 | Closed a silent-no-op path: an out-of-domain `SAPPHIRE_PREDICTION_MODE` passed to the targets that dispatch `linear_regression`/`machine_learning` is rejected at entry (exit 1) instead of running to completion having written nothing. This PR also added a matching domain check for a second, per-mode ML override variable used by `machine_learning` dispatch; that variable and its check were later removed entirely (see the `ML-022` issue file for the removal's history) — the `SAPPHIRE_PREDICTION_MODE` check described above is what remains. |
 
 Issue IDs above are named, not linked — look them up in
 [`doc/plans/module_issues.md`](../plans/module_issues.md). Issue files move through
@@ -309,8 +309,9 @@ failure is the known condition or a real outage, not merely useful context.
   with counts unchanged at `total_attempted=62 written=53 norm_absent=5 sdk_failed=4 api_failed=0`
   and the four `WARNING` lines present, each naming its station, the `ValueError`, and the word
   "continuing." INFRA-039 was checked separately in the same environment: an out-of-domain
-  `SAPPHIRE_PREDICTION_MODE` and an invalid `ML_MODE` were each rejected at entry with exit 1, naming
-  the variable and the offending value; valid values passed.
+  `SAPPHIRE_PREDICTION_MODE` and an invalid value for the (since-removed) per-mode ML override
+  variable were each rejected at entry with exit 1, naming the variable and the offending value;
+  valid values passed.
 - **Two limits on that verification, both of which §3 is what actually closes:**
   - It ran **locally** — a kghm configuration and the live tunnel, writing to a local SAPPHIRE
     database, not the deployed one. Nothing has been checked on the kghm production server.

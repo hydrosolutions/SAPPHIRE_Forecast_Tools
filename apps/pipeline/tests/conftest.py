@@ -237,7 +237,6 @@ LT_SCHEDULE_EMPTY_JSON = '{"active_modes": [], "skill_metric_types": []}'
 _ISOLATE_ENV_VARS = [
     "ieasyhydroforecast_organization",
     "SAPPHIRE_PREDICTION_MODE",
-    "ML_MODE",
     "CONTINUE_ON_ERROR",
     "DRY_RUN",
     "LT_FORECAST_TODAY",
@@ -255,6 +254,15 @@ _ISOLATE_ENV_VARS = [
     "ieasyhydroforecast_START_DATE",
     "lt_forecast_mode",
     "LT_RECOVERY_DATE",
+    # ML_MODE no longer influences run_locally.sh's logic at all (the
+    # per-mode ML override variable was removed), so it is not something
+    # the script itself needs isolated FROM -- it is listed here purely so
+    # an ambient `export ML_MODE=...` left in a developer's shell profile
+    # can't leak into a subprocess and make a test's outcome depend on the
+    # environment it happened to run in. Tests that need to prove ML_MODE
+    # is inert set it explicitly via `extra_env` (see
+    # TestStaleMlModeEnvVarIsInert in test_run_locally_orchestration.py).
+    "ML_MODE",
 ]
 
 # A fake `python` stub: logs its invocation to a call log, then lets a
