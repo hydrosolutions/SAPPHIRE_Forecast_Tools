@@ -11,11 +11,11 @@ change.
 **Found**: originally during review of FD-007 (pre-existing then, not introduced by it). Reprised
 and corrected 2026-09-09 during an owner-directed investigation into why the forecast
 dashboard's decade-horizon actions have not been visibly failing despite at least three of the
-four containers in that chain rejecting the value they were given (see LR-012 and FD-026).
-**Related**: **LR-012** and **FD-026** — this defect is *why* those two issues' documented
+four containers in that chain rejecting the value they were given (see LR-013 and FD-027).
+**Related**: **LR-013** and **FD-027** — this defect is *why* those two issues' documented
 failures (`postprocessing_operational.py` and `make_forecast.py` both `sys.exit`/`raise` on the
 dashboard's `DECADE` value) have not been visible to an operator; it is not a dependency of
-either — normalizing every module's domain (LR-012 + FD-026) means none of them fail on
+either — normalizing every module's domain (LR-013 + FD-027) means none of them fail on
 `DECADE` any more, independent of whether this issue ships. **P-007**
 (`archive/high_prio_gi_draft_pipeline_container_exit_status_discarded.md`, Complete) is the same
 defect shape — a container's exit status discarded so failure reads as success — already fixed
@@ -67,7 +67,7 @@ finally:
     ...
 ```
 
-**Impact**: when a container fails (e.g. `linreg` exits non-zero, or, per LR-012/FD-026,
+**Impact**: when a container fails (e.g. `linreg` exits non-zero, or, per LR-013/FD-027,
 `postprocessing` or `skill_recalc` reject an unrecognised `SAPPHIRE_PREDICTION_MODE`), the
 exception is caught and printed to the server console only. `save_to_database` never sees it and
 proceeds to the next container in the sequence regardless, then unconditionally sets the progress
@@ -103,12 +103,12 @@ even attempt to raise:
 
 ```python
 result = container.wait()
-if result['StatusCode'] != 0:
-    print(f"Container '{container_name}' exited with status code {result['StatusCode']}.")  # :4560
-    # Optionally log the error or add to a list of failed containers
+if result['StatusCode'] != 0:                                                                 # :4559
+    print(f"Container '{container_name}' exited with status code {result['StatusCode']}.")   # :4560
+    # Optionally log the error or add to a list of failed containers                          # :4561
 else:
-    print(f"Container '{container_name}' has stopped successfully.")                         # :4563
-_write_container_log(container_name, container)                                               # :4566
+    print(f"Container '{container_name}' has stopped successfully.")
+_write_container_log(container_name, container)
 ... container.remove(force=True) ...
 ```
 
@@ -136,7 +136,7 @@ failed containers` (`:4560-4562`) marking where the intended handling was appare
 finished. A reader auditing this module by its call sites and docstrings alone — rather than
 reading the full body — would reasonably conclude that `run_pipeline` already stops on a failed
 container (since the function it calls documents that it raises), and would not think to look
-here for why decade failures (LR-012/FD-026) have gone unnoticed. The fix must correct the
+here for why decade failures (LR-013/FD-027) have gone unnoticed. The fix must correct the
 docstring together with the behaviour, not leave a `Raises` section that is still untrue after
 the fix changes *how* it raises.
 
@@ -148,14 +148,66 @@ does silently continue — there is nothing else in `run_pipeline` that inspects
 `postprocessing` containers from running afterward, exactly the failure class Bug 1 describes for
 "Save Changes." The original claim was wrong; this revision corrects it rather than repeating it.
 
+### Bug 4 (module-level function, both flows in principle): a missing or non-executable SSH tunnel script returns success-like `None`, no signal at all
+
+Before ever running a container, the module-level `run_docker_container` checks for its SSH
+tunnel script:
+
+```python
+if not os.path.isfile(SSH_TUNNEL_SCRIPT_ABSOLUTE):
+    ...
+    if not os.path.isfile(SSH_TUNNEL_SCRIPT_ABSOLUTE):  # second candidate path
+        print(f"SSH tunnel script not found at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
+        return                                            # :4522 — silent None, no container run
+if not os.access(SSH_TUNNEL_SCRIPT_ABSOLUTE, os.X_OK):
+    print(f"SSH tunnel script is not executable: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
+    return                                                 # :4527 — silent None, no container run
+```
+
+Either branch returns `None` with no exception and no distinguishing signal — indistinguishable,
+to `run_pipeline`, from a container that ran and succeeded. This is a **third** way this specific
+function can look successful while doing nothing, on top of Bug 3's silent status-ignore.
+
+## Why re-raising alone does not meet this issue's own acceptance criteria — verify the whole call chain, not just the inner function
+
+A prior draft of this issue's fix (see "Technical Analysis" below) assumed that making the inner
+functions raise on failure would be sufficient. Verified against trunk, it is not — at every
+layer above the inner function, something currently erases or hides the failure signal:
+
+- **The module-level function's own re-raise would be caught by its own generic handler.** Any
+  `raise` added inside the `try` block (including a new `raise ContainerError` at the status
+  check) is still inside the same `try` whose `except Exception as e: print(...)` (`:4573-4574`)
+  catches everything not specifically excluded. A naive "just add `raise`" fix does not propagate
+  anything until that `except` is also changed to let `ContainerError` through specifically (the
+  same pattern the nested function's own Option A needs — see below).
+- **"Save Changes" would still show a completed progress bar.** Even if `save_to_database` sees
+  the exception, its own `except docker.errors.DockerException as e: print(...)` (`:4175`)
+  swallows it at that layer too, and its `finally` block unconditionally sets
+  `progress_bar.value = 100` (`:4181`) regardless of outcome.
+- **"Trigger forecasts" already tries to show an error — and then hides it.** `run_pipeline`'s own
+  `except docker.errors.ContainerError as ce: progress_message.object = f"Container Error: {ce}"`
+  (`:4443-4444`) *does* set a visible error message — but the enclosing `finally` block
+  (`:4452`) sets `progress_message.visible = False` (`:4458`) immediately after, hiding the
+  message it just set, on every code path including the error one.
+
+**Conclusion**: a correct fix must change the inner functions (raise/return meaningfully), the
+outer `except`/`finally` blocks in both `save_to_database` and `run_pipeline` (stop
+unconditionally resetting the UI to a "done" appearance), and Bug 4's silent SSH-script returns —
+not the inner functions alone. "Technical Analysis" below is revised accordingly.
+
 ## Why this matters now (2026-09-09)
 
-This defect is the reason **LR-012** and **FD-026**'s documented failures have gone unnoticed:
-per those two issues, when an operator uses the decade horizon in either dashboard button,
-`postprocessing_operational.py` and (in the "Trigger forecasts" flow) `make_forecast.py` both
-already reject the dashboard's `SAPPHIRE_PREDICTION_MODE=DECADE` value today, loudly
-(`sys.exit(1)` / `raise ValueError`) — but neither failure has ever reached the dashboard's UI,
-because of Bug 1/Bug 3 above. This is the same defect shape as **P-007**
+This defect is the reason **LR-013** and **FD-027**'s documented "Save Changes" failures have
+gone unnoticed: per those two issues, when an operator uses the decade horizon and clicks "Save
+Changes," `postprocessing_operational.py` already rejects the dashboard's
+`SAPPHIRE_PREDICTION_MODE=DECADE` value today, loudly (`sys.exit(1)`) — but that failure has
+never reached the dashboard's UI, because of Bug 1 above. (Correction: `make_forecast.py` is
+**not** implicated here — FD-027's out-of-loop review found "Trigger forecasts" has its own
+stale-closure defect, FD-028, that makes it always send `PENTAD`, never `DECADE`, so ML never
+sees the bad value via that path. Bug 3/Bug 4 above remain real and independently worth fixing —
+they are why *any other* container failure in the "Trigger forecasts" flow, including FD-028's
+own, goes unnoticed — just not the specific `DECADE` failure this paragraph originally described
+on that flow.) This is the same defect shape as **P-007**
 (`pipeline_docker.py`'s `run_docker_container` discarding `container.wait()`'s exit code across
 20 Luigi call sites, fixed in PR #478): a container that fails is indistinguishable, at the
 calling layer, from one that succeeded.
@@ -168,11 +220,13 @@ blast radius is understood:
 
 - It affects **both** manual dashboard flows, not one (the original's own "Out of Scope" claim to
   the contrary was wrong — see Bug 3).
-- It is the reason a *known-live, already-loudly-failing* defect (LR-012/FD-026's decade
-  mismatch, and any other unrelated container crash — OOM, network, code bug — in either flow)
-  produces no operator-visible signal at all. This is the same "wrong data reads as success, not
-  as a failure" hazard CLAUDE.md's Data I/O Transition section calls out, and the same shape that
-  made **P-007** worth fixing project-wide in the Luigi pipeline.
+- It is the reason a *known-live, already-loudly-failing* defect (LR-013/FD-027's decade
+  mismatch, confined to "Save Changes" — see the correction above) produces no operator-visible
+  signal there, and the reason any *other*, unrelated container crash — OOM, network, code bug,
+  or FD-028's own stale-horizon defect — produces none in **either** flow. This is the same
+  "wrong data reads as success, not as a failure" hazard CLAUDE.md's Data I/O Transition section
+  calls out, and the same shape that made **P-007** worth fixing project-wide in the Luigi
+  pipeline.
 - Not priced at P-007's own historical tier exactly, because P-007's blast radius was the fully
   automated Luigi cron path (20 call sites, 8 images); this is confined to two manual,
   operator-initiated dashboard buttons. That confinement is why this is **High**, not higher —
@@ -193,9 +247,9 @@ blast radius is understood:
 
 ## Technical Analysis
 
-### Option A: Re-raise from the `except` block (Bug 1/2, "Save Changes")
+### Option A: Re-raise from the `except` block, with `stderr` captured before removal (Bug 1/2, "Save Changes")
 
-Minimal change — let `ContainerError` propagate and fix the missing `stderr`:
+Let `ContainerError` propagate, and fix the missing `stderr`:
 
 ```python
 except docker.errors.ContainerError:
@@ -205,39 +259,64 @@ except Exception as e:
 ```
 
 ```python
+stderr_text = container.logs(tail=50).decode('utf-8', errors='replace')  # BEFORE remove()
+try:
+    container.remove(force=True)
+except docker.errors.APIError as e:
+    print(f"Warning: Failed to remove container '{container_name}': {e}")
 raise docker.errors.ContainerError(
     container=container,
     exit_status=result['StatusCode'],
     command=None,
     image=full_image_name,
-    stderr=container.logs(tail=50).decode('utf-8', errors='replace'),
+    stderr=stderr_text,
 )
 ```
+
+`stderr` is required by the pinned `docker` client library (`apps/forecast_dashboard/pyproject.toml:24`,
+`"docker>=7.1.0"`) — confirmed against the library's `ContainerError.__init__` signature.
+**Ordering matters**: the logs must be captured *before* `container.remove(force=True)` runs (the
+current code removes the container, then would-be-raise afterward) — a removed container's logs
+are not guaranteed to still be retrievable, so capturing `stderr` after removal risks constructing
+`ContainerError` with an empty or failing `.logs()` call.
 
 ### Option B: Restructure try/except (Bug 1, "Save Changes")
 
 Move the container-run logic out of the SSH-tunnel `try`/`except`, so only SSH tunnel errors are
 caught there. More invasive but cleaner.
 
-### For Bug 3 ("Trigger forecasts"): make the module-level function raise, and make `run_pipeline` check it
+### For Bug 3 (module-level function, used by "Trigger forecasts"): raise past the function's own generic handler, and make the caller check it
 
-The module-level `run_docker_container` (`:4491`) needs the same `raise
-docker.errors.ContainerError(..., stderr=...)` (with `stderr`, unlike Bug 2's version) added at
-its own `if result['StatusCode'] != 0:` branch (`:4559`), and `run_pipeline`'s three call sites
-need to stop assuming success — at minimum, stop launching the next container in the sequence
-after a failure, mirroring what Option A achieves for `save_to_database`.
+Per "Why re-raising alone does not meet this issue's own acceptance criteria" above, this needs
+more than adding a `raise`:
+
+1. The module-level `run_docker_container` needs the same `raise
+   docker.errors.ContainerError(..., stderr=...)` (stderr captured before removal, as above)
+   added at its `if result['StatusCode'] != 0:` branch (`:4559`).
+2. Its own outer `except Exception as e:` (`:4573`) must specifically let `ContainerError`
+   through first (`except docker.errors.ContainerError: raise` before the generic handler),
+   mirroring Bug 1/2's fix — otherwise the newly-added raise is caught right there and nothing
+   changes.
+3. `run_pipeline`'s own `finally` block (`:4452`) must stop unconditionally hiding
+   `progress_message` (`:4458`) when an error occurred — it already sets a `Container Error:`
+   message on the right exception (`:4443-4444`); the fix is narrower than it looks; and
+   `save_to_database`'s `finally` block (`:4178`) must stop unconditionally forcing
+   `progress_bar.value = 100` (`:4181`) on a failure path.
+4. Bug 4's two silent `return` statements on a missing/non-executable SSH tunnel script (`:4522`,
+   `:4527`) must also signal failure (e.g. raise, or return a sentinel the caller checks) rather
+   than returning `None` indistinguishably from success.
 
 ### Recommendation
 
-Option A for Bug 1/2, plus the equivalent raise-and-check fix for Bug 3 — both minimal and
-targeted; do them together since they are the same defect shape in two call sites, not two
-unrelated changes.
+Option A for Bug 1/2, the four-part fix above for Bug 3/4, applied together — they are the same
+defect shape (a failure signal manufactured, then discarded somewhere between the inner function
+and the UI) recurring at every layer of both flows, not independent changes.
 
 ---
 
 ## Out of Scope
 
-- LR-012's and FD-026's own fixes (normalizing `SAPPHIRE_PREDICTION_MODE` handling so the
+- LR-013's and FD-027's own fixes (normalizing `SAPPHIRE_PREDICTION_MODE` handling so the
   containers this issue is about stop failing on `DECADE` in the first place) — this issue is
   about **surfacing** a failure when one occurs, not about which values should or should not be
   failures.
@@ -250,18 +329,29 @@ unrelated changes.
 
 ## Dependencies
 
-None. Independent of LR-012 and FD-026 (see "Related" above).
+None. Independent of LR-013 and FD-027 (see "Related" above).
 
 ## Acceptance Criteria
 
-- [ ] `ContainerError` constructed with all required arguments including `stderr`, in **both**
-  `run_docker_container` implementations.
-- [ ] A container failure in `linreg` prevents `postprocessing`/`skill_recalc` from running in
-  the "Save Changes" flow.
+- [ ] `ContainerError` constructed with all required arguments including `stderr` (captured
+  *before* `container.remove()`), in **both** `run_docker_container` implementations, and each
+  implementation's own generic `except Exception` lets `ContainerError` through rather than
+  re-swallowing it.
+- [ ] A container failure in `linreg` prevents `postprocessing` from running in the "Save
+  Changes" flow, **except** the deliberately-non-fatal `skill_recalc` step (`:4145-4161`), which
+  must remain non-fatal by design — this criterion does **not** require the operator to see every
+  container failure; it explicitly excludes `skill_recalc`'s own intentional catch. (This
+  reconciles the prior draft's self-contradiction between "operator sees every failure" and the
+  "Out of Scope" carve-out for `skill_recalc` below.)
 - [ ] A container failure in `linreg` prevents the ML loop and `postprocessing` from running in
   the "Trigger forecasts" flow.
-- [ ] The operator sees an error message in the dashboard UI when a container fails, in both
-  flows.
+- [ ] A missing or non-executable SSH tunnel script (Bug 4, `:4522`/`:4527`) is signalled as a
+  failure to the caller, not returned as a silent `None`.
+- [ ] The operator sees an error message in the dashboard UI when a **non-excluded** container
+  fails, in both flows — and that message is not immediately hidden by the enclosing `finally`
+  block (`save_to_database`'s `:4178-4181`, `run_pipeline`'s `:4452-4458`), which must stop
+  unconditionally resetting the progress indicator/message to a "done" appearance on a failure
+  path.
 - [ ] Existing success path unchanged in both flows.
 - [ ] The module-level `run_docker_container`'s docstring (`:4491-4503`) is corrected to match
   its actual (fixed) behaviour — its `Raises` section must not describe a contract the body does
@@ -269,21 +359,56 @@ None. Independent of LR-012 and FD-026 (see "Related" above).
 - [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` — zero failures,
   zero new skips.
 
+## Fifth-pass corrections (2026-09-09, out-of-loop review of PR #506)
+
+- Added **Bug 4**: missing/non-executable SSH tunnel script returns silent `None` at `:4522`/
+  `:4527`, a third way the module-level function can look successful while doing nothing.
+- Added the "Why re-raising alone does not meet this issue's own acceptance criteria" section —
+  verified the whole call chain, not just the inner functions: the module-level function's own
+  generic `except Exception` (`:4573-4574`) would still catch a newly-added raise;
+  `save_to_database`'s `finally` (`:4178-4181`) unconditionally forces the progress bar to 100%
+  regardless of outcome; `run_pipeline`'s own `finally` (`:4452-4458`) hides the
+  `Container Error:` message its own `except` block (`:4443-4444`) already sets. Revised
+  "Technical Analysis" and "Acceptance Criteria" to cover all three layers, not the inner
+  functions alone.
+- Reconciled a self-contradiction: the acceptance criteria demanded the operator see every
+  container failure while "Out of Scope" preserved `skill_recalc`'s deliberately non-fatal catch
+  — the relevant criterion now explicitly excludes `skill_recalc`.
+- Added: `stderr` must be captured **before** `container.remove(force=True)` runs, not after —
+  the current code order would otherwise construct `ContainerError` from a container that may
+  already be gone. Confirmed the `docker` client library pin
+  (`apps/forecast_dashboard/pyproject.toml:24`, `"docker>=7.1.0"`) requires the `stderr` argument.
+- Citation fix: the exit-status check is at `:4559`, not `:4560` (the `print` is at `:4560`, the
+  leftover comment at `:4561`).
+- **Process note, not a content defect**: this file's 2026-09-09 rename (from the `low_prio_`
+  prefix) is recorded by `git` as a delete-plus-add in the diff at default rename-detection
+  thresholds, not as a detected rename — a reviewer skimming the diff stat could misread it as a
+  deletion. Harmless (the content carried over verified-correct), but worth a one-line callout in
+  the PR description.
+
 ## References
 
 - `apps/forecast_dashboard/src/vizualization.py:3858` (nested `run_docker_container` def, "Save
   Changes"), `:3949` (exit-status check), `:3956-3961` (raise, missing `stderr` — Bug 2),
   `:3970-3971` (the swallow — Bug 1)
 - `apps/forecast_dashboard/src/vizualization.py:4491` (module-level `run_docker_container` def,
-  "Trigger forecasts"), `:4559-4560` (exit-status check and print, no raise — Bug 3), `:4573`
-  (its own `except Exception`, catches only genuinely unexpected errors, not the StatusCode
-  branch, since that branch never raises)
-- `apps/forecast_dashboard/src/vizualization.py:3984` (`save_to_database`), `:4317`
-  (`run_pipeline`), `:4248` (`create_reload_button`, `run_pipeline`'s enclosing scope, confirming
-  it has no local `run_docker_container` of its own and therefore resolves to the module-level
-  one)
-- `doc/plans/issues/mid_prio_gi_draft_lr_unrecognised_mode_silent_exit_zero.md` (LR-012),
-  `doc/plans/issues/high_prio_gi_draft_fd_decade_horizon_prediction_mode_spelling.md` (FD-026) —
-  the concrete, already-live failures this defect has been hiding
+  "Trigger forecasts"), `:4522, :4527` (silent SSH-script `return None` — Bug 4), `:4559`
+  (exit-status check, no raise — Bug 3), `:4560` (print), `:4561` (leftover comment), `:4573-4574`
+  (its own `except Exception`, catches only genuinely unexpected errors and would also catch a
+  naively-added raise — must let `ContainerError` through specifically)
+- `apps/forecast_dashboard/src/vizualization.py:3984` (`save_to_database`), `:4175`
+  (`except docker.errors.DockerException`), `:4178-4181` (`finally`, unconditionally sets
+  `progress_bar.value = 100`), `:4317` (`run_pipeline`), `:4443-4444`
+  (`except docker.errors.ContainerError`, sets a visible message), `:4452-4458` (`finally`, hides
+  that same message), `:4248` (`create_reload_button`, `run_pipeline`'s enclosing scope,
+  confirming it has no local `run_docker_container` of its own and therefore resolves to the
+  module-level one)
+- `apps/forecast_dashboard/pyproject.toml:24` (`"docker>=7.1.0"` — the pinned client library
+  version whose `ContainerError` requires `stderr`)
+- `doc/plans/issues/high_prio_gi_draft_lr_unrecognised_mode_silent_exit_zero.md` (LR-013),
+  `doc/plans/issues/high_prio_gi_draft_fd_decade_horizon_prediction_mode_spelling.md` (FD-027) —
+  the concrete, already-live "Save Changes" failure this defect has been hiding
+- `doc/plans/issues/high_prio_gi_draft_fd_trigger_forecasts_stale_horizon_closure.md` (FD-028 —
+  a different defect this same swallow also hides, on the "Trigger forecasts" side)
 - `doc/plans/issues/archive/high_prio_gi_draft_pipeline_container_exit_status_discarded.md`
   (P-007 — same defect shape, fixed once already in the Luigi pipeline)

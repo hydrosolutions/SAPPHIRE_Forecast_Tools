@@ -1,10 +1,15 @@
-# LR-012: `linear_regression.py` exits 0 having written nothing when `SAPPHIRE_PREDICTION_MODE` is unrecognised
+# LR-013: `linear_regression.py` exits 0 having written nothing when `SAPPHIRE_PREDICTION_MODE` is unrecognised
 
 **Status**: Draft
 **Module**: `apps/linear_regression/linear_regression.py`
-**Priority**: High (raised from Medium 2026-09-09 — see "Priority reconsidered" below). Filename
-prefix (`mid_prio_`) is now stale relative to this field; left unchanged pending an explicit
-rename decision, since renaming files was outside this draft's original edit scope.
+**Priority**: High (raised from Medium 2026-09-09 — see "Priority reconsidered" below).
+**Renumbered from LR-012 to LR-013, 2026-09-09**: `LR-012` collided with an unrelated issue
+("mixed-freshness frames write prior-year values stamped with today's forecast date") already
+claimed on a local-only branch (`docs_fd024_fd025_doc008`, 2026-08-28, unpushed — invisible to an
+origin-only check). Verified free by surveying `git for-each-ref refs/heads` across all ~285
+local branches, not just `origin/*`. File renamed from `mid_prio_gi_draft_lr_unrecognised_mode_silent_exit_zero.md`
+to `high_prio_gi_draft_lr_unrecognised_mode_silent_exit_zero.md` in the same change, since the
+`mid_prio_` prefix no longer matched this issue's High priority.
 **Labels**: `linear_regression`, `silent-noop`, `input-validation`, `forecast-dashboard`
 **Found**: 2026-08-21, out-of-loop review of INFRA-039, recorded there as out-of-scope because it
 is a module-level fix reachable from entry points that patch did not touch. Filed 2026-08-24 on
@@ -13,35 +18,45 @@ branch `docs_infra040_lr012_followups`, which was later abandoned before the fil
 "Corrections from the original draft" below); a second out-of-loop pass the same day found the
 defect is live via the forecast dashboard (see "Second-pass corrections"); a third pass the same
 day — an **owner override** — replaced two separate per-value aliasing decisions with one
-governing normalization rule and found that fixing this module alone does not make the
-dashboard's decade actions work end to end (see "GOVERNING DECISION" and "Third-pass
-corrections" below). Rebased onto trunk `3791fa31` (PR #504, docs-only) same day.
+governing normalization rule (see "GOVERNING DECISION" and "Third-pass corrections"); a fourth
+pass, from an out-of-loop review of the resulting PR, found the "live" trigger is narrower than
+stated (only **one** of the two dashboard buttons — "Save Changes" — actually sends `DECADE`;
+"Trigger forecasts" has its own, different, worse defect, split out as **FD-028**) and the blast
+radius on the working button is *wider* than stated (every configured station, not the one
+selected) — see "Fourth-pass corrections" below. Rebased onto trunk `3791fa31` (PR #504,
+docs-only) same day.
 **Related**: **INFRA-039** (PR [#477](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/pull/477),
 merged 2026-08-24, added the `run_locally.sh`-side domain check; this is the module-side half).
 Its plan/issue file is now `doc/plans/issues/review_gi_draft_infra_run_locally_unvalidated_modes.md`,
 **Status: Review**. **LR-010** / **LR-011** are *not* duplicates — both concern API
 **write-failure** reporting, not mode handling. **INFRA-038** (`mid_prio_gi_draft_infra_connect_to_ieh_boolean_parsing.md`,
 Draft) is the same *case-sensitivity* defect class in a different variable — see "Case
-sensitivity" below. **FD-026** (`high_prio_gi_draft_fd_decade_horizon_prediction_mode_spelling.md`)
+sensitivity" below. **FD-027** (`high_prio_gi_draft_fd_decade_horizon_prediction_mode_spelling.md`)
 is the dashboard-side root cause and the umbrella issue for the **full chain** of modules the
 dashboard feeds this variable to — this issue's normalization fixes `linear_regression.py` only;
-FD-026 covers the rest (`postprocessing_operational.py`, `recalculate_skill_metrics.py`,
+FD-027 covers the rest (`postprocessing_operational.py`, `recalculate_skill_metrics.py`,
 `make_forecast.py`) and must ship for the dashboard's decade actions to actually work, not just
 this issue. **FD-008** (`high_prio_gi_draft_fd_inner_run_docker_error_handling.md`, repriced High
 2026-09-09) is a **separate, third defect**: the dashboard swallows container failures instead of
 surfacing them, which is the actual reason the decade defects below have gone unnoticed — see
-"Related finding: FD-008" below.
+"Related finding: FD-008" below. **FD-028** (new, filed alongside this correction) is a
+**separate, fourth defect**: "Trigger forecasts" captures the horizon selector's value once, at
+widget-construction time, and never re-reads it — so it always sends `PENTAD`, never `DECADE`,
+regardless of what horizon is selected when clicked. It does not expose this issue at all; it is
+its own, arguably worse, silent-wrong-horizon defect.
 
 ---
 
 > **Scope note, read before the rest of this issue**: this is a module-boundary validation
 > defect in `linear_regression.py` — it triggers on *any* unrecognised `SAPPHIRE_PREDICTION_MODE`
-> value, from any caller. Its one confirmed **live** trigger is the forecast dashboard's two
-> manual re-run buttons ("Save Changes", "Trigger forecasts") when an operator has the decade
-> horizon selected — see "Exposure → LIVE" below. **Operational decadal forecasting via the
-> production cron path and Luigi's `RunDecadalWorkflow` is unaffected**; both hardcode `DECAD`
-> and never reach the unrecognised-value code path this issue is about. See FD-026's "What is NOT
-> affected" section for the full verification.
+> value, from any caller. Its one confirmed **live** trigger is the forecast dashboard's
+> **"Save Changes"** button when an operator has the decade horizon selected — see
+> "Exposure → LIVE" below. (Correction, fourth pass: the dashboard's other manual button,
+> "Trigger forecasts", does **not** trigger this — a stale-closure defect of its own,
+> **always** sends `PENTAD` regardless of selection, and is tracked separately as **FD-028**.)
+> **Operational decadal forecasting via the production cron path and Luigi's `RunDecadalWorkflow`
+> is unaffected**; both hardcode `DECAD` and never reach the unrecognised-value code path this
+> issue is about. See FD-027's "What is NOT affected" section for the full verification.
 
 ## Defect
 
@@ -158,8 +173,8 @@ still support calling the defect latent** — but it is not the whole exposure p
 
 **Scope, stated plainly up front: operational decadal forecasting is NOT affected.** The
 production cron path (`bin/run_decadal_forecasts.sh:92`) and Luigi's `RunDecadalWorkflow`
-(`pipeline_docker.py:1524-1557`) all hardcode `DECAD` and are untouched by anything below — see
-FD-026's "What is NOT affected" section for the full verification. Everything in this subsection
+(`pipeline_docker.py:1526-1557`) all hardcode `DECAD` and are untouched by anything below — see
+FD-027's "What is NOT affected" section for the full verification. Everything in this subsection
 is confined to two **manual** dashboard buttons, described next.
 
 The forecast dashboard's horizon selector offers the value `"decade"`, not `"decad"`
@@ -174,63 +189,87 @@ horizon_types = {
 
 `select_and_plot_data(...)` reads this into a local `horizon` variable
 (`apps/forecast_dashboard/src/vizualization.py:3449`, `horizon = wm.horizon_selector.value`),
-and two nested callback closures defined later in the same function build a
+and a nested callback closure defined later in the same function builds a
 `SAPPHIRE_PREDICTION_MODE` value directly from it via `.upper()`:
 
 - `save_to_database(event)` (`:3984`, wired to the **"Save Changes"** button at `:4195`) —
   `:4080`: `f'SAPPHIRE_PREDICTION_MODE={horizon.upper()}'`, then `:4131` runs
-  `mabesa/sapphire-linreg:latest` with that environment.
-- `run_pipeline(event)` (`:4317`, wired to the **"Trigger forecasts"** button at `:4471`) —
-  `:4355`: the identical `f'SAPPHIRE_PREDICTION_MODE={horizon.upper()}'`, then `:4400` runs the
-  same `mabesa/sapphire-linreg:latest` image with that environment.
+  `mabesa/sapphire-linreg:latest` with that environment. Because `save_to_database` is nested
+  inside `select_and_plot_data` and closes over its *live* local `horizon`, this genuinely reads
+  the current selector value on every click.
+
+**Correction (fourth pass, out-of-loop PR review, 2026-09-09): "Trigger forecasts" does NOT send
+`DECADE`, ever.** The original filing of this issue (and its own second pass) claimed both
+buttons were affected — that was wrong. `run_pipeline` (the "Trigger forecasts" handler) is a
+*different* closure, built once by `create_reload_button(self.horizon_selector.value)` at
+dashboard-construction time (`widget_manager.py:107`) while the selector still holds its default
+`"pentad"` (`widgets.py:107`), and never rebuilt afterward — the code that shows/hides its card
+only ever toggles `.visible` (`vizualization.py:125-143`). So `run_pipeline`'s closed-over
+`horizon` is **permanently `"pentad"`**, and its own `SAPPHIRE_PREDICTION_MODE={horizon.upper()}`
+(`:4355`) is always `PENTAD`, never `DECADE` — regardless of what the operator has selected. This
+means "Trigger forecasts" cannot expose *this* issue at all; it has a distinct, arguably worse
+defect of its own (silently running the wrong horizon's pipeline while the operator believes they
+re-ran decade), filed separately as **FD-028** — see "Related" above. Every claim below is
+therefore scoped to **"Save Changes" only**.
 
 When `horizon == "decade"` (the widget's own decade value), `horizon.upper()` is `"DECADE"`, not
 `"DECAD"` — both LR horizon flags go false inside the container, and the operator's decade
 save/re-run silently writes nothing while the dashboard's progress bar reports completion. The
 mismatch is not a typo introduced once: the surrounding code in the same file expects `"decad"`
-throughout — e.g. the `else:  # decad` comments at `:4092` and `:4232` — so the widget's
-`"decade"` spelling is the outlier, not the LR module's `"DECAD"`.
+in most places — e.g. the `else:  # decad` comments at `:4092` and `:4232` — but `"decade"` is
+not itself wrong; it is the API's own vocabulary for a *different* contract. See FD-027's "Option
+A is dangerous" finding: `"decade"` is the value the postprocessing API's `HorizonType` enum
+requires (`sapphire/services/postprocessing/app/models.py:26`), and `save_to_database` also POSTs
+the raw `horizon` value as `"horizon_type"` to that API (`:4017`) — so the dashboard is *correct*
+to use `"decade"` for that contract. The defect is that the same string is reused, unmodified,
+for a second contract (`SAPPHIRE_PREDICTION_MODE`) with a different vocabulary.
 
-These are two real, currently-shipped buttons in the dashboard's manual forecast-editing panel,
-not a hidden or dev-only code path — an operator correcting a decade forecast and clicking
-**Save Changes**, or manually re-triggering a decade forecast via **Trigger forecasts**, hits
-this every time, deterministically, for the decade horizon specifically. The pentad horizon is
-unaffected (`"pentad".upper() == "PENTAD"`, which is in LR's domain already).
+This is a real, currently-shipped button in the dashboard's manual forecast-editing panel, not a
+hidden or dev-only code path — an operator correcting a decade forecast and clicking **Save
+Changes** hits this every time, deterministically, for the decade horizon specifically. The
+pentad horizon is unaffected (`"pentad".upper() == "PENTAD"`, which is in LR's domain already).
 
-**Cross-check confirming the root cause is real, not hypothetical**: `run_pipeline` also starts
-ML containers using the same `horizon.upper()` value forwarded as `SAPPHIRE_PREDICTION_MODE`
-(`vizualization.py:4415, :4421`). `apps/machine_learning/make_forecast.py:605-608` validates
-its own `PREDICTION_MODE` against `["PENTAD", "DECAD"]` and **raises `ValueError`** on anything
-else — i.e. the same dashboard-side `"DECADE"` value that LR silently swallows makes the ML
-container crash loudly (though see "Related finding: FD-008" below for why that crash is not
-visible either). This is not being proposed as a defect to fix in ML itself — its behavior (fail
-loudly on an out-of-domain value) is exactly what this issue is asking LR to adopt for LR's own
-genuinely-unrecognised values.
+**Correction (fourth pass): the blast radius on "Save Changes" is station-wide, not
+station-scoped.** An earlier pass of this issue implied the effect was limited to whichever
+station the operator had selected. Verified directly: neither `linear_regression.py` nor
+`postprocessing_operational.py` reads any station-scoping environment variable (no
+`SAPPHIRE_RECALC_STATION_CODE` or similar appears in either file) — `linear_regression.py` loads
+its pentad/decad site lists from configuration (`sl.get_pentadal_forecast_sites()` /
+`sl.get_decadal_forecast_sites_from_pentadal_sites()`, `:673-691`), independent of which station
+the operator was viewing. **Only the third, skill-metrics container is station-scoped** — it
+receives `SAPPHIRE_RECALC_STATION_CODE={station_code}` (`:4152`), which
+`recalculate_skill_metrics.py` reads at `:169`/`:212`. So one "Save Changes" click, at the decade
+horizon, today: silently fails to write a decade forecast for **every configured station** (not
+just the one on screen) at the selected boundary date, while only the skill-metrics
+recalculation — itself failing loudly, see below — was ever scoped to the single station.
 
 **Critical correction (owner override, 2026-09-09): fixing this module alone does not fix the
-dashboard.** Both `save_to_database` and `run_pipeline` run a `mabesa/sapphire-postprocessing:latest`
-container with the **same** `environment` list, immediately after the LR container
-(`:4137-4138` in `save_to_database`, `:4432` in `run_pipeline`). That image's default command is
-`postprocessing_operational.py` (`apps/postprocessing_forecasts/Dockerfile:38`), whose own
-domain check (`postprocessing_operational.py:245-251`) **already rejects `DECADE` today** and
-exits 1. So the dashboard's decade chain, as it stands today, is: LR silently writes nothing and
-exits 0, **then** postprocessing crashes on the same bad value. Normalizing `linear_regression.py`
-alone converts this into: LR now writes a real decade forecast, **then postprocessing still
-crashes** on `DECADE` — a materially different, still-broken intermediate state, not a fix. See
-**FD-026** for the full module map (`postprocessing_operational.py`, `recalculate_skill_metrics.py`,
-`make_forecast.py` all need the same normalization) and "Deployment note: behaviour change"
-below.
+dashboard.** `save_to_database` runs a `mabesa/sapphire-postprocessing:latest` container with the
+**same** `environment` list, immediately after the LR container (`:4137-4138`). That image's
+default command is `postprocessing_operational.py` (`apps/postprocessing_forecasts/Dockerfile:38`),
+whose own domain check (`postprocessing_operational.py:245-251`) **already rejects `DECADE`
+today** and exits 1 — again for every configured station, not just one. So the dashboard's decade
+chain, as it stands today, is: LR silently writes nothing (for every station) and exits 0,
+**then** postprocessing crashes on the same bad value (also for every station). Normalizing
+`linear_regression.py` alone converts this into: LR now writes real decade forecasts for every
+configured station, **then postprocessing still crashes** on `DECADE` — a materially different,
+still-broken intermediate state, not a fix. See **FD-027** for the full module map
+(`postprocessing_operational.py`, `recalculate_skill_metrics.py`, `make_forecast.py` all need the
+same normalization) and "Deployment note: behaviour change" below.
 
-The dashboard's own root cause (`"decade"` vs. every consumer's `"DECAD"`) and the full list of
-modules that need normalizing are filed and tracked in **FD-026** — see "Related" above and the
+The dashboard's own root cause (`"decade"` reused across two contracts) and the full list of
+modules that need normalizing are filed and tracked in **FD-027** — see "Related" above and the
 References below.
 
 ## Related finding: FD-008 (why none of this has been visibly failing)
 
-A further owner-directed check found the reason the dashboard's decade path has not been visibly
-crashing despite postprocessing (and, in `run_pipeline`, ML) rejecting `DECADE` loudly today:
-both of the dashboard's `run_docker_container` implementations **swallow container failures**
-rather than surfacing them.
+A further owner-directed check found the reason the "Save Changes" decade path has not been
+visibly crashing despite postprocessing rejecting `DECADE` loudly today: both of the dashboard's
+`run_docker_container` implementations **swallow container failures** rather than surfacing them
+— a general defect, independent of which value triggers the underlying failure. (`run_pipeline`'s
+own copy is not implicated in *this* issue's `DECADE` failure — per the correction above, it
+never receives `DECADE` — but its swallow is exactly why FD-028's own defect, and any other
+container failure in that flow, also goes unnoticed.)
 
 - `save_to_database`'s nested `run_docker_container` (`vizualization.py:3858`) raises
   `docker.errors.ContainerError` on a non-zero exit code (`:3949-3961`), but that `raise` is
@@ -251,8 +290,8 @@ tracked as its own pre-existing issue, **FD-008**
 bullet above (filed during FD-007 review, before this investigation); it is being **repriced
 Low → High and corrected** (its own "Out of scope" section incorrectly claimed the
 `run_pipeline` / "Trigger forecasts" path does not have this bug — it does, in a more direct
-form) as part of this round rather than duplicated here. This issue (LR-012) and FD-026 do not
-depend on FD-008 shipping first — normalizing every module's domain (this issue + FD-026) means
+form) as part of this round rather than duplicated here. This issue (LR-013) and FD-027 do not
+depend on FD-008 shipping first — normalizing every module's domain (this issue + FD-027) means
 none of them will fail on `DECADE` in the first place, which makes FD-008's swallow moot **for
 this specific value** even before FD-008 itself ships. FD-008 remains independently worth fixing
 for every *other* kind of container failure (crashes, OOM, network errors) in these two flows,
@@ -265,13 +304,22 @@ from the (incomplete) latent-only exposure picture above. That reasoning does no
 dashboard finding:
 
 - **Frequency/certainty**: the dashboard route is not config-dependent or typo-dependent — it
-  fires on 100% of decade-horizon uses of two real, currently-visible buttons ("Save Changes",
-  "Trigger forecasts"), which exist specifically so an operator can correct or re-run a forecast.
+  fires on 100% of decade-horizon uses of the real, currently-visible **"Save Changes"** button
+  (corrected fourth pass: **not** "Trigger forecasts" — see the correction above; that button has
+  its own, separately-tracked defect, FD-028), which exists specifically so an operator can
+  correct a forecast. And per the station-scope correction above, each such click affects every
+  configured station, not one.
 - **Consequence class**: an operator who notices a wrong decade forecast, edits it, and clicks
   Save believes the correction was persisted (the button re-enables, the progress bar completes,
-  no error is shown — see "Related finding: FD-008" for why) when nothing was recomputed — the
-  exact "wrong data, not a failure" hazard CLAUDE.md's Data I/O Transition section calls out for
-  CSV fallbacks, occurring here for a different reason but with the same operator-facing shape.
+  no error is shown — see "Related finding: FD-008" for why) when nothing was recomputed for any
+  configured station — the exact "wrong data, not a failure" hazard CLAUDE.md's Data I/O
+  Transition section calls out for CSV fallbacks, occurring here for a different reason but with
+  the same operator-facing shape. The visibility edit itself (which years/columns show in the
+  table) **does** persist — it is POSTed to the API before any container runs
+  (`vizualization.py:4016`, confirmed by the "Changes Saved Successfully" alert shown at `:4044`,
+  defined at `:3849`) — only the *regenerated forecast/skill-metric data* goes stale, not the
+  operator's visibility choice. This narrows what needs recovery, but does not change the
+  priority reasoning.
 - **Precedent**: **LR-011** (High) and **ML-021** (High) are both "exits 0 / reports success
   having written nothing" defects reachable in real operational use, not only via
   misconfiguration or typo — the same shape this issue now has, once the dashboard route is
@@ -289,7 +337,7 @@ original rating is being explicitly superseded, not carried forward.
 
 An earlier pass in this same draft recorded two separate decisions ("`ALL` is aliased to `BOTH`"
 and, later the same day, "`DECADE` is aliased to `DECAD`"). The owner has since overridden both
-with one general rule, which governs this issue and FD-026 alike. **Do not read either superseded
+with one general rule, which governs this issue and FD-027 alike. **Do not read either superseded
 decision below as still independently in force — they are folded into this rule.**
 
 ### The rule: normalize spelling and case; keep each module's own domain
@@ -314,12 +362,38 @@ has today; normalizing spelling/case must not widen or narrow any module's real 
 - `make_forecast.py:605-607` deliberately rejects `BOTH` — ML runs one horizon per invocation.
   Normalizing spelling/case there must add `decade`≡`decad` and case-insensitivity **only**; it
   must not gain `BOTH` or `ALL`.
-- `postprocessing_operational.py:245` legitimately accepts `MONTHLY` (and treats `ALL` as "run
-  pentad, decad, **and** monthly" — a wider meaning than LR's `ALL`, see its `:268/:278/:288`
-  branches). Normalizing there must add `decade`≡`decad` and case-insensitivity **only**; its
-  existing `ALL`/`MONTHLY` semantics must not change.
-- `recalculate_skill_metrics.py`'s `VALID_MODES` (`:94-103`) is wider still (`DAILY`, `QUARTERLY`,
-  `SEASONAL` in addition). Same treatment: add `decade`≡`decad` and case-insensitivity only.
+- `postprocessing_operational.py:245` accepts `MONTHLY` as a value, but its `MONTHLY`/`ALL`
+  branch (`:288-291`) does no monthly work — it only logs that monthly is handled by
+  `postprocessing_operational_long_term.py` and skips it. **Correction (fourth pass): `ALL` for
+  this module computes exactly the same two horizons as `BOTH`** (`:268` and `:278` both check
+  `["PENTAD","BOTH","ALL"]` / `["DECAD","BOTH","ALL"]`) — an earlier pass of this issue wrongly
+  said `ALL` here means "pentad, decad, and monthly"; it does not. Normalizing there must add
+  `decade`≡`decad` and case-insensitivity **only**; its existing (narrower-than-previously-stated)
+  `ALL`/`MONTHLY` semantics must not change.
+- `recalculate_skill_metrics.py`'s `VALID_MODES` (`:94-103`) is wider still, and genuinely — its
+  `ALL` really does mean "run pentad **and** decad **and** monthly **and** quarterly **and**
+  seasonal **and** daily" (verified: `["PENTAD","BOTH","ALL"]` at `:277`, `["MONTHLY","ALL"]` at
+  `:301`, `["QUARTERLY","ALL"]` at `:372`, `["SEASONAL","ALL"]` at `:443`, `["DAILY","ALL"]` at
+  `:528`). Collapsing this module's `ALL` to `BOTH` anywhere would silently drop four of those six
+  behaviors — a real narrowing, not a hypothetical one. Same treatment as the others: add
+  `decade`≡`decad` and case-insensitivity only.
+- **This normalization must happen inside each consuming module, on that module's own copy of
+  the value — never at an orchestrator boundary, and never by rewriting the ambient
+  `SAPPHIRE_PREDICTION_MODE` env var itself.** Concretely verified hazards of doing it at the
+  orchestrator level: (a) `apps/run_locally.sh`'s own `validate_env` (`:1977`) and its ML
+  resolver (`resolve_ml_bare_target_modes`, `:541`) both accept only unset/`PENTAD`/`DECAD`/`BOTH`
+  for the targets they gate, and `apps/pipeline/tests/test_run_locally_orchestration.py`'s
+  `test_out_of_domain_mode_rejected_before_any_module_runs` (`:1677-1690`) explicitly requires
+  `"ALL"` (alongside the typo `"PENTAAD"`) to be **rejected** there — a global `ALL`→`BOTH`
+  rewrite ahead of that gate would break this passing regression test; (b)
+  `RunAllMLModels.requires()` (`pipeline_docker.py:792`) checks `self.prediction_mode == "ALL"`
+  by exact string to expand into two separate, valid `RunMLModel(prediction_mode="PENTAD"/"DECAD")`
+  tasks — if `ALL` were rewritten to `BOTH` before this check, it would never match, and the
+  `else` branch would instead create a single `RunMLModel(prediction_mode="BOTH")` task, which
+  `make_forecast.py` rejects outright (`:605-607`); (c) `apps/reset_forecast_run_date/rerun_forecast.py`
+  reads the same env var (`:191`) and uses it **verbatim, uppercased-or-not**, as a filename
+  suffix (`_{prediction_mode}.txt`, `:83`) — a blanket case-normalization of the ambient value
+  would risk turning a working `_decad.txt` lookup into `_DECAD.txt`.
 
 **Decision, as applied to `linear_regression.py` (this issue's own scope):**
 
@@ -341,7 +415,7 @@ has today; normalizing spelling/case must not widen or narrow any module's real 
 decision both are already correct as written; only `linear_regression.py`'s own domain check and
 its two docstring/epilog copies are wrong. The **other three modules** in the dashboard's chain
 (`postprocessing_operational.py`, `recalculate_skill_metrics.py`, `make_forecast.py`) need the
-same case/spelling normalization applied to *their own* domains — tracked in **FD-026**, not
+same case/spelling normalization applied to *their own* domains — tracked in **FD-027**, not
 duplicated here.
 
 <details>
@@ -450,7 +524,7 @@ if mode not in ["PENTAD", "DECAD", "BOTH"]:
 - Do not change `apps/forecast_dashboard/...` as part of this fix — normalizing LR resolves the
   dashboard's `DECADE` value at the LR layer only; the dashboard's own root-cause spelling
   inconsistency, and the other three modules the dashboard also feeds this variable to, are
-  FD-026's scope, not this issue's. Fixing LR alone does **not** make the dashboard's decade
+  FD-027's scope, not this issue's. Fixing LR alone does **not** make the dashboard's decade
   chain succeed end to end — see "Exposure → LIVE" above.
 
 ## Out of scope
@@ -462,14 +536,14 @@ if mode not in ["PENTAD", "DECAD", "BOTH"]:
 - LR-010 / LR-011's API write-failure reporting.
 - Any change to `pipeline_docker.py`'s Luigi parameter defaults or to `doc/configuration.md` (see
   the governing decision).
-- FD-026 itself (the dashboard's `"decade"` vs. `"DECAD"` root cause, and the normalization needed
+- FD-027 itself (the dashboard's `"decade"` vs. `"DECAD"` root cause, and the normalization needed
   in `postprocessing_operational.py`, `recalculate_skill_metrics.py`, `make_forecast.py`) —
   tracked separately; this issue's normalization is a necessary but not sufficient part of making
   the dashboard's decade path work.
 - FD-008 (the dashboard swallowing container failures) — tracked separately; not a dependency of
   this issue (see "Related finding: FD-008").
 - The ML container's loud `ValueError` on `DECADE` (`make_forecast.py:605-608`) — cited only as
-  corroborating evidence above; its own normalization is FD-026's scope.
+  corroborating evidence above; its own normalization is FD-027's scope.
 
 ## Acceptance criteria
 
@@ -494,20 +568,26 @@ if mode not in ["PENTAD", "DECAD", "BOTH"]:
 
 ## Deployment note: behaviour change (state this in the release/deployment note, don't let it be discovered afterwards)
 
-Once this issue's normalization lands **in isolation** (before FD-026), the forecast dashboard's
-decade actions will start producing real, written decade LR forecasts where they previously wrote
-none — a genuine, intended change in observable data, not a regression. But because
-`postprocessing_operational.py` still rejects `DECADE` until FD-026 also ships (see "Exposure →
+**Scope correction (fourth pass): this is about "Save Changes" only** (Trigger forecasts never
+sent `DECADE` — see FD-028) **and affects every configured station**, not one (see the
+station-scope correction above). With that scope: once this issue's normalization lands **in
+isolation** (before FD-027), clicking "Save Changes" at the decade horizon will start producing
+real, written decade LR forecasts, for every configured station, where it previously wrote none —
+a genuine, intended change in observable data, not a regression. But because
+`postprocessing_operational.py` still rejects `DECADE` until FD-027 also ships (see "Exposure →
 LIVE" above), the *practical* result of shipping this issue alone is a **new**, still-incomplete
-state: LR forecast rows for decade start appearing, while the postprocessing step that runs
-immediately after (skill metrics / bulletin aggregation, depending on what
-`postprocessing_operational.py` does for the affected station) keeps failing on the same
-unnormalized value — a failure that, per "Related finding: FD-008," will very likely continue to
-be invisible in the dashboard's own UI. Operators who believe the decade dashboard actions "have
-been running all along" should be told, before this ships, that: (a) new decade rows will start
-appearing that were not being written before, and (b) shipping this issue without FD-026 leaves
-the postprocessing step still silently broken for decade — the full, correct fix requires both to
-land together (or FD-026 first).
+state: LR forecast rows for decade start appearing for every station, while the postprocessing
+step that runs immediately after — **not** skill metrics (see FD-027's correction: operational
+`postprocessing_operational.py` explicitly does not recalculate skill metrics, per its own
+header comment) — keeps failing on the same unnormalized value for every station. That failure,
+per "Related finding: FD-008," will very likely continue to be invisible in the dashboard's own
+UI. Operators who believe "Save Changes" decade actions "have been running all along" should be
+told, before this ships, that: (a) new decade LR forecast rows will start appearing, for every
+configured station, that were not being written before, and (b) shipping this issue without
+FD-027 leaves the postprocessing step still silently broken for decade, for every station — the
+full, correct fix requires both to land together (or FD-027 first). The visibility *edit* itself
+(which years/columns to show) was never lost — see the "Consequence class" note under "Priority
+reconsidered" above; only the regenerated forecast/skill-metric data is affected.
 
 ## Corrections from the original draft
 
@@ -592,7 +672,7 @@ chain. This pass:
   rejects `DECADE` today. Normalizing LR alone therefore does not make the dashboard's decade
   actions succeed — it changes what fails and where. Mapped the full module set (LR,
   `postprocessing_operational.py`, `recalculate_skill_metrics.py` via an explicit `command=`
-  override at `:4147-4157`, and `make_forecast.py` via `run_pipeline`'s ML branch) into FD-026.
+  override at `:4147-4157`, and `make_forecast.py` via `run_pipeline`'s ML branch) into FD-027.
 - Added "Related finding: FD-008" — the dashboard's two `run_docker_container` implementations
   both swallow container failures (verified: `:3949-3971` for `save_to_database`'s nested one,
   `:4491-4573` for `run_pipeline`'s module-level one, the latter never raising at all), which is
@@ -600,8 +680,58 @@ chain. This pass:
   crashes — have been visible. Corrected FD-008's own stale line numbers and its incorrect
   "Trigger forecasts does not have this bug" claim; repriced FD-008 Low → High.
 - Added the "Deployment note: behaviour change" section — shipping this issue's normalization
-  without FD-026 changes dashboard-observable behaviour (new decade LR rows appear) without fully
+  without FD-027 changes dashboard-observable behaviour (new decade LR rows appear) without fully
   fixing the dashboard flow, and that needs to be called out proactively, not discovered later.
+
+## Fourth-pass corrections (2026-09-09, out-of-loop review of PR #506)
+
+A set of out-of-loop reviews of the PR built from this issue and FD-027 returned 15 findings, one
+CRITICAL that invalidated half of FD-027's claims. All were re-verified directly against trunk
+before being applied here (a small number of the reviewers' own citations were themselves
+slightly off — noted individually below and in the coordinating session's report, not silently
+adopted).
+
+- **CRITICAL, invalidates the "both buttons send DECADE" claim.** Verified directly:
+  `widgets.py:107` defaults the horizon selector to `"pentad"`; `widget_manager.py:107` calls
+  `create_reload_button(self.horizon_selector.value)` exactly once, at dashboard-construction
+  time; `vizualization.py:125-143` only ever toggles the resulting `reload_card`'s `.visible`
+  flag, never rebuilds it. So `run_pipeline`'s closed-over `horizon` is permanently `"pentad"` —
+  "Trigger forecasts" **never** sends `DECADE`, regardless of the operator's selection. Corrected
+  throughout "Exposure → LIVE," "Priority reconsidered," the Deployment note, and the References.
+  The distinct, worse defect this reveals (Trigger Forecasts silently running the wrong horizon)
+  is filed separately as **FD-028**, not folded into this issue.
+- **Renumbered LR-012 → LR-013** (see header) after a local-only branch was found to have already
+  claimed `LR-012` for an unrelated defect.
+- **Station-scope correction**: this issue's own silent failure is not limited to the selected
+  station — verified neither `linear_regression.py` nor `postprocessing_operational.py` reads any
+  station-scoping env var; only the (separately non-fatal) skill-metrics container is
+  station-scoped. Corrected in "Exposure → LIVE," "Priority reconsidered," and the Deployment
+  note.
+- **`postprocessing_operational.py`'s `ALL` semantics corrected**: its `MONTHLY`/`ALL` branch
+  (`:288-291`) only logs and skips — `ALL` computes the same two horizons as `BOTH` for this
+  module, not "pentad, decad, and monthly" as an earlier pass claimed. Corrected in GOVERNING
+  DECISION.
+- **`recalculate_skill_metrics.py`'s `ALL` is genuinely wider (six horizons), confirmed exact
+  line-by-line** (`:277, :301, :372, :443, :528`) — this one **is** correctly described as wider
+  than LR's `ALL`; only `postprocessing_operational.py`'s was misstated. The two modules must not
+  be conflated.
+- **Orchestrator-boundary hazards added**: `run_locally.sh`'s own domain gates (`:1977`, `:541`)
+  and their regression test (`test_run_locally_orchestration.py:1677-1690`, which requires `"ALL"`
+  rejected) must not be touched by this issue's normalization; `RunAllMLModels`'s exact-string
+  `"ALL"` expansion (`pipeline_docker.py:792`) and `rerun_forecast.py`'s raw-value filename suffix
+  (`:83`) are both concrete reasons normalization must happen inside each consumer, never on the
+  ambient env var.
+- **Recovery-scope correction**: "Save Changes" does persist the visibility edit before any
+  container runs (POST at `:4016`, "Changes Saved Successfully" alert at `:4044`) — only the
+  regenerated forecast/skill-metric data goes stale, not the configuration edit. Added to
+  "Priority reconsidered" and the Deployment note.
+- **Citation fixes**: `RunDecadalWorkflow` starts at `pipeline_docker.py:1526`, not `1524`;
+  the module-level `run_docker_container`'s silent status-ignore is at `:4559-4561` (not
+  `:4572-4573`, which is only the unrelated generic-exception handler's header/body at
+  `:4573-4574`).
+- The dashboard's `"decade"` value is now described as **correct** for the API's `HorizonType`
+  contract (`sapphire/services/postprocessing/app/models.py:26`), not a typo — see FD-027 for the
+  full "Option A is dangerous" finding this issue's earlier passes did not have.
 
 ## References
 
@@ -617,11 +747,21 @@ chain. This pass:
 - `bin/locally_run_forecast_tools.sh:4` (deprecation notice), `:33-34` (mode passthrough guard),
   `:113` (LR invocation)
 - `apps/pipeline/pipeline_docker.py:635, :639` (`LinearRegression` class and Luigi default
-  `ALL`), `:802, :806, :813` (`PostProcessingForecasts` default and pass-through), `:1480, :1542`
-  (real workflow call sites), `:1764, :1767, :1789` (`LinRegMaintenance`), `:1867-1868`
+  `ALL`), `:792` (`RunAllMLModels`'s exact-string `"ALL"` expansion — orchestrator hazard),
+  `:802, :806, :813` (`PostProcessingForecasts` default and pass-through), `:1480, :1542`
+  (`RunPentadalWorkflow`/`RunDecadalWorkflow`'s LR call sites), `:1526` (`RunDecadalWorkflow`
+  class start), `:1549, :1557` (`RunDecadalWorkflow`'s ML and postprocessing call sites, both
+  hardcoded `DECAD`), `:1764, :1767, :1789` (`LinRegMaintenance`), `:1867-1868`
   (`LinRegMaintenance`'s own wrapper, hardcoded), `:2596, :2604, :2630` (`LinRegInitial`),
   `:2655, :2658, :2669, :2678` (`SkillMetricsInitial`), `:2716-2717` (`SkillMetricsInitial`'s own
   wrapper, hardcoded)
+- `apps/run_locally.sh:541` (`resolve_ml_bare_target_modes`, PENTAD/DECAD/BOTH/unset only),
+  `apps/pipeline/tests/test_run_locally_orchestration.py:1677-1690`
+  (`test_out_of_domain_mode_rejected_before_any_module_runs`, requires `"ALL"` rejected — do not
+  break)
+- `apps/reset_forecast_run_date/rerun_forecast.py:83` (raw value used as a filename suffix,
+  `_{prediction_mode}.txt`), `:191` (read, with a legacy `sapphire_forecast_horizon` fallback) —
+  cited only as an orchestrator-boundary-normalization hazard, see GOVERNING DECISION
 - `doc/configuration.md:870` (documented domain including `ALL`)
 - `apps/run_locally.sh:1977` (INFRA-039's `validate_env` guard)
 - `apps/postprocessing_forecasts/postprocessing_maintenance.py:124-130` (closest existing
@@ -629,28 +769,41 @@ chain. This pass:
   (precedent that already accepts `ALL`, literal message at `:249`; also rejects `DECADE` today —
   see "Exposure → LIVE"), `apps/postprocessing_forecasts/Dockerfile:38` (default CMD
   `postprocessing_operational.py`)
-- `apps/postprocessing_forecasts/recalculate_skill_metrics.py:94-103` (`VALID_MODES`, for context
-  on how wide the `ALL`/`MONTHLY` domain is for other consumers)
+- `apps/postprocessing_forecasts/recalculate_skill_metrics.py:94-103` (`VALID_MODES`), `:266-271`
+  (domain check including `sys.exit(1)`), `:277, :301, :372, :443, :528` (the six `ALL`-inclusive
+  branches proving `ALL` genuinely spans six horizons for this module — see GOVERNING DECISION)
 - `apps/forecast_dashboard/dashboard/widgets.py:90-110` (`create_horizon_selector`, `"decade"`
-  value at `:99`)
-- `apps/forecast_dashboard/src/vizualization.py:3449` (`horizon = wm.horizon_selector.value`),
-  `:3858` (nested `run_docker_container` def), `:3949-3961` (exit-status check / raise),
-  `:3970-3971` (the swallow), `:3984, :4080, :4131, :4137-4138, :4147-4157, :4195`
-  (`save_to_database` / "Save Changes", incl. the postprocessing and skill-recalc containers),
-  `:4317, :4355, :4400, :4415-4421, :4432, :4471` (`run_pipeline` / "Trigger forecasts", incl. ML
-  and postprocessing containers), `:4092, :4232` (`# decad` comments showing the module's own
-  expected spelling), `:4491-4573` (module-level `run_docker_container` def, used by
-  `run_pipeline`, its own swallow at `:4572-4573`)
-- `apps/machine_learning/make_forecast.py:605-608` (`PREDICTION_MODE` validation — loud
-  `ValueError` on `DECADE`, cross-check only)
+  value at `:99`, default `"pentad"` at `:107`), `:336` (`elif horizon == "decade":`)
+- `apps/forecast_dashboard/dashboard/widget_manager.py:107` (`create_reload_button` called once,
+  at construction — the root cause of FD-028, not this issue, cited here only to support the
+  "Trigger forecasts never sends DECADE" correction above)
+- `apps/forecast_dashboard/src/vizualization.py:3449` (`horizon = wm.horizon_selector.value`,
+  the live read `save_to_database` closes over), `:125-143` (`reload_card` toggled `.visible`
+  only, never rebuilt — FD-028 evidence), `:3858` (nested `run_docker_container` def),
+  `:3949-3961` (exit-status check / raise), `:3970-3971` (the swallow), `:3984, :4016, :4017,
+  :4044, :4080, :4131, :4137-4138, :4147-4157, :4152, :4195` (`save_to_database` / "Save
+  Changes": the visibility-record POST via `_db._save_data`, its `horizon_type` field, the
+  "Changes Saved Successfully" alert, the LR/postprocessing/skill-recalc containers, and the
+  skill-recalc-only station-code parameter), `:4092, :4232` (`# decad` comments showing most of
+  the module's own expected spelling), `:4491-4574` (module-level `run_docker_container` def,
+  used by `run_pipeline` — its silent status-ignore is at `:4559-4561` (no raise on a bad exit
+  code), a separate generic-exception swallow at `:4573-4574`; not implicated in this issue's own
+  `DECADE` failure, since `run_pipeline` never receives `DECADE` — see FD-028)
+- `apps/machine_learning/make_forecast.py:605-608` (`PREDICTION_MODE` validation, `{PENTAD,DECAD}`
+  only — cited only as a domain-precedent for the governing decision, not as evidence this issue
+  reaches ML: `run_pipeline`'s ML branch always sends `PENTAD`, per FD-028)
 - `apps/machine_learning/Dockerfile:40`, `apps/linear_regression/Dockerfile:34` (default CMDs,
   confirming which script each dashboard-launched container actually runs)
+- `sapphire/services/postprocessing/app/models.py:26` (`HorizonType.DECADE = "decade"` — the API
+  contract that makes the dashboard's `"decade"` value correct for `horizon_type`, not a typo)
 - Precedent / related: `doc/plans/issues/review_gi_draft_infra_run_locally_unvalidated_modes.md`
   (INFRA-039), `doc/plans/issues/mid_prio_gi_draft_infra_connect_to_ieh_boolean_parsing.md`
   (INFRA-038, same case-sensitivity defect class),
-  `doc/plans/issues/high_prio_gi_draft_fd_decade_horizon_prediction_mode_spelling.md` (FD-026,
+  `doc/plans/issues/high_prio_gi_draft_fd_decade_horizon_prediction_mode_spelling.md` (FD-027,
   the dashboard's own root cause and full module-chain map),
   `doc/plans/issues/high_prio_gi_draft_fd_inner_run_docker_error_handling.md` (FD-008, the
   swallowed-failure defect, repriced High),
+  `doc/plans/issues/high_prio_gi_draft_fd_trigger_forecasts_stale_horizon_closure.md` (FD-028,
+  the "Trigger forecasts" stale-closure defect),
   `doc/plans/issues/archive/high_prio_gi_draft_pipeline_container_exit_status_discarded.md`
   (P-007, same defect shape, fixed in the Luigi pipeline)
