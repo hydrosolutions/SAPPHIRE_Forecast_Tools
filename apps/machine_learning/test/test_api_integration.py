@@ -7,6 +7,7 @@ Tests the ML forecast API integration:
 - calculate_pentad_from_date and calculate_decad_from_date helpers
 """
 
+import logging
 import os
 import sys
 from datetime import datetime
@@ -39,6 +40,7 @@ from scr.utils_ml_forecast import (
     _API_PAGE_SIZE,
     ML_MODEL_TYPE_MAP,
     SAPPHIRE_API_AVAILABLE,
+    SapphireAPIError,
     _check_ml_forecast_consistency,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
@@ -181,8 +183,10 @@ class TestWriteMLForecastToApi:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
     @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
-    def test_api_not_ready_returns_false(self, mock_client_class):
-        """When API health check fails, should return False (non-blocking)."""
+    def test_api_not_ready_raises(self, mock_client_class):
+        """ML-021: when the API health check fails this is a genuine
+        delivery failure, not a benign skip — the helper must raise
+        SapphireAPIError instead of returning False."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -206,8 +210,10 @@ class TestWriteMLForecastToApi:
                 }
             )
 
-            result = _write_ml_forecast_to_api(data, "pentad", "TFT")
-            assert result is False
+            with pytest.raises(SapphireAPIError):
+                _write_ml_forecast_to_api(data, "pentad", "TFT")
+
+            mock_client.write_forecasts.assert_not_called()
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 
@@ -399,6 +405,129 @@ class TestWriteMLForecastToApi:
             # write_forecasts should not be called for empty data
             mock_client.write_forecasts.assert_not_called()
 
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    def _nonempty_data(self):
+        return pd.DataFrame(
+            {
+                "code": [19999],
+                "date": pd.to_datetime(["2024-01-06"]),
+                "forecast_date": pd.to_datetime(["2024-01-01"]),
+                "flag": [0],
+                "Q5": [50.0],
+                "Q25": [80.0],
+                "Q50": [100.0],
+                "Q75": [120.0],
+                "Q95": [150.0],
+            }
+        )
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_zero_count_write_raises_and_never_prints_success(
+        self, mock_client_class, capsys, caplog
+    ):
+        """ML-021 headline regression.
+
+        Non-empty records, write_forecasts() returns 0 (API accepted the
+        request but stored nothing) -> the helper must raise
+        SapphireAPIError, and the "Successfully wrote 0 ML forecast
+        records" print/log that caused the reported bug must NOT appear.
+        Pins: the `if not count: raise SapphireAPIError(...)` guard added
+        around the write call in _write_ml_forecast_to_api (utils_ml_forecast.py).
+        Reverting that guard makes this test fail because the function
+        would return True and print "Successfully wrote 0 ...".
+        """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_forecasts.return_value = 0
+            mock_client_class.return_value = mock_client
+
+            with pytest.raises(SapphireAPIError):
+                _write_ml_forecast_to_api(self._nonempty_data(), "pentad", "TFT")
+
+            out = capsys.readouterr().out
+            assert "Successfully wrote 0" not in out
+            assert "Successfully wrote" not in out
+            for record in caplog.records:
+                assert "Successfully wrote 0" not in record.message
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    def test_nothing_to_send_empty_input_logs_warning(self, caplog):
+        """ML-021 decision 2: an empty input DataFrame is a benign no-op,
+        but must be logged loudly (WARNING), not INFO. Pins the top-of
+        -function emptiness check and its log level."""
+        with caplog.at_level(logging.WARNING, logger="scr.utils_ml_forecast"):
+            data = pd.DataFrame(columns=["code", "date", "forecast_date", "flag", "Q50"])
+            result = _write_ml_forecast_to_api(data, "pentad", "TFT")
+
+        assert result is False
+        assert any(
+            record.levelno == logging.WARNING and "No ML forecast records" in record.message
+            for record in caplog.records
+        )
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_nothing_to_send_while_disabled_is_benign_and_warns(self, mock_client_class, caplog):
+        """ML-021 precedence rule: emptiness is evaluated BEFORE the
+        SAPPHIRE_API_ENABLED check. An empty record set while the API is
+        also disabled must still be classified as "nothing to send" (not
+        "disabled") and must still emit the WARNING -- if the ordering
+        were reversed, the disabled branch would return first and this
+        WARNING would never be emitted (the overlap the plan calls out)."""
+        os.environ["SAPPHIRE_API_ENABLED"] = "false"
+        try:
+            with caplog.at_level(logging.WARNING, logger="scr.utils_ml_forecast"):
+                data = pd.DataFrame(columns=["code", "date", "forecast_date", "flag", "Q50"])
+                result = _write_ml_forecast_to_api(data, "pentad", "TFT")
+
+            assert result is False
+            # write_forecasts is never reached either way here, but the
+            # emptiness WARNING specifically (not a generic False) must
+            # have fired.
+            assert any(
+                "No ML forecast records" in record.message and record.levelno == logging.WARNING
+                for record in caplog.records
+            )
+        finally:
+            os.environ.pop("SAPPHIRE_API_ENABLED", None)
+
+    @patch("scr.utils_ml_forecast.SapphirePostprocessingClient")
+    def test_nothing_to_send_while_readiness_would_fail_is_benign_and_warns(
+        self, mock_client_class, caplog
+    ):
+        """ML-021 precedence rule, second overlap: an empty record set
+        while the API is also unreachable must NOT be classified as a
+        delivery failure (which would otherwise raise SapphireAPIError
+        per the readiness-check branch) -- emptiness wins and the run
+        stays benign. The mocked client's readiness_check is set to
+        return False so that, absent the precedence fix, this would
+        raise instead of returning False with a WARNING."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ["SAPPHIRE_API_ENABLED"] = "true"
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = False
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.WARNING, logger="scr.utils_ml_forecast"):
+                data = pd.DataFrame(columns=["code", "date", "forecast_date", "flag", "Q50"])
+                result = _write_ml_forecast_to_api(data, "pentad", "TFT")
+
+            assert result is False
+            mock_client.readiness_check.assert_not_called()
+            assert any(
+                "No ML forecast records" in record.message and record.levelno == logging.WARNING
+                for record in caplog.records
+            )
         finally:
             os.environ.pop("SAPPHIRE_API_ENABLED", None)
 

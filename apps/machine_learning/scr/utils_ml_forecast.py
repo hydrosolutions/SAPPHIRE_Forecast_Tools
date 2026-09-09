@@ -720,6 +720,15 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     the caller is producing pentad or decade forecasts, but storage always
     uses "day" with day-of-year horizon values.
 
+    Three-way contract (ML-021):
+        - Returns True only when rows were actually written (API accepted
+          the request and stored a positive count).
+        - Returns False for a benign no-op: nothing to send, the client
+          library is not installed, or SAPPHIRE_API_ENABLED=false.
+        - Raises SapphireAPIError for a genuine delivery failure: the API
+          is unreachable (readiness check fails), or the API accepted the
+          request but stored zero records.
+
     Args:
         data: DataFrame with ML forecast data. Expected columns:
             - code: station code
@@ -732,8 +741,27 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
         model_type: ML model name (TFT, TIDE, TSMIXER)
 
     Returns:
-        bool: True if successful, False otherwise
+        bool: True if rows were written, False for a benign no-op.
+
+    Raises:
+        SapphireAPIError: If the API is unreachable, or the write call
+            raised, or the API accepted the request but stored no records.
     """
+    # "Nothing to send" is evaluated before anything about the API's state
+    # (client availability, SAPPHIRE_API_ENABLED, readiness_check) — we
+    # cannot have failed to deliver something we never had. This was
+    # previously an INFO log below the record-building loop, which sat
+    # beneath a WARNING-capped root logger (see the logging.getLogger()
+    # .setLevel(logging.WARNING) near the top of this module), so the
+    # condition was completely invisible in production. Log at WARNING.
+    if data.empty:
+        logger.warning(
+            "No ML forecast records to write to API (%s, %s): input is empty",
+            model_type,
+            horizon_type,
+        )
+        return False
+
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping ML forecast API write")
         return False
@@ -749,10 +777,12 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
 
     client = SapphirePostprocessingClient(base_url=api_url, batch_size=1)
 
-    # Health check - non-blocking, skip if API unavailable
+    # Health check - a genuine delivery failure, not a benign skip.
     if not client.readiness_check():
-        logger.warning(f"SAPPHIRE API at {api_url} is not ready, skipping ML forecast write")
-        return False
+        raise SapphireAPIError(
+            f"Failed to write ML forecast to API at {api_url}: API not ready "
+            f"(model={model_type}, horizon={horizon_type})"
+        )
 
     # Map model type to API format (shared constant)
     api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
@@ -801,19 +831,36 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
         }
         records.append(record)
 
-    # Write to API
-    if records:
-        count = client.write_forecasts(records)
-        logger.info(
-            f"Successfully wrote {count} ML forecast records to SAPPHIRE API ({model_type}, {horizon_type})"
+    # Second, narrower emptiness check: the top-of-function check covers an
+    # empty input DataFrame, but dedup/record-building can still leave an
+    # empty record list from a non-empty input. Same benign outcome.
+    if not records:
+        logger.warning(
+            "No ML forecast records to write to API (%s, %s): record list is empty "
+            "after dedup/build",
+            model_type,
+            horizon_type,
         )
-        print(
-            f"SAPPHIRE API: Successfully wrote {count} ML forecast records ({model_type}, {horizon_type})"
-        )
-        return True
-    else:
-        logger.info("No ML forecast records to write to API")
         return False
+
+    # Write to API. A zero/falsy count means the API accepted the request
+    # but stored nothing — a genuine delivery failure, not a success. The
+    # success log/print below must not run in that case (this was the
+    # reported bug: "Successfully wrote 0 ML forecast records").
+    count = client.write_forecasts(records)
+    if not count:
+        raise SapphireAPIError(
+            f"SAPPHIRE API at {api_url} accepted the write request but stored "
+            f"no records (model={model_type}, horizon={horizon_type})"
+        )
+
+    logger.info(
+        f"Successfully wrote {count} ML forecast records to SAPPHIRE API ({model_type}, {horizon_type})"
+    )
+    print(
+        f"SAPPHIRE API: Successfully wrote {count} ML forecast records ({model_type}, {horizon_type})"
+    )
+    return True
 
 
 def _write_ml_daily_forecast_to_api(data: pd.DataFrame, model_type: str) -> bool:

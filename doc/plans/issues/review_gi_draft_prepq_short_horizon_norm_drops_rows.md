@@ -1,6 +1,12 @@
 # PREPQ-020: Short-horizon hydrograph — a missing/failing norm drops the station's whole pentad or decad batch
 
-**Status**: Draft (2026-09-03, revised after out-of-loop review)
+**Status**: **Review** — **the defect is FIXED on trunk**, by commit `a6b9427e` (2026-09-04, "fix: a
+missing norm no longer drops the station's whole pentad/decad batch"), confirmed an ancestor of
+`origin/maxat_sapphire_2`. Verified 2026-09-08 by an out-of-loop static pass over every remedy and
+acceptance criterion plus a local test run. **Not archived yet**: two acceptance criteria require a
+live kyg run and cannot be settled statically — see "Verification 2026-09-08" below. The line
+numbers quoted throughout this document predate the fix and no longer match the code.
+Originally filed Draft 2026-09-03, revised after out-of-loop review.
 **Module**: `apps/preprocessing_runoff/sync_short_horizon_hydrograph.py`
 **Priority**: **High** — this runs on every operational `preprocessing_runoff` run that has iEH-HF
 SDK access (not only `--maintenance`, not only locally), and it silently discards observed discharge
@@ -260,6 +266,59 @@ Use `19999` / `19998` as station codes — never a real code.
    directly rather than relying on a norm-absent run, which after C1 produces records and completed
    stations and would therefore pass whether or not C5 was implemented. Assert the "all attempted
    station(s) had short-horizon hydrograph API read/write failures" message is **not** emitted.
+
+## Verification 2026-09-08 — what is done and what is not
+
+Out-of-loop static verification against trunk, every remedy and criterion checked at file:line, plus
+a local suite run. All references below are to `sync_short_horizon_hydrograph.py` unless stated.
+
+**Implemented and verified:**
+
+| Item | Evidence |
+|---|---|
+| **C1** — classify, never drop rows for a norm | `_NormClassification` `:113-123`; classifier rejects non-list/tuple, wrong length, bools, non-numeric, non-finite `:725-745`; both failing classes continue to write `:862-907` |
+| **C2** — preserve stored norms, correct window | `_read_existing_period_norms` `:767-810`; rows matched on both `date` and `horizon_in_year` `:816-829` |
+| **C2a** — a failed read-merge must not write all-`None` | `_ShortHorizonNormReadError` raised `:803-815` *before* the only write at `:899`; horizon recorded `API_FAILED`, nothing written `:1005-1030` |
+| **C3** — terminal statuses, one summary, log levels | statuses `:126-132`; counts `:997-1032`; single block `:932-967` called once `:1052`; norm-absence INFO, SDK failure WARNING `:959-967` |
+| **C3a** — per-`(code, horizon)` exception boundary | own `try` per horizon `:1005-1032`, loop continues |
+| **C5 / the popped-station defect** | **no longer true** — stations appended before processing `:1000-1003`, zero-record branch only logs `:1034-1037`, no `pop`; denominators use the retained list `:1044-1052` |
+| **The third branch** (unsized SDK response) | closed properly — type checked *before* `len()` `:736-739`; `None` becomes `NORM_ABSENT` rather than being preserved as an exception path |
+| **Raise vs wrong-shape stay distinguishable** | raise → `SDK_FAILED`/WARNING `:753-760`, `:864-873`; successful-but-invalid → `NORM_ABSENT`/INFO `:761-764`, `:875-882`; counters distinct `:951-954` |
+| **AC2** — no stored norm lost, including period 1 | exact-window merge `:795-829`; regression test `test_short_horizon_norm_decoupling.py:294-345` |
+| **AC3** — summary once, counts sum to attempted | one call `:1052`; each pair increments exactly one counter `:1015-1032` |
+| **AC5** — module suite | run locally 2026-09-08: **514 passed**. The 2 skips are pre-existing `test_src.py` multi-river-fixture TODOs, unrelated to this issue — but they are a standing zero-skips violation and should be tracked separately |
+| **AC6** — ruff | clean on all three files changed by `a6b9427e` |
+
+**Outstanding — requires a live run, deployment-time validation:**
+
+- **AC1**: kyg with a healthy API writing pentad **62/62** and decade **62/62**, with the count of
+  stations holding a non-null pentad norm unchanged at 10. Static analysis supports the expected
+  outcome but cannot establish it: a genuine preservation-read failure would legitimately make a
+  station-horizon absent, and no mock can rule that out.
+- **AC4**: both `--maintenance` and a plain operational entrypoint run exiting 0 against a fully
+  norm-absent station set. The inner contract is implemented and its targeted test passes, but the
+  criterion names two complete entrypoint runs, which have not been performed.
+
+## Two behaviour changes the implementation made that this issue did not ask for
+
+Recorded for a decision, not fixed here. Neither reintroduces the reported defect.
+
+1. **Total daily-data absence now suppresses the write.** `_read_daily_by_year` raises when all 21
+   yearly reads come back empty or failing (`:557-589`), and the horizon is then reported
+   `API_FAILED` (`:1015-1030`). Before `a6b9427e` such a station wrote a full null-envelope batch.
+   The rationale is sound and is stated in the function's docstring — an all-`None` envelope would
+   clobber stored values, the same reasoning as C2a. **But a legitimately empty API response is
+   labelled `API_FAILED` when no API failure occurred**, which makes the run-summary counter mean
+   two different things.
+2. **The C2a exception boundary was widened.** This issue prescribed `_API_READ_WRITE_ERRORS`; the
+   preservation call catches every `Exception` (`:803-815`). A programming or decoding error inside
+   `read_hydrograph` is therefore reclassified as a per-horizon `API_FAILED` and the run continues,
+   instead of surfacing through the existing outer wrapper. This is the broad-catch-hides-bugs shape
+   — the same one that made `snow_data_renalysis.py` (PREPG-027) invisible.
+
+**No "Contract not to break" violation was found.** `a6b9427e` touched only
+`sync_short_horizon_hydrograph.py` and two test files; `preprocessing_runoff.py`,
+`sync_long_horizon_hydrograph.py`, the record schema and the operational exit handling are untouched.
 
 ## Acceptance criteria
 

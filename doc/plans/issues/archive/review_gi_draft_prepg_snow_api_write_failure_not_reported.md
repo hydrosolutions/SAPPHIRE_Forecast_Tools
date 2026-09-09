@@ -1,6 +1,6 @@
 ## A failed snow API write does not fail the task (PREPG-026)
 
-**Status**: **Review** — implemented 2026-09-08, tests green, PR pending. The minimal design below
+**Status**: **Complete** — merged 2026-09-08 in **PR #500**. The minimal design below
 is what shipped; the "Review findings" section is kept as the record of why the original plan could
 not be implemented as written. Two review rounds were needed: the first placement broke the benign
 no-write contract, and the fix for that introduced an uncaught crash. Both are recorded below under
