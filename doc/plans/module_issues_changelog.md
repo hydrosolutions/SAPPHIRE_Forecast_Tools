@@ -155,6 +155,26 @@ Several citation fixes applied throughout (`RunDecadalWorkflow` starts at `:1526
 not `:4415-4421`; the module-level swallow's silent status-ignore is at `:4559-4561`, distinct
 from its separate generic-exception handler at `:4573-4574`).
 
+**Salvage of the abandoned `docs_infra_validation_reframe` branch** (4 commits, 2026-08-19; **203
+commits behind `e09d48d5`**, the trunk it was measured against — 207 behind `3791fa31`, the trunk
+this work was finally rebased onto). Two new rows: **INFRA-031** (nothing verifies that a production forecast run
+produced the data it owed — `validate_pipeline` has no production invoker) and **INFRA-052** (an
+explicit **alternative** to INFRA-028: an in-memory `--active-modes` CLI argument instead of a
+persisted run manifest). The "(INFRA-031 is reserved on the `docs_infra_validation_reframe` branch.)"
+parenthetical was removed from the INFRA-037 row now that the real row exists.
+`working/validate_pipeline_repair_plan.md` was added to Active Planning Documents — it was an orphan,
+linked from no file on trunk, while its header claimed to close INFRA-023 and INFRA-024, two ids that
+now name shipped and unrelated work. **Owner decision recorded 2026-09-09: the INFRA-028 manifest
+design is KEPT.** The abandoned branch had deleted it; instead its argument is filed as INFRA-052 so
+both designs stay visible and the owner chooses later. **No issue was repriced** — INFRA-020/021/022/028
+keep the priorities trunk has, and INFRA-031's High is explicitly a proposal, not a decision. Every
+line-number citation carried over from the branch was re-derived against trunk; the branch's had
+drifted by tens to hundreds of lines wherever it was checked (e.g. `run_api_validation` moved from
+~`:1063` to `:1471`). Known stale and deliberately not swept in this pass: the **INFRA-021 row**,
+whose defect shipped in PR #486 (`_load_deployment_env()` now exists in `validate_pipeline.py:1580`).
+
+---
+
 ## 2026-08-21
 
 **INFRA-038** filed — `connect_to_iEH` and `ssh_to_iEH` are parsed **four incompatible ways across
