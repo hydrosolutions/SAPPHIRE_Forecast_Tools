@@ -122,7 +122,9 @@ check under any module tag**, not merely mis-tagged.
 ## Why it matters
 
 The ML process can exit 0 having written nothing — or having written all-NaN rows —
-and the pipeline still reports `machine_learning: PASS`. This module has a
+and the pipeline still reports a PASS row for it (`machine_learning (<MODE>): PASS`
+since `refactor_run_locally_drop_ml_mode` added the horizon suffix; the 2026-07-23
+sample above predates that and is left as recorded). This module has a
 documented history of exactly those failure modes (ML-002, ML-015), and it
 is the one module with no effective post-run validation. Any operator or CI job
 trusting `run_locally.sh` output is being told ML is healthy on **no evidence**.

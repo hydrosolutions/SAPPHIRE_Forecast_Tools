@@ -381,8 +381,10 @@ has today; normalizing spelling/case must not widen or narrow any module's real 
   the value — never at an orchestrator boundary, and never by rewriting the ambient
   `SAPPHIRE_PREDICTION_MODE` env var itself.** Concretely verified hazards of doing it at the
   orchestrator level: (a) `apps/run_locally.sh`'s own `validate_env` (`:1977`) and its ML
-  resolver (`resolve_ml_bare_target_modes`, `:541`) both accept only unset/`PENTAD`/`DECAD`/`BOTH`
-  for the targets they gate, and `apps/pipeline/tests/test_run_locally_orchestration.py`'s
+  resolver (`resolve_ml_bare_target_modes`, `:541`) both accept only `PENTAD`/`DECAD`/`BOTH` for
+  the targets they gate — an **unset** value is accepted only for the outer-loop targets, which
+  default it later; the bare `machine_learning` target **rejects unset** and exits 1
+  (`run_locally.sh:544-546`, since `refactor_run_locally_drop_ml_mode`) — and `apps/pipeline/tests/test_run_locally_orchestration.py`'s
   `test_out_of_domain_mode_rejected_before_any_module_runs` (`:1677-1690`) explicitly requires
   `"ALL"` (alongside the typo `"PENTAAD"`) to be **rejected** there — a global `ALL`→`BOTH`
   rewrite ahead of that gate would break this passing regression test; (b)
