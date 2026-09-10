@@ -75,9 +75,15 @@ The recommended way to run this module is via the pipeline runner:
 
 ```bash
 cd apps
-bash run_locally.sh machine_learning            # operational forecasts
-bash run_locally.sh maintenance:machine_learning # NaN recalc + gap-fill + new stations
+SAPPHIRE_PREDICTION_MODE=PENTAD bash run_locally.sh machine_learning            # operational forecasts
+SAPPHIRE_PREDICTION_MODE=PENTAD bash run_locally.sh maintenance:machine_learning # NaN recalc + gap-fill + new stations
 ```
+
+Set `SAPPHIRE_PREDICTION_MODE` explicitly (`PENTAD`, `DECAD`, or `BOTH` for both
+horizons) — there is no horizon that is safe to assume for an operator who forgot
+to set it. The bare `machine_learning` target above now refuses to run and exits
+non-zero if it is unset. `maintenance:machine_learning` still falls back to
+`PENTAD` with a warning if unset, but do not rely on that default.
 
 This runs each script for all configured models (TFT, TIDE, TSMIXER) automatically.
 

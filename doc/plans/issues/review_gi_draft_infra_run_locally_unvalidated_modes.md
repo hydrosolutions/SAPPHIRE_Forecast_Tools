@@ -2,6 +2,16 @@
 
 **Status**: Review (2026-08-21). Plan reviewed out-of-loop (codex, open-ended pass) before commit;
 that pass overturned three claims in the first draft — see § Review corrections.
+
+**SUPERSEDED IN PART (2026-09-09, `refactor_run_locally_drop_ml_mode`)**: `ML_MODE` and
+`should_skip_ml_for_mode` were removed from `run_locally.sh` entirely. **Block 2 (the `ML_MODE`
+domain check) no longer exists** — there is nothing left to validate a domain against, so it was
+deleted along with the variable rather than left dead. **Block 1 (the `SAPPHIRE_PREDICTION_MODE`
+domain check) is unaffected and still shipped**, and gained a third arm in the same branch for the
+bare `machine_learning` target (empty/unset is now also rejected there, not just an out-of-domain
+value — see `apps/run_locally.sh`'s `validate_env`). Every passage below that describes Block 2,
+`ML_MODE`'s domain/default, or `should_skip_ml_for_mode` documents the pre-refactor implementation
+and is kept as history, not current behaviour.
 **Module**: `apps/run_locally.sh` (`validate_env`)
 **Priority**: Medium — no crash, no error, exit 0. Reachable not only by typo but by an operator
 carrying a **legitimate** mode (`ALL`, `MONTHLY`) from one target to another. Not confirmed to
@@ -158,6 +168,11 @@ do not extend the PENTAD claim to LR targets.
 
 ### Block 2 — `ML_MODE`, domain `PENTAD|DECAD|BOTH`
 
+**REMOVED 2026-09-09 (`refactor_run_locally_drop_ml_mode`)**: `ML_MODE` no longer exists, so this
+whole block (and the code it specified, `validate_env`'s former "INFRA-039 Block 2") was deleted
+rather than kept dead. Read the rest of this section as a historical record of the shipped-then-
+removed design, not a current spec.
+
 Applies to `daily|short-term|all|maintenance|maintenance:machine_learning` — `daily` included,
 since it is vulnerable to Failure B.
 
@@ -183,6 +198,12 @@ domain, so `ML_MODE=JUNK` filters every mode identically.
 Does **not** close its headline: `maintenance:machine_learning` with `SAPPHIRE_PREDICTION_MODE`
 unset defaults to `PENTAD`, and `ML_MODE`'s default `DECAD` filters it out — a silent no-op built
 from two **valid** values that no domain check can catch. ML-022 carries a scope note saying so.
+
+**SUPERSEDED 2026-09-09**: `should_skip_ml_for_mode` and `ML_MODE` are both gone
+(`refactor_run_locally_drop_ml_mode`), so ML-022's headline no-op cannot recur at this call site —
+there is no second variable left to filter the resolved mode back out. See ML-022's own file
+(`review_gi_draft_infra_ml_maintenance_target_silent_noop.md`), which records this as its actual
+closing resolution.
 
 ## Out of scope
 
@@ -217,6 +238,8 @@ from two **valid** values that no domain check can catch. ML-022 carries a scope
 2. **Block 2 rejections.** For each of `daily`, `short-term`, `all`, `maintenance`,
    `maintenance:machine_learning`: `ML_MODE=DEACD` exits non-zero, names `ML_MODE` and the value,
    and invokes no module.
+   **SUPERSEDED 2026-09-09**: `ML_MODE` no longer exists and Block 2 was deleted, so this
+   criterion is vacuous going forward — kept as history of what shipped originally.
 3. **Regression guards — must still succeed.** Each maps to a live usage or a stated exclusion;
    these are the load-bearing half of the change.
    - `SAPPHIRE_PREDICTION_MODE=ALL bash apps/run_locally.sh recalculate_skill_metrics`, and the
@@ -225,8 +248,13 @@ from two **valid** values that no domain check can catch. ML-022 carries a scope
    - `SAPPHIRE_PREDICTION_MODE=PENTAAD` on `daily` and on `long-term` still runs.
    - `ML_MODE=DEACD` on `long-term`, `recalculate_skill_metrics`,
      `maintenance:linear_regression`, and bare `linear_regression` still runs.
+     **SUPERSEDED 2026-09-09**: `ML_MODE` is inert everywhere now (see
+     `TestStaleMlModeEnvVarIsInert` in `test_run_locally_orchestration.py`), so this guard's
+     premise (that `ML_MODE` needed excluding from certain targets) no longer applies.
    - **`ML_MODE=DEACD` on `daily` still runs when `ORG=demo` and when `ORG=uzhm`** (ML is skipped
      for those orgs, so Block 2 must be gated). Both orgs tested explicitly.
+     **SUPERSEDED 2026-09-09**: same as above — history of the removed Block 2's gating, not a
+     live guard.
    - `SAPPHIRE_PREDICTION_MODE` unset on `short-term` still WARNs and defaults to PENTAD.
    - `SAPPHIRE_PREDICTION_MODE` unset on `recalculate_skill_metrics` still WARNs — the existing
      notice must survive the narrowing.
@@ -234,10 +262,18 @@ from two **valid** values that no domain check can catch. ML-022 carries a scope
      its own `BOTH` default.
 4. **Both blocks fire under `--dry-run`** (validation precedes the dry-run exit at `:2090-2092`).
    Tested, not merely asserted in prose.
+   **Note 2026-09-09**: only Block 1 remains; it still fires under `--dry-run`, and the bare
+   `machine_learning` target's own arm (added on `refactor_run_locally_drop_ml_mode`) was
+   verified to fire under `--dry-run` too, mirroring this criterion for the new arm.
 5. **Every existing test in `apps/pipeline/tests/test_run_locally_orchestration.py` passes
    unchanged.** The seven `ML_MODE` tests (`:885, 895, 908, 916, 932, 981, 1020`) all target bare
    `machine_learning`, which neither block touches. If any needs editing, **stop and escalate** —
    it means a block's target list is wrong.
+   **SUPERSEDED 2026-09-09**: those seven tests no longer exist as `ML_MODE` tests — the bare
+   `machine_learning` target's tests were rewritten for the `ML_MODE`-free contract (see
+   `TestMachineLearningBareTargetModes`), and new tests
+   (`TestStaleMlModeEnvVarIsInert`) were added to pin that a stale `ML_MODE` is now inert
+   everywhere, not just on the bare target.
 6. New tests covering 1, 2, 3 and 4 in `apps/pipeline/tests/test_run_locally_orchestration.py`.
 7. `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` — zero failures, zero new skips.
 

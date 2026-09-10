@@ -164,6 +164,11 @@ recovery outcomes are the most likely first consumer.
       `TestSkipSummaryRows::test_maintenance_ml_mode_mismatch_now_prints_a_summary_at_all`
       (reason text is `ML_MODE=DECAD, mode=PENTAD`, i.e. the shipped reason also names the
       resolved mode, not just `ML_MODE=DECAD` as this line originally predicted).
+      **SUPERSEDED 2026-09-09 (`refactor_run_locally_drop_ml_mode`)**: `ML_MODE` no longer
+      exists, so this exact scenario can no longer be constructed and the cited test was renamed
+      to `test_maintenance_ml_unset_mode_runs_pentad_not_silent_noop` (unset
+      `SAPPHIRE_PREDICTION_MODE` now runs PENTAD directly, with nothing left to filter it back
+      out) — see ML-022's own file for the closing detail.
 - [x] `run_locally.sh long-term-operational` on a non-issue day reports the long-term module as
       SKIP with the gate reason, and the totals line names the skip — covered by
       `TestSkipSummaryRows::test_operational_schedule_gate_records_skip_row`.
@@ -215,6 +220,10 @@ counted and rendered rather than silently dropped from all three counts
       (org-level `should_skip_module`, an `ML_MODE`/mode mismatch via `should_skip_ml_for_mode`,
       and the long-term schedule gate) records **exactly one** `SKIP` row, labelled with the
       headline runner the gate controls — not one row per runner the gate suppresses.
+      **SUPERSEDED 2026-09-09**: `should_skip_ml_for_mode` and `ML_MODE` were removed entirely
+      (`refactor_run_locally_drop_ml_mode`), so that particular gating branch no longer exists —
+      there is nothing left there to record a SKIP row for. The other two gates (org-level
+      `should_skip_module`, the long-term schedule gate) are unaffected and still covered.
 - [x] The totals line reports skips separately from passes and failures (`, N skipped`, shown only
       when N > 0 — see Invariant 5,
       `TestSkipSummaryRows::test_no_skip_baseline_totals_line_is_byte_identical_to_today`).

@@ -8,6 +8,25 @@ modules and services pass, zero failures, and no skips introduced by the
 branch (15 skips pre-existed; 1 more arrived from trunk during a rebase,
 gated on bash < 4). Multiple rounds of out-of-loop adversarial review have run
 against the branch.
+
+**SUPERSEDED (2026-09-09, `refactor_run_locally_drop_ml_mode`)**: `ML_MODE`
+was removed from `run_locally.sh` entirely — the per-mode ML override
+variable this issue's implementation depended on no longer exists.
+`resolve_ml_bare_target_modes` now validates `SAPPHIRE_PREDICTION_MODE`
+alone: `PENTAD`/`DECAD` resolve to themselves, `BOTH` resolves to
+`(PENTAD DECAD)`, and unset/empty is a hard error (exit 1) naming the
+variable — there is no derived default and no `ML_MODE`
+conflict-resolution error any more. Every passage below that describes
+`ML_MODE` interacting with the bare `machine_learning` target (the
+Workaround, Impact, Fix options, Bug 1 fix, and two of the Acceptance
+criteria) documents the **pre-refactor** implementation and is kept as
+history, not current behaviour. Bug 1's crash itself (the reason this
+issue was filed) is still fixed — it is the specific unset-mode-derived-
+from-`ML_MODE` resolution shape that no longer applies. See
+`apps/run_locally.sh`'s `resolve_ml_bare_target_modes` and its
+`machine_learning)` case for the current contract, and
+`review_gi_draft_infra_ml_maintenance_target_silent_noop.md` (ML-022) for
+the sibling call site's equivalent history.
 **Module**: `apps/run_locally.sh` (ML dispatch) + `apps/machine_learning/recalculate_nan_forecasts.py`
 **Priority**: High (broke the documented per-module verification command used by the local review checklist; recurring)
 **Labels**: `ml`, `orchestration`, `run_locally`, `dx`, `error-message`
@@ -192,7 +211,18 @@ the actual value (including distinguishing `None`/empty from a typo) instead of 
 - [x] `bash apps/run_locally.sh machine_learning` (no extra env) runs without crashing — resolves to
       a sensible default mode (derived from `ML_MODE`, with a WARN), consistent in spirit with the
       `daily`/`maintenance` default.
+      **SUPERSEDED 2026-09-09 (`refactor_run_locally_drop_ml_mode`)**: this was true only of the
+      now-removed `ML_MODE`-derived resolution. The current contract (owner decision) is the
+      opposite — no extra env means an unset `SAPPHIRE_PREDICTION_MODE`, which
+      `resolve_ml_bare_target_modes` now treats as a **hard error** (exit 1, invokes no module),
+      not a WARN-and-default. See `TestMachineLearningBareTargetModes` in
+      `test_run_locally_orchestration.py`.
 - [x] `ML_MODE=BOTH bash apps/run_locally.sh machine_learning` runs PENTAD then DECAD (no longer inert).
+      **SUPERSEDED 2026-09-09**: `ML_MODE` no longer exists, so this specific invocation now runs
+      with an unset `SAPPHIRE_PREDICTION_MODE` and hits the hard-error case above instead. The
+      surviving contract is `SAPPHIRE_PREDICTION_MODE=BOTH bash apps/run_locally.sh
+      machine_learning` runs PENTAD then DECAD — see
+      `test_both_mode_runs_pentad_then_decad_in_order`.
 - [x] Error message in all five sites (`recalculate_nan_forecasts.py`, `make_forecast.py` ×2,
       `fill_ml_gaps.py`, `hindcast_ML_models.py`) interpolates the actual mode/model value.
 - [ ] Review checklist Section 5 command works as written — updated in

@@ -11,6 +11,15 @@ fix the headline scenario, and one of its steps was not achievable in the scope 
 See "Review 2026-09-08" and "Owner decisions taken 2026-09-08" before treating the superseded
 proposal below as a work order. Originally Draft 2026-08-20, revised same day after two
 independent out-of-loop reviews.
+
+**Terminology note (2026-09-09, `refactor_run_locally_drop_ml_mode`)**: this file's several
+`ML_MODE=BOTH` mentions (decision 4, the truth table discussion, § "Note on scope", and the
+implementation record) predate `ML_MODE`'s removal from `run_locally.sh` and were already loose
+shorthand at the time — the mechanism they describe (the horizon loop running PENTAD then DECAD
+without stopping on a PENTAD failure) is driven by `SAPPHIRE_PREDICTION_MODE=BOTH`, which is what
+`run_locally.sh`'s own comments now say (see `run_machine_learning`/
+`run_maintenance_machine_learning`). `ML_MODE` no longer exists; nothing in this file's actual
+shipped resolution (decisions 3/4, the exit-5 truth table, the log-suffix fix) depended on it.
 **Module**: `apps/machine_learning` (`make_forecast.py`, `scr/utils_ml_forecast.py`)
 **Priority**: High — an operational ML run can report success on every layer
 (`make_forecast.py` exit 0, `run_locally.sh` `PASS`) while writing **nothing** to
@@ -478,6 +487,13 @@ Implements the truth table and the four owner decisions above. Commits `685016e5
     (`run_locally.sh:790-795`, falling back to the unsuffixed name when unset) — the same shape as
     `run_module_validation`'s `LABEL_SUFFIX` (INFRA-037). The recorded row label stays
     `"machine_learning"` either way; only the log file path changed.
+    **SUPERSEDED 2026-09-09 (`refactor_run_locally_drop_ml_mode`)**: the row label no longer stays
+    unsuffixed. The owner decision that removed `ML_MODE` also gave the PASS/FAIL/SKIP row the same
+    horizon suffix as the log file (e.g. `machine_learning (PENTAD)`, `machine_learning
+    (maintenance) (DECAD)`) — see `test_pentad_failure_log_is_not_overwritten_by_decad_success` and
+    `test_pentad_maintenance_failure_log_is_not_overwritten_by_decad_success` in
+    `test_run_locally_orchestration.py`. This sentence accurately describes commit `685016e5`'s own
+    diff at the time it was written; it is no longer true of current `run_locally.sh`.
 - **Verification.** `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` is green across all 16
   modules/services with zero unexpected skips (re-run in this review session: `machine_learning`
   161 passed, `pipeline` 407 passed — both figures re-verified directly, not carried over from the

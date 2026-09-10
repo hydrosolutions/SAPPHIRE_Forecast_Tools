@@ -273,7 +273,7 @@ path (see § Correction) and has been filed as its own draft:
 [`low_prio_gi_draft_preprocessing_runoff_dead_exit_sites.md`](low_prio_gi_draft_preprocessing_runoff_dead_exit_sites.md).
 Do not duplicate that analysis here.
 
-### Known limitation — per-mode `machine_learning` MODULE rows still collide (not fixed here)
+### Known limitation — per-mode `machine_learning` MODULE rows still collide (not fixed here; row-label half RESOLVED 2026-09-09, see below)
 
 Review round 3 fixed the per-mode **VALIDATION** rows for the bare
 `machine_learning` single-module target: `run_module_validation`
@@ -303,6 +303,44 @@ This does not happen by default. `should_skip_ml_for_mode`
 calls its ML function only once. The collision requires `ML_MODE=BOTH`,
 which is not the default.
 
+**SUPERSEDED 2026-09-09 (`refactor_run_locally_drop_ml_mode`)**: `ML_MODE` and
+`should_skip_ml_for_mode` were removed entirely, so **"this does not happen by default" is no
+longer true** — `run_daily_pipeline`'s `for mode in PENTAD DECAD` loop now unconditionally calls
+`run_machine_learning`/`run_maintenance_machine_learning` for both horizons on every `daily` run,
+with no filter left to reduce it to one call. Separately, ML-021 (implemented the same day) gave
+both functions a mode-suffixed `CURRENT_MODULE_LOG` path unconditionally (not only for the bare
+target), so the **log-overwrite** half of this limitation is fixed for every caller including
+`daily` — but the **row-label** half described here (`record_result "machine_learning" ...` and
+`record_result "machine_learning (maintenance)" ...` carry no mode suffix) is unchanged, so a
+`daily` run now always produces two identically-labelled `machine_learning` PASS/FAIL rows in
+`PIPELINE SUMMARY`, distinguishable only by opening each row's own (now correctly-suffixed) log
+file. This was not re-scoped as a fix here — flagging it as a live, no-longer-conditional
+observation for whoever picks up the row-label half next.
+
+**RESOLVED 2026-09-09 (same branch, owner decision same day)**: the row-label half is now fixed
+too, by the same mechanism already used for the log path and for `run_module_validation`'s
+`LABEL_SUFFIX` (INFRA-037) — derive a suffix from the horizon the invocation actually ran under
+(the ambient `SAPPHIRE_PREDICTION_MODE`, captured once at function entry, before it can be
+mutated by anything downstream) and fall back to the unsuffixed name when that horizon is
+unknown/empty. `run_machine_learning` and `run_maintenance_machine_learning`
+(`apps/run_locally.sh`) now build a local `ml_row_label` alongside the existing `ml_log_mode`
+derivation and pass it to every `record_result` call in place of the literal
+`"machine_learning"` / `"machine_learning (maintenance)"` strings, so a `daily` run now renders
+four distinctly-labelled rows: `machine_learning (PENTAD)`, `machine_learning (DECAD)`,
+`machine_learning (maintenance) (PENTAD)`, `machine_learning (maintenance) (DECAD)` — the
+double-parenthesis shape is deliberate, matching `machine_learning (maintenance)`'s existing
+unsuffixed form with `(PENTAD)`/`(DECAD)` appended, not folded into one parenthetical. Because
+`MODULE ERROR DETAILS` (`print_error_details`) already renders its per-failure heading from the
+same recorded label, a failing horizon's heading is now also disambiguated with no separate
+change needed there. The four outer-loop SKIP sites (`short-term`, `daily` phases 3/4, the
+aggregate `maintenance` target) were given the same label suffix for consistency with the
+PASS/FAIL rows; the two standalone-target org-skip sites (bare `machine_learning`,
+`maintenance:machine_learning`) were deliberately left as a single unsuffixed row each — their
+org check short-circuits before any horizon is resolved, so there is no horizon to name, and
+`test_org_skip_short_circuits_resolve_ml_bare_target_modes` already pins that single-row,
+no-suffix contract. Covered by new/extended tests in
+`apps/pipeline/tests/test_run_locally_orchestration.py` (mutation-verified).
+
 Same family as **INFRA-024** (a module's specific exit code is normalised
 away, so failure causes are unattributable) and **INFRA-030** (skipped
 modules leave no summary line) — all three are instances of `PIPELINE
@@ -331,6 +369,8 @@ VALIDATION rows.
 - **Do not** fold in the per-mode `machine_learning` MODULE-row collision
   (§ Known limitation above). It is pre-existing, in the same reporting
   family as INFRA-024/INFRA-030, and deliberately left unfixed here.
+  (Row-label half since resolved 2026-09-09 — see the RESOLVED note in that
+  section.)
 - This issue is **orchestration and exit semantics only**. It does not touch what
   `preprocessing_runoff` or `sync_long_horizon_hydrograph.py` read or write.
 
@@ -375,7 +415,7 @@ VALIDATION rows.
 |---|---|
 | INFRA-024 | Failure *causes* are unattributable; a failed module's exit code is normalised to 1 at the pipeline guard — unrelated to the fix here, which acts one level up (inside `run_maintenance_preprocessing_runoff`, before that guard is reached) |
 | INFRA-030 | Skipped modules leave no summary line, so a `--continue-on-error` run's summary under-reports |
-| — | Same reporting family, found this round but **not fixed here**: per-mode `machine_learning` MODULE rows still collide (§ Known limitation above) — the per-mode VALIDATION rows were fixed on this branch, the MODULE rows were not |
+| — | Same reporting family, found this round but **not fixed here**: per-mode `machine_learning` MODULE rows still collide (§ Known limitation above) — the per-mode VALIDATION rows were fixed on this branch, the MODULE rows were not. Row-label half resolved 2026-09-09 (see § Known limitation) |
 | ML-016 | One of the traps the operator hits when falling back to manual module invocation |
 | `low_prio_gi_draft_preprocessing_runoff_dead_exit_sites.md` | The dead-code analysis of `preprocessing_runoff.py:523/536/653`, split out of this issue — same finding, not on this issue's failure path |
 | — | [ML debugging runbook](../../prod/ml_no_forecasts_debug_runbook.md) — the operator-facing document this issue was found from |

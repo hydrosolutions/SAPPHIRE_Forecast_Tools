@@ -36,6 +36,14 @@ and M2.4 governs only how much the check may *claim*.
 >   mode-provenance caveat. That is optional hardening, not a correctness fix — M2 may ship under
 >   option (ii) without it. It is **not** an owner decision this issue is waiting on.
 
+
+**SUPERSEDED IN PART (2026-09-09, `refactor_run_locally_drop_ml_mode`)**: `ML_MODE` and its
+`run_locally.sh`-only DECAD skip (`should_skip_ml_for_mode`) were removed entirely. Every passage
+below citing `ML_MODE` (C3's correction, C7, and the `ML_MODE=BOTH` reproduction command) describes
+that pre-refactor mechanism as history, not current `run_locally.sh` behaviour — `run_locally.sh`
+no longer skips ML for any horizon based on a second variable. This does **not** change this
+issue's core finding: `validate_pipeline`'s zero-check PASS-on-no-evidence defect for
+`machine_learning` is independent of `ML_MODE` and is unaffected by its removal.
 **Module**: `apps/validate_pipeline` (+ `apps/run_locally.sh` summary reporting)
 **Priority**: **High** (silent false assurance on the module with the most silent-write history)
 **Labels**: `infra`, `validation`, `false-pass`, `machine_learning`, `observability`
@@ -114,7 +122,9 @@ check under any module tag**, not merely mis-tagged.
 ## Why it matters
 
 The ML process can exit 0 having written nothing — or having written all-NaN rows —
-and the pipeline still reports `machine_learning: PASS`. This module has a
+and the pipeline still reports a PASS row for it (`machine_learning (<MODE>): PASS`
+since `refactor_run_locally_drop_ml_mode` added the horizon suffix; the 2026-07-23
+sample above predates that and is left as recorded). This module has a
 documented history of exactly those failure modes (ML-002, ML-015), and it
 is the one module with no effective post-run validation. Any operator or CI job
 trusting `run_locally.sh` output is being told ML is healthy on **no evidence**.
@@ -457,6 +467,10 @@ the fix depends on.
   | `test_all_forecast_modules_affected` | `:937-963` (class `TestNonForecastDaySkip`, `:849`), assertion `assert all(r.status == "SKIP" ...)` at `:963` | `machine_learning` **must** become SKIP on a non-forecast day | invalidated by **C3a** — ML runs daily, so this downgrade is what reintroduces the false-green |
 
 ## Reproduction
+
+**SUPERSEDED 2026-09-09**: `ML_MODE=BOTH` below is inert — `ML_MODE` no longer exists
+(`refactor_run_locally_drop_ml_mode`). `SAPPHIRE_PREDICTION_MODE=DECAD` alone reproduces the same
+observation.
 
 ```bash
 ieasyhydroforecast_env_file_path=<env> SAPPHIRE_PREDICTION_MODE=DECAD ML_MODE=BOTH \
