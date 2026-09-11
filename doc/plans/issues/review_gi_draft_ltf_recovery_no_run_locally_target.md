@@ -31,7 +31,7 @@ LTF-009 Stage A shipped (PR #485, merge `eb18d932`) as a complete operator-invok
 | Piece | Where |
 |---|---|
 | Guard → run → read-back in one process | `apps/long_term_forecasting/lt_recovery.py` (new, 682 lines) |
-| `--recover` flag, requires `--today` | `apps/long_term_forecasting/run_forecast.py:565-571`, `:586-590` |
+| `--recover` flag, requires `--today` | `apps/long_term_forecasting/run_forecast.py:565-579`, `:590-592` |
 | Dated Luigi task (`max_retries = 1`) | `apps/pipeline/pipeline_docker.py:2203-2233` |
 | `task_type="lt_recovery"` wiring + per-(mode,date) marker | `pipeline_docker.py:2057-2091` |
 | Operator wrapper | `bin/run_periodic_maintenance.sh` (`lt_recovery <env_file> <mode> <YYYY-MM-DD>`) |
@@ -48,7 +48,7 @@ the only one with no corresponding local target.
 
 **To be precise about what is and is not missing**: `run_forecast.py --today <ISO> --recover` is a
 perfectly valid direct CLI invocation and the long-term venv has everything it needs
-(`run_forecast.py:553`, `:603` call `run_recovery()` directly). Luigi supplies orchestration,
+(`run_forecast.py:610` calls `run_recovery()` directly). Luigi supplies orchestration,
 `max_retries = 1` and a marker — none of which is required to *run* a recovery. So this issue is
 **not** "recovery cannot be run locally". It is: there is no standardised, documented, tested entry
 point, so every local rehearsal is hand-assembled from the module's internals, and the operator
@@ -60,8 +60,8 @@ learns the argument shape by reading source.
 > | `run_periodic_maintenance.sh` task_type | `run_locally.sh` target |
 > |---|---|
 > | `long_term` | `maintenance:postprocessing_long_term` |
-> | `skill_recalc` | `recalculate_skill_metrics` (impl `:1048`, dispatch `:2253`) |
-> | `snow_norms` | `recalculate_snow_norms` (impl `:1069`, dispatch `:2253`) |
+> | `skill_recalc` | `recalculate_skill_metrics` (impl `:1159`, dispatch `:2608`) |
+> | `snow_norms` | `recalculate_snow_norms` (impl `:1180`, dispatch `:2611`) |
 > | `lt_recovery` | **none** |
 >
 > `grep -c skill_recalc apps/run_locally.sh` returns `0` and proves nothing.
@@ -88,7 +88,7 @@ where every other maintenance action is rehearsed before it is trusted.
 > decline is not proof the month is complete. The rest of this section is left as the rationale
 > written against the pre-fix code; the claims it drew from that code are corrected inline below.
 
-`lt_recovery` defines a three-valued outcome (`lt_recovery.py:69-73`):
+`lt_recovery` defines a three-valued outcome (`lt_recovery.py:77-96`):
 
 ```
 EXIT_OK      = 0
@@ -155,7 +155,7 @@ Therefore:
 causes of exit 2, and there is still no `DEGRADED` outcome here.)*
 
 **Exit 0 is a partial-success criterion, not proof of complete coverage.** The read-back accepts the
-run once at least one finite row carries `forecast_run_flag=1` (`lt_recovery.py:641`, `:673`); it
+run once at least one finite row carries `forecast_run_flag=1` (`lt_recovery.py:736`, `:752`); it
 does not verify every station × model. Do not describe a `PASS` row as "the month is fully
 recovered".
 
@@ -171,7 +171,7 @@ run_forecast.py --today <ISO date> --recover
 with the forecast mode supplied through the module's existing `lt_forecast_mode` environment
 variable — that is how `run_forecast.py` already selects a mode (`:447`,
 `os.getenv("lt_forecast_mode")`), and how `run_locally.sh` already passes it for the simulate and
-operational targets (`:786`, `:796`, `:850`). Do **not** invent a second mode variable.
+operational targets (`:851`, `:861`, `:915`). Do **not** invent a second mode variable.
 
 It does **not** go through Luigi or Docker. Everything `run_locally.sh` runs is a direct venv
 invocation; the Luigi task's `max_retries = 1` and its per-(mode,date) marker are orchestration
@@ -179,34 +179,37 @@ concerns with no local equivalent.
 
 **"Local" does not mean "self-contained".** The target still runs against whatever the supplied env
 file points at. Document these prerequisites at the target, because a rehearsal that silently lacks
-one of them will surface as a confusing `FAIL` (exit 1 — could not be attempted), not a `REFUSED`:
+one of them will surface as a confusing `FAIL`, not a `REFUSED` — exit 1 means "could not be
+attempted" for most of these, but the database and historical inputs below are consumed in stage 2,
+after the guard passes, where exit 1 instead means the forecast ran and rows may be absent, partial
+or complete:
 
 - the env file plus its configuration / model / static / intermediate paths;
 - `SAPPHIRE_API_ENABLED=true` and a host-reachable postprocessing API at `SAPPHIRE_API_URL`
-  (`lt_recovery.py:333`);
+  (`lt_recovery.py:406`);
 - a host-reachable preprocessing database and its credentials (`data_interface.py:35`);
 - historical inputs already present for the requested issue date;
 - `IN_DOCKER` **explicitly false** — the target must pass `IN_DOCKER=False` to the child rather than
-  rely on it being unset, because `run_in_venv` inherits the ambient environment (`run_locally.sh:623`)
+  rely on it being unset, because `run_in_venv` inherits the ambient environment (`run_locally.sh:613`)
   and the database host is chosen from that variable (`data_interface.py:65`); credentials and host
   selection are at `data_interface.py:48`.
 
 **Clock caveat.** Eligibility uses the process-local clock, deliberately matching
-`lt_utils.check_valid_forecast_issue_date` (`lt_recovery.py:35`, `:123`). A rehearsal in a local
+`lt_utils.check_valid_forecast_issue_date` (`lt_recovery.py:47`, `:110`). A rehearsal in a local
 timezone and a container running UTC can briefly disagree about which issue dates are permitted near
 a month boundary. Note it in the usage text; do not claim the local run is behaviourally identical
 to the deployment.
 
 **C2 — both parameters are required, and a missing one is a loud refusal.** The date comes from a
 new, **mandatory** `LT_RECOVERY_DATE` variable. It is stylistically like
-`RUNOFF_LONG_HORIZON_TARGET_YEAR` (`run_locally.sh:894`) but semantically the opposite: that one is
+`RUNOFF_LONG_HORIZON_TARGET_YEAR` (`run_locally.sh:959`) but semantically the opposite: that one is
 *optional* and omitting it deliberately preserves the underlying script's default. There is no
 sensible default issue date for a recovery, so omission is an error, not a fallback.
 If either `lt_forecast_mode` or `LT_RECOVERY_DATE` is unset or empty, the target must print what is
 missing and exit non-zero **without running anything**.
 
 It must not fall back to a default date, must not infer the mode, and must not run "all modes".
-The CLI itself rejects a recovery without `--today` (via `parser.error` at `:588` when `--recover`
+The CLI itself rejects a recovery without `--today` (via `parser.error` at `:592` when `--recover`
 is combined with a selection flag, and via the required mutually-exclusive group otherwise) — but
 the shell target must fail *before* spawning the process, so the operator gets a message about
 `run_locally.sh`'s own interface rather than an argparse error about flags they never typed.
@@ -219,7 +222,7 @@ the shell target must fail *before* spawning the process, so the operator gets a
 **C3 — it must NOT be part of any aggregate target.** A dated recovery is a deliberate,
 argument-bearing, one-month action. Wiring it into a run-everything target would either abort that
 run via C2 or, worse, run it with stale parameters. Aggregates here are hard-coded lists
-(`run_locally.sh:1400`, `:1485`), so this is achieved by *not* adding the name to them — but the
+(`run_locally.sh:175`, `:200`), so this is achieved by *not* adding the name to them — but the
 test must cover **every** aggregate, not just the obvious three: `maintenance`, `daily`, `all`,
 `long-term`, `long-term-operational` and `yearly`. Add the new name through explicit valid-target
 and dispatch handling only, and state this in `print_usage`.
@@ -261,22 +264,28 @@ itself, that is a new issue, not a widening of this one.
 Follow the existing pattern: fake `.venv/bin/<exe>` stubs that record their argv and exit with a
 chosen code.
 
-**The harness moved, and the prerequisite is now half-done — read this before grepping.** PR #491
-extracted the stub out of `test_run_locally_orchestration.py` into
-**`apps/pipeline/tests/conftest.py`**. In that file `lt_forecast_mode` now appears in
-`_ISOLATE_ENV_VARS` (`:256`), so it is **cleared** before every subprocess — good, and not something
-to redo.
+**As of 2026-09-04, the harness had moved and the prerequisite was half-done — this has since been
+completed (see the Implemented note below).** PR #491 extracted the stub out of
+`test_run_locally_orchestration.py` into **`apps/pipeline/tests/conftest.py`**. In that file
+`lt_forecast_mode` appears in `_ISOLATE_ENV_VARS` (`:255`), so it is **cleared** before every
+subprocess.
 
-But the stub template (`:269`) still logs only `SAPPHIRE_PREDICTION_MODE`:
+As of 2026-09-04, the stub template (cited then as `:269`) still logged only
+`SAPPHIRE_PREDICTION_MODE`:
 
 ```
 printf 'CALL module=@MODULE@ script=%s args=%s mode=%s\n' \
     "$script" "$*" "${SAPPHIRE_PREDICTION_MODE:-}" >> "@CALL_LOG@"
 ```
 
-So the variable **is isolated but is not recorded**, and test 6 still cannot be written as-is.
-Extend the template to log `lt_forecast_mode` too. A `grep lt_forecast_mode conftest.py` returns a
-hit and looks like the work is already done — it is not.
+So the variable was isolated but not recorded, and test 6 could not be written as-is. **Implemented**
+(shipped with LTF-010, PR #495, `f3267d4a`): the template now also logs `lt_forecast_mode`
+(`conftest.py:287-288`):
+
+```
+printf 'CALL module=@MODULE@ script=%s args=%s lt_forecast_mode=%s mode=%s\n' \
+    "$script" "$*" "${lt_forecast_mode:-}" "${SAPPHIRE_PREDICTION_MODE:-}" >> "@CALL_LOG@"
+```
 
 *(Corrected 2026-09-07. The original text cited `test_run_locally_orchestration.py:121`, which no
 longer exists.)*
@@ -298,17 +307,17 @@ longer exists.)*
    `long-term-operational` and `yearly` never invokes the recovery stub, whatever
    `lt_forecast_mode` / `LT_RECOVERY_DATE` are set to.
 5b. **`--dry-run` with missing parameters** still fails, i.e. the check sits ahead of the dry-run
-   early return (`run_locally.sh:2166`).
+   early return (`run_locally.sh:2511`).
 6. **Mode is passed through, not defaulted**: `lt_forecast_mode=quarter` reaches the child process
    as `quarter`.
 7. **Skipped organisations (C2)**: with the organisation set to `demo`, and again `uzhm`, and both
    parameters supplied — the target prints that long-term recovery is not available for this
    deployment, names the organisation, exits **non-zero**, and **the recovery stub is never
    invoked**. `long_term_forecasting` is in both skip lists (`run_locally.sh:211`) via
-   `should_skip_module` (`:482`).
+   `should_skip_module` (`:496`).
 8. **Docker hostname cannot leak in (C1)**: with `IN_DOCKER=True` exported ambiently, the child is
    still invoked with `IN_DOCKER=False`, so `data_interface.py:65` selects the host-side database
-   name. `run_in_venv` inherits the ambient environment (`run_locally.sh:623`), so this must be set
+   name. `run_in_venv` inherits the ambient environment (`run_locally.sh:613`), so this must be set
    explicitly, not assumed.
 
 ## Acceptance criteria

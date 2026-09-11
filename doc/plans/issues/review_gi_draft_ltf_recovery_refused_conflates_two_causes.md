@@ -47,12 +47,14 @@ So `EXIT_REFUSED` (2) covers **two categories that mean opposite things to the o
 
 | Category | Example | What the operator should do |
 |---|---|---|
-| **Benign refusal** — the guard did its job | member rows already exist for that key; the issue date is outside the permitted window | For an existing-row decline: check the month — a single existing row is enough to decline, so it may be only partially populated, not complete. For a date-window decline: the date was wrong. |
+| **Declined** — doesn't warrant investigating the deployment | member rows already exist for that key; the issue date is outside the permitted window | For an existing-row decline: check the month — a single existing row is enough to decline, so it may be only partially populated, not complete. For a date-window decline: the date was wrong. |
 | **Something is broken** | configuration failed to load, the mode name is invalid, the station scope came back empty, the API is unavailable or disabled, a readiness check or query failed | Investigate and retry. The month is still missing. |
 
-`bin/run_periodic_maintenance.sh:185` documents exit 2 as *"'REFUSED' (child exit 2) - nothing ran,
-no rows were written."* That is true of the rows in both categories, and actively misleading about
-the second: it reads as "there was nothing to do".
+As of 2026-09-04, `bin/run_periodic_maintenance.sh:185` documented exit 2 as *"'REFUSED' (child exit
+2) - nothing ran, no rows were written."* (`:185` is now an unrelated `[retcode]` setting; the
+wrapper's current REFUSED/FAILED description is in the echo block at roughly `:223-234`.) That was
+true of the rows in both categories, and actively misleading about the second: it read as "there was
+nothing to do".
 
 ## Why it matters beyond tidiness
 
@@ -70,9 +72,20 @@ the second: it reads as "there was nothing to do".
 
 ## The real taxonomy — enumerated, because it is not what the class names suggest
 
-An earlier revision of this issue said "keep exit 2 for `RecoveryRefused`, everything else 1". **That
-is wrong**, because `RecoveryRefused` is raised for three different kinds of thing, not one. Every
-raise site, read from the code:
+> **SUPERSEDED 2026-09-07** (LTF-011, PR #493, `4f171a50`; noted here 2026-09-11). What shipped is
+> exactly the `RecoveryRefused`-only mapping this section discusses: `EXIT_REFUSED` (2) for
+> `RecoveryRefused` only, `EXIT_FAILED` (1) for everything else — including the two misconfiguration
+> raise sites below, which were reclassified to `RecoveryMisconfigured` and no longer raise
+> `RecoveryRefused` at all. The section's analytical point — that `RecoveryRefused` covered several
+> distinct conditions — is still correct and is why that reclassification was needed; only the "that
+> is wrong" verdict about the mapping itself does not hold. The raise-site table below is marked
+> pre-fix where it has since changed.
+
+An earlier revision of this issue proposed "keep exit 2 for `RecoveryRefused`, everything else 1" —
+this is exactly what shipped, once two raise sites were moved out of `RecoveryRefused` first (see the
+banner above). At the time this section was written, `RecoveryRefused` was raised for three different
+kinds of thing, not one — a real observation, and the reason the reclassification was needed. Every
+raise site, read from the code as it stood on 2026-09-04:
 
 | Site | Condition | What it really means |
 |---|---|---|
@@ -81,8 +94,8 @@ raise site, read from the code:
 | `:247` | outside the current/previous calendar month window | operator asked for something out of scope |
 | `:285`, `:295` | not a scheduled issue date for any member model of this mode | operator asked for something out of scope |
 | `:565` | no forecast mode supplied | operator did not set `lt_forecast_mode` |
-| `:320` | **station list is empty** | **the deployment is misconfigured** |
-| `:563`-area | missing member-model configuration | **the deployment is misconfigured** |
+| `:320` (pre-fix) | **station list is empty** — now raises `RecoveryMisconfigured` (`lt_recovery.py:377`), exit 1 | **the deployment is misconfigured** |
+| `:563`-area (pre-fix) | missing member-model configuration — now raises `RecoveryMisconfigured` (`lt_recovery.py:649`), exit 1 | **the deployment is misconfigured** |
 | `:608` | member rows already exist for the key | **already done** |
 
 And `RecoveryQueryError` — API unreachable, not ready, query failed (`:345`, `:350`, `:359`,
@@ -94,12 +107,14 @@ all of the above.
 **C1 — split on meaning, not on the existing class names.** Two outcomes, mapped from three
 meanings:
 
-- **`EXIT_REFUSED` (2) — "declined; no infrastructure is broken":** member rows already exist, **and**
+- **`EXIT_REFUSED` (2) — "declined; nothing was attempted":** member rows already exist, **and**
   the operator-input refusals (bad/missing date, missing mode, future date, outside the window, not a
-  scheduled issue date). In all of these the system is healthy and the answer is "I am not doing
-  that, and here is why" — though an existing-row decline is not proof the month is complete: a
-  single existing row is enough to decline a partially populated one. They belong together because
-  none of them warrants investigating the deployment's health.
+  scheduled issue date). This asserts only that the request was declined and nothing ran — **not**
+  that the deployment was checked and found healthy: a missing-mode or malformed-date refusal is
+  raised before configuration loading or the API readiness check ever runs, so infrastructure health
+  was never evaluated. An existing-row decline is not proof the month is complete either: a single
+  existing row is enough to decline a partially populated one. They belong together because none of
+  them warrants investigating the deployment.
 - **`EXIT_FAILED` (1) — "could not be attempted":** empty station list, missing member-model
   configuration, every `RecoveryQueryError`, and every unexpected exception. In all of these the
   month is still missing and something needs fixing.
