@@ -3,8 +3,9 @@
 **Status**: Review — shipped 2026-09-07 in PR #493 (`4f171a50`); this status update written 2026-09-11
 **Module**: `apps/long_term_forecasting/lt_recovery.py`
 **Priority**: **Medium** — nothing is lost or corrupted; the recovery correctly declines to run in
-every case it reports. But the operator cannot tell "there was nothing to do" from "I could not
-reach the database", and both are reported with the same words and the same status.
+every case it reports. At filing, the operator could not tell "there was nothing to do" from "I
+could not reach the database": both were reported with the same words and the same status (fixed —
+see "What shipped").
 **Labels**: `ltf`, `recovery`, `exit-contract`, `operator-experience`
 **Found**: 2026-09-04, while drafting **LTF-010** (the missing `run_locally.sh` target). Filed rather
 than fixed there, because LTF-010 is explicitly forbidden from changing the recovery implementation.
@@ -59,7 +60,7 @@ the second: it reads as "there was nothing to do".
   postprocessing API happens to be down is told "REFUSED — nothing was run". The natural reading is
   "already fine". The month stays missing.
 - **It blocks a correct local target.** LTF-010 must render exit 2 as a failure precisely because it
-  cannot distinguish the two. Once split, the benign half can become a warning
+  cannot distinguish the two. Once split, the declined-and-healthy half can become a warning
   (INFRA-044's `DEGRADED`) while the broken half stays red. **This issue is the prerequisite for
   that**, and LTF-010 says so. *(Note, added 2026-09-11: `DEGRADED` was never built — INFRA-044 owner
   decision — and the refusal deliberately remained `FAIL (REFUSED)` rather than becoming its
@@ -155,14 +156,16 @@ Use `19999` as a station code if one is needed.
    could not be attempted.
 4. **API unreachable / not ready** (`RecoveryQueryError`) → exit **1**.
 5. **Empty station scope** → exit **1** — this is a reclassification, so the test must fail against
-   today's code, where it exits 2. Same for **missing member-model configuration**.
+   the pre-fix baseline (2026-09-04), where it exits 2. Same for **missing member-model
+   configuration**.
 6. **Unexpected exception in stage 1** (raise something the code does not anticipate) → exit **1**,
    not 2. Regression guard: it must fail if someone re-widens the bare `except` back over the
    refusal code.
 6b. **Handler order**: a `RecoveryQueryError` must not be caught as a refusal — pins that
    `except RecoveryRefused` precedes `except RecoveryError`.
 7. **The existing Luigi and wrapper behaviour is unchanged for exit 1** — a failed recovery is still
-   reported as unsuccessful (`run_periodic_maintenance.sh:174`).
+   reported as unsuccessful (as of 2026-09-04, `run_periodic_maintenance.sh:174`; `:174` is now a
+   search-path comment — the reporting/propagation is at `:217-246`).
 
 Check by hand that each new test fails if C1 is reverted, and say so in the report.
 

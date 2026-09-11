@@ -13,13 +13,14 @@ observed not to cover the recovery path at all.
 **Related**: **LTF-009** (the issue that specified Stage A; shipped as PR #485), **INFRA-043** (the
 dead `temp_luigi.cfg` mount found while implementing it), **INFRA-044** (a `DEGRADED` result state —
 **not** a dependency, see "The exit taxonomy"), and **LTF-011** (the follow-up this issue identified —
-`EXIT_REFUSED` conflated a benign refusal with an infrastructure failure, see the same section; filed
-2026-09-04, shipped as PR #493, `4f171a50`).
+`EXIT_REFUSED` conflated an operator decline with an infrastructure failure under one code and one
+message, see the same section; filed 2026-09-04, shipped as PR #493, `4f171a50`).
 
 > Verified on `docs_ltf_recovery_local_target`, branched from `origin/maxat_sapphire_2` at
-> `e367e430`. All citations below are against that tree. **PR #485 is on trunk but was not in the
-> branch this was first investigated from** — check you are on a branch that contains
-> `apps/long_term_forecasting/lt_recovery.py` before reading further.
+> `e367e430`. All citations below are against that tree, except citations added in the 2026-09-11
+> documentation update, which are against the current tree and are marked as such where they appear.
+> **PR #485 is on trunk but was not in the branch this was first investigated from** — check you are
+> on a branch that contains `apps/long_term_forecasting/lt_recovery.py` before reading further.
 
 ---
 
@@ -80,12 +81,12 @@ where every other maintenance action is rehearsed before it is trusted.
 
 ## The exit taxonomy — and why `REFUSED` must stay non-zero
 
-> **SUPERSEDED (2026-09-11).** LTF-011 (PR #493, `4f171a50`) has since split stage 1's handler three
-> ways, so exit 2 no longer covers configuration errors, an invalid mode, or an unavailable API — it
-> now means a genuine decline only. **The conclusion this section reaches still stands**: REFUSED
-> remains non-zero and renders as `FAIL (REFUSED)`, because a decline is not proof the month is
-> complete. The rest of this section is left as the rationale written against the pre-fix code;
-> the claims it drew from that code are corrected inline below.
+> **SUPERSEDED 2026-09-07** (when LTF-011, PR #493 `4f171a50`, merged; noted here 2026-09-11).
+> Stage 1's handler was split three ways, so exit 2 no longer covers configuration errors, an invalid
+> mode, or an unavailable API — it now means a genuine decline only. **The conclusion this section
+> reaches still stands**: REFUSED remains non-zero and renders as `FAIL (REFUSED)`, because a
+> decline is not proof the month is complete. The rest of this section is left as the rationale
+> written against the pre-fix code; the claims it drew from that code are corrected inline below.
 
 `lt_recovery` defines a three-valued outcome (`lt_recovery.py:69-73`):
 
@@ -146,7 +147,7 @@ Therefore:
 | Recovery exit | `run_locally.sh` row | Process exit |
 |---|---|---|
 | 0 — recovered, and the read-back found at least one row | `PASS` | 0 |
-| 2 — REFUSED: guard declined (post-LTF-011: a genuine decline only — no longer "or stage 1 errored") | `FAIL (REFUSED)` — nothing was written by this run | non-zero |
+| 2 — REFUSED: guard declined (post-LTF-011: a genuine decline only — no longer "or stage 1 errored") | `FAIL (REFUSED)` — no database rows written by this run (side effects still possible before the decline; see C4) | non-zero |
 | 1 — could not be attempted (stage 1: misconfiguration, query/API error, unexpected exception — never ran), **or** ran and failed (stage 2/3: forecast or read-back failure — rows may be absent, partial or written) | `FAIL` | non-zero |
 | anything else (parser error, signal) | `FAIL` | non-zero |
 
@@ -362,8 +363,8 @@ not later found to have been claimed by the wrong one of the two.
   a bare `except Exception` (`lt_recovery.py:625-627`), so exit 2 also covers config errors, invalid
   modes, an unavailable API and query failures. Mapping it to `DEGRADED`/exit 0 would have reported
   an outage as "nothing to do". REFUSED now stays non-zero, and the **INFRA-044 dependency is gone**
-  — the target ships independently. **(Superseded 2026-09-11: LTF-011, PR #493 `4f171a50`, has since
-  split this handler — exit 2 no longer covers those cases.)**
+  — the target ships independently. **(Superseded 2026-09-07 when LTF-011, PR #493 `4f171a50`, split
+  this handler — exit 2 no longer covers those cases; noted here 2026-09-11.)**
 - The framing "can only be rehearsed on a deployment" was **false**:
   `run_forecast.py --today <ISO> --recover` is directly runnable in the module venv. The defect is
   the absence of a standardised, documented, tested target — not the impossibility of local
