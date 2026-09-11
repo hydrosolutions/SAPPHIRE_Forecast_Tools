@@ -16,15 +16,22 @@ dead `temp_luigi.cfg` mount found while implementing it), **INFRA-044** (a `DEGR
 `EXIT_REFUSED` conflated an operator decline with an infrastructure failure under one code and one
 message, see the same section; filed 2026-09-04, shipped as PR #493, `4f171a50`).
 
-> Verified on `docs_ltf_recovery_local_target`, branched from `origin/maxat_sapphire_2` at
-> `e367e430`. All citations below are against that tree, except citations added in the 2026-09-11
-> documentation update, which are against the current tree and are marked as such where they appear.
+> Originally verified on `docs_ltf_recovery_local_target`, branched from `origin/maxat_sapphire_2` at
+> `e367e430`. Citations have since been updated to the current tree, except where a passage
+> explicitly marks them as of 2026-09-04 or pre-fix.
 > **PR #485 is on trunk but was not in the branch this was first investigated from** — check you are
 > on a branch that contains `apps/long_term_forecasting/lt_recovery.py` before reading further.
 
 ---
 
 ## The gap
+
+> **SUPERSEDED 2026-09-07** (PR #495, `f3267d4a`; noted here 2026-09-11). The gap described in this
+> section — no `run_locally.sh` local entry point for the recovery — was closed by this issue's own
+> fix: `grep -c lt_recovery apps/run_locally.sh` now returns 2, and the target is implemented at
+> `run_locally.sh:1393` (`run_maintenance_long_term_forecasting`) with dispatch at `:2600`
+> (`maintenance:long_term_forecasting`). The rest of this section is preserved as the statement of
+> the original problem that motivated this issue, not as current state.
 
 LTF-009 Stage A shipped (PR #485, merge `eb18d932`) as a complete operator-invoked recovery:
 
@@ -195,7 +202,7 @@ or complete:
   selection are at `data_interface.py:48`.
 
 **Clock caveat.** Eligibility uses the process-local clock, deliberately matching
-`lt_utils.check_valid_forecast_issue_date` (`lt_recovery.py:47`, `:110`). A rehearsal in a local
+`lt_utils.check_valid_forecast_issue_date` (`lt_recovery.py:47`, `:179`). A rehearsal in a local
 timezone and a container running UTC can briefly disagree about which issue dates are permitted near
 a month boundary. Note it in the usage text; do not claim the local run is behaviourally identical
 to the deployment.
@@ -221,11 +228,16 @@ the shell target must fail *before* spawning the process, so the operator gets a
 
 **C3 — it must NOT be part of any aggregate target.** A dated recovery is a deliberate,
 argument-bearing, one-month action. Wiring it into a run-everything target would either abort that
-run via C2 or, worse, run it with stale parameters. Aggregates here are hard-coded lists
-(`run_locally.sh:175`, `:200`), so this is achieved by *not* adding the name to them — but the
-test must cover **every** aggregate, not just the obvious three: `maintenance`, `daily`, `all`,
-`long-term`, `long-term-operational` and `yearly`. Add the new name through explicit valid-target
-and dispatch handling only, and state this in `print_usage`.
+run via C2 or, worse, run it with stale parameters. Aggregate execution is not table-driven: `run_all`
+(`run_locally.sh:1676`) and `run_maintenance_pipeline` (`:1696`) call their constituent module
+functions explicitly, so exclusion is achieved by *not* adding a call to the new target from either
+function's body, not by omitting it from a list. (`ALL_MODULES`/`MAINTENANCE_MODULES`, `:175`/`:200`,
+are consumed only for validation — `modules_to_check` at `:2025`/`:2027` and the valid-target check
+at `:2472`/`:2475` — so keeping the new target's name out of those two arrays is a second, separate
+precaution, not the execution-exclusion mechanism.) But the test must cover **every** aggregate, not
+just the obvious three: `maintenance`, `daily`, `all`, `long-term`, `long-term-operational` and
+`yearly`. Add the new name through explicit valid-target and dispatch handling only, and state this
+in `print_usage`.
 
 **C4 — the run's side effects must be documented at the target, precisely.** They are conditional,
 and some of them happen *before* a refusal:
