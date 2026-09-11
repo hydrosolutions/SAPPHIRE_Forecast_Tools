@@ -1,6 +1,6 @@
 # LTF-010: the long-term recovery has no `run_locally.sh` target, so every local rehearsal is hand-assembled
 
-**Status**: Review (2026-09-11) — shipped in PR #495 (`f3267d4a`)
+**Status**: Review — shipped 2026-09-07 in PR #495 (`f3267d4a`); this status update written 2026-09-11
 **Module**: `apps/run_locally.sh` (+ `apps/long_term_forecasting/lt_recovery.py`, read-only)
 **Priority**: **Medium** — no production path is broken; `run_locally.sh` is a developer gate, not an
 operational one. It is not Low because the one task with no local target is the one that writes
@@ -95,8 +95,11 @@ EXIT_FAILED  = 1
 EXIT_REFUSED = 2
 ```
 
-`bin/run_periodic_maintenance.sh:185` describes exit 2 as *"'REFUSED' (child exit 2) - nothing ran,
-no rows were written."*
+As of 2026-09-04, `bin/run_periodic_maintenance.sh:185` described exit 2 as *"'REFUSED' (child exit
+2) - nothing ran, no rows were written."* (Line 185 is now an unrelated `[retcode]` setting; the
+wrapper's current REFUSED/FAILED wording lives in the echo block around `:223-234`, and there it
+correctly distinguishes a decline — exit 2 — from a failure that could not be attempted or ran and
+failed partway — exit 1.)
 
 **That description is true of the rows and misleading about everything else, and an earlier revision
 of this issue built its whole design on it.** Read the code:
@@ -122,32 +125,33 @@ chain: `except RecoveryRefused` → `EXIT_REFUSED`
 `EXIT_FAILED` (1); bare `except Exception` → `EXIT_FAILED` (1). So exit 2 no longer covers a
 configuration-loading error, an invalid mode name, an empty station scope, an unavailable or disabled
 API client, a readiness failure or a query error — those all now return `EXIT_FAILED` (1). Exit 2
-means only the benign `RecoveryRefused` case: "rows already exist" / date outside the window / other
-operator-input refusals.
+now means a genuine decline: member rows already exist for the key, or the operator's input does not
+qualify (a malformed/missing/future issue date, outside the window, or no scheduled issue date). This
+is **not benign** — the existing-row guard fires on a single row, so it can decline a partially
+populated month, not only a complete one.
 
 Therefore:
 
-- **`EXIT_REFUSED` must remain a non-zero result in `run_locally.sh`.** Rendering it as a passing or
-  merely-degraded outcome would report an unreachable API or a typo'd mode as "nothing to do" — the
-  exact silent-failure shape INFRA-044, INFRA-030 and ML-022 all exist to prevent. Report it with
-  its own wording (`REFUSED — nothing was run`) so it is distinguishable from `FAILED`, but keep the
-  process exit non-zero.
+- **`EXIT_REFUSED` must remain a non-zero result in `run_locally.sh`.** A decline is not proof the
+  month is complete — the existing-row guard fires on a single row, so it can decline a partially
+  populated month. Report it with its own status (`FAIL (REFUSED)`) so it is distinguishable from a
+  plain `FAIL`, but keep the process exit non-zero.
 - **This issue does NOT depend on INFRA-044.** An earlier revision claimed it did, on the assumption
   that REFUSED was benign. It is not, so the target can ship against today's binary PASS/FAIL.
-- Splitting benign refusal from infrastructure failure would need a change inside `lt_recovery.py`
-  (it already has a distinct `RecoveryRefused` class to key on), which **C5 forbids**. That split is
-  worth its own issue, and is the *prerequisite* for ever mapping a refusal to `DEGRADED`. File it;
-  do not smuggle it in here.
+- Splitting the guard's decline from an infrastructure failure required a change inside
+  `lt_recovery.py` (it already had a distinct `RecoveryRefused` class to key on), which **C5 forbids**
+  here. That split was filed as its own issue and has since shipped as **LTF-011**
+  (PR #493, `4f171a50`).
 
 | Recovery exit | `run_locally.sh` row | Process exit |
 |---|---|---|
 | 0 — recovered, and the read-back found at least one row | `PASS` | 0 |
-| 2 — REFUSED: guard declined (post-LTF-011: a genuine decline only — no longer "or stage 1 errored") | `FAIL`, labelled `REFUSED — nothing was run` | non-zero |
-
-*(Rendered as PASS / REFUSED-FAIL / FAIL — **LTF-011** (PR #493) has since split the two former
-causes of exit 2, and there is still no `DEGRADED` outcome here.)*
-| 1 — the forecast ran and failed | `FAIL` | non-zero |
+| 2 — REFUSED: guard declined (post-LTF-011: a genuine decline only — no longer "or stage 1 errored") | `FAIL (REFUSED)` — nothing was written by this run | non-zero |
+| 1 — could not be attempted (stage 1: misconfiguration, query/API error, unexpected exception — never ran), **or** ran and failed (stage 2/3: forecast or read-back failure — rows may be absent, partial or written) | `FAIL` | non-zero |
 | anything else (parser error, signal) | `FAIL` | non-zero |
+
+*(Rendered as PASS / FAIL (REFUSED) / FAIL — **LTF-011** (PR #493) has since split the two former
+causes of exit 2, and there is still no `DEGRADED` outcome here.)*
 
 **Exit 0 is a partial-success criterion, not proof of complete coverage.** The read-back accepts the
 run once at least one finite row carries `forecast_run_flag=1` (`lt_recovery.py:641`, `:673`); it
@@ -174,7 +178,7 @@ concerns with no local equivalent.
 
 **"Local" does not mean "self-contained".** The target still runs against whatever the supplied env
 file points at. Document these prerequisites at the target, because a rehearsal that silently lacks
-one of them will surface as a confusing `REFUSED`:
+one of them will surface as a confusing `FAIL` (exit 1 — could not be attempted), not a `REFUSED`:
 
 - the env file plus its configuration / model / static / intermediate paths;
 - `SAPPHIRE_API_ENABLED=true` and a host-reachable postprocessing API at `SAPPHIRE_API_URL`
@@ -279,10 +283,12 @@ longer exists.)*
 1. **Happy path**: `lt_forecast_mode=month_0 LT_RECOVERY_DATE=2026-08-01`, stub exits 0 → the stub
    was invoked with `run_forecast.py --today 2026-08-01 --recover`, the summary row is `PASS`,
    process exit 0.
-2. **REFUSED**: stub exits 2 → the row is a failure labelled `REFUSED — nothing was run`, and the
-   process exits **non-zero**. This is the test that pins the "exit 2 is not benign" decision; it
-   must fail if someone later maps REFUSED to a passing or DEGRADED result without first splitting
-   the refusal classes inside `lt_recovery.py`.
+2. **REFUSED**: stub exits 2 → the row is a failure labelled `FAIL (REFUSED)`, and the process exits
+   **non-zero**. This is the test that pins the "exit 2 is not benign" decision; it must fail if
+   someone later maps REFUSED to a passing or `DEGRADED` result. The refusal classes were split
+   inside `lt_recovery.py` by **LTF-011** (PR #493, `4f171a50`) — that split is done, and its
+   completion does not license remapping REFUSED to anything but `FAIL (REFUSED)`: a decline is
+   still not proof the month is complete.
 3. **Failed**: stub exits 1 → `FAIL`, process exit 1.
 4. **Missing mode** and **missing date**, separately: the target exits non-zero, names the missing
    variable, and **the stub is never invoked** (assert zero recorded invocations — that is the
@@ -308,8 +314,8 @@ longer exists.)*
 
 - [ ] `EXIT_REFUSED` is reported distinctly **and** keeps the process exit non-zero; test 2 passes.
 - [ ] `bash apps/run_locally.sh maintenance:long_term_forecasting` with both variables set performs
-      a real recovery against a local deployment and reports the correct one of PASS / DEGRADED /
-      FAIL for each of the three exit codes.
+      a real recovery against a local deployment and reports the correct one of PASS / FAIL (REFUSED)
+      / FAIL for each of the three exit codes. `DEGRADED` was never built and must not appear here.
 - [ ] With either variable unset it exits non-zero, names the variable, and runs nothing.
 - [ ] On `demo` and `uzhm` it says long-term recovery is not available for this deployment and exits
       non-zero, without invoking the recovery.
@@ -356,7 +362,8 @@ not later found to have been claimed by the wrong one of the two.
   a bare `except Exception` (`lt_recovery.py:625-627`), so exit 2 also covers config errors, invalid
   modes, an unavailable API and query failures. Mapping it to `DEGRADED`/exit 0 would have reported
   an outage as "nothing to do". REFUSED now stays non-zero, and the **INFRA-044 dependency is gone**
-  — the target ships independently.
+  — the target ships independently. **(Superseded 2026-09-11: LTF-011, PR #493 `4f171a50`, has since
+  split this handler — exit 2 no longer covers those cases.)**
 - The framing "can only be rehearsed on a deployment" was **false**:
   `run_forecast.py --today <ISO> --recover` is directly runnable in the module venv. The defect is
   the absence of a standardised, documented, tested target — not the impossibility of local

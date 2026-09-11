@@ -1,6 +1,6 @@
 # LTF-011: the recovery reports "REFUSED" for both "already done" and "something is broken"
 
-**Status**: Review (2026-09-11) — shipped in PR #493 (`4f171a50`)
+**Status**: Review — shipped 2026-09-07 in PR #493 (`4f171a50`); this status update written 2026-09-11
 **Module**: `apps/long_term_forecasting/lt_recovery.py`
 **Priority**: **Medium** — nothing is lost or corrupted; the recovery correctly declines to run in
 every case it reports. But the operator cannot tell "there was nothing to do" from "I could not
@@ -10,12 +10,12 @@ reach the database", and both are reported with the same words and the same stat
 than fixed there, because LTF-010 is explicitly forbidden from changing the recovery implementation.
 **Related**: **LTF-009** (shipped Stage A), **LTF-010** (renders a refusal as `FAIL (REFUSED)`;
 LTF-011 has since landed, and exit 2 nonetheless remains a non-zero `FAIL (REFUSED)` by design — a
-decline is not proof the month is complete), **INFRA-044** (the `DEGRADED` state a benign refusal
-would map to).
+decline is not proof the month is complete), **INFRA-044** (a `DEGRADED` state that was never built;
+this refusal deliberately did not become its consumer).
 
 ---
 
-## What shipped (2026-09-11)
+## What shipped (2026-09-07; this section added 2026-09-11)
 
 PR #493 (`4f171a50`) split stage 1's handler three ways: `except RecoveryRefused` returns
 `EXIT_REFUSED` (2); `except RecoveryError` (which now catches `RecoveryMisconfigured` and
@@ -25,7 +25,10 @@ operator's input does not qualify — and remains non-zero, rendered by `run_loc
 `FAIL (REFUSED)`. The rest of this document is left as the analysis and rationale that motivated the
 change; it is not rewritten to past tense.
 
-## What happens now
+## What happened before the fix
+
+*(See "What shipped" above for the current behaviour; this section is retained as the record of the
+conflation that motivated the fix.)*
 
 `run_recovery` ends stage 1 with two handlers that return the same code
 (`lt_recovery.py:622-627`):
@@ -43,7 +46,7 @@ So `EXIT_REFUSED` (2) covers **two categories that mean opposite things to the o
 
 | Category | Example | What the operator should do |
 |---|---|---|
-| **Benign refusal** — the guard did its job | member rows already exist for that key; the issue date is outside the permitted window | Nothing. The month is already populated, or the date was wrong. |
+| **Benign refusal** — the guard did its job | member rows already exist for that key; the issue date is outside the permitted window | For an existing-row decline: check the month — a single existing row is enough to decline, so it may be only partially populated, not complete. For a date-window decline: the date was wrong. |
 | **Something is broken** | configuration failed to load, the mode name is invalid, the station scope came back empty, the API is unavailable or disabled, a readiness check or query failed | Investigate and retry. The month is still missing. |
 
 `bin/run_periodic_maintenance.sh:185` documents exit 2 as *"'REFUSED' (child exit 2) - nothing ran,
@@ -58,7 +61,9 @@ the second: it reads as "there was nothing to do".
 - **It blocks a correct local target.** LTF-010 must render exit 2 as a failure precisely because it
   cannot distinguish the two. Once split, the benign half can become a warning
   (INFRA-044's `DEGRADED`) while the broken half stays red. **This issue is the prerequisite for
-  that**, and LTF-010 says so.
+  that**, and LTF-010 says so. *(Note, added 2026-09-11: `DEGRADED` was never built — INFRA-044 owner
+  decision — and the refusal deliberately remained `FAIL (REFUSED)` rather than becoming its
+  consumer.)*
 - **The information already exists.** `RecoveryRefused` is a distinct exception class. The code
   already knows which category it is in; it just discards the distinction at the return.
 
@@ -88,20 +93,23 @@ all of the above.
 **C1 — split on meaning, not on the existing class names.** Two outcomes, mapped from three
 meanings:
 
-- **`EXIT_REFUSED` (2) — "declined, and nothing is wrong":** member rows already exist, **and** the
-  operator-input refusals (bad/missing date, missing mode, future date, outside the window, not a
+- **`EXIT_REFUSED` (2) — "declined; no infrastructure is broken":** member rows already exist, **and**
+  the operator-input refusals (bad/missing date, missing mode, future date, outside the window, not a
   scheduled issue date). In all of these the system is healthy and the answer is "I am not doing
-  that, and here is why". They belong together because none of them warrants investigating the
-  deployment.
+  that, and here is why" — though an existing-row decline is not proof the month is complete: a
+  single existing row is enough to decline a partially populated one. They belong together because
+  none of them warrants investigating the deployment's health.
 - **`EXIT_FAILED` (1) — "could not be attempted":** empty station list, missing member-model
   configuration, every `RecoveryQueryError`, and every unexpected exception. In all of these the
   month is still missing and something needs fixing.
 
-**This requires reclassifying two raise sites**, because they are currently `RecoveryRefused` and
-belong in the failure bucket: the empty station list (`:320`) and the missing member-model
-configuration. Introduce a `RecoveryMisconfigured(RecoveryError)` subclass and raise it there,
-rather than widening the handler — the handler must stay readable, and the classification belongs at
-the raise site where the condition is known.
+**This requires reclassifying two raise sites**, because they were `RecoveryRefused` and belonged in
+the failure bucket: the empty station list (cited as `:320` on 2026-09-04, now stale — the site is
+`check_station_codes`, `lt_recovery.py:377`) and the missing member-model configuration (now
+`lt_recovery.py:649`). Introduce a `RecoveryMisconfigured(RecoveryError)` subclass and raise it
+there, rather than widening the handler — the handler must stay readable, and the classification
+belongs at the raise site where the condition is known. **Implemented**: both sites now raise
+`RecoveryMisconfigured`.
 
 Then stage 1's handlers become, in order: `except RecoveryRefused` → 2; `except RecoveryError` → 1
 (this now catches `RecoveryMisconfigured` and `RecoveryQueryError`); `except Exception` → 1.
@@ -112,9 +120,11 @@ Do not add a fourth exit code. Three meanings, two codes, and the message carrie
 run)". The failure path must say the recovery could not be *attempted* and name the exception type,
 so a log reader can tell them apart without the exit code.
 
-**C3 — the wrapper's documentation must follow.** `bin/run_periodic_maintenance.sh:185` describes
-exit 2 as "nothing ran, no rows were written". After C1 that is accurate for exit 2 and needs a
-matching line for exit 1; the exit handling itself is at `:177`. Update both.
+**C3 — the wrapper's documentation must follow.** As of 2026-09-04, `bin/run_periodic_maintenance.sh:185`
+described exit 2 as "nothing ran, no rows were written", and the exit handling itself was at `:177`
+(both citations are now stale: `:185` is an unrelated `[retcode]` setting). After C1 that description
+needed a matching line for exit 1. **Implemented**: the wrapper's current REFUSED/FAILED description
+lives in the echo block at roughly `:223-234`, and the single `exit "$COMPOSE_STATUS"` is at `:246`.
 
 **C4 — do not touch the guard's semantics.** Which conditions refuse, the check/write race, the
 `--today` window and the read-back acceptance are unchanged. This issue changes how the outcome is
@@ -186,6 +196,7 @@ Check by hand that each new test fails if C1 is reverted, and say so in the repo
 
 - The check/write race in the guard (documented and accepted in Stage A; closing it needs a
   conditional insert or an advisory lock service-side).
-- LTF-010's `run_locally.sh` target — it ships independently, treating exit 2 as a failure until
-  this lands.
+- LTF-010's `run_locally.sh` target — it shipped independently, and exit 2 remains a non-zero
+  failure there by design, even now that this issue has landed: a decline is not proof the month is
+  complete.
 - LTF-009 Stage B.

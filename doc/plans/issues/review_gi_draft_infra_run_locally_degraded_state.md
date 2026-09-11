@@ -147,9 +147,10 @@ result state to `print_summary` and `print_error_details`. After the decision th
 not our failure, exit 4 records **no row at all**, so that state would ship with **no producer in
 the tree** and no test able to exercise it end to end. It is dropped rather than built unused.
 
-If a consumer appears — **INFRA-030** (`SKIP` for skipped modules) or **LTF-011** (a benign recovery
-refusal, once its causes are split) — add it then. It is about fifteen lines in one function, and
-building it now would mean shipping code that nothing reaches.
+If a consumer appears — **INFRA-030** (`SKIP` for skipped modules) — add it then. **LTF-011** has
+since shipped (PR #493, `4f171a50`) without needing it: its split refusal remained `FAIL (REFUSED)`,
+not `DEGRADED`. It is about fifteen lines in one function, and building it now would mean shipping
+code that nothing reaches.
 
 **Consequence for this issue**: `run_locally.sh`'s result rendering is **unchanged**. The only shell
 change is C4's branch routing. That is deliberate and makes this issue much smaller than its title
