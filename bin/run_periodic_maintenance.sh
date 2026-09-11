@@ -17,8 +17,10 @@
 #                    snapped). The run refuses if any member row already exists
 #                    for that month, marks recovered rows with flag=1, and reads
 #                    the rows back from the database before reporting success.
-#                    Unlike the other task types this one RETURNS the Luigi exit
-#                    status. Exit 0 means rows were written AND read back.
+#                    All four task types propagate the Luigi exit status (see
+#                    below); unlike the others, this one also prints a detailed
+#                    SUCCESS / NOT-CONFIRMED summary. Exit 0 means rows were
+#                    written AND read back.
 #                    A non-zero exit means the recovery was NOT CONFIRMED --
 #                    it does NOT mean the database is unchanged: only a decline
 #                    (child exit 2) guarantees no forecast ran and no rows were

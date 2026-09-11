@@ -1,6 +1,6 @@
 # LTF-010: the long-term recovery has no `run_locally.sh` target, so every local rehearsal is hand-assembled
 
-**Status**: Draft (2026-09-04)
+**Status**: Review (2026-09-11) — shipped in PR #495 (`f3267d4a`)
 **Module**: `apps/run_locally.sh` (+ `apps/long_term_forecasting/lt_recovery.py`, read-only)
 **Priority**: **Medium** — no production path is broken; `run_locally.sh` is a developer gate, not an
 operational one. It is not Low because the one task with no local target is the one that writes
@@ -12,8 +12,9 @@ deployment.
 observed not to cover the recovery path at all.
 **Related**: **LTF-009** (the issue that specified Stage A; shipped as PR #485), **INFRA-043** (the
 dead `temp_luigi.cfg` mount found while implementing it), **INFRA-044** (a `DEGRADED` result state —
-**not** a dependency, see "The exit taxonomy"), and a **follow-up to be filed**: `EXIT_REFUSED`
-conflates a benign refusal with an infrastructure failure (see the same section).
+**not** a dependency, see "The exit taxonomy"), and **LTF-011** (the follow-up this issue identified —
+`EXIT_REFUSED` conflated a benign refusal with an infrastructure failure, see the same section; filed
+2026-09-04, shipped as PR #493, `4f171a50`).
 
 > Verified on `docs_ltf_recovery_local_target`, branched from `origin/maxat_sapphire_2` at
 > `e367e430`. All citations below are against that tree. **PR #485 is on trunk but was not in the
@@ -79,6 +80,13 @@ where every other maintenance action is rehearsed before it is trusted.
 
 ## The exit taxonomy — and why `REFUSED` must stay non-zero
 
+> **SUPERSEDED (2026-09-11).** LTF-011 (PR #493, `4f171a50`) has since split stage 1's handler three
+> ways, so exit 2 no longer covers configuration errors, an invalid mode, or an unavailable API — it
+> now means a genuine decline only. **The conclusion this section reaches still stands**: REFUSED
+> remains non-zero and renders as `FAIL (REFUSED)`, because a decline is not proof the month is
+> complete. The rest of this section is left as the rationale written against the pre-fix code;
+> the claims it drew from that code are corrected inline below.
+
 `lt_recovery` defines a three-valued outcome (`lt_recovery.py:69-73`):
 
 ```
@@ -93,19 +101,29 @@ no rows were written."*
 **That description is true of the rows and misleading about everything else, and an earlier revision
 of this issue built its whole design on it.** Read the code:
 
+As of 2026-09-04 (the line numbers below predate LTF-011's fix), stage 1 ended in a bare `except
+Exception`:
+
 ```python
     except RecoveryError as exc:
         logger.error("Long-term recovery REFUSED (nothing was run): %s", exc)
         return EXIT_REFUSED
-    except Exception as exc:                      # <-- lt_recovery.py:625-627
+    except Exception as exc:                      # <-- lt_recovery.py:625-627 (pre-LTF-011)
         logger.exception("Long-term recovery REFUSED (nothing was run): %s", exc)
         return EXIT_REFUSED
 ```
 
-Stage 1 ends in a bare `except Exception`, so **exit 2 also covers a configuration-loading error, an
-invalid mode name, an empty station scope, an unavailable or disabled API client, a readiness
-failure and a query error** — not only the benign `RecoveryRefused` ("rows already exist" / date
-outside the window).
+**Corrected by LTF-011 (PR #493, `4f171a50`):** this section originally claimed, from the code above,
+that exit 2 also covered a configuration-loading error, an invalid mode name, an empty station scope,
+an unavailable or disabled API client, a readiness failure and a query error. That claim was true of
+the code as it stood on 2026-09-04 and is no longer true. Stage 1's handler is now a three-way
+chain: `except RecoveryRefused` → `EXIT_REFUSED`
+(2); `except RecoveryError` (now catching `RecoveryMisconfigured` and `RecoveryQueryError`) →
+`EXIT_FAILED` (1); bare `except Exception` → `EXIT_FAILED` (1). So exit 2 no longer covers a
+configuration-loading error, an invalid mode name, an empty station scope, an unavailable or disabled
+API client, a readiness failure or a query error — those all now return `EXIT_FAILED` (1). Exit 2
+means only the benign `RecoveryRefused` case: "rows already exist" / date outside the window / other
+operator-input refusals.
 
 Therefore:
 
@@ -124,10 +142,10 @@ Therefore:
 | Recovery exit | `run_locally.sh` row | Process exit |
 |---|---|---|
 | 0 — recovered, and the read-back found at least one row | `PASS` | 0 |
-| 2 — REFUSED: guard declined **or** stage 1 errored | `FAIL`, labelled `REFUSED — nothing was run` | non-zero |
+| 2 — REFUSED: guard declined (post-LTF-011: a genuine decline only — no longer "or stage 1 errored") | `FAIL`, labelled `REFUSED — nothing was run` | non-zero |
 
-*(Rendered as PASS / REFUSED-FAIL / FAIL — there is no `DEGRADED` outcome here until **LTF-011**
-splits the two causes of exit 2.)*
+*(Rendered as PASS / REFUSED-FAIL / FAIL — **LTF-011** (PR #493) has since split the two former
+causes of exit 2, and there is still no `DEGRADED` outcome here.)*
 | 1 — the forecast ran and failed | `FAIL` | non-zero |
 | anything else (parser error, signal) | `FAIL` | non-zero |
 
@@ -373,6 +391,10 @@ not later found to have been claimed by the wrong one of the two.
   LTF-011 lands.
 - Citations: dry-run return `:2166`; recovery marker block ends `:2097`; database host/credentials
   `data_interface.py:48`; `general_config.json` write `config_forecast.py:168`.
+
+**Note (2026-09-11):** the exit-taxonomy finding recorded above and in "The exit taxonomy" section
+was subsequently superseded by LTF-011 (PR #493, `4f171a50`) — see the banner at the top of that
+section.
 
 ## Out of scope
 

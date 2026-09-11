@@ -1,6 +1,6 @@
 # LTF-011: the recovery reports "REFUSED" for both "already done" and "something is broken"
 
-**Status**: Draft (2026-09-04)
+**Status**: Review (2026-09-11) — shipped in PR #493 (`4f171a50`)
 **Module**: `apps/long_term_forecasting/lt_recovery.py`
 **Priority**: **Medium** — nothing is lost or corrupted; the recovery correctly declines to run in
 every case it reports. But the operator cannot tell "there was nothing to do" from "I could not
@@ -8,10 +8,22 @@ reach the database", and both are reported with the same words and the same stat
 **Labels**: `ltf`, `recovery`, `exit-contract`, `operator-experience`
 **Found**: 2026-09-04, while drafting **LTF-010** (the missing `run_locally.sh` target). Filed rather
 than fixed there, because LTF-010 is explicitly forbidden from changing the recovery implementation.
-**Related**: **LTF-009** (shipped Stage A), **LTF-010** (blocked from rendering a refusal as anything
-but a failure until this lands), **INFRA-044** (the `DEGRADED` state a benign refusal would map to).
+**Related**: **LTF-009** (shipped Stage A), **LTF-010** (renders a refusal as `FAIL (REFUSED)`;
+LTF-011 has since landed, and exit 2 nonetheless remains a non-zero `FAIL (REFUSED)` by design — a
+decline is not proof the month is complete), **INFRA-044** (the `DEGRADED` state a benign refusal
+would map to).
 
 ---
+
+## What shipped (2026-09-11)
+
+PR #493 (`4f171a50`) split stage 1's handler three ways: `except RecoveryRefused` returns
+`EXIT_REFUSED` (2); `except RecoveryError` (which now catches `RecoveryMisconfigured` and
+`RecoveryQueryError`) returns `EXIT_FAILED` (1); and a bare `except Exception` also returns
+`EXIT_FAILED` (1). Exit 2 now means a genuine decline only — member rows already exist, or the
+operator's input does not qualify — and remains non-zero, rendered by `run_locally.sh` as
+`FAIL (REFUSED)`. The rest of this document is left as the analysis and rationale that motivated the
+change; it is not rewritten to past tense.
 
 ## What happens now
 

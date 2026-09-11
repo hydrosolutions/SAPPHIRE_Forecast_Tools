@@ -8,8 +8,9 @@ Contracts under test:
 - the undated operational path is byte-for-byte unchanged (REGRESSION);
 - RunPeriodicMaintenanceWorkflow routes task_type 'lt_recovery' to the dated
   task and refuses incomplete arguments;
-- the wrapper script returns the Compose status for lt_recovery only, and the
-  [retcode] block it writes actually reaches Luigi (proved by running Luigi).
+- the wrapper script propagates the Compose status for all task types, and the
+  [retcode] block it writes actually reaches Luigi (proved by running Luigi);
+  only the detailed SUCCESS / NOT-CONFIRMED summary is lt_recovery-specific.
 """
 
 import os
