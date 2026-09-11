@@ -267,7 +267,8 @@ itself, that is a new issue, not a widening of this one.
 - `doc/dev/testing_workflow.md` and/or `apps/run_locally.sh`'s own usage block, for C4
 - `doc/plans/module_issues.md` — register the LTF-010 row. The number is free on this branch (which
   has LTF-001..007) and avoids LTF-008/009, claimed on the unmerged `docs_fd024_fd025_doc008`
-  branch; it is not reserved until that row is committed.
+  branch; it is not reserved until that row is committed. **(Done — registered; noted here
+  2026-09-11: the row is committed and reads `Review`.)**
 
 **Do not** change any file listed in C5.
 
