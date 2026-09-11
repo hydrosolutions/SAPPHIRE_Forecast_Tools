@@ -95,7 +95,8 @@ All issues, decisions, and plans are tracked in **[`module_issues.md`](module_is
 ### Status Values
 
 For plans: `Not started` → `In progress` → `Complete`
-For issues: `Open` → `Draft` → `Ready` → `In Progress` → `Complete`
+For issues: `Open` → `Draft` → `Ready` → `In Progress` → `Review` → `Complete`
+`Review` means implemented and verified, awaiting the human owner's sign-off before the issue is closed and its file moved to `archive/`.
 
 ## Skill-Assisted Workflow
 

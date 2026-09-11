@@ -1,6 +1,6 @@
 # LTF-010: the long-term recovery has no `run_locally.sh` target, so every local rehearsal is hand-assembled
 
-**Status**: Draft (2026-09-04)
+**Status**: Review — shipped 2026-09-07 in PR #495 (`f3267d4a`); this status update written 2026-09-11
 **Module**: `apps/run_locally.sh` (+ `apps/long_term_forecasting/lt_recovery.py`, read-only)
 **Priority**: **Medium** — no production path is broken; `run_locally.sh` is a developer gate, not an
 operational one. It is not Low because the one task with no local target is the one that writes
@@ -12,24 +12,33 @@ deployment.
 observed not to cover the recovery path at all.
 **Related**: **LTF-009** (the issue that specified Stage A; shipped as PR #485), **INFRA-043** (the
 dead `temp_luigi.cfg` mount found while implementing it), **INFRA-044** (a `DEGRADED` result state —
-**not** a dependency, see "The exit taxonomy"), and a **follow-up to be filed**: `EXIT_REFUSED`
-conflates a benign refusal with an infrastructure failure (see the same section).
+**not** a dependency, see "The exit taxonomy"), and **LTF-011** (the follow-up this issue identified —
+`EXIT_REFUSED` conflated an operator decline with an infrastructure failure under one code and one
+message, see the same section; filed 2026-09-04, shipped as PR #493, `4f171a50`).
 
-> Verified on `docs_ltf_recovery_local_target`, branched from `origin/maxat_sapphire_2` at
-> `e367e430`. All citations below are against that tree. **PR #485 is on trunk but was not in the
-> branch this was first investigated from** — check you are on a branch that contains
-> `apps/long_term_forecasting/lt_recovery.py` before reading further.
+> Originally verified on `docs_ltf_recovery_local_target`, branched from `origin/maxat_sapphire_2` at
+> `e367e430`. Citations have since been updated to the current tree, except where a passage
+> explicitly marks them as of 2026-09-04 or pre-fix.
+> **PR #485 is on trunk but was not in the branch this was first investigated from** — check you are
+> on a branch that contains `apps/long_term_forecasting/lt_recovery.py` before reading further.
 
 ---
 
 ## The gap
+
+> **SUPERSEDED 2026-09-07** (PR #495, `f3267d4a`; noted here 2026-09-11). The gap described in this
+> section — no `run_locally.sh` local entry point for the recovery — was closed by this issue's own
+> fix: `grep -c lt_recovery apps/run_locally.sh` now returns 2, and the target is implemented at
+> `run_locally.sh:1393` (`run_maintenance_long_term_forecasting`) with dispatch at `:2600`
+> (`maintenance:long_term_forecasting`). The rest of this section is preserved as the statement of
+> the original problem that motivated this issue, not as current state.
 
 LTF-009 Stage A shipped (PR #485, merge `eb18d932`) as a complete operator-invoked recovery:
 
 | Piece | Where |
 |---|---|
 | Guard → run → read-back in one process | `apps/long_term_forecasting/lt_recovery.py` (new, 682 lines) |
-| `--recover` flag, requires `--today` | `apps/long_term_forecasting/run_forecast.py:565-571`, `:586-590` |
+| `--recover` flag, requires `--today` | `apps/long_term_forecasting/run_forecast.py:565-579`, `:590-592` |
 | Dated Luigi task (`max_retries = 1`) | `apps/pipeline/pipeline_docker.py:2203-2233` |
 | `task_type="lt_recovery"` wiring + per-(mode,date) marker | `pipeline_docker.py:2057-2091` |
 | Operator wrapper | `bin/run_periodic_maintenance.sh` (`lt_recovery <env_file> <mode> <YYYY-MM-DD>`) |
@@ -46,7 +55,7 @@ the only one with no corresponding local target.
 
 **To be precise about what is and is not missing**: `run_forecast.py --today <ISO> --recover` is a
 perfectly valid direct CLI invocation and the long-term venv has everything it needs
-(`run_forecast.py:553`, `:603` call `run_recovery()` directly). Luigi supplies orchestration,
+(`run_forecast.py:610` calls `run_recovery()` directly). Luigi supplies orchestration,
 `max_retries = 1` and a marker — none of which is required to *run* a recovery. So this issue is
 **not** "recovery cannot be run locally". It is: there is no standardised, documented, tested entry
 point, so every local rehearsal is hand-assembled from the module's internals, and the operator
@@ -58,8 +67,8 @@ learns the argument shape by reading source.
 > | `run_periodic_maintenance.sh` task_type | `run_locally.sh` target |
 > |---|---|
 > | `long_term` | `maintenance:postprocessing_long_term` |
-> | `skill_recalc` | `recalculate_skill_metrics` (impl `:1048`, dispatch `:2253`) |
-> | `snow_norms` | `recalculate_snow_norms` (impl `:1069`, dispatch `:2253`) |
+> | `skill_recalc` | `recalculate_skill_metrics` (impl `:1159`, dispatch `:2608`) |
+> | `snow_norms` | `recalculate_snow_norms` (impl `:1180`, dispatch `:2611`) |
 > | `lt_recovery` | **none** |
 >
 > `grep -c skill_recalc apps/run_locally.sh` returns `0` and proves nothing.
@@ -79,7 +88,14 @@ where every other maintenance action is rehearsed before it is trusted.
 
 ## The exit taxonomy — and why `REFUSED` must stay non-zero
 
-`lt_recovery` defines a three-valued outcome (`lt_recovery.py:69-73`):
+> **SUPERSEDED 2026-09-07** (when LTF-011, PR #493 `4f171a50`, merged; noted here 2026-09-11).
+> Stage 1's handler was split three ways, so exit 2 no longer covers configuration errors, an invalid
+> mode, or an unavailable API — it now means a genuine decline only. **The conclusion this section
+> reaches still stands**: REFUSED remains non-zero and renders as `FAIL (REFUSED)`, because a
+> decline is not proof the month is complete. The rest of this section is left as the rationale
+> written against the pre-fix code; the claims it drew from that code are corrected inline below.
+
+`lt_recovery` defines a three-valued outcome (`lt_recovery.py:77-96`):
 
 ```
 EXIT_OK      = 0
@@ -87,52 +103,66 @@ EXIT_FAILED  = 1
 EXIT_REFUSED = 2
 ```
 
-`bin/run_periodic_maintenance.sh:185` describes exit 2 as *"'REFUSED' (child exit 2) - nothing ran,
-no rows were written."*
+As of 2026-09-04, `bin/run_periodic_maintenance.sh:185` described exit 2 as *"'REFUSED' (child exit
+2) - nothing ran, no rows were written."* (Line 185 is now an unrelated `[retcode]` setting; the
+wrapper's current REFUSED/FAILED wording lives in the echo block around `:223-234`, and there it
+correctly distinguishes a decline — exit 2 — from a failure that could not be attempted or ran and
+failed partway — exit 1.)
 
 **That description is true of the rows and misleading about everything else, and an earlier revision
 of this issue built its whole design on it.** Read the code:
+
+As of 2026-09-04 (the line numbers below predate LTF-011's fix), stage 1 ended in a bare `except
+Exception`:
 
 ```python
     except RecoveryError as exc:
         logger.error("Long-term recovery REFUSED (nothing was run): %s", exc)
         return EXIT_REFUSED
-    except Exception as exc:                      # <-- lt_recovery.py:625-627
+    except Exception as exc:                      # <-- lt_recovery.py:625-627 (pre-LTF-011)
         logger.exception("Long-term recovery REFUSED (nothing was run): %s", exc)
         return EXIT_REFUSED
 ```
 
-Stage 1 ends in a bare `except Exception`, so **exit 2 also covers a configuration-loading error, an
-invalid mode name, an empty station scope, an unavailable or disabled API client, a readiness
-failure and a query error** — not only the benign `RecoveryRefused` ("rows already exist" / date
-outside the window).
+**Corrected by LTF-011 (PR #493, `4f171a50`):** this section originally claimed, from the code above,
+that exit 2 also covered a configuration-loading error, an invalid mode name, an empty station scope,
+an unavailable or disabled API client, a readiness failure and a query error. That claim was true of
+the code as it stood on 2026-09-04 and is no longer true. Stage 1's handler is now a three-way
+chain: `except RecoveryRefused` → `EXIT_REFUSED`
+(2); `except RecoveryError` (now catching `RecoveryMisconfigured` and `RecoveryQueryError`) →
+`EXIT_FAILED` (1); bare `except Exception` → `EXIT_FAILED` (1). So exit 2 no longer covers a
+configuration-loading error, an invalid mode name, an empty station scope, an unavailable or disabled
+API client, a readiness failure or a query error — those all now return `EXIT_FAILED` (1). Exit 2
+now means a genuine decline: member rows already exist for the key, or the operator's input does not
+qualify (a malformed/missing/future issue date, outside the window, or no scheduled issue date). This
+is **not benign** — the existing-row guard fires on a single row, so it can decline a partially
+populated month, not only a complete one.
 
 Therefore:
 
-- **`EXIT_REFUSED` must remain a non-zero result in `run_locally.sh`.** Rendering it as a passing or
-  merely-degraded outcome would report an unreachable API or a typo'd mode as "nothing to do" — the
-  exact silent-failure shape INFRA-044, INFRA-030 and ML-022 all exist to prevent. Report it with
-  its own wording (`REFUSED — nothing was run`) so it is distinguishable from `FAILED`, but keep the
-  process exit non-zero.
+- **`EXIT_REFUSED` must remain a non-zero result in `run_locally.sh`.** A decline is not proof the
+  month is complete — the existing-row guard fires on a single row, so it can decline a partially
+  populated month. Report it with its own status (`FAIL (REFUSED)`) so it is distinguishable from a
+  plain `FAIL`, but keep the process exit non-zero.
 - **This issue does NOT depend on INFRA-044.** An earlier revision claimed it did, on the assumption
   that REFUSED was benign. It is not, so the target can ship against today's binary PASS/FAIL.
-- Splitting benign refusal from infrastructure failure would need a change inside `lt_recovery.py`
-  (it already has a distinct `RecoveryRefused` class to key on), which **C5 forbids**. That split is
-  worth its own issue, and is the *prerequisite* for ever mapping a refusal to `DEGRADED`. File it;
-  do not smuggle it in here.
+- Splitting the guard's decline from an infrastructure failure required a change inside
+  `lt_recovery.py` (it already had a distinct `RecoveryRefused` class to key on), which **C5 forbids**
+  here. That split was filed as its own issue and has since shipped as **LTF-011**
+  (PR #493, `4f171a50`).
 
 | Recovery exit | `run_locally.sh` row | Process exit |
 |---|---|---|
 | 0 — recovered, and the read-back found at least one row | `PASS` | 0 |
-| 2 — REFUSED: guard declined **or** stage 1 errored | `FAIL`, labelled `REFUSED — nothing was run` | non-zero |
-
-*(Rendered as PASS / REFUSED-FAIL / FAIL — there is no `DEGRADED` outcome here until **LTF-011**
-splits the two causes of exit 2.)*
-| 1 — the forecast ran and failed | `FAIL` | non-zero |
+| 2 — REFUSED: guard declined (post-LTF-011: a genuine decline only — no longer "or stage 1 errored") | `FAIL (REFUSED)` — no database rows written by this run (side effects still possible before the decline; see C4) | non-zero |
+| 1 — could not be attempted (stage 1: misconfiguration, query/API error, unexpected exception — never ran), **or** ran and failed (stage 2/3: forecast or read-back failure — rows may be absent, partial or written) | `FAIL` | non-zero |
 | anything else (parser error, signal) | `FAIL` | non-zero |
 
+*(Rendered as PASS / FAIL (REFUSED) / FAIL — **LTF-011** (PR #493) has since split the two former
+causes of exit 2, and there is still no `DEGRADED` outcome here.)*
+
 **Exit 0 is a partial-success criterion, not proof of complete coverage.** The read-back accepts the
-run once at least one finite row carries `forecast_run_flag=1` (`lt_recovery.py:641`, `:673`); it
+run once at least one finite row carries `forecast_run_flag=1` (`lt_recovery.py:736`, `:752`); it
 does not verify every station × model. Do not describe a `PASS` row as "the month is fully
 recovered".
 
@@ -148,7 +178,7 @@ run_forecast.py --today <ISO date> --recover
 with the forecast mode supplied through the module's existing `lt_forecast_mode` environment
 variable — that is how `run_forecast.py` already selects a mode (`:447`,
 `os.getenv("lt_forecast_mode")`), and how `run_locally.sh` already passes it for the simulate and
-operational targets (`:786`, `:796`, `:850`). Do **not** invent a second mode variable.
+operational targets (`:851`, `:861`, `:915`). Do **not** invent a second mode variable.
 
 It does **not** go through Luigi or Docker. Everything `run_locally.sh` runs is a direct venv
 invocation; the Luigi task's `max_retries = 1` and its per-(mode,date) marker are orchestration
@@ -156,34 +186,37 @@ concerns with no local equivalent.
 
 **"Local" does not mean "self-contained".** The target still runs against whatever the supplied env
 file points at. Document these prerequisites at the target, because a rehearsal that silently lacks
-one of them will surface as a confusing `REFUSED`:
+one of them will surface as a confusing `FAIL`, not a `REFUSED` — exit 1 means "could not be
+attempted" for most of these, but the database and historical inputs below are consumed in stage 2,
+after the guard passes, where exit 1 instead means the forecast ran and rows may be absent, partial
+or complete:
 
 - the env file plus its configuration / model / static / intermediate paths;
 - `SAPPHIRE_API_ENABLED=true` and a host-reachable postprocessing API at `SAPPHIRE_API_URL`
-  (`lt_recovery.py:333`);
+  (`lt_recovery.py:406`);
 - a host-reachable preprocessing database and its credentials (`data_interface.py:35`);
 - historical inputs already present for the requested issue date;
 - `IN_DOCKER` **explicitly false** — the target must pass `IN_DOCKER=False` to the child rather than
-  rely on it being unset, because `run_in_venv` inherits the ambient environment (`run_locally.sh:623`)
+  rely on it being unset, because `run_in_venv` inherits the ambient environment (`run_locally.sh:613`)
   and the database host is chosen from that variable (`data_interface.py:65`); credentials and host
   selection are at `data_interface.py:48`.
 
 **Clock caveat.** Eligibility uses the process-local clock, deliberately matching
-`lt_utils.check_valid_forecast_issue_date` (`lt_recovery.py:35`, `:123`). A rehearsal in a local
+`lt_utils.check_valid_forecast_issue_date` (`lt_recovery.py:47`, `:179`). A rehearsal in a local
 timezone and a container running UTC can briefly disagree about which issue dates are permitted near
 a month boundary. Note it in the usage text; do not claim the local run is behaviourally identical
 to the deployment.
 
 **C2 — both parameters are required, and a missing one is a loud refusal.** The date comes from a
 new, **mandatory** `LT_RECOVERY_DATE` variable. It is stylistically like
-`RUNOFF_LONG_HORIZON_TARGET_YEAR` (`run_locally.sh:894`) but semantically the opposite: that one is
+`RUNOFF_LONG_HORIZON_TARGET_YEAR` (`run_locally.sh:959`) but semantically the opposite: that one is
 *optional* and omitting it deliberately preserves the underlying script's default. There is no
 sensible default issue date for a recovery, so omission is an error, not a fallback.
 If either `lt_forecast_mode` or `LT_RECOVERY_DATE` is unset or empty, the target must print what is
 missing and exit non-zero **without running anything**.
 
 It must not fall back to a default date, must not infer the mode, and must not run "all modes".
-The CLI itself rejects a recovery without `--today` (via `parser.error` at `:588` when `--recover`
+The CLI itself rejects a recovery without `--today` (via `parser.error` at `:592` when `--recover`
 is combined with a selection flag, and via the required mutually-exclusive group otherwise) — but
 the shell target must fail *before* spawning the process, so the operator gets a message about
 `run_locally.sh`'s own interface rather than an argparse error about flags they never typed.
@@ -195,11 +228,16 @@ the shell target must fail *before* spawning the process, so the operator gets a
 
 **C3 — it must NOT be part of any aggregate target.** A dated recovery is a deliberate,
 argument-bearing, one-month action. Wiring it into a run-everything target would either abort that
-run via C2 or, worse, run it with stale parameters. Aggregates here are hard-coded lists
-(`run_locally.sh:1400`, `:1485`), so this is achieved by *not* adding the name to them — but the
-test must cover **every** aggregate, not just the obvious three: `maintenance`, `daily`, `all`,
-`long-term`, `long-term-operational` and `yearly`. Add the new name through explicit valid-target
-and dispatch handling only, and state this in `print_usage`.
+run via C2 or, worse, run it with stale parameters. Aggregate execution is not table-driven: `run_all`
+(`run_locally.sh:1676`) and `run_maintenance_pipeline` (`:1696`) call their constituent module
+functions explicitly, so exclusion is achieved by *not* adding a call to the new target from either
+function's body, not by omitting it from a list. (`ALL_MODULES`/`MAINTENANCE_MODULES`, `:175`/`:200`,
+are consumed only for validation — `modules_to_check` at `:2025`/`:2027` and the valid-target check
+at `:2472`/`:2475` — so keeping the new target's name out of those two arrays is a second, separate
+precaution, not the execution-exclusion mechanism.) But the test must cover **every** aggregate, not
+just the obvious three: `maintenance`, `daily`, `all`, `long-term`, `long-term-operational` and
+`yearly`. Add the new name through explicit valid-target and dispatch handling only, and state this
+in `print_usage`.
 
 **C4 — the run's side effects must be documented at the target, precisely.** They are conditional,
 and some of them happen *before* a refusal:
@@ -229,7 +267,8 @@ itself, that is a new issue, not a widening of this one.
 - `doc/dev/testing_workflow.md` and/or `apps/run_locally.sh`'s own usage block, for C4
 - `doc/plans/module_issues.md` — register the LTF-010 row. The number is free on this branch (which
   has LTF-001..007) and avoids LTF-008/009, claimed on the unmerged `docs_fd024_fd025_doc008`
-  branch; it is not reserved until that row is committed.
+  branch; it is not reserved until that row is committed. **(Done — registered; noted here
+  2026-09-11: the row is committed and reads `Review`.)**
 
 **Do not** change any file listed in C5.
 
@@ -238,22 +277,28 @@ itself, that is a new issue, not a widening of this one.
 Follow the existing pattern: fake `.venv/bin/<exe>` stubs that record their argv and exit with a
 chosen code.
 
-**The harness moved, and the prerequisite is now half-done — read this before grepping.** PR #491
-extracted the stub out of `test_run_locally_orchestration.py` into
-**`apps/pipeline/tests/conftest.py`**. In that file `lt_forecast_mode` now appears in
-`_ISOLATE_ENV_VARS` (`:256`), so it is **cleared** before every subprocess — good, and not something
-to redo.
+**As of 2026-09-04, the harness had moved and the prerequisite was half-done — this has since been
+completed (see the Implemented note below).** PR #491 extracted the stub out of
+`test_run_locally_orchestration.py` into **`apps/pipeline/tests/conftest.py`**. In that file
+`lt_forecast_mode` appears in `_ISOLATE_ENV_VARS` (`:255`), so it is **cleared** before every
+subprocess.
 
-But the stub template (`:269`) still logs only `SAPPHIRE_PREDICTION_MODE`:
+As of 2026-09-04, the stub template (cited then as `:269`) still logged only
+`SAPPHIRE_PREDICTION_MODE`:
 
 ```
 printf 'CALL module=@MODULE@ script=%s args=%s mode=%s\n' \
     "$script" "$*" "${SAPPHIRE_PREDICTION_MODE:-}" >> "@CALL_LOG@"
 ```
 
-So the variable **is isolated but is not recorded**, and test 6 still cannot be written as-is.
-Extend the template to log `lt_forecast_mode` too. A `grep lt_forecast_mode conftest.py` returns a
-hit and looks like the work is already done — it is not.
+So the variable was isolated but not recorded, and test 6 could not be written as-is. **Implemented**
+(shipped with LTF-010, PR #495, `f3267d4a`): the template now also logs `lt_forecast_mode`
+(`conftest.py:287-288`):
+
+```
+printf 'CALL module=@MODULE@ script=%s args=%s lt_forecast_mode=%s mode=%s\n' \
+    "$script" "$*" "${lt_forecast_mode:-}" "${SAPPHIRE_PREDICTION_MODE:-}" >> "@CALL_LOG@"
+```
 
 *(Corrected 2026-09-07. The original text cited `test_run_locally_orchestration.py:121`, which no
 longer exists.)*
@@ -261,10 +306,12 @@ longer exists.)*
 1. **Happy path**: `lt_forecast_mode=month_0 LT_RECOVERY_DATE=2026-08-01`, stub exits 0 → the stub
    was invoked with `run_forecast.py --today 2026-08-01 --recover`, the summary row is `PASS`,
    process exit 0.
-2. **REFUSED**: stub exits 2 → the row is a failure labelled `REFUSED — nothing was run`, and the
-   process exits **non-zero**. This is the test that pins the "exit 2 is not benign" decision; it
-   must fail if someone later maps REFUSED to a passing or DEGRADED result without first splitting
-   the refusal classes inside `lt_recovery.py`.
+2. **REFUSED**: stub exits 2 → the row is a failure labelled `FAIL (REFUSED)`, and the process exits
+   **non-zero**. This is the test that pins the "exit 2 is not benign" decision; it must fail if
+   someone later maps REFUSED to a passing or `DEGRADED` result. The refusal classes were split
+   inside `lt_recovery.py` by **LTF-011** (PR #493, `4f171a50`) — that split is done, and its
+   completion does not license remapping REFUSED to anything but `FAIL (REFUSED)`: a decline is
+   still not proof the month is complete.
 3. **Failed**: stub exits 1 → `FAIL`, process exit 1.
 4. **Missing mode** and **missing date**, separately: the target exits non-zero, names the missing
    variable, and **the stub is never invoked** (assert zero recorded invocations — that is the
@@ -273,25 +320,25 @@ longer exists.)*
    `long-term-operational` and `yearly` never invokes the recovery stub, whatever
    `lt_forecast_mode` / `LT_RECOVERY_DATE` are set to.
 5b. **`--dry-run` with missing parameters** still fails, i.e. the check sits ahead of the dry-run
-   early return (`run_locally.sh:2166`).
+   early return (`run_locally.sh:2511`).
 6. **Mode is passed through, not defaulted**: `lt_forecast_mode=quarter` reaches the child process
    as `quarter`.
 7. **Skipped organisations (C2)**: with the organisation set to `demo`, and again `uzhm`, and both
    parameters supplied — the target prints that long-term recovery is not available for this
    deployment, names the organisation, exits **non-zero**, and **the recovery stub is never
    invoked**. `long_term_forecasting` is in both skip lists (`run_locally.sh:211`) via
-   `should_skip_module` (`:482`).
+   `should_skip_module` (`:496`).
 8. **Docker hostname cannot leak in (C1)**: with `IN_DOCKER=True` exported ambiently, the child is
    still invoked with `IN_DOCKER=False`, so `data_interface.py:65` selects the host-side database
-   name. `run_in_venv` inherits the ambient environment (`run_locally.sh:623`), so this must be set
+   name. `run_in_venv` inherits the ambient environment (`run_locally.sh:613`), so this must be set
    explicitly, not assumed.
 
 ## Acceptance criteria
 
 - [ ] `EXIT_REFUSED` is reported distinctly **and** keeps the process exit non-zero; test 2 passes.
 - [ ] `bash apps/run_locally.sh maintenance:long_term_forecasting` with both variables set performs
-      a real recovery against a local deployment and reports the correct one of PASS / DEGRADED /
-      FAIL for each of the three exit codes.
+      a real recovery against a local deployment and reports the correct one of PASS / FAIL (REFUSED)
+      / FAIL for each of the three exit codes. `DEGRADED` was never built and must not appear here.
 - [ ] With either variable unset it exits non-zero, names the variable, and runs nothing.
 - [ ] On `demo` and `uzhm` it says long-term recovery is not available for this deployment and exits
       non-zero, without invoking the recovery.
@@ -338,7 +385,8 @@ not later found to have been claimed by the wrong one of the two.
   a bare `except Exception` (`lt_recovery.py:625-627`), so exit 2 also covers config errors, invalid
   modes, an unavailable API and query failures. Mapping it to `DEGRADED`/exit 0 would have reported
   an outage as "nothing to do". REFUSED now stays non-zero, and the **INFRA-044 dependency is gone**
-  — the target ships independently.
+  — the target ships independently. **(Superseded 2026-09-07 when LTF-011, PR #493 `4f171a50`, split
+  this handler — exit 2 no longer covers those cases; noted here 2026-09-11.)**
 - The framing "can only be rehearsed on a deployment" was **false**:
   `run_forecast.py --today <ISO> --recover` is directly runnable in the module venv. The defect is
   the absence of a standardised, documented, tested target — not the impossibility of local
@@ -373,6 +421,10 @@ not later found to have been claimed by the wrong one of the two.
   LTF-011 lands.
 - Citations: dry-run return `:2166`; recovery marker block ends `:2097`; database host/credentials
   `data_interface.py:48`; `general_config.json` write `config_forecast.py:168`.
+
+**Note (2026-09-11):** the exit-taxonomy finding recorded above and in "The exit taxonomy" section
+was subsequently superseded by LTF-011 (PR #493, `4f171a50`) — see the banner at the top of that
+section.
 
 ## Out of scope
 
