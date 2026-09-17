@@ -28,7 +28,8 @@ Its accepted fix, per its own acceptance criteria, was:
 - `prepare_long_forecast_records()` does not append all-`None`-Q records
 - `MC_ALD`'s dependency check correctly reads `flag=2` output as failure
 
-**What shipped, verified at `89a6ffc7`:** the flag half. `apply_success_flag`
+**What shipped, verified at `89a6ffc7` and still accurate at the branch's current base `4fe3e545`
+(the cited source is unchanged between the two commits):** the flag half. `apply_success_flag`
 (`apps/long_term_forecasting/lt_recovery.py:547-570`) stamps every row whose main Q value is NaN
 with `MISSING_VALUE_FLAG = 2` (`lt_recovery.py:101`) and every row with a value with
 `OPERATIONAL_FLAG = 0` (`lt_recovery.py:99-102`), or `recovery_flag` when a recovery run supplies
@@ -174,11 +175,35 @@ to distinguish them:
       skipped (`execution_is_success[dependent] = False`, "Skipping model ... due to failed
       dependencies" logged) when its upstream dependency produced an all-NaN or empty output. Cover
       both:
-      - the full `forecast_all` run (`ignore_initial_dependencies = False`), and
-      - an explicitly-selected-model run (`forecast_all=False`, `models_to_run` given), where
-        `ignore_initial_dependencies = True` is set and dependencies are re-checked inside
-        `run_single_model` itself — confirm the fixed `success` value still propagates correctly
-        in that mode, since it takes a different path to the same `execution_is_success` dict.
+      - the full `forecast_all` run (`ignore_initial_dependencies = False`), where the
+        `deps_success` gate in `run_forecast` is real and already correctly skips a dependent
+        whose upstream failed.
+      - **the explicitly-selected-model path is NOT covered by this fix, and this issue must say
+        so rather than claim it verifies dependency propagation there.** `run_forecast` sets
+        `ignore_initial_dependencies = True` for this path with the comment "we check dependencies
+        again in the run_single_model function" (`run_forecast.py:486`) — **that comment is
+        wrong**. The dependency loop it refers to (`run_single_model`, `for dep in
+        model_dependencies.get(model_name, [])`, `run_forecast.py:248-259`) only calls
+        `os.path.exists()` on each dependency's forecast/hindcast CSV path; on a missing file it
+        calls `logger.error(...)` and then **appends the path anyway** — it never sets
+        `can_be_run = False`, never returns early, and never reads `execution_is_success` or the
+        upstream `success`/flag value. So on this path a dependent model runs regardless of
+        whether its upstream dependency actually succeeded; only a missing *file* is logged, not a
+        failed *dependency*. Fixing the post-prediction `success` value (this issue's scope) does
+        not close this path, because nothing on this path reads that value. A genuine
+        dependency-success check on the explicit-selection path — e.g. having `run_single_model`
+        consult `execution_is_success` for each dependency the way `run_forecast`'s own loop does
+        — is **larger than this issue's stated scope**; this issue explicitly does not require it.
+        Either implement it as a separate, scoped follow-up or record it here as out of scope —
+        do not fold it into this issue's acceptance.
+      - **Secondary observation, same code path:** because the check is existence-only, a
+        **stale** `<model>_forecast.csv`/`<model>_hindcast.csv` left over from an earlier
+        (possibly failed) run satisfies it just as well as a fresh one. A dependent model on the
+        explicit-selection path can silently consume stale upstream data with nothing more than a
+        `logger.error` line to show for it — no exception, no skip, no non-`SUCCESS` status.
+      - The misleading source comment at `run_forecast.py:486` should be corrected (to state what
+        the loop actually does — a file-existence check, not a dependency-success check) as part
+        of whatever fix addresses this.
       Also cover the **partial-output** case: some stations get a value, others NaN, for the same
       model — confirm this still reports `success = True` (partial output remains success, per
       LTF-003's own accepted decision that partial-NaN is not a failure) and is not accidentally

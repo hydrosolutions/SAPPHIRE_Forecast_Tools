@@ -24,7 +24,7 @@ Python process, before the function ever reaches the quarterly block (starts `:2
 block (starts `:390`). In a single invocation where the monthly tier hits any one of the six, the
 quarterly and seasonal gap-fill code is never reached — not skipped-and-logged, simply not executed.
 
-## The six monthly-tier early exits (verified at `89a6ffc7`)
+## The six monthly-tier early exits (verified at `89a6ffc7`, still accurate at the branch's current base `4fe3e545` — the cited source file is unchanged between the two commits)
 
 All six exit via `sys.exit(0)` after only writing a timing summary (`_print_timing()`), and all six
 occur strictly before the quarterly block begins at `:291`:
@@ -66,11 +66,20 @@ collected errors, exit 0.
   as "Bimonthly long-term postprocessing (1st of odd months)" (`:9`).
 - `doc/deployment.md` cron entry (6) (`:1001`):
   `0 22 1 1,3,5,7,9,11 * cd ... && bash bin/run_periodic_maintenance.sh long_term ...` — 22:00 on the
-  1st of every odd month.
+  1st of every odd month. This is the **scheduled production path**.
 
-No other tracked `bin/` script or cron entry invokes `postprocessing_maintenance_long_term.py`; this
-is the sole production path. Confirmed reachable defect: a run on this path whose monthly tier hits
-any of the six conditions above completes that run without executing quarterly or seasonal gap-fill.
+**A second invocation path exists.** `bin/bimonthly_long_term_postprocessing.sh` also runs
+`postprocessing_maintenance_long_term.py` directly: its `run_container` call for the maintenance
+branch (`MODE` defaults to `both`, which includes maintenance) launches the same script in a
+`postprc-lt-maintenance` container. `bin/README.md` marks this script `[Legacy]` — "superseded by
+... `run_periodic_maintenance.sh` for automated cron scheduling" but "still functional for manual
+invocation and debugging" — and it is not wired into any tracked cron entry (see the cross-referenced
+`doc/plans/observations.md` note on this wrapper's own exit-status and container-naming issues). It
+does not weaken this defect: it only broadens reachability beyond the single scheduled path, since a
+manual run through either script hits the identical six early exits in the same underlying function.
+
+Confirmed reachable defect: a run on either path whose monthly tier hits any of the six conditions
+above completes that run without executing quarterly or seasonal gap-fill.
 
 ## What this issue does not claim
 

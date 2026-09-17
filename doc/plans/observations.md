@@ -888,23 +888,23 @@ During ML module data flow audit, found that `_write_ml_daily_forecast_to_api()`
 
 ## 2026-09-17
 
-### bin/bimonthly_long_term_postprocessing.sh: exit-status discard and fixed-name container removal — a known, deliberately unfixed gap, now a documented manual step
+### bin/bimonthly_long_term_postprocessing.sh: exit-status discard and fixed-name container removal — a known, deliberately unfixed gap; nothing currently depends on it
 
-**Source**: LT recovery runbook review (`plan_issue_filing_rev4.md`, P7); verified against `bin/bimonthly_long_term_postprocessing.sh` at commit `89a6ffc7`
+**Source**: LT recovery runbook review (`plan_issue_filing_rev4.md`, P7); verified against `bin/bimonthly_long_term_postprocessing.sh` at commit `89a6ffc7`, still accurate at the branch's current base `4fe3e545` (the script is unchanged between the two commits)
 **Date**: 2026-09-17
 
 `run_container()` (lines 102–148) computes the launched container's real exit code via `docker inspect --format='{{.State.ExitCode}}'` (line 135) and `return`s it (line 147), but neither call site (lines 151–155, 158–162) captures that return value, so the container's exit status never reaches the script's own exit code — the script proceeds to log cleanup and exits 0 regardless. The same function also force-removes the container under a fixed name both before (line 116) and after (line 145) each run, with no per-run uniqueness (PID, timestamp) and no lock, so a second concurrent invocation of the same mode will `docker rm -f` a still-running sibling instead of queuing behind it.
 
 **This is not a new finding and is not being filed.** INFRA-023's archived survey (`doc/plans/issues/archive/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`, "Survey result 3") already examined this wrapper and deliberately cut it from scope: it records that the wrapper "is superseded by `run_periodic_maintenance.sh long_term`", that kghm's own crontab comment calls it "kept on origin for manual / debugging use only", and that "fixing a wrapper nobody schedules is not worth a production diff." That decision stands; this note does not reopen it.
 
-**What is new**: `doc/prod/long_term_recovery_runbook.md` (committed on the unpushed branch `docs_lt_recovery_runbook` at `2e552e28` — not present in this branch's base) now prescribes running this wrapper by hand as the operator's postprocessing follow-up after a long-term recovery. That runbook already tells the operator the wrapper's exit `0` proves nothing about postprocessing success and requires a database row/coverage check instead, plus a concurrency preflight (`docker ps --filter name=postprc-lt-maintenance`) before running it by hand.
+**Update — this is no longer prescribed anywhere.** An earlier version of this note recorded that `doc/prod/long_term_recovery_runbook.md` (pending on the unpushed branch `docs_lt_recovery_runbook`, not present in this branch's base) prescribed running this wrapper by hand as the operator's postprocessing follow-up after a long-term recovery. That has changed: the runbook's postprocessing follow-up now uses `bin/run_periodic_maintenance.sh long_term <env_file>` instead — the same path cron entry (6) uses, which propagates the container's real exit status and does not `docker rm -f` a fixed container name. Nothing now depends on this wrapper.
 
-**Assessment**: Not a defect to file. Recorded so the next reader who rediscovers the discarded exit status or the fixed-name `docker rm -f` does not re-file it as a missed production fix — INFRA-023 already considered it, the "manual / debugging use only" status has not changed, and the runbook's manual-path guidance already compensates for both behaviours.
-**Status**: Not filed — INFRA-023's scoping decision stands. Cross-referenced here because the wrapper is now a documented manual step rather than an undocumented one.
+**Assessment**: Not a defect to file. Recorded so the next reader who rediscovers the discarded exit status or the fixed-name `docker rm -f` does not re-file it as a missed production fix — INFRA-023's "manual / debugging use only" scoping decision still stands, and separately, nothing in the current runbook draft exercises this wrapper's behaviour anymore.
+**Status**: Not filed — INFRA-023's scoping decision stands. Cross-referenced here purely so the wrapper's known exit-status/container-naming gaps aren't rediscovered and re-filed as new.
 
 ### apps/pipeline/pipeline_docker.py: three minor logging/cleanup observations, folded rather than filed
 
-**Source**: LT recovery runbook review (`plan_issue_filing_rev4.md`, P7); verified against `apps/pipeline/pipeline_docker.py` at commit `89a6ffc7`
+**Source**: LT recovery runbook review (`plan_issue_filing_rev4.md`, P7); verified against `apps/pipeline/pipeline_docker.py` at commit `89a6ffc7`, still accurate at the branch's current base `4fe3e545` (the file is unchanged between the two commits)
 **Date**: 2026-09-17
 
 Three small logging/cleanup gaps noticed while tracing long-term recovery failure paths. None rises to an issue on its own.

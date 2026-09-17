@@ -98,11 +98,27 @@ FAIL to SKIP on a day that is *not* a forecast day for the horizon, because
 a one-off run capture, since the observable result depends on the calendar; no dated
 observation is asserted here for that reason.
 
-**`check_expected_models` inherits the same defect.** It builds its "found" set only from Tier 1
-results whose name starts with `"Forecasts ("` (`apps/validate_pipeline/validate_pipeline.py`),
-never from the separate `"LR details"` result, so on a forecast day with LR genuinely present in
-`lr_forecasts`, `check_expected_models`'s `"All models present (<horizon>)"` result still lists
-LR under `missing` and returns FAIL.
+**`check_expected_models` inherits the same defect through two independent barriers, not one — a
+fix must clear both.**
+
+1. **The call site filters the result out before the function is ever invoked.**
+   `run_tier1_short_term` builds `forecast_results = [r for r in tier1_results if
+   r.name.startswith("Forecasts (")]` and passes only `forecast_results` into
+   `check_expected_models(forecast_results, horizon)` (`apps/validate_pipeline/validate_pipeline.py`).
+   The separate `"LR details (<horizon>)"` result does not start with `"Forecasts ("`, so it never
+   reaches `check_expected_models` at all, regardless of what the function does internally.
+2. **Inside the function, the found-set is populated only from a `model_type` or `model_short`
+   column** (`if "model_type" in r.data.columns: ... elif "model_short" in r.data.columns: ...`).
+   Even if the "LR details" result were passed in, it carries neither column: the LR forecast
+   schema (`sapphire/services/postprocessing/app/models.py`'s `LRForecast` /
+   `schemas.py`'s `LRForecastBase`) has no `model_type` or `model_short` field at all — its columns
+   are `horizon_type`, `code`, `date`, `horizon_value`, `horizon_in_year`, the regression
+   parameters, and the statistical measures. So a fix that only changes the call site (barrier 1)
+   would still be skipped by barrier 2.
+
+So on a forecast day with LR genuinely present in `lr_forecasts`, `check_expected_models`'s "All
+models present (`<horizon>`)" result still lists LR under `missing` and returns FAIL, for two
+independent reasons that must both be addressed.
 
 ## Root cause, stated once
 
@@ -129,13 +145,18 @@ Each check encodes an expectation that was never reconciled with the product's o
    ensemble-eligibility conditions are met (non-null forecasts, NE excluded, ≥2 distinct
    qualifying models in the same period/date/station group)"* — which requires reading those
    conditions, not comparing totals.
-4. **Fix LR presence at its real store — not with a one-line endpoint swap.** Both the
-   "Forecasts (LR, ...)" check and `check_expected_models` must read LR from `lr_forecasts` (via
-   `read_lr_forecasts`), not from `/forecast/`. `read_lr_forecasts` takes different query
-   arguments than `read_short_term_forecasts` (no `model` parameter — it already returns
-   LR-only rows) and its result needs deliberate normalisation before it can feed into
-   `check_expected_models`'s `found_models` set alongside the other four models' `/forecast/`
-   output.
+4. **Fix LR presence at its real store — not with a one-line endpoint swap, and clear both
+   barriers that keep `check_expected_models` blind to it.** The "Forecasts (LR, ...)" check
+   must read LR from `lr_forecasts` (via `read_lr_forecasts`), not from `/forecast/`. For
+   `check_expected_models`, two independent changes are both required: (a) the call site's filter
+   (`r.name.startswith("Forecasts (")`) must also admit the "LR details" result — or the LR
+   result must be renamed/merged so it passes the existing filter — so it reaches the function at
+   all; and (b) inside the function, LR's contribution to `found_models` cannot come from a
+   `model_type`/`model_short` column, since the LR schema has neither — it must be derived
+   separately (e.g. treat a non-empty "LR details" result as `found_models.add("LR")`) and merged
+   with the other four models' `/forecast/`-derived set. `read_lr_forecasts` also takes different
+   query arguments than `read_short_term_forecasts` (no `model` parameter — it already returns
+   LR-only rows).
 
 ## Acceptance criteria
 
@@ -148,6 +169,10 @@ Each check encodes an expectation that was never reconciled with the product's o
 - **LR presence, on a forecast day, with LR rows present only in `lr_forecasts`:** the
   "Forecasts (LR, `<horizon>`)" check (or its replacement) PASSes, and `check_expected_models`'s
   `"All models present (<horizon>)"` result includes LR in `found_models` rather than `missing`.
+  Both barriers must be cleared for this to hold: (1) the "LR details" result (or its replacement)
+  must actually reach `check_expected_models` — a test on the call-site filter alone, with the
+  function's internals unchanged, is not sufficient; and (2) `found_models` must gain "LR" without
+  relying on a `model_type`/`model_short` column, since the LR schema has neither.
 - **The same checks still report LR missing when LR is genuinely absent** — a fixture with an
   empty `lr_forecasts` table for the issue date, on a forecast day, must still FAIL. A repair
   that makes the LR branch pass unconditionally is not acceptable.

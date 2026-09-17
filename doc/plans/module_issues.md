@@ -230,7 +230,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 |----|-------|----------|--------|------|------------|
 | ~~**LTF-001**~~ | ~~`--today` flag in `run_forecast.py` runs zero models~~ | | Complete | [`archive/review_gi_draft_lt_today_flag_runs_no_models.md`](issues/archive/review_gi_draft_lt_today_flag_runs_no_models.md) | — |
 | ~~**LTF-002**~~ | ~~SQL org-scoping for long-term forecasting queries~~ | | Complete | [`archive/review_gi_draft_ltf_sql_org_scoping.md`](issues/archive/review_gi_draft_ltf_sql_org_scoping.md) | — |
-| ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
+| ~~**LTF-003**~~ | ~~run_forecast.py sets flag=0 on null forecasts — marks failures as valid~~ (Fixed by @sandrohuni: NaN-aware flag=2; dependency propagation still incomplete, see LTF-012) | | Complete | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) | — |
 | ~~**LTF-004**~~ | ~~Seasonal/quarterly hindcasts have `q=None` for LR models — blocks skill computation~~ | | Complete | [`archive/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md`](issues/archive/high_prio_gi_draft_ltf_seasonal_quarterly_q_null.md) | Resolved 2026-05-29: `q` is now populated; `q50` null is harmless via `q`-first fallback at `skill_metrics.py:1090` |
 | **LTF-005** | Add climatological quantile bounds (Q25/Q75) for GBT forecasts | **Medium** | Review | [`review_gi_draft_lt_gbt_quantile_bounds.md`](issues/review_gi_draft_lt_gbt_quantile_bounds.md) | — |
 | **LTF-006** | `GBT_Base` has no `ModelType` enum value → long-term forecast writes 422 (operational + from-file backfill) | **High** | Cannot Reproduce / Pending Server Confirmation | [`high_prio_gi_draft_ltf_gbt_base_modeltype_gap.md`](issues/high_prio_gi_draft_ltf_gbt_base_modeltype_gap.md) | 2026-07-14: `GBT_Base` not found in either local deployment data repo's operational config (`long_term_configs/month_*.json` etc. use `GBT`, not `GBT_Base`); only appears in a stale/example `apps/long_term_forecasting/config_monthly.json` template + readme.md usage examples, not the config path the app actually loads from. Recommend closing unless confirmed on a deployed server (local repos only were checked). Originally found 2026-06-13 during ML from-file backfill WS-B planning. |
@@ -432,7 +432,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Resolved | File |
 |----|-------|----------|------|
-| LTF-003 | run_forecast.py sets flag=0 on null forecasts — Fixed by @sandrohuni: NaN-aware flag=2 + dependency propagation; Fix 2 (skeleton record guard) not implemented but non-critical | 2026-03-27 | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) |
+| LTF-003 | run_forecast.py sets flag=0 on null forecasts — Fixed by @sandrohuni: NaN-aware flag=2; dependency propagation still incomplete (see LTF-012); Fix 2 (skeleton record guard) not implemented but non-critical | 2026-03-27 | [`archive/high_prio_gi_draft_ltf_flag_zero_on_null.md`](issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md) |
 
 ### API (`api`)
 
