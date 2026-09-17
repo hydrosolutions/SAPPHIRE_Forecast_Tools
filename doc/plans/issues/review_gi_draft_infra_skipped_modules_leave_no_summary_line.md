@@ -136,8 +136,9 @@ command.
 **Also note INFRA-044's decision**, so nobody plans around a state that does not exist: the
 `DEGRADED` status that issue originally proposed was **not built** (owner decision, 2026-09-04) —
 with exit 4 recording no row at all, it would have shipped with no producer. If a degraded state is
-ever wanted, this issue's three-way renderer is the natural place to add it, and LTF-011's split
-recovery outcomes are the most likely first consumer.
+ever wanted, this issue's three-way renderer is the natural place to add it. **LTF-011** has since
+shipped (PR #493, `4f171a50`) without becoming that consumer — its split refusal remained
+`FAIL (REFUSED)`, not `DEGRADED`.
 
 ## Implementation sketch
 
