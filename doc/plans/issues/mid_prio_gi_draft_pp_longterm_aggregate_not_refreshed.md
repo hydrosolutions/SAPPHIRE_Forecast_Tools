@@ -201,8 +201,8 @@ A fixture must demonstrate all of the following, and only fail if any is violate
   symbol name (`detect_missing_ensembles`, `detect_missing_monthly_ensembles`,
   `detect_missing_quarterly_ensembles`, `detect_missing_seasonal_ensembles`,
   `_normalize_combined_forecasts`) rather than trusting stale line numbers.
-- This file carries its own ID (**PP-063**) in the body. Its `doc/plans/module_issues.md` index
-  row is deferred to a separate follow-up (tracked as INFRA-057) and is not added here.
+- This file carries its own ID (**PP-063**) in the body, and its `doc/plans/module_issues.md`
+  index row is filed alongside it in the same change.
 
 ## References
 
