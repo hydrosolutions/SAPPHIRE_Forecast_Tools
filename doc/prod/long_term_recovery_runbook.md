@@ -3,6 +3,14 @@
 **Audience:** operator on a production server responding to a missed
 long-term (month/quarter/season) forecast run.
 
+**Assumed access and skills.** This procedure requires shell access to the
+production server, `docker exec` into containers, running raw SQL against
+the Postgres database, reading the Luigi scheduler UI, and editing the
+crontab. At a smaller hydromet service there may be no separate IT
+operator — if you are a hydrologist without that access or comfort level,
+hand this to whoever administers the server (or run it together) rather
+than improvising around a step you cannot complete.
+
 **Scope:** recovering member forecast rows and the derived ensembles for
 ONE mode and ONE issue date, within the current or previous calendar
 month. This runbook does not cover code changes, and it does not cover
@@ -139,10 +147,29 @@ The live config is authoritative, not this document. **The config
 directory is not a fixed path** — `ForecastConfig` builds it from two env
 vars: `ieasyhydroforecast_configuration_path` (the base config path) plus
 `ieasyhydroforecast_ml_long_term_configuration` (the long-term config
-subfolder name). Do not assume a particular subfolder name; read both env
-vars from the deployment's env file (or from a running container:
-`docker exec <container> printenv ieasyhydroforecast_configuration_path
-ieasyhydroforecast_ml_long_term_configuration`) and join them yourself:
+subfolder name). Do not assume a particular subfolder name. Read both env
+vars directly from the deployment's env file — the same `<env_file>`
+section 3's command takes:
+
+```bash
+grep -E '^(ieasyhydroforecast_configuration_path|ieasyhydroforecast_ml_long_term_configuration)=' <env_file>
+```
+
+**Do not try `docker exec <container> printenv ...` instead — it is a dead
+end here.** Neither variable is ever set as container-level environment
+anywhere in this stack (checked across every compose file:
+`sapphire/docker-compose.yml`, `bin/docker-compose-luigi.yml`,
+`bin/docker-compose-dashboards.yml`). Both are loaded at Python runtime by
+`load_dotenv()` (`apps/pipeline/src/environment.py`) into that one
+process's own memory — invisible to a fresh `docker exec` shell even in
+the same container. `luigi-daemon`, the only long-lived container in this
+path, runs bare `luigid` with none of these variables set at all; the
+long-term containers themselves are `--rm` and gone by the time you would
+think to inspect them. A `printenv` here returns empty output, which is
+easy to misread as "the config is unset" — it only means you asked a
+process that never had the variable.
+
+Join the two values yourself:
 
 ```bash
 LT_CONFIG_DIR="<value of ieasyhydroforecast_configuration_path>/<value of ieasyhydroforecast_ml_long_term_configuration>"
@@ -423,6 +450,12 @@ a real station is missing. Compare the actual
 codes (`ieasyforecast_config_file_station_selection`), not just its
 length.
 
+To read a code in that list as a named station, do not look in the
+station-selection file above — it holds only a bare list of selected
+codes (`stationsID`), no names. The code → name mapping lives in the file
+named by `ieasyforecast_config_file_all_stations` (`name_ru` field per
+station code).
+
 If, after applying both corrections above, any scheduled member model is
 missing entirely, or its usable coverage is short of the expected station
 set:
@@ -558,18 +591,40 @@ from members separately. A "successful" member recovery (section 6) still
 leaves the operator's own dashboard view empty until the ensembles are
 rebuilt.
 
-**Concurrency preflight — do this before running the command.** The
-wrapper script's container-launch step (`run_container` in
-`bin/bimonthly_long_term_postprocessing.sh`) unconditionally force-removes
-any existing container with the same fixed name
-(`docker rm -f postprc-lt-maintenance`) before starting a new one. If
-another invocation of this same command is already running — another
-operator working the same incident, or the cron-scheduled run landing
-mid-window — starting a second one will kill the first one outright, not
-queue behind it. Before running this command, confirm no
-`postprc-lt-maintenance` container is already running:
-`docker ps --filter name=postprc-lt-maintenance`. If one is running, wait
-for it to finish rather than starting a second.
+**Concurrency preflight — do this before running the command.** Confirm
+no other invocation is already in flight: check
+`docker ps --filter name=sapphire-pipeline-periodic-maintenance` and the
+Luigi UI (`http://localhost:8082`) for a running
+`RunPeriodicMaintenanceWorkflow`/`LongTermPostProcessingMaintenance` task.
+If one is running, wait for it to finish rather than starting a second —
+this path does not queue behind a running instance, it fails outright (see
+why below).
+
+This runbook uses `bin/run_periodic_maintenance.sh long_term <env_file>`
+(the same wrapper section 3 uses for the recovery itself, and the same one
+cron entry (6) runs) — **not** the older
+`bin/bimonthly_long_term_postprocessing.sh maintenance`, which is marked
+`[Legacy]` in `bin/README.md` and should not be used here. Both invoke the
+identical Python file, `postprocessing_maintenance_long_term.py`, but they
+launch it differently, and the difference is exactly the concurrency
+hazard above: the legacy script's `run_container` helper unconditionally
+force-removes any existing container with the same fixed name
+(`docker rm -f postprc-lt-maintenance`) before starting a new one, so a
+concurrent second invocation would silently kill the first one's run. The
+Luigi path removes that specific hazard — every container it launches
+gets a per-attempt, timestamp-suffixed name
+(`run_docker_container` in `apps/pipeline/pipeline_docker.py`), so two
+runs cannot collide on a container name — but it is not lock-free either:
+the outer `docker compose run` invocation for this task uses a **fixed**
+Compose `container_name` (`sapphire-pipeline-periodic-maintenance`, in
+`bin/docker-compose-luigi.yml`) with no pre-emptive removal, so a second
+`bin/run_periodic_maintenance.sh long_term` started while the first is
+still running hits a Docker "name already in use" conflict and fails
+loudly instead — an error, not a silent kill, but still not a queue. (The
+`LongTermPostProcessingMaintenance` Luigi task itself carries no
+`resources` entry, so this specific protection lives in the wrapper's
+compose service, not in Luigi's own scheduling — do not assume it holds
+if this task is ever invoked any other way.)
 
 **Scope caveat: this is not scoped to your mode or date.** Unlike section
 3's recovery command, this follow-up takes no mode or date argument. Each
@@ -585,15 +640,19 @@ ensembles, not your one incident.
 Run the follow-up:
 
 ```bash
-bash bin/bimonthly_long_term_postprocessing.sh <env_file> maintenance
+bash bin/run_periodic_maintenance.sh long_term <env_file>
 ```
 
-This invokes `postprocessing_maintenance_long_term.py`. Before treating
-this as "the recovery is now visible on the dashboard," understand what
-this command actually does:
+This invokes `postprocessing_maintenance_long_term.py` — the same Python
+file the legacy `bimonthly_long_term_postprocessing.sh maintenance`
+command runs, so the behavior described below is identical regardless of
+wrapper. Before treating this as "the recovery is now visible on the
+dashboard," understand what this command actually does:
 
 > **Headline caveat: a clean monthly tier silently aborts the entire
-> run, including quarterly and seasonal.** The script processes the
+> run, including quarterly and seasonal.** This is a property of
+> `postprocessing_maintenance_long_term.py` itself, not of which wrapper
+> launched it — switching wrappers does not change it. The script processes the
 > monthly tier first. If the monthly gap scan finds nothing to fill (no
 > gap, or several other empty-input cases — no monthly combined data, no
 > monthly skill metrics, no monthly forecast data for the gap years, or
@@ -632,12 +691,16 @@ Other things to know before relying on this command:
   process environment before the deployment environment file is loaded,
   and the wrapper script does not forward it into the container. Setting
   it in `<env_file>` has no effect here.
-- **This wrapper's exit `0` proves nothing about postprocessing
-  success.** The container's own exit status is discarded by the
-  wrapper; the wrapper's final exit code comes from an unrelated cleanup
-  step further down the script, so it reads `0` regardless of what
-  happened inside the container. Verify by querying rows (below), never
-  by the wrapper's exit status.
+- **This wrapper's exit `0` is not proof your tier was rebuilt — for a
+  structural reason, not a swallowed status.** Unlike the legacy script,
+  `bin/run_periodic_maintenance.sh` genuinely propagates the container's
+  own exit status (through Luigi's `[retcode]` mapping — see section 5).
+  But `postprocessing_maintenance_long_term.py` itself exits `0` as soon
+  as the monthly tier comes back clean, *before* the quarterly and
+  seasonal blocks ever run (the headline caveat above). So an honest exit
+  `0` can still mean "the container succeeded at doing nothing for your
+  tier." Verify by querying rows (below) every time — never by the exit
+  status alone, honest or not.
 - **This only fills a missing key — it does not refresh a stale existing
   one.** The gap detectors (`gap_detector.detect_missing_monthly_ensembles`
   and its quarterly/seasonal equivalents) find gaps purely by whether an
