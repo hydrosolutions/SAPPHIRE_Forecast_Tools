@@ -169,10 +169,56 @@ think to inspect them. A `printenv` here returns empty output, which is
 easy to misread as "the config is unset" — it only means you asked a
 process that never had the variable.
 
-Join the two values yourself:
+**Do not join the two raw values and grep that path on the host — it may
+not resolve there at all.** `ForecastConfig._get_paths()`
+(`apps/long_term_forecasting/config_forecast.py`) joins
+`ieasyhydroforecast_configuration_path` and
+`ieasyhydroforecast_ml_long_term_configuration` with `os.path.join` and
+reads the result from *inside the container's own filesystem*. That raw
+value is meaningful only in the container's namespace — it may be a bare
+relative path (resolved against the container's working directory) or a
+container-absolute path — neither of which need exist at that literal
+string on the production repo root you are sitting in. The only thing
+that actually makes a config directory visible on both sides is the bind
+mount `${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config`
+(`bin/docker-compose-luigi.yml`), and those two prefix variables are
+derived from `<env_file>`'s own path by `bin/utils/common_functions.sh`'s
+`read_configuration` — get them from there instead of re-deriving them by
+hand:
 
 ```bash
-LT_CONFIG_DIR="<value of ieasyhydroforecast_configuration_path>/<value of ieasyhydroforecast_ml_long_term_configuration>"
+source bin/utils/common_functions.sh
+read_configuration <env_file>
+echo "Host config root:      $ieasyhydroforecast_data_ref_dir/config"
+echo "Container config root: $ieasyhydroforecast_container_data_ref_dir/config"
+```
+
+If the raw `ieasyhydroforecast_configuration_path` value from the grep
+above starts with `$ieasyhydroforecast_container_data_ref_dir`, translate
+it through the same bind mount by swapping that prefix for
+`$ieasyhydroforecast_data_ref_dir`:
+
+```bash
+RAW_CONFIG_PATH="<value of ieasyhydroforecast_configuration_path>"
+LT_CONFIG_DIR="${ieasyhydroforecast_data_ref_dir}${RAW_CONFIG_PATH#"$ieasyhydroforecast_container_data_ref_dir"}/<value of ieasyhydroforecast_ml_long_term_configuration>"
+```
+
+If it does **not** start with that prefix — a bare relative path, or an
+absolute container path that lies outside the bind mount (baked into the
+image, for example) — there is no host directory that corresponds to it
+at all. Do not guess one.
+
+Either way, **confirm the directory actually exists and holds the mode
+JSON files before trusting it** — the substitution above is arithmetic on
+strings, not proof:
+
+```bash
+ls "$LT_CONFIG_DIR"/*.json || echo "LT_CONFIG_DIR does not resolve on this host -- escalate rather than guessing a path"
+```
+
+Only once that succeeds, read the issue days:
+
+```bash
 grep operational_issue_day "$LT_CONFIG_DIR"/*.json
 ```
 
@@ -640,19 +686,47 @@ what exists:
   itself declares no `resources` entry (unlike `RunLongTermForecast`'s
   `lt_memory`), so Luigi's resource-limiting mechanism, which does protect
   the section-3 recovery, does not apply to this follow-up.
-- **The one thing that does help, and only partially:** neither
-  `RunPeriodicMaintenanceWorkflow(task_type="long_term")` nor the
-  `LongTermPostProcessingMaintenance` task it requires takes any other
-  parameter, so two invocations of this command resolve to the identical
-  Luigi task ID. If — and only if — both invocations reach the **same**
-  central scheduler (the `luigi-daemon` container this wrapper always
-  points at), that scheduler will not hand the same task to a second
-  worker while the first is still running it; the second
-  `docker compose run` process typically waits and then reports success
-  once the first one finishes, without re-running the script itself. This
-  gives no protection at all across a different Luigi scheduler (a
-  different deployment, or a `--local-scheduler` invocation), and none
-  whatsoever against a direct/manual run of
+- **The one thing that does help, and only partially — and it fails
+  non-obviously, not safely:** `RunPeriodicMaintenanceWorkflow` and
+  `LongTermPostProcessingMaintenance` do declare other parameters
+  (`lt_recovery_mode`/`lt_recovery_issue_date` on the workflow task;
+  `timeout_seconds`/`max_retries`/`retry_delay`, inherited from
+  `DockerTaskBase`, on the maintenance task) — they are not parameterless.
+  What actually matters is narrower: every `long_term` invocation of this
+  wrapper leaves all of those at the same defaults, so two such invocations
+  still resolve to the identical Luigi task ID. If — and only if — both
+  invocations reach the **same** central scheduler (the `luigi-daemon`
+  container this wrapper always points at), the scheduler will not hand
+  the same task to a second worker while the first is still running it.
+  **That does not mean the second invocation waits.** `keep_alive` is off
+  throughout this stack (not set in `apps/pipeline/luigi.cfg` or in
+  `bin/run_periodic_maintenance.sh`), and Luigi's own default for
+  `worker-keep-alive` is off too — an idle worker that asks for work and is
+  told its task is already owned by another worker gets nothing back and
+  exits immediately, it does not poll until the owner finishes. This is not
+  a reading of the code — it was reproduced directly: running two workers
+  against one scheduler with an 8-second task, the second worker returned
+  in well under a second (exit code matching `already_running`) while the
+  first was still running, and its own log said outright "Did not run any
+  tasks." Concretely, the losing `docker compose run` process exits almost
+  immediately with a **non-zero** code — `already_running` (6) in the
+  reproduced case, or `not_run` (8) for the scheduler's broader "not
+  granted run permission" outcome, per the wrapper's `[retcode]` mapping —
+  having launched no container and done nothing.
+  **Do not read that non-zero exit the way section 5 reads a `FAILED` or
+  `REFUSED` log** — for section 5's case the child container ran and wrote
+  one of those two words to its log; here, no `LongTermPostProcessingMaintenance`
+  container is ever launched by the losing invocation, so there is no
+  `docker_logs/log_maintenance_lt_postproc_*.txt` and no
+  `failure_log_*.txt` for it to write. The distinguishing signs are the
+  wrapper returning almost immediately (seconds, not the several minutes
+  this task normally takes) with exit 6 or 8, and no new log file appearing
+  for the attempt. If you see that combination, another invocation owns the
+  task — go check the Luigi UI and `docker ps` (as directed above) for the
+  one that is actually running, rather than concluding your follow-up
+  failed. This gives no protection at all across a different Luigi
+  scheduler (a different deployment, or a `--local-scheduler` invocation),
+  and none whatsoever against a direct/manual run of
   `postprocessing_maintenance_long_term.py` outside Luigi.
 
 Treat the label-based `docker ps` check and the Luigi UI, done by hand
@@ -724,16 +798,34 @@ container-name-based or Compose-level lock here at all; the concurrency
 and marker preflights above, done by hand, are what actually protect the
 operator.
 
-**Scope caveat: this is not scoped to your mode or date.** Unlike section
-3's recovery command, this follow-up takes no mode or date argument. Each
-time it runs, it re-scans **every configured station** against **every**
-monthly/quarterly/seasonal gap inside each tier's lookback window (see the
-window bullet below) — not just the mode and date you just recovered. Running
-it to pick up one recovered month can also regenerate or rewrite ensemble
-rows for unrelated stations and periods that happen to fall inside the
-scan windows. That is expected behavior, not a bug, but it means the
-blast radius of this command is the whole deployment's recent long-term
-ensembles, not your one incident.
+**Scope caveat: this is not scoped to your mode or date — and three
+different "scopes" are in play here, do not conflate them.** Unlike
+section 3's recovery command, this follow-up takes no mode or date
+argument.
+
+- **Gap-detection window** — how far back each tier looks when deciding
+  what counts as a candidate gap (see the window bullet below: 3
+  months/2 quarters/1 season by default).
+- **Regeneration range** — what actually gets recomputed once a gap is
+  found. For monthly and seasonal this stays scoped to the exact missing
+  keys. For **quarterly, under this deployment's default configuration**,
+  it is not scoped to the missing keys at all — recomputation covers every
+  station/quarter/model across the whole span of years touched by any
+  quarterly gap, gap or not. See the detailed bullet below.
+- **Write scope** — what actually lands in the database, which is
+  history-wide for **all three tiers** regardless of the point above: each
+  tier reads its entire combined-forecast history for the configured
+  codes with no date bound and writes the whole merged frame back, so
+  every existing row for those codes is re-emitted on every run, not just
+  the period you recovered.
+
+Re-emitting unchanged rows is mostly harmless on its own. The real risk is
+the quarterly regeneration-range gap: an unrelated gap elsewhere in the
+same gap-year span can incidentally refresh (recompute and overwrite) an
+existing quarterly aggregate that was never itself a detected gap — see
+the detailed bullet below. Treat the blast radius of this command as the
+whole deployment's long-term history for these tiers, not just your one
+incident.
 
 Run the follow-up:
 
@@ -799,18 +891,57 @@ Other things to know before relying on this command:
   `0` can still mean "the container succeeded at doing nothing for your
   tier." Verify by querying rows (below) every time — never by the exit
   status alone, honest or not.
-- **This only fills a missing key — it does not refresh a stale existing
-  one.** The gap detectors (`gap_detector.detect_missing_monthly_ensembles`
-  and its quarterly/seasonal equivalents) find gaps purely by whether an
-  aggregate row is *absent* for a given key. If an ensemble row already
-  exists for the period you recovered — for example, written earlier from
-  an incomplete member set, before the missing members were recovered —
-  this command sees the key as already present and leaves its value
-  unchanged. The row check below only confirms an aggregate row *exists*;
-  it does not confirm its value reflects the member data you just
-  recovered. If you suspect a stale aggregate rather than a missing one,
-  that is not something this command fixes — escalate rather than
-  assuming the row check clears it.
+- **"Fills a missing key" means three different things depending on
+  tier — do not read this as one uniform behavior.** The gap-detection
+  window, the regeneration range, and the write scope are three separate
+  properties, and only the first is the same shape across tiers:
+  - **Gap-detection window**: the per-tier lookback described in the
+    bullet above. A key outside that window is never even considered,
+    filled or not.
+  - **Regeneration range for monthly and seasonal** is tightly scoped:
+    `gap_detector.detect_missing_monthly_ensembles` /
+    `detect_missing_seasonal_ensembles` find gaps purely by whether an
+    aggregate row is *absent* for a given key, and
+    `postprocessing_maintenance_long_term.py` filters the freshly computed
+    ensemble rows down to exactly those missing (year, month/season, code,
+    model[, lead]) tuples before merging them back. An ensemble row that
+    already exists — for example, written earlier from an incomplete
+    member set, before the missing members were recovered — is left with
+    its old value by these two tiers. For monthly and seasonal, "fills a
+    missing key, does not refresh an existing one" is accurate.
+  - **Regeneration range for quarterly, under this deployment's default
+    configuration** (`SAPPHIRE_SKILL_LEAD_AWARE` unset or false), is
+    **not** scoped to the missing keys: the freshly computed quarterly
+    ensemble rows are merged back without being filtered to the gap
+    tuples first (filed as **PP-063**). Concretely, if this run finds even
+    one missing quarterly ensemble anywhere in the lookback window, it
+    recomputes quarterly ensembles for every configured station and
+    quarter across that gap's whole year range from currently available
+    inputs, and the merge's `keep="last"` makes the freshly recomputed
+    value win for every one of those keys — gap or not. **Changed member
+    inputs alone never trigger this** — the gap detector still only acts
+    on absence, not staleness — but an unrelated gap landing in the same
+    year range can incidentally overwrite an existing, non-gap quarterly
+    aggregate as a side effect of filling that unrelated gap. Enabling
+    `SAPPHIRE_SKILL_LEAD_AWARE` gives quarterly the same gap-key
+    restriction monthly and seasonal already have.
+  - **Write scope is history-wide for all three tiers**, independent of
+    the above: `read_monthly_combined_forecasts` /
+    `read_quarterly_combined_forecasts` / `read_seasonal_combined_forecasts`
+    read the entire combined-forecast history for the configured codes
+    with no date bound, the regenerated rows (narrow or wide, per tier
+    above) are merged into that full history, and the **whole** merged
+    frame — not just the gap-year slice — is sent back through
+    `save_monthly_forecast_data` / `save_quarterly_forecast_data` /
+    `save_seasonal_forecast_data`. Every existing row for the configured
+    codes is re-emitted on every run; an unaffected row round-trips
+    unchanged, but this is why "blast radius" above is not hyperbole.
+
+  The row check below only confirms an aggregate row *exists* for the key
+  you recovered — it does not confirm the value reflects the member data
+  you just recovered. If you suspect a stale rather than a missing
+  aggregate, that is not something this command reliably fixes for any
+  tier — escalate rather than assuming the row check clears it.
 - **Ensembles this command creates carry `flag=0`, and what that means for
   your recovery's audit trail differs by tier — do not assume one
   behavior covers all three:**
