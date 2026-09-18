@@ -338,9 +338,16 @@ you trust a bad result:**
 - **`q` and `flag` are both nullable columns.** A plain `COUNT(*)` /
   `COUNT(DISTINCT code)` counts every row that merely *exists* for the key,
   including a row with `flag` unset or `q` NULL — which is not usable
-  recovered data. The recovery's own read-back requires `flag = 1 AND q`
-  finite before it counts a row as recovered
-  (`lt_recovery.count_member_rows`); your coverage check must use the same
+  recovered data. The recovery's own read-back requires `flag = 1` AND a
+  genuinely finite `q` before it counts a row as recovered
+  (`lt_recovery.count_member_rows`, via `_is_usable_value` and Python's
+  `math.isfinite()`); your coverage check must use the same test. **"Finite"
+  is not the same as "not null."** `q` is a Postgres `double precision`
+  column, which can hold `Infinity` or `-Infinity` as well as NULL — a
+  divide-by-zero upstream can persist one of those, and `q IS NOT NULL`
+  alone would still count it as recovered coverage. The query below
+  excludes `q IS NULL` and both infinities explicitly
+  (`q > '-Infinity' AND q < 'Infinity'`) so it matches that same finiteness
   test, or it will report "complete" while some stations silently have no
   usable value at all. The query below reports **both** numbers side by
   side (rows/sites present vs. usable recovered rows/sites) so you see the
@@ -374,11 +381,14 @@ SELECT
   model_type,
   COUNT(*) AS rows_present,
   COUNT(DISTINCT code) AS sites_present,
-  COUNT(*) FILTER (WHERE flag = 1 AND q IS NOT NULL)
+  COUNT(*) FILTER (WHERE flag = 1 AND q IS NOT NULL
+                    AND q > '-Infinity' AND q < 'Infinity')
     AS usable_recovered_rows,
-  COUNT(DISTINCT code) FILTER (WHERE flag = 1 AND q IS NOT NULL)
+  COUNT(DISTINCT code) FILTER (WHERE flag = 1 AND q IS NOT NULL
+                                 AND q > '-Infinity' AND q < 'Infinity')
     AS sites_with_usable_recovered_row,
-  array_agg(DISTINCT code) FILTER (WHERE flag = 1 AND q IS NOT NULL)
+  array_agg(DISTINCT code) FILTER (WHERE flag = 1 AND q IS NOT NULL
+                                     AND q > '-Infinity' AND q < 'Infinity')
     AS codes_with_usable_recovered_row
 FROM long_forecasts
 WHERE horizon_type = '<HORIZON_TYPE>'   -- UPPERCASE enum NAME, see mapping above
@@ -395,8 +405,12 @@ is written by the recovery itself, not by this query:
 
 - `flag = 0` — an ordinary operational row (not relevant to a recovery
   check).
-- `flag = 1` — this model produced a usable value for this station and
-  the recovery marked it recovered.
+- `flag = 1` — this model produced a **non-NaN** value for this station
+  and the recovery marked it recovered. `apply_success_flag` stamps
+  `flag = 1` on anything that is not NaN — that includes a persisted
+  `Infinity`/`-Infinity` from an upstream divide-by-zero, which is not
+  usable. Do not read `flag = 1` alone as "usable"; that is exactly why
+  the query above also requires `q` to be finite.
 - `flag = 2` — this model was attempted for this station, but its value
   was missing or NaN. The recovery writes `flag = 2` deliberately
   (`apply_success_flag`'s own intent: "a recovery must never dress a
@@ -591,14 +605,99 @@ from members separately. A "successful" member recovery (section 6) still
 leaves the operator's own dashboard view empty until the ensembles are
 rebuilt.
 
-**Concurrency preflight — do this before running the command.** Confirm
-no other invocation is already in flight: check
-`docker ps --filter name=sapphire-pipeline-periodic-maintenance` and the
-Luigi UI (`http://localhost:8082`) for a running
+**Concurrency preflight — do this before running the command, and do not
+trust a fixed container name to tell you the truth.** Confirm no other
+invocation is already in flight: check
+`docker ps --filter label=com.docker.compose.service=periodic-maintenance`
+and the Luigi UI (`http://localhost:8082`) for a running
 `RunPeriodicMaintenanceWorkflow`/`LongTermPostProcessingMaintenance` task.
+**Do not filter by the container name
+(`sapphire-pipeline-periodic-maintenance`) configured in
+`bin/docker-compose-luigi.yml` — it will not match anything.** This task
+is started with `docker compose ... run` (confirmed in
+`bin/run_periodic_maintenance.sh`), and Compose does not apply a service's
+`container_name` to a `run` (one-off) container; it generates a unique
+per-invocation name instead (verified directly: a `run` container for a
+service with a fixed `container_name` gets a name like
+`<project>-<service>-run-<hash>`, never the configured fixed name — even
+when nothing else is running). A name-based `docker ps` filter can report
+"nothing running" while a follow-up is genuinely in progress. The Compose
+*label* `com.docker.compose.service=periodic-maintenance` is set on every
+container Compose creates for this service, one-off or not, and is the
+check that actually works.
+
 If one is running, wait for it to finish rather than starting a second —
-this path does not queue behind a running instance, it fails outright (see
-why below).
+**but do not assume anything stops you if you don't wait.** There is
+close to no real protection here, and this runbook previously overstated
+what exists:
+
+- **No Docker-level lock.** Because `run` ignores `container_name` (above),
+  two concurrent invocations do not collide on a container name at all —
+  there is no "name already in use" error to catch a second run. Nothing
+  at the Compose/Docker layer stops two invocations from starting side by
+  side.
+- **No Luigi resource lock.** The `LongTermPostProcessingMaintenance` task
+  itself declares no `resources` entry (unlike `RunLongTermForecast`'s
+  `lt_memory`), so Luigi's resource-limiting mechanism, which does protect
+  the section-3 recovery, does not apply to this follow-up.
+- **The one thing that does help, and only partially:** neither
+  `RunPeriodicMaintenanceWorkflow(task_type="long_term")` nor the
+  `LongTermPostProcessingMaintenance` task it requires takes any other
+  parameter, so two invocations of this command resolve to the identical
+  Luigi task ID. If — and only if — both invocations reach the **same**
+  central scheduler (the `luigi-daemon` container this wrapper always
+  points at), that scheduler will not hand the same task to a second
+  worker while the first is still running it; the second
+  `docker compose run` process typically waits and then reports success
+  once the first one finishes, without re-running the script itself. This
+  gives no protection at all across a different Luigi scheduler (a
+  different deployment, or a `--local-scheduler` invocation), and none
+  whatsoever against a direct/manual run of
+  `postprocessing_maintenance_long_term.py` outside Luigi.
+
+Treat the label-based `docker ps` check and the Luigi UI, done by hand
+before you run the command, as the actual concurrency control — not the
+container name, and not an assumption that Luigi or Compose will stop a
+second run for you.
+
+**Marker preflight — also do this before running the command.** This
+task's Luigi completion marker is date-keyed and can make the command
+silently do nothing even when nothing else is running. Its `output()` is
+`<data_ref_dir>/intermediate_data/marker_files/maintenance_lt_postproc_<YYYY-MM-DD>.marker`
+(today's date, by default), and `DockerTaskBase.execute_with_retries`
+writes that marker as soon as the child container exits `0` —
+**including the monthly-tier early-exit case** described below, where the
+script does nothing at all and still exits `0`. The marker directory is
+bind-mounted (unlike the `--rm` container that would otherwise take any
+in-container state with it), so it persists across runs, and Luigi checks
+it *before* deciding whether to launch the container at all.
+
+Concretely: if this follow-up already completed today for any reason —
+cron entry (6) fired, or this same command was already run once today,
+regardless of mode — today's marker already exists, Luigi will consider
+`LongTermPostProcessingMaintenance` complete, and running the command
+again reports success **without launching the Python script at all**.
+That is fatal to this workflow, because you are typically running this
+*after* recovering member rows in section 3: a marker written earlier
+today, before that recovery, means this follow-up has **not** run against
+the data you just recovered, no matter what its reported exit status says.
+
+Check before trusting a success from this command:
+
+```bash
+ls -la <data_ref_dir>/intermediate_data/marker_files/maintenance_lt_postproc_$(date +%F).marker
+```
+
+If that file exists and its modification time is **before** you ran the
+section-3 recovery, the follow-up has not (yet) run against the recovered
+data — the row check below would be confirming a stale rebuild, not a
+fresh one. This runbook does not have a confirmed, supported way to force
+a same-day rerun once that marker exists — do not delete the marker file
+yourself; nothing in this codebase documents that as a safe operation, and
+this runbook will not invent one. Escalate to the long-term owner for a
+safe way to force a same-day rerun. (The marker is date-keyed, so it
+starts fresh at local midnight on its own — not a usable answer when the
+dashboard needs to be fixed now.)
 
 This runbook uses `bin/run_periodic_maintenance.sh long_term <env_file>`
 (the same wrapper section 3 uses for the recovery itself, and the same one
@@ -606,25 +705,24 @@ cron entry (6) runs) — **not** the older
 `bin/bimonthly_long_term_postprocessing.sh maintenance`, which is marked
 `[Legacy]` in `bin/README.md` and should not be used here. Both invoke the
 identical Python file, `postprocessing_maintenance_long_term.py`, but they
-launch it differently, and the difference is exactly the concurrency
-hazard above: the legacy script's `run_container` helper unconditionally
-force-removes any existing container with the same fixed name
-(`docker rm -f postprc-lt-maintenance`) before starting a new one, so a
-concurrent second invocation would silently kill the first one's run. The
-Luigi path removes that specific hazard — every container it launches
-gets a per-attempt, timestamp-suffixed name
-(`run_docker_container` in `apps/pipeline/pipeline_docker.py`), so two
-runs cannot collide on a container name — but it is not lock-free either:
-the outer `docker compose run` invocation for this task uses a **fixed**
-Compose `container_name` (`sapphire-pipeline-periodic-maintenance`, in
-`bin/docker-compose-luigi.yml`) with no pre-emptive removal, so a second
-`bin/run_periodic_maintenance.sh long_term` started while the first is
-still running hits a Docker "name already in use" conflict and fails
-loudly instead — an error, not a silent kill, but still not a queue. (The
-`LongTermPostProcessingMaintenance` Luigi task itself carries no
-`resources` entry, so this specific protection lives in the wrapper's
-compose service, not in Luigi's own scheduling — do not assume it holds
-if this task is ever invoked any other way.)
+launch it differently. The legacy script's `run_container` helper
+unconditionally force-removes any existing container with the same fixed
+name (`docker rm -f postprc-lt-maintenance`) before starting a new one, so
+a concurrent second invocation of the *legacy* script would silently kill
+the first one's run. The Luigi path removes that specific hazard —
+`run_docker_container` (`apps/pipeline/pipeline_docker.py`) gives every
+container it launches a per-attempt, timestamp-suffixed name, so two runs
+launched through Luigi cannot collide on that inner container name either
+— but do not read "no name collision" as "safe to run twice." As
+described above, the outer `docker compose run` container for this task
+also never uses the fixed `container_name` configured in
+`bin/docker-compose-luigi.yml` (Compose ignores it for `run`), so two
+concurrent invocations do not hit a Docker naming conflict at either
+layer — nothing stops them starting side by side, short of the narrow
+same-scheduler task-identity behavior described above. There is no
+container-name-based or Compose-level lock here at all; the concurrency
+and marker preflights above, done by hand, are what actually protect the
+operator.
 
 **Scope caveat: this is not scoped to your mode or date.** Unlike section
 3's recovery command, this follow-up takes no mode or date argument. Each
@@ -730,12 +828,25 @@ Other things to know before relying on this command:
     writes land under the same key:
     - **Quarterly, default configuration** (`SAPPHIRE_SKILL_LEAD_AWARE`
       unset/false): this writer keys its `date` column to `valid_from`
-      (the period start), not the issue date your section-3 member rows
-      used. Different date -> no collision, your `flag=1` rows survive —
-      but it also means a verification query filtered on the issue date
-      will find **no** rows from this follow-up even after a successful
-      gap-fill. Query by `valid_from`/`valid_to` for this tier, not the
-      issue date.
+      (the period start) by default, not the issue date your section-3
+      member rows used — **but this is a stated condition, not a blanket
+      exemption** (filed as PP-061). `valid_from` is only guaranteed to
+      differ from the recovered issue date if this deployment's issue day
+      and lead do not happen to land on the same calendar date; a
+      deployment with issue day 1 and lead 0 makes the quarter's
+      `valid_from` and the recovered issue date identical, and nothing in
+      `lt_recovery.py`'s scheduling forbids issuing a recovery on that
+      date. **Check this deployment's actual issue day and lead for this
+      mode (section 2b) before assuming no collision.** If they can
+      coincide, treat this exactly like the seasonal / lead-aware-quarterly
+      case below: **capture the section-6 query output before running this
+      follow-up**, because the `flag=1` recovery marker is not guaranteed
+      to survive it. Only once you have confirmed `valid_from` cannot equal
+      the recovered issue date for this deployment and mode does "different
+      date -> no collision" hold — and even then, a verification query
+      filtered on the issue date will find **no** rows from this follow-up
+      even after a successful gap-fill; query by `valid_from`/`valid_to`
+      for this tier instead.
     - **Seasonal always, and quarterly only when `SAPPHIRE_SKILL_LEAD_AWARE`
       is enabled**: this writer keys `date` to the row's own issue date
       instead — the **same** key your section-3 member rows used, for the
@@ -755,9 +866,13 @@ Other things to know before relying on this command:
       recovered.
   - There is no way to tell a gap-filled ensemble from an ordinary
     operational one by flag alone in any tier; the member-level `flag=1`
-    from section 3 is meant to be that record, except in the seasonal /
-    lead-aware-quarterly case just described, where this follow-up erases
-    it.
+    from section 3 is meant to be that record, except whenever this
+    follow-up's write lands on the same seven-column key
+    (`horizon_type, horizon_value, code, date, model_type, valid_from,
+    valid_to`) as the recovery's own write — seasonal and lead-aware
+    quarterly always, and default (non-lead-aware) quarterly whenever
+    `valid_from` coincides with the recovered issue date (see above) — in
+    which case this follow-up erases it.
 
 Its scheduled cron entry (6) only fires on the 1st of odd months — that
 is why you are running it by hand now instead of waiting for the cron
@@ -767,18 +882,31 @@ job to pick it up.
 `-X -v ON_ERROR_STOP=1` and dynamic `$POSTGRES_USER`/`$POSTGRES_DB`
 against `long_forecasts` directly — but note `flag = 1` does not apply
 here: every row this follow-up writes carries `flag=0` regardless of
-tier, so your acceptance test for THIS check is `q IS NOT NULL` (a usable
-value present), not `flag = 1`). **The "combined forecasts" this script
-reads for gap detection are not the same table as `long_forecasts`, and
-are not purely API-sourced**: `data_reader.read_monthly_combined_forecasts`
-(and its quarterly/seasonal equivalents) read the API first but silently
-fall back to a deprecated CSV file whenever the API call returns empty —
-including when the API is reachable but genuinely has no rows yet, not
-only when the API is down. A stale CSV can then make the gap scan miss a
-real gap, or make it think a gap was already filled. This runbook's own
-verification queries always go directly against the database
-(`long_forecasts`), bypassing this reader — do not substitute a CSV
-inspection for the database check below.
+tier, so your acceptance test for THIS check is a genuinely finite value
+present — `q IS NOT NULL AND q > '-Infinity' AND q < 'Infinity'`, the same
+finiteness test as section 6, not a bare `q IS NOT NULL` (which would
+count a persisted `Infinity`/`-Infinity` as a usable recovered value) —
+not `flag = 1`.
+
+**Only the monthly gap detector has a CSV fallback; do not assume
+quarterly/seasonal share it, and do not assume "combined forecasts" means
+a different table.** `data_reader.read_monthly_combined_forecasts` reads
+the API first and silently falls back to a deprecated CSV file whenever
+the API call returns empty — including when the API is reachable but
+genuinely has no rows yet, not only when the API is down. A stale CSV can
+then make the *monthly* gap scan miss a real gap, or make it think a gap
+was already filled. `read_quarterly_combined_forecasts` and
+`read_seasonal_combined_forecasts` have **no CSV fallback**: they are
+API-only and return an empty frame when the API has nothing, via their
+shared `_read_long_combined_forecasts_api`, which itself calls
+`read_long_term_forecasts` against the same `long_forecasts` table these
+verification queries read directly. "Combined forecasts" names the shape
+of the frame these readers return (all member models plus ensembles), not
+a separate table — for quarter and season it is `long_forecasts` under
+another name. This runbook's own verification queries always go directly
+against `long_forecasts`, bypassing these readers entirely either way — do
+not substitute a CSV inspection for the database check below for any
+tier.
 
 Filter to the recovered mode's `horizon_type`/`horizon_value` and
 `model_type IN ('ENSEMBLE_MEAN', 'SKILLED_MEAN', 'NAIVE_MEAN')` (the raw
