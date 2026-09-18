@@ -980,6 +980,9 @@ Add the following to the crontab file:
 # then refused by lt_utils.py:202 (>5 days), so the run writes nothing and
 # still exits 0 (LTF-007). Scheduling on the issue day itself is the only
 # safe choice.
+# If this run is missed or writes no rows, do NOT re-run it blind: follow
+# doc/prod/long_term_recovery_runbook.md, which covers the guarded
+# lt_recovery command, its exit codes, and the postprocessing follow-up.
 0 6 <lt_issue_day> * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_long_term_forecasts.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_longterm_$(date +\%Y\%m\%d).log 2>&1
 #
 # (4b) Bimonthly long-term skill recalc at 10:00 UTC on the 10th and 25th

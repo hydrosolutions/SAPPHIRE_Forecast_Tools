@@ -431,5 +431,6 @@ models are gone:
 - [`ppipe_ensemble_hv_deploy_runbook.md`](ppipe_ensemble_hv_deploy_runbook.md) — detailed P-PIPE deploy + the verification SQL referenced in Phase 4.
 - [`update_deployment_checklist.md`](update_deployment_checklist.md) — full image/service deploy mechanics.
 - [`historical_backfill_runbook.md`](historical_backfill_runbook.md) — historical data backfill (server commands).
+- [`long_term_recovery_runbook.md`](long_term_recovery_runbook.md) — production incident runbook for one missed long-term (month/quarter/season) forecast.
 - [`../plans/archive/longforecast_hv_convention_plan.md`](../plans/archive/longforecast_hv_convention_plan.md) — hv convention + old-convention cleanup predicates (P3).
 - [`../plans/archive/two_model_ensemble_plan.md`](../plans/archive/two_model_ensemble_plan.md) — two-model EM + deprecated-model cleanup predicates.
