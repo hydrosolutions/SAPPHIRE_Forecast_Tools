@@ -139,7 +139,7 @@ return success
 True if at least one save operation succeeded"). A `save_forecast` failure (both DB and CSV writes
 failing) is only logged as a warning; the function still `return`s the earlier `success` value from
 the prediction branch, unchanged. So today, `success`/`execution_is_success` answers only "does
-`forecast` have a `Q_<model_name>` column at all" — not whether that column contains any non-NaN
+`forecast` have a `Q_<model_name>` column at all" — not whether that column contains any finite
 value, which is the fourth-row defect established above — and never "did any row reach the
 database". A model can predict successfully, fail to save anywhere, and still report
 `SUCCESS`, gate dependents open, and leave the DB with nothing new (rows unchanged from a prior
@@ -163,10 +163,19 @@ to distinguish them:
 
 ## Acceptance criteria
 
-- [ ] In `run_single_model`'s post-prediction branch, `success` reflects whether
-      `apply_success_flag` actually found at least one non-NaN value in `main_q_col` — not merely
-      that the column exists. An all-NaN `Q_<model_name>` column must yield `success = False` in
-      this branch, matching the `flag=2` rows `apply_success_flag` already writes.
+- [ ] In `run_single_model`'s post-prediction branch, `success` reflects whether `main_q_col`
+      contains at least one **finite** value — the same `math.isfinite` contract as
+      `lt_recovery._is_usable_value`, not `apply_success_flag`'s `isna()`-based flag assignment.
+      The two checks are deliberately different and must stay that way: `flag=2` stays NaN-only
+      (see "Leave flag semantics ... unchanged" below); only the `success` value gets the stricter,
+      finite-only test. Merely checking that the column exists is not enough. An all-NaN
+      `Q_<model_name>` column must yield `success = False`, matching the `flag=2` rows
+      `apply_success_flag` already writes. An **infinity-only** `Q_<model_name>` column (every
+      value `+inf`/`-inf`, no NaN) must also yield `success = False` — `apply_success_flag`'s
+      `isna()` check does not catch infinities and would stamp those rows `flag=OPERATIONAL_FLAG`
+      (or `recovery_flag`) rather than `flag=2`, so an implementation that reuses
+      `notna().any()` for the success check would pass a NaN-only test suite while still reporting
+      `SUCCESS` for a forecast with no usable value.
 - [ ] An **empty** forecast frame (zero rows) reaching this branch is also treated as failure, not
       only an all-NaN one — do not leave a frame with no rows as an untested edge of the fix.
 - [ ] The three already-correct `False`-setting sites (missing column, not-scheduled skip,
@@ -174,12 +183,23 @@ to distinguish them:
 - [ ] Persistence success must be scoped to this issue's own definition — "those rows ... reached
       the database" (above), i.e. the database write specifically — not to `save_forecast`'s
       `success_db or success_csv` return, which is `True` whenever the CSV write alone succeeds
-      even if the DB write fails. The fix must add a distinct database-persistence signal (e.g.
-      `run_single_model` consulting `success_db` directly, or `save_forecast` returning both track
-      results) that `run_forecast` also consults for `execution_is_success`, instead of relying on
-      `save_forecast`'s current OR'd boolean. Acceptance must include two persistence-failure
-      cases: prediction succeeds but both DB and CSV writes fail, and prediction succeeds but only
-      the DB write fails while the CSV write succeeds — in both cases the reported status for that
+      even if the DB write fails. **Consulting `success_db` directly is not sufficient on its
+      own**: `save_forecast_to_db` (`lt_utils.py:385-462`) returns `True` when
+      `prepare_long_forecast_records` produces zero records (`if not records: ... return True`,
+      `lt_utils.py:429-431`), and `prepare_long_forecast_records` silently skips any row with a
+      missing `date`, `valid_from`, or `valid_to` (`lt_utils.py:339-345`). The row count
+      `write_long_forecasts` returns is logged but never checked against what was submitted
+      (`lt_utils.py:435-439`). So a non-empty frame of finite predictions can produce **zero**
+      submitted records and `save_forecast_to_db` still returns `True`. The fix must add a
+      database-persistence signal that establishes a **non-empty, successful write** — e.g.
+      `save_forecast_to_db` (or its caller) treating a zero-record conversion as failure before
+      calling the API, and/or checking the returned row count against the records submitted — not
+      merely `success_db`'s current `True`/`False` return, and not `run_single_model` consulting
+      `success_db` as-is today. Acceptance must include three persistence-failure cases: prediction
+      succeeds but both DB and CSV writes fail; prediction succeeds but only the DB write fails
+      while the CSV write succeeds; and prediction succeeds with a finite `Q_<model_name>` value
+      but every row is discarded during conversion (e.g. missing `date`, `valid_from`, or
+      `valid_to`), leaving zero records to submit — in all three cases the reported status for that
       model must not be `SUCCESS`.
 - [ ] On the normal `forecast_all=True` path in `run_forecast`, a dependent model is correctly
       skipped (`execution_is_success[dependent] = False`, "Skipping model ... due to failed
@@ -217,19 +237,26 @@ to distinguish them:
       Also cover the **partial-output** case: some stations get a value, others NaN, for the same
       model — confirm this still reports `success = True` (partial output remains success, per
       LTF-003's own accepted decision that partial-NaN is not a failure) and is not accidentally
-      swept into the "all-NaN" fix.
+      swept into the "all-NaN" fix. Cover the same partial shape when the unusable rows are
+      **infinite** rather than NaN: some stations finite, others `+inf`/`-inf` — this
+      finite-plus-non-finite mix must also report `success = True`, using the same finite-value
+      criterion as the all-or-nothing cases above.
 - [ ] The fix does not change `run_recovery`'s stage 3 read-back criterion
       (`count_member_rows(flags={RECOVERY_FLAG}, require_value=True)`, satisfied by one usable
       row). Recovery success stays deliberately partial; this issue must not be implemented as "a
       recovery now requires full coverage to report `EXIT_OK`". Add or update a test asserting the
       read-back threshold is unchanged.
 - [ ] `apps/long_term_forecasting/test/` gains unit tests for: all-NaN output → `success = False`;
-      empty-frame output → `success = False`; mixed NaN/non-NaN (partial) output → `success = True`;
-      prediction success + persistence failure (both tracks failing, and DB-only failing with CSV
-      succeeding) → not reported `SUCCESS`; a dependent model skipped when its dependency's output
-      was all-NaN, on the `forecast_all` path only (the real `deps_success` gate). Do **not** add a
-      skipping test for the explicitly-selected-model path — this fix does not cover it (see the
-      acceptance bullet above); a genuine dependency-success check there is separate, larger work.
+      empty-frame output → `success = False`; **infinity-only** output (every value `+inf`/`-inf`,
+      no NaN) → `success = False`; mixed NaN/non-NaN (partial) output → `success = True`; mixed
+      finite/non-finite (partial, a `+inf`/`-inf` value alongside a finite one) output →
+      `success = True`; prediction success + persistence failure (both tracks failing, DB-only
+      failing with CSV succeeding, and finite predictions whose records are all discarded during
+      conversion due to missing `date`/`valid_from`/`valid_to`) → not reported `SUCCESS`; a
+      dependent model skipped when its dependency's output was all-NaN, on the `forecast_all` path
+      only (the real `deps_success` gate). Do **not** add a skipping test for the
+      explicitly-selected-model path — this fix does not cover it (see the acceptance bullet
+      above); a genuine dependency-success check there is separate, larger work.
 - [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh long_term_forecasting` passes with zero
       failures and zero unexpected skips.
 - [ ] No changes to `sapphire/services/` (ownership boundary).
