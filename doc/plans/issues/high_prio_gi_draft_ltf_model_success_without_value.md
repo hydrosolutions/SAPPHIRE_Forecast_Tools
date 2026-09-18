@@ -9,7 +9,8 @@
 of archived **LTF-003** — see "Relationship to LTF-003" below, which this issue must not restate as
 new territory.
 **Related**: **LTF-003** (archived, Complete — the `flag=2` fix this issue builds on, not
-contradicts), **LTF-011** (a different `run_recovery`/exit-code conflation, Draft), **LTF-013**
+contradicts), **LTF-011** (a different `run_recovery`/exit-code conflation; status Review, fixed in
+PR #493), **LTF-013**
 (the non-operational-mode gap in the same recovery entry point, filed separately because it is an
 unrelated code path).
 
@@ -17,8 +18,11 @@ unrelated code path).
 
 ## Relationship to LTF-003 — read this before the rest
 
-`doc/plans/issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md` is **Complete**. Its defect
-was that `run_forecast.py` set `flag=0` unconditionally after `predict_operational()` returned,
+`doc/plans/issues/archive/high_prio_gi_draft_ltf_flag_zero_on_null.md` is recorded **Complete** in
+`doc/plans/module_issues.md` — the archived file's own header still says **Draft**, stale from
+before the tracker was updated at close; an implementer opening that file directly should not read
+its header as current status. Its defect was that `run_forecast.py` set `flag=0` unconditionally
+after `predict_operational()` returned,
 so an all-NaN model output was written to the database indistinguishable from a valid forecast.
 Its accepted fix, per its own acceptance criteria, was:
 
@@ -134,9 +138,10 @@ return success
 `success_db or success_csv` — true if *either* track wrote, by its own docstring contract ("`bool`:
 True if at least one save operation succeeded"). A `save_forecast` failure (both DB and CSV writes
 failing) is only logged as a warning; the function still `return`s the earlier `success` value from
-the prediction branch, unchanged. So today, `success`/`execution_is_success` answers only "did
-`predict_operational` produce a column with at least one non-NaN value", never "did any row reach
-the database". A model can predict successfully, fail to save anywhere, and still report
+the prediction branch, unchanged. So today, `success`/`execution_is_success` answers only "does
+`forecast` have a `Q_<model_name>` column at all" — not whether that column contains any non-NaN
+value, which is the fourth-row defect established above — and never "did any row reach the
+database". A model can predict successfully, fail to save anywhere, and still report
 `SUCCESS`, gate dependents open, and leave the DB with nothing new (rows unchanged from a prior
 run, if any).
 
@@ -166,11 +171,16 @@ to distinguish them:
       only an all-NaN one — do not leave a frame with no rows as an untested edge of the fix.
 - [ ] The three already-correct `False`-setting sites (missing column, not-scheduled skip,
       `can_be_run == False`) are unchanged in behaviour.
-- [ ] `save_forecast`'s false return is surfaced into the returned `success` value (or a separate
-      persistence-success signal `run_forecast` also consults for `execution_is_success`) instead of
-      being logged and discarded. Acceptance must include a case where prediction succeeds
-      (non-NaN value) but persistence fails (both DB and CSV writes fail) — the reported status
-      for that model must not be `SUCCESS`.
+- [ ] Persistence success must be scoped to this issue's own definition — "those rows ... reached
+      the database" (above), i.e. the database write specifically — not to `save_forecast`'s
+      `success_db or success_csv` return, which is `True` whenever the CSV write alone succeeds
+      even if the DB write fails. The fix must add a distinct database-persistence signal (e.g.
+      `run_single_model` consulting `success_db` directly, or `save_forecast` returning both track
+      results) that `run_forecast` also consults for `execution_is_success`, instead of relying on
+      `save_forecast`'s current OR'd boolean. Acceptance must include two persistence-failure
+      cases: prediction succeeds but both DB and CSV writes fail, and prediction succeeds but only
+      the DB write fails while the CSV write succeeds — in both cases the reported status for that
+      model must not be `SUCCESS`.
 - [ ] On the normal `forecast_all=True` path in `run_forecast`, a dependent model is correctly
       skipped (`execution_is_success[dependent] = False`, "Skipping model ... due to failed
       dependencies" logged) when its upstream dependency produced an all-NaN or empty output. Cover
@@ -215,9 +225,11 @@ to distinguish them:
       read-back threshold is unchanged.
 - [ ] `apps/long_term_forecasting/test/` gains unit tests for: all-NaN output → `success = False`;
       empty-frame output → `success = False`; mixed NaN/non-NaN (partial) output → `success = True`;
-      prediction success + persistence failure → not reported `SUCCESS`; a dependent model skipped
-      when its dependency's output was all-NaN, on both the `forecast_all` and explicitly-selected
-      paths.
+      prediction success + persistence failure (both tracks failing, and DB-only failing with CSV
+      succeeding) → not reported `SUCCESS`; a dependent model skipped when its dependency's output
+      was all-NaN, on the `forecast_all` path only (the real `deps_success` gate). Do **not** add a
+      skipping test for the explicitly-selected-model path — this fix does not cover it (see the
+      acceptance bullet above); a genuine dependency-success check there is separate, larger work.
 - [ ] `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh long_term_forecasting` passes with zero
       failures and zero unexpected skips.
 - [ ] No changes to `sapphire/services/` (ownership boundary).
