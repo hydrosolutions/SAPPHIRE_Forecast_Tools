@@ -886,4 +886,36 @@ During ML module data flow audit, found that `_write_ml_daily_forecast_to_api()`
 
 ---
 
-*Last updated: 2026-03-28 (ML operational/maintenance script separation observation)*
+## 2026-09-17
+
+### bin/bimonthly_long_term_postprocessing.sh: exit-status discard and fixed-name container removal — a known, deliberately unfixed gap; nothing currently depends on it
+
+**Source**: LT recovery runbook review (`plan_issue_filing_rev4.md`, P7); verified against `bin/bimonthly_long_term_postprocessing.sh` at commit `89a6ffc7`, still accurate at the branch's current base `4fe3e545` (the script is unchanged between the two commits)
+**Date**: 2026-09-17
+
+`run_container()` (lines 102–148) computes the launched container's real exit code via `docker inspect --format='{{.State.ExitCode}}'` (line 135) and `return`s it (line 147), but neither call site (lines 151–155, 158–162) captures that return value, so the container's exit status never reaches the script's own exit code — the script proceeds to log cleanup and exits 0 regardless. The same function also force-removes the container under a fixed name both before (line 116) and after (line 145) each run, with no per-run uniqueness (PID, timestamp) and no lock, so a second concurrent invocation of the same mode will `docker rm -f` a still-running sibling instead of queuing behind it.
+
+**This is not a new finding and is not being filed.** INFRA-023's archived survey (`doc/plans/issues/archive/mid_prio_gi_draft_infra_yearly_monthly_norms_cron_unmapped.md`, "Survey result 3") already examined this wrapper and deliberately cut it from scope: it records that the wrapper "is superseded by `run_periodic_maintenance.sh long_term`", that kghm's own crontab comment calls it "kept on origin for manual / debugging use only", and that "fixing a wrapper nobody schedules is not worth a production diff." That decision stands; this note does not reopen it.
+
+**Update — this is no longer prescribed anywhere.** An earlier version of this note recorded that `doc/prod/long_term_recovery_runbook.md` (pending on the unpushed branch `docs_lt_recovery_runbook`, not present in this branch's base) prescribed running this wrapper by hand as the operator's postprocessing follow-up after a long-term recovery. That has changed: the runbook's postprocessing follow-up now uses `bin/run_periodic_maintenance.sh long_term <env_file>` instead — the same path cron entry (6) uses, which propagates the container's real exit status and does not `docker rm -f` a fixed container name. Nothing now depends on this wrapper.
+
+**Assessment**: Not a defect to file. Recorded so the next reader who rediscovers the discarded exit status or the fixed-name `docker rm -f` does not re-file it as a missed production fix — INFRA-023's "manual / debugging use only" scoping decision still stands, and separately, nothing in the current runbook draft exercises this wrapper's behaviour anymore.
+**Status**: Not filed — INFRA-023's scoping decision stands. Cross-referenced here purely so the wrapper's known exit-status/container-naming gaps aren't rediscovered and re-filed as new.
+
+### apps/pipeline/pipeline_docker.py: three minor logging/cleanup observations, folded rather than filed
+
+**Source**: LT recovery runbook review (`plan_issue_filing_rev4.md`, P7); verified against `apps/pipeline/pipeline_docker.py` at commit `89a6ffc7`, still accurate at the branch's current base `4fe3e545` (the file is unchanged between the two commits)
+**Date**: 2026-09-17
+
+Three small logging/cleanup gaps noticed while tracing long-term recovery failure paths. None rises to an issue on its own.
+
+1. `DockerTaskBase.send_failure_notification` (line 226) names its attached failure-log file `failure_log_<epoch>.txt` (line 241, a raw `int(time.time())`), written into `os.path.dirname(self.docker_logs_file_path)` — a directory shared by every `DockerTaskBase` subclass's docker logs. The filename carries no task name, mode or date, so failures from different tasks in the same run are distinguishable only by timestamp, not by name.
+2. `LTScheduleQuery.run` (line 2137) explicitly deletes any stale result JSON first (lines 2138–2141), then builds its container command as `["sh", "-c", f"{base_cmd} > {self.SCHEDULE_RESULT_PATH}"]` (line 2163). The shell's `>` redirection creates (or truncates) `SCHEDULE_RESULT_PATH` as soon as the shell starts, before `lt_schedule_query.py` has produced any output or the child process's exit status is known — so a container that fails to start or crashes immediately still leaves a fresh, empty result file rather than no file at all.
+3. `LogFileCleanup` (class at line 1218) has `days_to_keep = luigi.IntParameter(default=15)` (line 1220) and `file_pattern = "log_*.txt"` (line 1221), which matches `LTScheduleQuery`'s `log_lt_schedule_query_*.txt` files along with every other task's `log_*.txt` output. An outage discovered more than roughly 15 days late can find its schedule-query log already pruned. **This one is intended behaviour, not a defect** — it is already documented in `doc/prod/long_term_recovery_runbook.md` (pending push at `2e552e28`) as a known limitation of the default retention window. Recorded here for completeness only.
+
+**Assessment**: (1) and (2) are minor diagnosability gaps — harder-to-trace failure attribution, and a redundant truncation window in a path that already guards against stale-file reuse — not correctness bugs; folding them here avoids a dedicated issue for a cosmetic naming/ordering nit. (3) is confirmed intended, documented behaviour.
+**Status**: Not filed — folded into this observation rather than filed as a separate issue.
+
+---
+
+*Last updated: 2026-09-17 (bimonthly wrapper manual-dependency note; pipeline_docker.py logging observations)*
