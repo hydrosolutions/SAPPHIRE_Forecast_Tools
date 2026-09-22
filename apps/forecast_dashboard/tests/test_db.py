@@ -2718,6 +2718,59 @@ class TestReadDataPaginated:
 
         assert result.empty
 
+    def test_default_page_size_is_10000(self, monkeypatch):
+        """Latency follow-up to FD-005: the default page size must be large
+        enough that a typical station result set fits in one or a handful
+        of requests, not the ~10 requests a page_size of 1000 caused. This
+        pins the default the helper requests when the caller does not pass
+        `page_size`."""
+        full_df = pd.DataFrame({"id": range(5)})
+        seen_limits = []
+
+        def fake(service_type, data_type, params=None):
+            seen_limits.append(params["limit"])
+            return _skip_limit_fake(full_df)(service_type, data_type, params)
+
+        monkeypatch.setattr(db, "_read_data", fake)
+
+        result = db._read_data_paginated("preprocessing", "runoff", {})
+
+        assert seen_limits == [10000]
+        assert len(result) == 5
+
+    def test_progress_guard_stops_on_unresponsive_skip(self, monkeypatch):
+        """A server that ignores `skip` and always returns a full page must
+        not make the loop run unboundedly. The guard must terminate the
+        loop and log a WARNING, rather than de-duplicating (which would
+        mask the server defect) or looping forever.
+
+        `db.logger` is stubbed directly (rather than via `caplog`) because
+        it is configured with `propagate = False`, which `caplog`'s
+        root-logger handler never sees.
+        """
+        call_count = 0
+        warn_calls = []
+
+        def fake(service_type, data_type, params=None):
+            nonlocal call_count
+            call_count += 1
+            # Ignores params["skip"] entirely: always the same full page.
+            return pd.DataFrame({"id": [1, 2]})
+
+        def fake_warning(msg, *args, **kwargs):
+            warn_calls.append(msg % args if args else msg)
+
+        monkeypatch.setattr(db, "_read_data", fake)
+        monkeypatch.setattr(db.logger, "warning", fake_warning)
+
+        result = db._read_data_paginated("preprocessing", "runoff", {}, page_size=2)
+
+        # Must have stopped well short of an unbounded loop.
+        assert 0 < call_count <= 2000
+        assert not result.empty
+        assert warn_calls
+        assert any("skip" in w.lower() for w in warn_calls)
+
 
 def _ml_forecast_rows(n, forecast_date, target_date="2026-03-25", model_type="LR"):
     return [

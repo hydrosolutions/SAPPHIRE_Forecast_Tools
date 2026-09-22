@@ -168,7 +168,7 @@ def _read_data(service_type: str, data_type: str, params: dict = None) -> pd.Dat
 
 
 def _read_data_paginated(
-    service_type: str, data_type: str, params: dict = None, page_size: int = 1000
+    service_type: str, data_type: str, params: dict = None, page_size: int = 10000
 ) -> pd.DataFrame:
     """Fetch data from the backend API across as many pages as needed.
 
@@ -178,6 +178,14 @@ def _read_data_paginated(
     concatenates the pages. Use this instead of `_read_data` whenever a
     result set can plausibly exceed one page — otherwise a fixed `limit`
     silently truncates the result.
+
+    The default of 10000 (rather than a smaller page size) matters for
+    dashboard responsiveness: this file already requests `limit=10000`
+    successfully elsewhere (`get_linreg_predictor`, `_get_snow_single`), so
+    the server accepts it, and the postprocessing service's `limit` query
+    param has no declared maximum. A smaller default turns one logical read
+    into many sequential, synchronous HTTP round trips on every
+    station/horizon change.
 
     Args:
         service_type: 'preprocessing' or 'postprocessing'
@@ -194,7 +202,14 @@ def _read_data_paginated(
     base_params = dict(params or {})
     skip = 0
     frames = []
-    while True:
+    # Progress guard: a well-behaved server always terminates this loop via
+    # the empty/short-page checks below. A misbehaving server that ignores
+    # `skip` and keeps returning a full page would otherwise loop
+    # unboundedly. Cap the number of pages at a sane bound and warn if it is
+    # ever hit, rather than looping forever or silently de-duplicating
+    # (de-duplication would mask a real server defect).
+    max_pages = 1000
+    for _page_num in range(max_pages):
         page_params = {**base_params, "skip": skip, "limit": page_size}
         df = _read_data(service_type, data_type, page_params)
         if df.empty:
@@ -203,6 +218,16 @@ def _read_data_paginated(
         if len(df) < page_size:
             break
         skip += page_size
+    else:
+        logger.warning(
+            "_read_data_paginated: hit the %d-page cap for %s/%s (skip=%d) "
+            "without an empty or short page — the server may be ignoring "
+            "`skip`; stopping to avoid an unbounded loop.",
+            max_pages,
+            service_type,
+            data_type,
+            skip,
+        )
 
     if not frames:
         return pd.DataFrame()
