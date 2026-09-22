@@ -2792,22 +2792,60 @@ def _ml_forecast_rows(n, forecast_date, target_date="2026-03-25", model_type="LR
     ]
 
 
+def _read_data_paginated_default_page_size() -> int:
+    """The *current* default `page_size` of `db._read_data_paginated`, read
+    off the function object rather than hardcoded as a literal 1000/10000.
+
+    FD-005 test-rot history: this test's fixture size used to be hardcoded
+    against the default in effect when the test was written (1000). When the
+    default was later raised to 10000, a 1200-row fixture — sized to span
+    two pages under the *old* default — fit in a single page under the new
+    one, and the test kept passing even with the fix reverted. Deriving the
+    size from the live default here means a future change to it cannot
+    silently disarm this test a second time.
+    """
+    return db._read_data_paginated.__defaults__[-1]
+
+
 class TestGetMlForecastPagination:
     """FD-005: get_ml_forecast must not silently drop the true latest
     forecast_date when the station's row count exceeds one API page.
 
-    This is the FD-005 regression test — a station with 1200 rows (1000 in
-    a stale first page, 200 in a second page holding the true latest
-    forecast_date) must still resolve `forecast_date.max()` to the true
-    latest date, not the stale one visible within a single 1000-row page.
+    Parameterized over an explicit small `page_size` (fast, deterministic,
+    and immune to the real default ever changing) and the real, current
+    default (introspected — see `_read_data_paginated_default_page_size` —
+    never hardcoded). Either way, the fixture is one full page of stale rows
+    plus a second page holding the true latest `forecast_date`; the test
+    must fail if `get_ml_forecast` stops paginating and instead resolves
+    `forecast_date.max()` from a single, truncated page.
     """
 
-    def test_forecast_date_max_reflects_true_latest_not_truncated_slice(self, monkeypatch):
-        stale_rows = _ml_forecast_rows(1000, "2025-12-01")
-        latest_rows = _ml_forecast_rows(200, "2026-03-20")
+    @pytest.mark.parametrize(
+        "page_size_override",
+        [3, None],
+        ids=["explicit-small-page-size", "real-default-page-size"],
+    )
+    def test_forecast_date_max_reflects_true_latest_not_truncated_slice(
+        self, monkeypatch, page_size_override
+    ):
+        page_size = page_size_override or _read_data_paginated_default_page_size()
+        # One full page of stale rows, plus a second page holding the true
+        # latest forecast_date — the exact shape of the original FD-005 bug.
+        stale_rows = _ml_forecast_rows(page_size, "2025-12-01")
+        latest_rows = _ml_forecast_rows(3, "2026-03-20")
         full_df = pd.DataFrame(stale_rows + latest_rows)
 
         monkeypatch.setattr(db, "_read_data", _skip_limit_fake(full_df))
+        if page_size_override is not None:
+            # Force `_read_data_paginated`'s own default down to the small
+            # override for the duration of this test, without touching
+            # get_ml_forecast (which never passes page_size explicitly and
+            # so always uses whatever this default is). This exercises the
+            # real pagination loop at a small, fast page size instead of
+            # requiring a fixture larger than the real (10000) default.
+            monkeypatch.setattr(
+                db._read_data_paginated, "__defaults__", (None, page_size_override)
+            )
 
         result = db.get_ml_forecast("day", "19999")
 

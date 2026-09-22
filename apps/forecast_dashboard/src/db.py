@@ -187,6 +187,24 @@ def _read_data_paginated(
     into many sequential, synchronous HTTP round trips on every
     station/horizon change.
 
+    `page_size` is a latency/payload trade-off, and it can be lowered if a
+    deployment shows strain. Measured numbers for that trade-off:
+
+    - Payload size: a 10000-row page measured 2.67-3.80 MB versus
+      0.26-0.38 MB at 1000 rows; traced service-side peak allocation rose
+      from 4.2-6.4 MB to 36.6-63.7 MB for the larger page — the gateway
+      buffers, parses, and reserializes the whole page. The dashboard's own
+      HTTP timeout is 30s (see `API_TIMEOUT` above) and the gateway's is
+      deployment-configured (30s in `sapphire/.env.example`). Local
+      requests took 0.57-0.82s regardless of page size in this measurement.
+    - Not snapshot-consistent: each page is fetched via its own database
+      session, so concurrent writes to the underlying table can shift row
+      offsets between pages. A row committed out of order between two page
+      requests has been reproduced to omit one row and duplicate another
+      (e.g. IDs [1, 3, 3, 4] instead of [1, 2, 3, 4]). This helper is
+      correct for a stable result set; it can omit or duplicate rows if the
+      table is written to while the pages are still being read.
+
     Args:
         service_type: 'preprocessing' or 'postprocessing'
         data_type: 'runoff', 'hydrograph', 'meteo', 'forecast',
@@ -207,7 +225,10 @@ def _read_data_paginated(
     # `skip` and keeps returning a full page would otherwise loop
     # unboundedly. Cap the number of pages at a sane bound and warn if it is
     # ever hit, rather than looping forever or silently de-duplicating
-    # (de-duplication would mask a real server defect).
+    # (de-duplication would mask a real server defect). At the default
+    # page_size of 10000 this caps a single read at max_pages * page_size =
+    # 10,000,000 rows — a safety-net ceiling, not a contract: it is
+    # deliberately approximate and may need to move if page_size changes.
     max_pages = 1000
     for _page_num in range(max_pages):
         page_params = {**base_params, "skip": skip, "limit": page_size}
