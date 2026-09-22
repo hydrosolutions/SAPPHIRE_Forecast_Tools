@@ -161,10 +161,12 @@ pre-commit / pre-merge validation gate.
   record a PASS/FAIL stage row, and `return $rc`. Dispatched from `:489` / `:499`, under
   `if [ "$MODE" = "full" ]` (`:485`, set at `:425`; the default `MODE="quick"` at `:67` runs Stage 1
   only) and `if [ "$SKIP_PIPELINE" = false ]` (`:488`). Documented as
-  Stage 1b of the validation chain in `doc/dev/testing_workflow.md:272` (the stage diagram), `:381`
-  ("## Stage 1b: Local Pipeline Run (Optional)") and `:846`, and in `run_validation.sh:36`.
-  `doc/plans/issues/high_prio_gi_draft_infra_no_production_run_verification.md:45` and `:71` already
-  list these exact call sites.
+  Stage 1b of the validation chain in `doc/dev/testing_workflow.md` under **"Testing Workflow
+  Overview"**, **"Stage 1b: Local Pipeline Run (Optional)"**, and the Quick Reference note that says
+  `run_validation.sh` orchestrates `run_locally.sh`, and in `run_validation.sh:36`.
+  `doc/plans/issues/high_prio_gi_draft_infra_no_production_run_verification.md` already lists these
+  exact call sites in its initial reference table and in the later path matrix row for
+  `apps/run_validation.sh`.
 - **The test suite** — `apps/pipeline/tests/test_run_locally_orchestration.py` drives `run_main()`
   end to end and asserts process status in 84 places — 79 on `result.returncode`, five on
   `first.returncode` (`:381`, `:453`, `:516`, `:574`, `:622`).

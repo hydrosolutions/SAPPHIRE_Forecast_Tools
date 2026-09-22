@@ -710,6 +710,83 @@ def _read_ml_forecasts_from_api(
     return df
 
 
+# Hindcast rows use flag 3 or 4 (hindcast_ML_models.py:470-478); operational
+# rows use flag 0, 1, 2 (make_forecast.py). Used by the ML-027 overwrite
+# guard in _write_ml_forecast_to_api() to identify which incoming rows need
+# protection-checking before they can replace an existing row.
+_HINDCAST_FLAGS = (3, 4)
+
+
+def _fetch_operational_flag0_keys(
+    client: "SapphirePostprocessingClient",
+    api_model_type: str,
+    start_date: str,
+    end_date: str,
+) -> set[tuple[str, str, str]]:
+    """Fetch the (code, forecast_date, target_date) keys of existing flag=0
+    operational forecasts for a model, over a forecast_date (issue date) span.
+
+    Used by the ML-027 overwrite guard: an incoming hindcast row must not be
+    allowed to replace a key that already holds a flag=0 operational
+    forecast. This reads via the client directly rather than through
+    ``_read_ml_forecasts_from_api``, because that helper returns an empty
+    DataFrame indistinguishably for "no records", "readiness failure" and
+    "exception" — which would let a transient read failure be read as
+    "nothing to protect". Here, any failure to complete the read raises
+    instead, so the guard fails closed.
+
+    Args:
+        client: An already-constructed, ready SapphirePostprocessingClient.
+        api_model_type: Model name in API form (e.g. "TiDE").
+        start_date: ISO date string, inclusive lower bound on forecast_date.
+        end_date: ISO date string, inclusive upper bound on forecast_date.
+
+    Returns:
+        Set of (code, forecast_date, target_date) tuples, each an ISO
+        "%Y-%m-%d" string, for rows currently stored with flag=0.
+
+    Raises:
+        SapphireAPIError: If the read could not be completed successfully.
+    """
+    pages: list[pd.DataFrame] = []
+    skip = 0
+    try:
+        while True:
+            page = client.read_short_term_forecasts(
+                horizon="day",
+                model=api_model_type,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=_API_PAGE_SIZE,
+            )
+            if page.empty:
+                break
+            pages.append(page)
+            if len(page) < _API_PAGE_SIZE:
+                break  # last page
+            skip += _API_PAGE_SIZE
+
+        if not pages:
+            return set()
+
+        protected = pd.concat(pages, ignore_index=True)
+        flag0 = protected[protected["flag"] == 0]
+        return {
+            (
+                str(int(row["code"])),
+                pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
+                pd.to_datetime(row["target"]).strftime("%Y-%m-%d"),
+            )
+            for _, row in flag0.iterrows()
+        }
+    except Exception as exc:
+        raise SapphireAPIError(
+            "ML-027 overwrite guard: failed to read existing operational "
+            f"forecasts (model={api_model_type}, {start_date}..{end_date}): {exc}"
+        ) from exc
+
+
 def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
     """
     Write ML forecasts to SAPPHIRE postprocessing API.
@@ -729,12 +806,30 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
           is unreachable (readiness check fails), or the API accepted the
           request but stored zero records.
 
+    ML-027 overwrite guard: the upsert key (horizon_type, code, model_type,
+    date, target) does not include flag, so an unfiltered hindcast write
+    (flag 3 or 4) could otherwise replace an existing flag=0 operational
+    row's quantiles and flag. If `data` contains any flag 3/4 rows, this
+    function reads the currently-stored flag=0 keys for this model over the
+    incoming rows' forecast_date span and drops any hindcast row that would
+    collide with one, logging the count at WARNING. The guard fails closed
+    on read errors, timeouts, and an unreachable API: if the protection read
+    cannot be completed, this raises SapphireAPIError and writes nothing. A
+    successful-but-empty protection read (e.g. an HTTP 200 with no matching
+    rows) is treated as "nothing to protect", not as a read failure — it
+    does not by itself block the write. If `data` contains no flag 3/4 rows,
+    none of this runs and behavior is identical to before this guard
+    existed. This is a read-then-write check: it holds absent a concurrent
+    operational writer. A flag=3 hindcast row replacing an existing flag=4
+    hindcast row is not guarded — only flag=0 operational rows are
+    protected.
+
     Args:
         data: DataFrame with ML forecast data. Expected columns:
             - code: station code
             - date: target date (when forecast is for)
             - forecast_date: when the forecast was made
-            - flag: quality flag (0=ok, 1=NaN, 2=error)
+            - flag: quality flag (0=ok, 1=NaN, 2=error; hindcast uses 3/4)
             - Q5, Q25, Q50, Q75, Q95: quantile predictions
         horizon_type: Informational only. Indicates whether the caller is
             producing pentad or decade forecasts. Storage always uses "day".
@@ -744,8 +839,9 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
         bool: True if rows were written, False for a benign no-op.
 
     Raises:
-        SapphireAPIError: If the API is unreachable, or the write call
-            raised, or the API accepted the request but stored no records.
+        SapphireAPIError: If the API is unreachable, the protection read
+            for the ML-027 guard fails, the write call raised, or the API
+            accepted the request but stored no records.
     """
     # "Nothing to send" is evaluated before anything about the API's state
     # (client availability, SAPPHIRE_API_ENABLED, readiness_check) — we
@@ -786,6 +882,86 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
 
     # Map model type to API format (shared constant)
     api_model_type = ML_MODEL_TYPE_MAP.get(model_type.upper(), model_type)
+
+    # ML-027 overwrite guard: only runs when the incoming frame actually
+    # contains hindcast rows (flag 3/4). Operational-only writes take none
+    # of this path and see no behavior change, including no extra read.
+    # Normalize the same way the record builder coerces `flag` below
+    # (`int(row["flag"]) if pd.notna(row.get("flag")) else None`) so that a
+    # value which will be *written* as 3 or 4 (e.g. the string "3", or a
+    # float like 3.5/4.9 that int() truncates to 3/4) is also *guarded* as
+    # 3 or 4 -- an unnormalized `.isin(_HINDCAST_FLAGS)` check would miss
+    # those and let them bypass the guard. A value that cannot be coerced
+    # to int is not a hindcast flag as far as this guard is concerned --
+    # treat it as unguarded (None) rather than raising, matching what the
+    # frame would have done before this guard existed (drop_duplicates
+    # would have discarded an earlier colliding row without ever coercing
+    # its flag).
+    def _coerce_flag_for_guard(f):
+        if pd.isna(f):
+            return None
+        try:
+            return int(f)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    if "flag" in data.columns:
+        coerced_flags = data["flag"].apply(_coerce_flag_for_guard)
+        hindcast_mask = coerced_flags.isin(_HINDCAST_FLAGS)
+    else:
+        hindcast_mask = None
+    if hindcast_mask is not None and hindcast_mask.any():
+        # Select and drop by integer position, not index label: callers
+        # build `data` via pd.concat, which can produce duplicate index
+        # labels, and a label-based `.drop(index=...)` would remove every
+        # row sharing a protected row's label -- including unrelated
+        # operational rows.
+        hindcast_positions = np.flatnonzero(hindcast_mask.to_numpy())
+        hindcast_rows = data.iloc[hindcast_positions]
+
+        # Parse forecast_date per row, exactly as the record-building loop
+        # below does (`pd.to_datetime(row["forecast_date"])`), rather than
+        # via a Series-level `pd.to_datetime(hindcast_rows["forecast_date"])`.
+        # The Series-level form infers ONE format for the whole column from
+        # its first value, which can silently misparse other rows on
+        # ambiguous input (e.g. a column mixing '13/06/2024' and
+        # '06/07/2024' infers dayfirst=True and reads the second as July 6,
+        # while per-row parsing reads it as June 7 -- the same value the
+        # writer below stores it as). Using the same per-row parse for both
+        # the guard's date span and its row keys keeps them from disagreeing
+        # by construction.
+        def _guard_forecast_date(row: pd.Series) -> pd.Timestamp:
+            return pd.to_datetime(row["forecast_date"])
+
+        forecast_date_values = [_guard_forecast_date(row) for _, row in hindcast_rows.iterrows()]
+        guard_start = min(forecast_date_values).strftime("%Y-%m-%d")
+        guard_end = max(forecast_date_values).strftime("%Y-%m-%d")
+
+        protected_keys = _fetch_operational_flag0_keys(
+            client, api_model_type, guard_start, guard_end
+        )
+
+        def _row_key(row: pd.Series) -> tuple[str, str, str]:
+            return (
+                str(int(row["code"])),
+                _guard_forecast_date(row).strftime("%Y-%m-%d"),
+                pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
+            )
+
+        protected_positions = [
+            pos for pos in hindcast_positions if _row_key(data.iloc[pos]) in protected_keys
+        ]
+        if protected_positions:
+            logger.warning(
+                "ML-027 guard: skipping %d hindcast row(s) that would overwrite "
+                "an existing flag=0 operational forecast (%s, %s)",
+                len(protected_positions),
+                model_type,
+                horizon_type,
+            )
+            keep_mask = np.ones(len(data), dtype=bool)
+            keep_mask[protected_positions] = False
+            data = data[keep_mask]
 
     # Deduplicate by the DB unique key (horizon_type, code, model_type, date,
     # target) before building records.  Within a single call horizon_type and
