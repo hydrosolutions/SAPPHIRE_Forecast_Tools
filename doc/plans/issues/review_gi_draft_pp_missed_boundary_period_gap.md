@@ -760,10 +760,21 @@ original premise (§A6).
    never looks further back than the most recent boundary, so any earlier stranded
    day is outside it by construction. **INFERRED (not verified here):** that the
    validator therefore actually returned PASS on the reported tjhm data — that
-   depends on DB contents this session did not query. Same family as INFRA-024 (a
-   check that cannot fail) and INFRA-026 (expectations that do not match the
-   product's schedule); neither currently names the "historical boundary day
-   silently empty" case, so it should be added to one of them.
+   depends on DB contents this session did not query. Same family as **INFRA-026** (a
+   check that cannot fail) and **INFRA-027** (expectations that do not match the
+   product's schedule); neither currently names the "historical boundary day silently
+   empty" case, so it should be added to one of them.
+
+   *(Id history, corrected 2026-09-22. This passage originally read "INFRA-024 and
+   INFRA-026", using ids allocated before a renumbering. The repair plan's mapping table
+   (`doc/plans/working/validate_pipeline_repair_plan.md:37-46`) records **historical INFRA-024 →
+   today's INFRA-026** explicitly. It does **not** contain a corresponding row for historical
+   INFRA-026; that this passage's second id is today's **INFRA-027** is inferred from the current
+   issue titles — INFRA-026 is "a check that cannot fail" and INFRA-027 is "expectations
+   contradicting the products' own rules" (`doc/plans/module_issues.md:129-130`) — which match this
+   passage's two descriptions in that order. They were always **two** issues; a correction on
+   2026-09-21 wrongly collapsed them into one and is reverted here. Today's INFRA-024 is
+   the unrelated exit-code issue, closed unimplemented, and is **not** a candidate owner.)*
 
 6. **CORRECTION to this issue's own premise: per-model PERIOD rows are written by
    at least three entrypoints, not "only the operational code path".** The
@@ -1202,9 +1213,19 @@ Silence here is indistinguishable from health.
 
 **Recommendation: detect-and-report, never auto-fix.**
 
+> **Detector criterion mismatch — noted 2026-09-22.** "Zero per-model period rows" would **not**
+> have caught the incident that motivated this issue. The evidence above (`:925-950`) establishes
+> that per-model rows were **present** on all four dates and only **EM** was missing, on 15 of 71
+> available codes. A detector keyed on absent per-model rows therefore watches for a condition
+> that did not occur here. Either key it on the anomaly actually observed — EM missing while
+> per-model rows exist — or state explicitly that it targets a different, still-plausible failure
+> and accept that it would have stayed silent through this one.
+
 - **Where:** `maintenance:postprocessing_forecasts` — it runs frequently from cron
   and is where an operator already looks. Emit a WARN listing boundary dates in the
-  lookback window with zero per-model period rows and, because that is the
+  lookback window with **the anomaly actually observed** — see the criterion note above;
+  "zero per-model period rows" is superseded, because this issue's own evidence shows
+  per-model rows were present on all four dates and only EM was missing — and, because that is the
   operator's actual next decision, which of the C1–C6 causes the evidence points
   at. **No writes, no exit-code change** (the exit contract is PP-051/PP-055
   territory; do not entangle them).
@@ -1219,9 +1240,11 @@ Silence here is indistinguishable from health.
   availability logic (so C1 is reported as an upstream gap rather than a PP gap).
   Small, but a real ticket — not a two-line WARN.
 - **Why not `validate_pipeline`:** that is where such a check morally belongs, but
-  its expectation model is itself under repair (INFRA-024 / INFRA-026). Adding a
-  boundary-history sweep before those land risks re-opening INFRA-026 from the
-  other side — a check that fires on healthy deployments. Lift it there afterwards.
+  its expectation model is itself under repair — **INFRA-026 and INFRA-027**, two
+  separate issues. (This passage originally cited "INFRA-024 / INFRA-026" under the
+  pre-renumbering ids; see the id-history note above. **Both** dependencies stand.)
+  Adding a boundary-history sweep before they land risks re-opening INFRA-027 from
+  the other side — a check that fires on healthy deployments. Lift it there afterwards.
 - **Honest counter-argument:** `postprocessing_maintenance.py` already carries the
   most contested write/exit semantics in the module (PP-007, PP-024, PP-051,
   PP-055), and a WARN nobody reads is not detection. Mitigation: the change touches

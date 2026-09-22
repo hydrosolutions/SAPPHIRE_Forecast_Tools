@@ -11,7 +11,8 @@ rating.
 **Labels**: `infra`, `logging`, `observability`, `cross-module`
 **Found**: 2026-08-18, local kghm (kyg) end-to-end review on `maxat_sapphire_2` @ `a304ffb0`.
 **Related**: **INFRA-024** (failure *causes* logged at DEBUG are unattributable — same blind
-spot, one level down), **PP-045** (its backfill CLI is one of the affected entry points — see
+spot, one level down; **that issue is closed and its DEBUG-logging half, Defect A, was resolved
+independently on trunk `4fe3e545` — cited here as the historical parallel, not as live work**), **PP-045** (its backfill CLI is one of the affected entry points — see
 "Consequence for PP-045"), PREPG-009 / PP-051 / PP-054 (silent-success family: those modules
 misreport an outcome; this one reports nothing at all).
 
@@ -172,8 +173,10 @@ A correction has been added to the runbook and to PP-045's issue pointing here.
   coverage question once this is fixed**; it is currently undecidable from the run itself, and
   both readings (a legitimate EM admission gate vs a gap-filler that did nothing and reported
   success) remain open.
-- **It compounds INFRA-024.** That issue records failure *causes* being logged at DEBUG; this
-  one removes INFO as well, leaving WARNING as the lowest visible level across five modules.
+- **It compounds the blind spot INFRA-024 recorded.** That issue recorded failure *causes* being
+  logged at DEBUG (its Defect A, since fixed independently); this one removes INFO as well,
+  leaving WARNING as the lowest visible level across five modules. **This issue's own scope is
+  unaffected by INFRA-024's closure** — the root-logger repair stands on its own.
 - **Cron and CI see nothing.** A scheduled run's log is the only artefact; a WARNING-only log
   cannot show that the run did the right thing.
 
@@ -203,9 +206,19 @@ disk-space change as well as an observability change.
 
 ## Testing
 
-- [ ] Unit test in `apps/iEasyHydroForecast/tests/`: after importing `setup_library`, a fresh
-      `logging.basicConfig(level=logging.INFO)` **does** take effect (post-fix), asserting
+- [ ] **Scoped to (a)/(c) only — corrected 2026-09-22.** Unit test in
+      `apps/iEasyHydroForecast/tests/`: after importing `setup_library`, a fresh
+      `logging.basicConfig(level=logging.INFO)` **does** take effect, asserting
       `logging.getLogger().isEnabledFor(logging.INFO)`.
+
+      This test **cannot pass under option (b)**, which is the option recommended first. (b) adds
+      `force=True` or an explicit `setLevel` per entry point and deliberately leaves
+      `setup_library`'s import-time handler configuration in place — so a *plain* `basicConfig`
+      after the import still does nothing, by design. Writing it as an unconditional acceptance
+      criterion would block the very repair the issue recommends starting with.
+- [ ] **Verification for (b)**: assert through an affected *entry point* — with its
+      `force=True`/`setLevel` applied, its own INFO output reaches its log file. That is the
+      property (b) actually delivers.
 - [ ] Per-module smoke test: run each affected entry point with a no-op configuration and assert
       its log file contains its own start banner. This is the test that would have caught the
       empty `log_maintenance_long_term`.

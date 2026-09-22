@@ -247,14 +247,23 @@ The actual fix, in `run_maintenance_preprocessing_runoff`
   (`write_station_monthly_hydrograph`), so the specific station and exception
   are visible in a default-level log instead of requiring `DEBUG` to be
   enabled.
-- **Exit 4 no longer sets `rc`.** `run_maintenance_preprocessing_runoff` now
-  records a **separate** `preprocessing_runoff (long-horizon sync)` `FAIL`
-  row via `record_result` and logs an ERROR line, but leaves the function's
-  own `rc` (and thus its return value) at whatever `preprocessing_runoff.py
-  --maintenance` itself returned. That lets the Phase 2 guard idiom see
-  success and the `daily` run continue into Phase 3, where `machine_learning`
-  runs — while the run **still exits non-zero overall**, because the separate
-  FAIL row still makes `print_summary` return 1.
+- **Exit 4 no longer sets `rc`.** `run_maintenance_preprocessing_runoff`
+  leaves the function's own `rc` (and thus its return value) at whatever
+  `preprocessing_runoff.py --maintenance` itself returned. That lets the
+  Phase 2 guard idiom see success and the `daily` run continue into Phase 3,
+  where `machine_learning` runs.
+
+  > **SUPERSEDED BY INFRA-044 — corrected 2026-09-22.** This bullet used to
+  > say exit 4 records a separate `preprocessing_runoff (long-horizon sync)`
+  > `FAIL` row and that the run "still exits non-zero overall" because of it.
+  > That is no longer the contract. On trunk, exit 4 records **no result row
+  > at all**, logs at INFO rather than ERROR, and leaves the run's status
+  > untouched (`run_locally.sh:988-998`) — it is a known upstream iEH HF
+  > condition, not a failure we own. **Exit 6** now carries the FAIL-row
+  > contract: total norm-lookup failure records a `FAIL` row while the
+  > module's `rc` stays 0 (`:1017`), and that row is what makes the run
+  > non-zero. Anything reasoning about "the exit-4 FAIL row" should read
+  > exit 6 instead.
 - **Exits 1, 3 and 5 remain fatal exactly as before** — only exit 4 (SDK
   lookup failure, a degraded-but-partial-success condition) was reclassified.
   Exit 2 (no records) was already warn-and-continue and is unchanged.
@@ -359,7 +368,8 @@ VALIDATION rows.
   which is why `--continue-on-error` still exits non-zero even after this fix;
   that behaviour is unchanged and **not** in scope here.
 - **Do not** fold in INFRA-024 or INFRA-030. They make this issue's symptoms worse
-  to read but are distinct defects with their own drafts.
+  to read but are distinct defects. INFRA-030 has its own draft; **INFRA-024 was closed
+  2026-09-21 without being implemented**, so its half is not coming.
 - **ML-016 stays its own issue** (it already has an id and history) but is a hard
   co-dependency: this issue blocks the `daily` route to ML, ML-016 blocks the
   manual route. **Ship them together** — either alone leaves an operator stuck.
@@ -368,7 +378,10 @@ VALIDATION rows.
   issue harder to diagnose; neither is a prerequisite.
 - **Do not** fold in the per-mode `machine_learning` MODULE-row collision
   (§ Known limitation above). It is pre-existing, in the same reporting
-  family as INFRA-024/INFRA-030, and deliberately left unfixed here.
+  family as INFRA-024/INFRA-030, and deliberately left unfixed here. **(Scope exclusion stands.
+  Do not read the INFRA-024 closure of 2026-09-21 as leaving this collision orphaned — both
+  halves were already handled: log paths by ML-021, row labels on 2026-09-09, per the RESOLVED
+  note below. Corrected 2026-09-21.)**
   (Row-label half since resolved 2026-09-09 — see the RESOLVED note in that
   section.)
 - This issue is **orchestration and exit semantics only**. It does not touch what
@@ -390,9 +403,17 @@ VALIDATION rows.
    `PIPELINE_ABORTED` flag rather than on the target's name.
 3. A `sync_long_horizon_hydrograph.py` exit 4 no longer aborts the `daily`
    run — Phase 3 (`machine_learning`, `linear_regression`,
-   `postprocessing_forecasts`) still runs — while the overall run still exits
-   non-zero and a distinct `preprocessing_runoff (long-horizon sync)` FAIL row
-   is recorded. **Implemented** in `run_maintenance_preprocessing_runoff`.
+   `postprocessing_forecasts`) still runs. **Implemented** in
+   `run_maintenance_preprocessing_runoff`.
+
+   > **Second half superseded by INFRA-044 — corrected 2026-09-22.** This
+   > criterion used to add "while the overall run still exits non-zero and a
+   > distinct `preprocessing_runoff (long-horizon sync)` FAIL row is
+   > recorded". That is no longer exit 4's contract: exit 4 records **no row**,
+   > logs INFO, and leaves an otherwise-successful run at **exit 0**
+   > (`run_locally.sh:988-998`). **Exit 6** is what records the FAIL row while
+   > the module's `rc` stays 0 (`:1017`), and that row is what makes the run
+   > non-zero. Judge this criterion on the non-abort property alone.
 4. Exits 1, 3 and 5 from `sync_long_horizon_hydrograph.py` remain fatal to
    `daily` exactly as before this change. **Implemented** — only exit 4's
    handling changed.

@@ -29,7 +29,7 @@ qualified claims above are what the milestones actually deliver.)*
 This plan was written 2026-08-16 and the issue drafts it references have moved underneath it since.
 Its *shape* and its § 2 governing constraint are untouched and remain correct.
 
-### (a) The issue ids were stale — and two of them now name **shipped, unrelated** work
+### (a) The issue ids were stale — and both now name **unrelated** work (one shipped, one closed unimplemented)
 
 They were allocated before a renumbering. **Anyone implementing from rev 3 would have claimed
 closure of an issue that is already merged and has nothing to do with this validator.**
@@ -37,11 +37,13 @@ closure of an issue that is already merged and has nothing to do with this valid
 | rev 3 said | Actually is | What that id is on trunk today |
 |---|---|---|
 | **INFRA-023** | **INFRA-025** | `iEasyHydroForecast` package shadowing — validation dies at import. **Open (Draft).** Today's INFRA-023 is the `monthly_norms` cron-mapping issue: **Complete, shipped in PR #494** |
-| **INFRA-024** | **INFRA-026** | Tier-1 PASS + "all datasets fresh" when values are absent. **Open (Draft).** Today's INFRA-024 is failure-cause attribution — `run_locally.sh` normalising a module's exit code to 1 — **Draft, and not in scope here** |
+| **INFRA-024** | **INFRA-026** | Tier-1 PASS + "all datasets fresh" when values are absent. **Open (Draft).** Today's INFRA-024 is failure-cause attribution — `run_locally.sh` normalising a module's exit code to 1 — **CLOSED 2026-09-21, not implemented; never was in scope here** |
 
 *Verified 2026-09-09 against `doc/plans/module_issues.md`: INFRA-025 and INFRA-026 are both Draft
-and both describe what this plan fixes; INFRA-023 is Complete and INFRA-024 is an unrelated open
-draft. PR #494 confirmed merged with `gh pr view`.*
+and both describe what this plan fixes; INFRA-023 is Complete and INFRA-024 is an unrelated issue.
+PR #494 confirmed merged with `gh pr view`.* *(Appended 2026-09-21, after the original verification:
+that unrelated INFRA-024 — the exit-code issue — was closed without being implemented. It never bore
+on this plan; noted only so the row above is not read as pointing at live work.)*
 
 This is the same id drift that had to be corrected inside the issue drafts. It lived here too, and
 that pass did not reach it.
@@ -313,7 +315,10 @@ the ML filter still matches nothing until M2.
    `check_snow_operational_values` (`:958`, running to the next definition `check_em_ne_parity` at
    `:1011`) untouched, and do not give snow a staleness verdict.
 
-   The distinction that keeps INFRA-026 closable without it:
+   The distinction that lets M3 deliver INFRA-026's **null-value half** without it — *not* a
+   basis for closing the whole issue (corrected 2026-09-22; the header above is the binding
+   statement: M3 leaves `check_snow_operational_values` untouched, excludes snow from the
+   freshness verdict, and defers per-station coverage):
 
    - **"rows exist, all values NULL" ⇒ FAIL — applies to every dataset, snow included.** This
      needs no cadence decision; a dataset with no operational values at all is broken whatever

@@ -386,7 +386,9 @@ distinguish them was never emitted. **Superseded — INFRA-037 lifted this to `l
 per-station exception type and message are now emitted at default log level instead of being
 suppressed. A counts-only summary at WARNING keyed by
 a **normalised reason/stage** (not by exception class — `ValueError` covers several distinct stages
-here; see INFRA-024) would still improve on today's per-station raw-exception lines without
+here; see INFRA-024 — **closed 2026-09-21 without being implemented, and no successor owns this
+logging follow-up. It is a logging change, independent of exit codes, so none of the reasons for
+that closure apply to it; file it separately if the need is real**) would still improve on today's per-station raw-exception lines without
 exposing station codes.
 
 **`run_locally.sh` does not propagate exit 4 as the process status — and, per INFRA-037, no longer
