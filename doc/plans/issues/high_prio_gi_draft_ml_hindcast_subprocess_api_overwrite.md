@@ -117,24 +117,6 @@ protecting `flag=4`, is additional scope and not proposed here.
 4. `test_recalculate_nan_api_write.py:688-707` — the mock that hides it.
 5. `archive/review_gi_draft_ml_recalc_api_overwrite.md` — ML-013's pattern.
 
-## Known coverage gaps
-
-A mutation review of the guard and its tests found five surviving mutations. Two were reversals of
-fixes already applied and are now caught by dedicated tests (label-based row removal via
-`data.drop(index=...)`; post-read key-building errors escaping the try block in
-`_fetch_operational_flag0_keys` as a bare `ValueError`). The other three are recorded here rather
-than chased, because the cost of a test for each exceeds its value:
-
-- **Stopping pagination after page one.** `_fetch_operational_flag0_keys` breaks its pagination loop
-  once a page returns fewer than `_API_PAGE_SIZE` rows; a mutation that stops after the first page
-  unconditionally still passes, since no test's fixture spans more than one page.
-- **Narrowing the guarded date span to its minimum.** A mutation collapsing `guard_start`/`guard_end`
-  to a single date (instead of the min/max over all incoming hindcast rows) still passes, since no
-  test exercises hindcast rows spanning more than one `forecast_date`.
-- **Mutating the caller's index.** A mutation that mutates `data`'s index in place (rather than only
-  reading it positionally) still passes, since no test asserts the caller's original frame is left
-  untouched after the call.
-
 ## Deliberately out of scope
 
 - The CSV writes alongside these API writes. Those belong to the separate CSV-overwrite work (GH

@@ -488,3 +488,110 @@ class TestOverwriteGuardFailsClosed:
             utils_ml_forecast._write_ml_forecast_to_api(hindcast, "pentad", "TIDE")
 
         assert fake_client.write_calls == []
+
+
+class TestOverwriteGuardProtectionReadPaginates:
+    def test_protected_row_on_later_page_is_still_caught(self, install_fake_client, monkeypatch):
+        """The protection read must paginate to completion, not stop after
+        the first page. Seed more flag=0 rows than the (patched, small)
+        page size, with the colliding row on the second page -- if the
+        read stopped after page one (e.g. a `break` right after the first
+        `client.read_short_term_forecasts` call), the later-page row would
+        never make it into `protected_keys` and the collision would be
+        missed."""
+        monkeypatch.setattr(utils_ml_forecast, "_API_PAGE_SIZE", 2)
+
+        decoy1 = _existing_record(19001, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=10.0)
+        decoy2 = _existing_record(19002, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=20.0)
+        target = _existing_record(CODE, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=42.0)
+        # Insertion order matters: with page size 2, page 1 is
+        # [decoy1, decoy2] (full -> continue) and page 2 is [target]
+        # (short -> stop), so `target`'s key only surfaces once the read
+        # continues past page 1.
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[decoy1, decoy2, target])
+        )
+
+        hindcast = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-06", forecast_date="2024-06-05", q50=None
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(hindcast, "pentad", "TIDE")
+
+        assert result is False
+        stored = {r["code"]: r for r in fake_client.all_rows()}
+        assert stored[str(CODE)]["flag"] == 0
+        assert stored[str(CODE)]["forecasted_discharge"] == 42.0
+        assert fake_client.write_calls == []
+
+
+class TestOverwriteGuardProtectionReadSpansAllIssueDates:
+    def test_later_issue_date_row_is_still_protected(self, install_fake_client):
+        """The protection read's date span must cover every incoming
+        hindcast row's forecast_date, from min to max -- not just the
+        earliest one. Two hindcast rows with different issue dates, where
+        the LATER one collides with a stored flag=0 row: if `guard_end`
+        were narrowed to the minimum issue date instead of the maximum,
+        the protection read would never look far enough forward to see
+        the later row's key, and the overwrite would go through."""
+        existing = _existing_record(CODE, "TiDE", "2024-06-10", "2024-06-11", flag=0, q50=42.0)
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing])
+        )
+
+        early_row = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-02", forecast_date="2024-06-01", q50=None
+        )
+        late_colliding_row = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-11", forecast_date="2024-06-10", q50=None
+        )
+        data = pd.concat([early_row, late_colliding_row], ignore_index=True)
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(data, "pentad", "TIDE")
+
+        # The early, non-colliding row is written; the late, colliding row
+        # is dropped and the operational row it targets survives.
+        assert result is True
+        stored = fake_client.all_rows()
+        by_target = {r["target"]: r for r in stored}
+        assert by_target["2024-06-11"]["flag"] == 0
+        assert by_target["2024-06-11"]["forecasted_discharge"] == 42.0
+        assert by_target["2024-06-02"]["flag"] == 3
+        assert len(fake_client.write_calls) == 1
+        assert len(fake_client.write_calls[0]) == 1
+
+
+class TestOverwriteGuardDoesNotMutateCallerFrame:
+    def test_caller_dataframe_is_unchanged_after_guarded_write(self, install_fake_client):
+        """The guard must remove protected rows by rebinding `data` to a
+        new, filtered DataFrame -- never by mutating the DataFrame object
+        the caller passed in place (e.g. `data.drop(index=..., inplace=True)`).
+        Callers write their own CSVs from that same frame after the API
+        call, so an in-place mutation here would silently change what
+        lands in the CSV."""
+        existing = _existing_record(CODE, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=42.0)
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing])
+        )
+
+        protected_row = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-06", forecast_date="2024-06-05", q50=None
+        )
+        other_code = 19998
+        unrelated_row = _hindcast_frame(
+            other_code, flag=4, date_="2024-07-01", forecast_date="2024-06-30", q50=77.0
+        )
+        data = pd.concat([protected_row, unrelated_row], ignore_index=True)
+        original = data.copy(deep=True)
+        original_len = len(data)
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(data, "pentad", "TIDE")
+
+        assert result is True
+        stored = {r["code"]: r for r in fake_client.all_rows()}
+        assert stored[str(other_code)]["flag"] == 4
+        assert stored[str(other_code)]["forecasted_discharge"] == 77.0
+        # The caller's own `data` reference must be untouched: same length,
+        # same contents, including the row the guard dropped internally.
+        assert len(data) == original_len
+        pd.testing.assert_frame_equal(data, original)
