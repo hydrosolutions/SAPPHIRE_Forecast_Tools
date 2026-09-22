@@ -111,4 +111,4 @@ baseline behind.
 
 - INFRA-045's five findings.
 - Whether `--phase pre` should return non-zero (INFRA-045 F5 decided: no).
-- Exit-code attribution generally (INFRA-024).
+- Exit-code attribution generally (INFRA-024). **(INFRA-024 was closed 2026-09-21 without being implemented; this exclusion stands and nothing inherits the work. The archive records what would reopen it: `doc/plans/issues/archive/mid_prio_gi_draft_infra_module_failures_unattributable.md`.)**

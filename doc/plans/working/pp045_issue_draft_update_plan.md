@@ -782,7 +782,7 @@ configured kyg deployment with write authorisation.
 - Shipped fix: PR #425, `cd97db57` (2026-07-23); commits `cce5922a`, `62bbba65`
 - 2026-08-17 re-assessment: commit `31370164`, branch `docs_pp045_status_2026-08-17`
 - Related: PP-046 (yearless key — updated by §7, not duplicated), PP-047 (write reports
-  success on zero/partial), PP-048 (decade EM freeze), INFRA-024 / INFRA-026 (validator
+  success on zero/partial), PP-048 (decade EM freeze), INFRA-026 / INFRA-027 (validator *(ids corrected 2026-09-22: this passage used the pre-renumbering pair INFRA-024/INFRA-026; today's INFRA-024 is the unrelated, closed exit-code issue)*
   cannot see this class of gap)
 - Conventions: `CLAUDE.md` § Orchestration Protocol, § Multi-Model Review;
   `doc/plans/README.md` (status vocabulary — see C2 on the disagreement);

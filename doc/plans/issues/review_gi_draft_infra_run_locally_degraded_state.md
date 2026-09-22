@@ -257,7 +257,7 @@ Files confirmed to contain hits as of 2026-09-03 (classification still required 
 | `doc/prod/ml_no_forecasts_debug_runbook.md` | `:124`, `:152-166`, `:727` — the INFRA-037 row and the Step-5 note both say "still exits non-zero overall … records a FAIL line". |
 | `doc/plans/module_issues.md` | INFRA-024, INFRA-030, INFRA-037, PREPQ-014, PREPQ-015 rows. **PREPQ-015's "'all-failed still exits non-zero' already holds with no code change needed" must now cite exit 6.** Add the INFRA-044 row. |
 | `doc/plans/issues/review_gi_draft_prepq_longhorizon_sdk_failure_drops_station.md` | `:92`, `:130`, `:178`, and its test table (~`:198`). |
-| `doc/plans/issues/mid_prio_gi_draft_infra_module_failures_unattributable.md` | `:56`, `:69-75`, `:143-145` — quotes the `lt_rc -eq 4` branch verbatim. |
+| `doc/plans/issues/archive/mid_prio_gi_draft_infra_module_failures_unattributable.md` (INFRA-024, closed 2026-09-21) | `:56`, `:69-75`, `:143-145` — quotes the `lt_rc -eq 4` branch verbatim. |
 | `doc/plans/issues/mid_prio_gi_draft_prepq_longhorizon_narrow_api_exception_handler.md` | `:79` — reasons about `run_locally.sh`'s generic `elif [ $lt_rc -ne 0 ]` branch, which C4 now steps in front of for code 6. |
 | `doc/plans/issues/mid_prio_gi_draft_prepq_backfill_discharge_discards_writer_status.md` | `:35`, `:80-87`, `:99-106`. |
 | `doc/plans/issues/low_prio_gi_draft_prepq_long_horizon_sdk_norm_path_none.md` | "Operational consequence" — says the target "reports FAIL on every run while this persists". |
@@ -410,7 +410,7 @@ Line numbers are as of 2026-09-03; re-derive them with `grep -n` at implementati
 
 ## Out of scope
 
-- INFRA-024's other half (specific exit codes normalised to 1 for genuinely failed modules).
+- INFRA-024's other half (specific exit codes normalised to 1 for genuinely failed modules). **(INFRA-024 was closed 2026-09-21 without being implemented; this exclusion stands and nothing inherits the work. The archive records what would reopen it: `doc/plans/issues/archive/mid_prio_gi_draft_infra_module_failures_unattributable.md`.)**
 - Classifying any other module's outcome as DEGRADED (C5).
 - Adding a `SKIP` state (INFRA-030) — this issue only unblocks it.
 - Anything about *why* the SDK raises (PREPQ-014, upstream).
