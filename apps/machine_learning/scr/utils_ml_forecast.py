@@ -768,25 +768,25 @@ def _fetch_operational_flag0_keys(
             if len(page) < _API_PAGE_SIZE:
                 break  # last page
             skip += _API_PAGE_SIZE
+
+        if not pages:
+            return set()
+
+        protected = pd.concat(pages, ignore_index=True)
+        flag0 = protected[protected["flag"] == 0]
+        return {
+            (
+                str(int(row["code"])),
+                pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
+                pd.to_datetime(row["target"]).strftime("%Y-%m-%d"),
+            )
+            for _, row in flag0.iterrows()
+        }
     except Exception as exc:
         raise SapphireAPIError(
             "ML-027 overwrite guard: failed to read existing operational "
             f"forecasts (model={api_model_type}, {start_date}..{end_date}): {exc}"
         ) from exc
-
-    if not pages:
-        return set()
-
-    protected = pd.concat(pages, ignore_index=True)
-    flag0 = protected[protected["flag"] == 0]
-    return {
-        (
-            str(int(row["code"])),
-            pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
-            pd.to_datetime(row["target"]).strftime("%Y-%m-%d"),
-        )
-        for _, row in flag0.iterrows()
-    }
 
 
 def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
@@ -884,9 +884,25 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     # ML-027 overwrite guard: only runs when the incoming frame actually
     # contains hindcast rows (flag 3/4). Operational-only writes take none
     # of this path and see no behavior change, including no extra read.
-    hindcast_mask = data["flag"].isin(_HINDCAST_FLAGS) if "flag" in data.columns else None
+    # Normalize the same way the record builder coerces `flag` below
+    # (`int(row["flag"]) if pd.notna(row.get("flag")) else None`) so that a
+    # value which will be *written* as 3 or 4 (e.g. the string "3", or a
+    # float like 3.5/4.9 that int() truncates to 3/4) is also *guarded* as
+    # 3 or 4 -- an unnormalized `.isin(_HINDCAST_FLAGS)` check would miss
+    # those and let them bypass the guard.
+    if "flag" in data.columns:
+        coerced_flags = data["flag"].apply(lambda f: int(f) if pd.notna(f) else None)
+        hindcast_mask = coerced_flags.isin(_HINDCAST_FLAGS)
+    else:
+        hindcast_mask = None
     if hindcast_mask is not None and hindcast_mask.any():
-        hindcast_rows = data[hindcast_mask]
+        # Select and drop by integer position, not index label: callers
+        # build `data` via pd.concat, which can produce duplicate index
+        # labels, and a label-based `.drop(index=...)` would remove every
+        # row sharing a protected row's label -- including unrelated
+        # operational rows.
+        hindcast_positions = np.flatnonzero(hindcast_mask.to_numpy())
+        hindcast_rows = data.iloc[hindcast_positions]
         forecast_dates = pd.to_datetime(hindcast_rows["forecast_date"])
         guard_start = forecast_dates.min().strftime("%Y-%m-%d")
         guard_end = forecast_dates.max().strftime("%Y-%m-%d")
@@ -902,18 +918,20 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
                 pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
             )
 
-        protected_index = [
-            idx for idx, row in hindcast_rows.iterrows() if _row_key(row) in protected_keys
+        protected_positions = [
+            pos for pos in hindcast_positions if _row_key(data.iloc[pos]) in protected_keys
         ]
-        if protected_index:
+        if protected_positions:
             logger.warning(
                 "ML-027 guard: skipping %d hindcast row(s) that would overwrite "
                 "an existing flag=0 operational forecast (%s, %s)",
-                len(protected_index),
+                len(protected_positions),
                 model_type,
                 horizon_type,
             )
-            data = data.drop(index=protected_index)
+            keep_mask = np.ones(len(data), dtype=bool)
+            keep_mask[protected_positions] = False
+            data = data[keep_mask]
 
     # Deduplicate by the DB unique key (horizon_type, code, model_type, date,
     # target) before building records.  Within a single call horizon_type and

@@ -233,6 +233,52 @@ class TestOverwriteGuardProtectsOperationalRows:
         # Nothing was ever sent to write_forecasts for this call.
         assert fake_client.write_calls == []
 
+    def test_flag4_hindcast_does_not_overwrite_existing_flag0_row(self, install_fake_client):
+        """A flag=4 hindcast row (not just flag=3) targeting a key that
+        already holds a flag=0 operational forecast must also be dropped.
+        Mutating _HINDCAST_FLAGS from (3, 4) to (3,) must fail this test."""
+        existing = _existing_record(CODE, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=42.0)
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing])
+        )
+
+        hindcast = _hindcast_frame(
+            CODE, flag=4, date_="2024-06-06", forecast_date="2024-06-05", q50=None
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(hindcast, "pentad", "TIDE")
+
+        assert result is False
+        stored = fake_client.all_rows()
+        assert len(stored) == 1
+        assert stored[0]["flag"] == 0
+        assert stored[0]["forecasted_discharge"] == 42.0
+        assert fake_client.write_calls == []
+
+    def test_string_flag_hindcast_is_normalized_and_guarded(self, install_fake_client):
+        """A flag stored as the string "3" must be normalized the same way
+        the record builder coerces it (`int(row["flag"])`) before the guard
+        tests membership in _HINDCAST_FLAGS -- an unnormalized
+        `.isin((3, 4))` check would miss it and let it overwrite the
+        operational row."""
+        existing = _existing_record(CODE, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=42.0)
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing])
+        )
+
+        hindcast = _hindcast_frame(
+            CODE, flag="3", date_="2024-06-06", forecast_date="2024-06-05", q50=None
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(hindcast, "pentad", "TIDE")
+
+        assert result is False
+        stored = fake_client.all_rows()
+        assert len(stored) == 1
+        assert stored[0]["flag"] == 0
+        assert stored[0]["forecasted_discharge"] == 42.0
+        assert fake_client.write_calls == []
+
     def test_hindcast_row_for_new_key_is_written(self, install_fake_client):
         """A hindcast row for a key with no existing row must be written."""
         fake_client = install_fake_client(FakeSapphirePostprocessingClient(existing_rows=[]))
