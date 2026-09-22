@@ -355,6 +355,82 @@ class TestOperationalWritesUnaffected:
         assert stored[0]["flag"] == 0
 
 
+class TestFlagCoercionIsTolerant:
+    def test_unparseable_flag_value_does_not_raise_and_matches_pre_guard_behavior(
+        self, install_fake_client
+    ):
+        """A flag value that cannot be coerced to int (e.g. the string
+        '3.0', which int() rejects even though float() would accept it)
+        must not raise -- it is simply treated as unguarded (None), and the
+        surviving row after drop_duplicates(keep='last') is written, exactly
+        as before this guard existed. Reproduces a real reported case: two
+        rows sharing a key with flags ['3.0', 0] used to discard the first
+        row and write flag 0; the guard's coercion made that raise instead
+        and write nothing."""
+        fake_client = install_fake_client(FakeSapphirePostprocessingClient(existing_rows=[]))
+
+        data = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "date": pd.to_datetime(["2024-06-06", "2024-06-06"]),
+                "forecast_date": pd.to_datetime(["2024-06-05", "2024-06-05"]),
+                "flag": ["3.0", 0],
+                "Q5": [None, 30.0],
+                "Q25": [None, 35.0],
+                "Q50": [None, 40.0],
+                "Q75": [None, 45.0],
+                "Q95": [None, 50.0],
+            }
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(data, "pentad", "TIDE")
+
+        assert result is True
+        stored = fake_client.all_rows()
+        assert len(stored) == 1
+        assert stored[0]["flag"] == 0
+        assert stored[0]["forecasted_discharge"] == 40.0
+
+
+class TestOverwriteGuardRowRemovalIsPositional:
+    def test_duplicate_index_labels_do_not_remove_unrelated_rows(self, install_fake_client):
+        """Row removal must be positional, not label-based. Reverting to
+        `data.drop(index=protected_positions)` drops every row sharing a
+        protected row's index LABEL -- and callers build `data` via
+        pd.concat, which readily yields duplicate labels (e.g. two
+        per-code frames each starting at index 0)."""
+        existing = _existing_record(CODE, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=42.0)
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing])
+        )
+
+        protected_hindcast = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-06", forecast_date="2024-06-05", q50=None
+        )
+        unrelated_code = 19998
+        unrelated_hindcast = _hindcast_frame(
+            unrelated_code, flag=4, date_="2024-07-01", forecast_date="2024-06-30", q50=77.0
+        )
+        # Both frames default to a RangeIndex starting at 0 -- concatenating
+        # without ignore_index reproduces the duplicate-label frame that
+        # callers build from per-code/per-horizon results.
+        data = pd.concat([protected_hindcast, unrelated_hindcast])
+        assert data.index.tolist() == [0, 0]
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(data, "pentad", "TIDE")
+
+        assert result is True
+        stored = {r["code"]: r for r in fake_client.all_rows()}
+        # Protected operational row survives untouched.
+        assert stored[str(CODE)]["flag"] == 0
+        assert stored[str(CODE)]["forecasted_discharge"] == 42.0
+        # Unrelated hindcast row for a different key must still be written,
+        # not swept away because it shares an index label with the
+        # protected row.
+        assert stored[str(unrelated_code)]["flag"] == 4
+        assert stored[str(unrelated_code)]["forecasted_discharge"] == 77.0
+
+
 class TestOverwriteGuardFailsClosed:
     def test_protection_read_failure_raises_and_writes_nothing(self, install_fake_client):
         """If the protection read cannot be completed, the guard must fail
@@ -389,4 +465,26 @@ class TestOverwriteGuardFailsClosed:
         result = utils_ml_forecast._write_ml_forecast_to_api(hindcast, "pentad", "TIDE")
 
         assert result is False
+        assert fake_client.write_calls == []
+
+    def test_post_read_key_building_error_raises_sapphire_api_error(self, install_fake_client):
+        """A stored row whose code cannot be coerced to int (something the
+        API's schema permits even though this guard's key-building does
+        not) must still surface as SapphireAPIError, not a bare ValueError
+        -- the protection read's try block must cover the post-read
+        key-building in `_fetch_operational_flag0_keys`, not only the
+        client call itself."""
+        bad_existing = _existing_record(CODE, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=42.0)
+        bad_existing["code"] = "not-an-int"
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[bad_existing])
+        )
+
+        hindcast = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-06", forecast_date="2024-06-05", q50=None
+        )
+
+        with pytest.raises(SapphireAPIError):
+            utils_ml_forecast._write_ml_forecast_to_api(hindcast, "pentad", "TIDE")
+
         assert fake_client.write_calls == []

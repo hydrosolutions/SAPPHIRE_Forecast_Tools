@@ -814,13 +814,17 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     row's quantiles and flag. If `data` contains any flag 3/4 rows, this
     function reads the currently-stored flag=0 keys for this model over the
     incoming rows' forecast_date span and drops any hindcast row that would
-    collide with one, logging the count at WARNING. If the protection read
-    itself fails, this raises SapphireAPIError and writes nothing (fail
-    closed). If `data` contains no flag 3/4 rows, none of this runs and
-    behavior is identical to before this guard existed. This is a
-    read-then-write check: it holds absent a concurrent operational writer.
-    A flag=3 hindcast row replacing an existing flag=4 hindcast row is not
-    guarded — only flag=0 operational rows are protected.
+    collide with one, logging the count at WARNING. The guard fails closed
+    on read errors, timeouts, and an unreachable API: if the protection read
+    cannot be completed, this raises SapphireAPIError and writes nothing. A
+    successful-but-empty protection read (e.g. an HTTP 200 with no matching
+    rows) is treated as "nothing to protect", not as a read failure — it
+    does not by itself block the write. If `data` contains no flag 3/4 rows,
+    none of this runs and behavior is identical to before this guard
+    existed. This is a read-then-write check: it holds absent a concurrent
+    operational writer. A flag=3 hindcast row replacing an existing flag=4
+    hindcast row is not guarded — only flag=0 operational rows are
+    protected.
 
     Args:
         data: DataFrame with ML forecast data. Expected columns:
@@ -889,9 +893,22 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     # value which will be *written* as 3 or 4 (e.g. the string "3", or a
     # float like 3.5/4.9 that int() truncates to 3/4) is also *guarded* as
     # 3 or 4 -- an unnormalized `.isin(_HINDCAST_FLAGS)` check would miss
-    # those and let them bypass the guard.
+    # those and let them bypass the guard. A value that cannot be coerced
+    # to int is not a hindcast flag as far as this guard is concerned --
+    # treat it as unguarded (None) rather than raising, matching what the
+    # frame would have done before this guard existed (drop_duplicates
+    # would have discarded an earlier colliding row without ever coercing
+    # its flag).
+    def _coerce_flag_for_guard(f):
+        if pd.isna(f):
+            return None
+        try:
+            return int(f)
+        except (TypeError, ValueError):
+            return None
+
     if "flag" in data.columns:
-        coerced_flags = data["flag"].apply(lambda f: int(f) if pd.notna(f) else None)
+        coerced_flags = data["flag"].apply(_coerce_flag_for_guard)
         hindcast_mask = coerced_flags.isin(_HINDCAST_FLAGS)
     else:
         hindcast_mask = None
