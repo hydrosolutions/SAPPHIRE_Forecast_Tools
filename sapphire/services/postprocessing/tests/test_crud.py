@@ -1043,7 +1043,8 @@ class TestPaginationOrdering:
         assert select_statements, f"expected a SELECT statement against {table}"
         for s in select_statements:
             assert "ORDER BY" in s.upper(), s
-            assert id_column.lower() in s.lower(), s
+            order_by_clause = s[s.upper().index("ORDER BY"):]
+            assert id_column.lower() in order_by_clause.lower(), s
 
     def test_get_forecast_orders_by_id(self, db_session):
         items = [
