@@ -155,7 +155,8 @@ shipped (PR #493, `4f171a50`) without becoming that consumer — its split refus
    parallel arrays, so a fifth "reason" argument is silently dropped until a `RESULTS_REASON`
    array and its parameter are added. Step 1 and step 3 are one change, not two.
 4. Leave the exit code alone: a skip is not a failure. This issue does **not** touch the exit
-   contract — INFRA-024 owns exit-code normalisation and PP-051/PP-055 own the module-level
+   contract — INFRA-024 *was* to own exit-code normalisation (**closed 2026-09-21 without being
+   implemented; nothing inherits it**) and PP-051/PP-055 own the module-level
    contracts.
 
 ## Testing
@@ -189,7 +190,7 @@ shipped (PR #493, `4f171a50`) without becoming that consumer — its split refus
 
 - Whether the ML mode/`ML_MODE` defaults *should* disagree (that is ML-016's territory) — this
   issue only makes the resulting skip visible.
-- Exit-code semantics (INFRA-024).
+- Exit-code semantics (INFRA-024). **(INFRA-024 was closed 2026-09-21 without being implemented; this exclusion stands and nothing inherits the work. The archive records what would reopen it: `doc/plans/issues/archive/mid_prio_gi_draft_infra_module_failures_unattributable.md`.)**
 - The Docker/Luigi pipeline's own summary, if it differs — check it, and file separately if the
   same shape exists there.
 
