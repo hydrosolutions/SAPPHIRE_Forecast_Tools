@@ -766,15 +766,16 @@ original premise (§A6).
    empty" case, so it should be added to one of them.
 
    *(Id history, corrected 2026-09-22. This passage originally read "INFRA-024 and
-   INFRA-026", using ids allocated before a renumbering. The repair plan's mapping table
-   (`doc/plans/working/validate_pipeline_repair_plan.md:37-46`) records **historical INFRA-024 →
+   INFRA-026", using ids allocated before a renumbering. The repair plan's section
+   **"(a) The issue ids were stale — and both now name unrelated work"** in
+   `doc/plans/working/validate_pipeline_repair_plan.md` records **historical INFRA-024 →
    today's INFRA-026** explicitly. It does **not** contain a corresponding row for historical
    INFRA-026; that this passage's second id is today's **INFRA-027** is inferred from the current
-   issue titles — INFRA-026 is "a check that cannot fail" and INFRA-027 is "expectations
-   contradicting the products' own rules" (`doc/plans/module_issues.md:129-130`) — which match this
-   passage's two descriptions in that order. They were always **two** issues; a correction on
-   2026-09-21 wrongly collapsed them into one and is reverted here. Today's INFRA-024 is
-   the unrelated exit-code issue, closed unimplemented, and is **not** a candidate owner.)*
+   issue titles in `doc/plans/module_issues.md` — INFRA-026 is "a check that cannot fail" and
+   INFRA-027 is "expectations contradicting the products' own rules" — which match this passage's
+   two descriptions in that order. They were always **two** issues; a correction on 2026-09-21
+   wrongly collapsed them into one and is reverted here. Today's INFRA-024 is the unrelated
+   exit-code issue, closed unimplemented, and is **not** a candidate owner.)*
 
 6. **CORRECTION to this issue's own premise: per-model PERIOD rows are written by
    at least three entrypoints, not "only the operational code path".** The
