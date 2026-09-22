@@ -102,7 +102,13 @@ class FakeSapphirePostprocessingClient:
 
     @staticmethod
     def _key(record: dict) -> tuple:
-        return (record["model_type"], str(record["code"]), record["date"], record["target"])
+        return (
+            record.get("horizon_type"),
+            record["model_type"],
+            str(record["code"]),
+            record["date"],
+            record["target"],
+        )
 
     def readiness_check(self) -> bool:
         return self.ready
@@ -124,6 +130,8 @@ class FakeSapphirePostprocessingClient:
             raise RuntimeError("simulated transient read failure")
 
         rows = list(self._rows.values())
+        if horizon is not None:
+            rows = [r for r in rows if r.get("horizon_type") == horizon]
         if model is not None:
             rows = [r for r in rows if r["model_type"] == model]
         if code is not None:
@@ -559,6 +567,169 @@ class TestOverwriteGuardProtectionReadSpansAllIssueDates:
         assert by_target["2024-06-02"]["flag"] == 3
         assert len(fake_client.write_calls) == 1
         assert len(fake_client.write_calls[0]) == 1
+
+
+class TestOverwriteGuardDateParsingMatchesWriter:
+    def test_ambiguous_date_format_guard_matches_writer(self, install_fake_client):
+        """Reproduces the ML-027 guard bypass: the guard's date span used a
+        Series-level pd.to_datetime, which infers ONE format for the whole
+        forecast_date column, while the record builder converts per row.
+        With forecast_date values ['13/06/2024', '06/07/2024'], the
+        Series-level conversion infers dayfirst=True from the unambiguous
+        '13/06/2024' and misreads '06/07/2024' as July 6 -- pushing the
+        guard's span start past 2024-06-07 -- while the per-row builder
+        correctly reads '06/07/2024' as June 7. A stored flag=0 row at
+        forecast_date 2024-06-07 must still be protected."""
+        existing = _existing_record(CODE, "TiDE", "2024-06-07", "2024-06-08", flag=0, q50=42.0)
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing])
+        )
+
+        data = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "date": ["2024-06-14", "2024-06-08"],
+                "forecast_date": ["13/06/2024", "06/07/2024"],
+                "flag": [3, 3],
+                "Q5": [None, None],
+                "Q25": [None, None],
+                "Q50": [None, None],
+                "Q75": [None, None],
+                "Q95": [None, None],
+            }
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(data, "pentad", "TIDE")
+
+        stored = {r["target"]: r for r in fake_client.all_rows()}
+        # The stored flag=0 row must survive untouched.
+        assert stored["2024-06-08"]["flag"] == 0
+        assert stored["2024-06-08"]["forecasted_discharge"] == 42.0
+        # The non-colliding hindcast row (target 2024-06-14) is written.
+        assert stored["2024-06-14"]["flag"] == 3
+        assert result is True
+
+    def test_mixed_iso_date_formats_are_accepted(self, install_fake_client):
+        """A forecast_date column mixing bare-date and datetime-with-time
+        ISO strings must not raise: the previous Series-level
+        pd.to_datetime(hindcast_rows["forecast_date"]) call raised a raw
+        ValueError on this exact mix (pandas cannot infer one shared format
+        for both), even though the per-row conversion the record builder
+        uses accepts both forms fine."""
+        fake_client = install_fake_client(FakeSapphirePostprocessingClient(existing_rows=[]))
+
+        data = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "date": ["2024-06-06", "2024-06-11"],
+                "forecast_date": ["2024-06-05", "2024-06-10 00:00:00"],
+                "flag": [3, 3],
+                "Q5": [None, None],
+                "Q25": [None, None],
+                "Q50": [None, None],
+                "Q75": [None, None],
+                "Q95": [None, None],
+            }
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(data, "pentad", "TIDE")
+
+        assert result is True
+        stored = {r["target"]: r for r in fake_client.all_rows()}
+        assert stored["2024-06-06"]["flag"] == 3
+        assert stored["2024-06-11"]["flag"] == 3
+
+
+class TestFlagCoercionCatchesOverflowError:
+    def test_infinite_flag_value_does_not_raise(self, install_fake_client):
+        """int(float('inf')) raises OverflowError, not TypeError/ValueError.
+        Two duplicate-key rows with flags [inf, 0] must not crash the
+        write -- the inf-flagged row is treated as unguarded (None) and
+        discarded by drop_duplicates(keep='last'), same as the existing
+        tolerant-coercion behavior for other unparseable flag values."""
+        fake_client = install_fake_client(FakeSapphirePostprocessingClient(existing_rows=[]))
+
+        data = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "date": pd.to_datetime(["2024-06-06", "2024-06-06"]),
+                "forecast_date": pd.to_datetime(["2024-06-05", "2024-06-05"]),
+                "flag": [float("inf"), 0],
+                "Q5": [None, 30.0],
+                "Q25": [None, 35.0],
+                "Q50": [None, 40.0],
+                "Q75": [None, 45.0],
+                "Q95": [None, 50.0],
+            }
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(data, "pentad", "TIDE")
+
+        assert result is True
+        stored = fake_client.all_rows()
+        assert len(stored) == 1
+        assert stored[0]["flag"] == 0
+        assert stored[0]["forecasted_discharge"] == 40.0
+
+
+class TestOverwriteGuardProtectionReadUsesCorrectHorizon:
+    def test_protection_read_uses_day_horizon_not_others(self, install_fake_client):
+        """The protection read must request horizon='day' -- ML forecasts
+        are always stored at horizon_type='day' regardless of the caller's
+        pentad/decade horizon_type. If the protection read requested a
+        different horizon (e.g. 'pentad'), the fake client's horizon filter
+        would return no rows for the stored (horizon_type='day') operational
+        row, the collision would go undetected, and the operational row
+        would be silently overwritten."""
+        existing = _existing_record(CODE, "TiDE", "2024-06-05", "2024-06-06", flag=0, q50=42.0)
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing])
+        )
+
+        hindcast = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-06", forecast_date="2024-06-05", q50=None
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(hindcast, "pentad", "TIDE")
+
+        assert result is False
+        stored = fake_client.all_rows()
+        assert len(stored) == 1
+        assert stored[0]["flag"] == 0
+        assert stored[0]["forecasted_discharge"] == 42.0
+
+
+class TestOverwriteGuardProtectionReadFiltersByModel:
+    def test_protection_read_is_scoped_to_the_writing_model(self, install_fake_client):
+        """A hindcast write for model B must not be blocked by a flag=0
+        operational row that belongs to a different model, A, at the same
+        code/dates -- the protection read is scoped to the model being
+        written via `model=api_model_type`. Removing that filter would let
+        model A's flag=0 key wrongly suppress model B's legitimate write,
+        since the guard's key does not itself include model_type (the API
+        read is what scopes it)."""
+        existing_model_a = _existing_record(
+            CODE, "TFT", "2024-06-05", "2024-06-06", flag=0, q50=42.0
+        )
+        fake_client = install_fake_client(
+            FakeSapphirePostprocessingClient(existing_rows=[existing_model_a])
+        )
+
+        hindcast_model_b = _hindcast_frame(
+            CODE, flag=3, date_="2024-06-06", forecast_date="2024-06-05", q50=55.0
+        )
+
+        result = utils_ml_forecast._write_ml_forecast_to_api(hindcast_model_b, "pentad", "TIDE")
+
+        assert result is True
+        stored = fake_client.all_rows()
+        by_model = {r["model_type"]: r for r in stored}
+        # Model A's operational row survives untouched.
+        assert by_model["TFT"]["flag"] == 0
+        assert by_model["TFT"]["forecasted_discharge"] == 42.0
+        # Model B's hindcast row is written, not suppressed.
+        assert by_model["TiDE"]["flag"] == 3
+        assert by_model["TiDE"]["forecasted_discharge"] == 55.0
 
 
 class TestOverwriteGuardDoesNotMutateCallerFrame:

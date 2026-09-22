@@ -722,7 +722,6 @@ def _fetch_operational_flag0_keys(
     api_model_type: str,
     start_date: str,
     end_date: str,
-    timeout: int = 30,
 ) -> set[tuple[str, str, str]]:
     """Fetch the (code, forecast_date, target_date) keys of existing flag=0
     operational forecasts for a model, over a forecast_date (issue date) span.
@@ -741,7 +740,6 @@ def _fetch_operational_flag0_keys(
         api_model_type: Model name in API form (e.g. "TiDE").
         start_date: ISO date string, inclusive lower bound on forecast_date.
         end_date: ISO date string, inclusive upper bound on forecast_date.
-        timeout: unused; kept for signature symmetry with other read helpers.
 
     Returns:
         Set of (code, forecast_date, target_date) tuples, each an ISO
@@ -904,7 +902,7 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
             return None
         try:
             return int(f)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
     if "flag" in data.columns:
@@ -920,9 +918,24 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
         # operational rows.
         hindcast_positions = np.flatnonzero(hindcast_mask.to_numpy())
         hindcast_rows = data.iloc[hindcast_positions]
-        forecast_dates = pd.to_datetime(hindcast_rows["forecast_date"])
-        guard_start = forecast_dates.min().strftime("%Y-%m-%d")
-        guard_end = forecast_dates.max().strftime("%Y-%m-%d")
+
+        # Parse forecast_date per row, exactly as the record-building loop
+        # below does (`pd.to_datetime(row["forecast_date"])`), rather than
+        # via a Series-level `pd.to_datetime(hindcast_rows["forecast_date"])`.
+        # The Series-level form infers ONE format for the whole column from
+        # its first value, which can silently misparse other rows on
+        # ambiguous input (e.g. a column mixing '13/06/2024' and
+        # '06/07/2024' infers dayfirst=True and reads the second as July 6,
+        # while per-row parsing reads it as June 7 -- the same value the
+        # writer below stores it as). Using the same per-row parse for both
+        # the guard's date span and its row keys keeps them from disagreeing
+        # by construction.
+        def _guard_forecast_date(row: pd.Series) -> pd.Timestamp:
+            return pd.to_datetime(row["forecast_date"])
+
+        forecast_date_values = [_guard_forecast_date(row) for _, row in hindcast_rows.iterrows()]
+        guard_start = min(forecast_date_values).strftime("%Y-%m-%d")
+        guard_end = max(forecast_date_values).strftime("%Y-%m-%d")
 
         protected_keys = _fetch_operational_flag0_keys(
             client, api_model_type, guard_start, guard_end
@@ -931,7 +944,7 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
         def _row_key(row: pd.Series) -> tuple[str, str, str]:
             return (
                 str(int(row["code"])),
-                pd.to_datetime(row["forecast_date"]).strftime("%Y-%m-%d"),
+                _guard_forecast_date(row).strftime("%Y-%m-%d"),
                 pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
             )
 
