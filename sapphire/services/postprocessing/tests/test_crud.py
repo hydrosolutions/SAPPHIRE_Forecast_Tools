@@ -8,6 +8,7 @@ SQLite in-memory databases.
 from datetime import date
 
 import pytest
+from sqlalchemy import event
 
 from app import crud
 from app.models import Bulletin, Forecast, LongForecast, LRForecast, LRVisibility, SkillMetric
@@ -983,3 +984,183 @@ class TestLargeBatch:
         assert r.q25 == 90.0
         assert r.q75 == 110.0
         assert r.q95 == 120.0
+
+
+# -------------------------------------------------------------------
+# Pagination ordering (regression test for unordered pagination)
+# -------------------------------------------------------------------
+
+class TestPaginationOrdering:
+    """Regression tests: every paginated get_* reader must ORDER BY id.
+
+    Without an explicit ORDER BY, `.offset(skip).limit(limit)` pagination
+    has no guaranteed row order, so successive pages can overlap or omit
+    rows. A purely behavioural check (paginate, assert ascending ids, no
+    duplicates) is not a sufficient guard here: on SQLite a simple table
+    scan usually still returns rows in rowid order even without an ORDER
+    BY, so such a test would keep passing if the fix were reverted. These
+    tests therefore also assert, at the SQL level, that the emitted
+    SELECT for each reader actually contains an ORDER BY on the model's
+    id column.
+    """
+
+    @staticmethod
+    def _capture_sql(bind):
+        """Attach a before_cursor_execute listener; return (statements, detach)."""
+        statements = []
+
+        def _listener(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(bind, "before_cursor_execute", _listener)
+
+        def _detach():
+            event.remove(bind, "before_cursor_execute", _listener)
+
+        return statements, _detach
+
+    @staticmethod
+    def _paginate_all(getter, db_session, page_size=2):
+        """Read all rows via small pages, concatenating results in order."""
+        results = []
+        skip = 0
+        while True:
+            page = getter(db_session, skip=skip, limit=page_size)
+            if not page:
+                break
+            results.extend(page)
+            skip += page_size
+        return results
+
+    @staticmethod
+    def _assert_ordered_select(statements, table, id_column):
+        """Assert at least one captured SELECT against `table` orders by `id_column`."""
+        select_statements = [
+            s for s in statements
+            if s.strip().upper().startswith("SELECT")
+            and f"from {table}" in s.lower()
+        ]
+        assert select_statements, f"expected a SELECT statement against {table}"
+        for s in select_statements:
+            assert "ORDER BY" in s.upper(), s
+            order_by_clause = s[s.upper().index("ORDER BY"):]
+            assert id_column.lower() in order_by_clause.lower(), s
+
+    def test_get_forecast_orders_by_id(self, db_session):
+        items = [
+            make_forecast(code=f"190{i:02d}", date=date(2024, 6, 15))
+            for i in range(7)
+        ]
+        crud.create_forecast(db_session, ForecastBulkCreate(data=items))
+        expected_ids = {r.id for r in db_session.query(Forecast).all()}
+
+        statements, detach = self._capture_sql(db_session.get_bind())
+        try:
+            results = self._paginate_all(crud.get_forecast, db_session)
+        finally:
+            detach()
+
+        ids = [r.id for r in results]
+        assert ids == sorted(ids)
+        assert len(ids) == len(set(ids))
+        assert set(ids) == expected_ids
+        self._assert_ordered_select(statements, "forecasts", "forecasts.id")
+
+    def test_get_long_forecast_orders_by_id(self, db_session):
+        items = [make_long_forecast(code=f"190{i:02d}") for i in range(7)]
+        crud.create_long_forecast(
+            db_session, LongForecastBulkCreate(data=items)
+        )
+        expected_ids = {r.id for r in db_session.query(LongForecast).all()}
+
+        statements, detach = self._capture_sql(db_session.get_bind())
+        try:
+            results = self._paginate_all(crud.get_long_forecast, db_session)
+        finally:
+            detach()
+
+        ids = [r.id for r in results]
+        assert ids == sorted(ids)
+        assert len(ids) == len(set(ids))
+        assert set(ids) == expected_ids
+        self._assert_ordered_select(
+            statements, "long_forecasts", "long_forecasts.id"
+        )
+
+    def test_get_lr_forecast_orders_by_id(self, db_session):
+        items = [make_lr_forecast(code=f"190{i:02d}") for i in range(7)]
+        crud.create_lr_forecast(db_session, LRForecastBulkCreate(data=items))
+        expected_ids = {r.id for r in db_session.query(LRForecast).all()}
+
+        statements, detach = self._capture_sql(db_session.get_bind())
+        try:
+            results = self._paginate_all(crud.get_lr_forecast, db_session)
+        finally:
+            detach()
+
+        ids = [r.id for r in results]
+        assert ids == sorted(ids)
+        assert len(ids) == len(set(ids))
+        assert set(ids) == expected_ids
+        self._assert_ordered_select(
+            statements, "lr_forecasts", "lr_forecasts.id"
+        )
+
+    def test_get_skill_metric_orders_by_id(self, db_session):
+        items = [make_skill_metric(code=f"190{i:02d}") for i in range(7)]
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=items)
+        )
+        expected_ids = {r.id for r in db_session.query(SkillMetric).all()}
+
+        statements, detach = self._capture_sql(db_session.get_bind())
+        try:
+            results = self._paginate_all(crud.get_skill_metric, db_session)
+        finally:
+            detach()
+
+        ids = [r.id for r in results]
+        assert ids == sorted(ids)
+        assert len(ids) == len(set(ids))
+        assert set(ids) == expected_ids
+        self._assert_ordered_select(
+            statements, "skill_metrics", "skill_metrics.id"
+        )
+
+    def test_get_bulletin_orders_by_id(self, db_session):
+        items = [make_bulletin(code=f"190{i:02d}") for i in range(7)]
+        crud.create_bulletin(db_session, BulletinBulkCreate(data=items))
+        expected_ids = {r.id for r in db_session.query(Bulletin).all()}
+
+        statements, detach = self._capture_sql(db_session.get_bind())
+        try:
+            results = self._paginate_all(crud.get_bulletin, db_session)
+        finally:
+            detach()
+
+        ids = [r.id for r in results]
+        assert ids == sorted(ids)
+        assert len(ids) == len(set(ids))
+        assert set(ids) == expected_ids
+        self._assert_ordered_select(statements, "bulletins", "bulletins.id")
+
+    def test_get_lr_visibility_orders_by_id(self, db_session):
+        items = [make_lr_visibility(code=f"190{i:02d}") for i in range(7)]
+        crud.create_lr_visibility(
+            db_session, LRVisibilityBulkCreate(data=items)
+        )
+        expected_ids = {r.id for r in db_session.query(LRVisibility).all()}
+
+        statements, detach = self._capture_sql(db_session.get_bind())
+        try:
+            results = self._paginate_all(crud.get_lr_visibility, db_session)
+        finally:
+            detach()
+
+        ids = [r.id for r in results]
+        assert ids == sorted(ids)
+        assert len(ids) == len(set(ids))
+        assert set(ids) == expected_ids
+        self._assert_ordered_select(
+            statements, "lr_visibility", "lr_visibility.id"
+        )

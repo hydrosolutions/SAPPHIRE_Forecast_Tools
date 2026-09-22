@@ -96,7 +96,7 @@ def get_forecast(
         if target and target == "null":
             query = query.filter(Forecast.target.is_(None))
 
-        results = query.offset(skip).limit(limit).all()
+        results = query.order_by(Forecast.id).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} forecasts (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
@@ -191,7 +191,7 @@ def get_long_forecast(
         if valid_to:
             query = query.filter(LongForecast.valid_to <= valid_to)
 
-        results = query.offset(skip).limit(limit).all()
+        results = query.order_by(LongForecast.id).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} long forecasts (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
@@ -268,7 +268,7 @@ def get_lr_forecast(
         if end_date:
             query = query.filter(LRForecast.date <= end_date)
 
-        results = query.offset(skip).limit(limit).all()
+        results = query.order_by(LRForecast.id).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} LR forecasts (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
@@ -375,7 +375,7 @@ def get_skill_metric(
         if end_date:
             query = query.filter(SkillMetric.date <= end_date)
 
-        results = query.offset(skip).limit(limit).all()
+        results = query.order_by(SkillMetric.id).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} skill metrics (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
@@ -452,7 +452,7 @@ def get_bulletin(
         if horizon_value is not None:
             query = query.filter(Bulletin.horizon_value == horizon_value)
 
-        results = query.offset(skip).limit(limit).all()
+        results = query.order_by(Bulletin.id).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} bulletins (skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
@@ -609,7 +609,7 @@ def get_lr_visibility(
         if horizon_value is not None:
             query = query.filter(LRVisibility.horizon_value == horizon_value)
 
-        results = query.offset(skip).limit(limit).all()
+        results = query.order_by(LRVisibility.id).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} LR visibility records (code={code}, month={month}, horizon_value={horizon_value}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
