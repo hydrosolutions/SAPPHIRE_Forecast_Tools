@@ -76,6 +76,11 @@ send_alert() {
     echo "$SMTP_PASS" > "$PASS_FILE"
     chmod 600 "$PASS_FILE"
     
+    # The To: header keeps the comma-separated form (correct for mail
+    # headers), but msmtp takes each recipient as its own argument, so the
+    # commas are converted to spaces only for the argument list below.
+    RECIPIENT_ARGS=${RECIPIENT//,/ }
+
     # Send the email with error and log context
     {
         echo "Subject: Dashboard Error Detected ($container)"
@@ -92,7 +97,7 @@ send_alert() {
         echo "==============================================================="
     } | msmtp --host=$SMTP_SERVER --port=$SMTP_PORT --auth=on \
               --user=$SMTP_USER --passwordeval="cat $PASS_FILE" \
-              --tls=on --tls-starttls=on $RECIPIENT
+              --tls=on --tls-starttls=on --from="$SENDER" $RECIPIENT_ARGS
               
     # Clean up temporary password file
     rm -f "$PASS_FILE"
@@ -110,9 +115,16 @@ done
 # Start monitoring each container
 for c in "${containers[@]}"; do
     ( 
+        # Tracks whether the "not running" message has already been logged
+        # for the CURRENT absence, so repeated poll iterations stay quiet.
+        # Reset to false whenever the container is seen running, so a later
+        # disappearance is reported again (log on state CHANGE, not on
+        # every poll).
+        absent_reported=false
         while true; do
             # Check if container exists and is running
             if docker ps --format '{{.Names}}' | grep -q "^$c$"; then
+                absent_reported=false
                 # Follow logs from the container
                 docker logs -f "$c" 2>&1 | grep --line-buffered -Ei "$pattern" | 
                 while read line; do
@@ -120,7 +132,10 @@ for c in "${containers[@]}"; do
                     send_alert "$c" "[$ts] $line"
                 done
             else
-                echo "Container $c not running. Will check again in 60 seconds."
+                if [[ "$absent_reported" != true ]]; then
+                    echo "Container $c not running. Will check again in 60 seconds."
+                    absent_reported=true
+                fi
                 sleep 60
             fi
             
