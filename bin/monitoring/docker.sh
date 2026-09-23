@@ -125,8 +125,24 @@ send_alert() {
 # instead of as a `docker events --filter` argument. `docker events` itself
 # is therefore left filtering only by event type, same as before.
 
+# Emit ID, action and container name as explicit fields (delimited by "|",
+# which cannot appear in a container name) instead of the human-readable
+# default line. The default line's last whitespace field is the closing
+# "name=<container>)" attribute, not a container ID -- awk '{print $NF}' on
+# it never yields a usable ID, so `docker inspect` on that value always
+# failed. Reading the name directly out of the event also means we no
+# longer need `docker inspect` at all, which cannot look up a --rm
+# container that is already gone by the time its die event arrives.
+#
+# NOTE: "--filter event=health_status:unhealthy" (the value used previously)
+# delivers ZERO live events -- verified against a real daemon, it is not
+# valid docker events filter syntax and silently matches nothing, so the
+# unhealthy-container alert has never fired. The correct filter is plain
+# "event=health_status" (matches both healthy and unhealthy transitions);
+# the classification below (on $action) already picks out "unhealthy" only.
 # Start docker event monitoring in background and redirect to the named pipe
-docker events --filter event=die --filter event=health_status:unhealthy > "$EVENT_PIPE" &
+docker events --filter event=die --filter event=health_status \
+    --format '{{.Actor.ID}}|{{.Action}}|{{.Actor.Attributes.name}}' > "$EVENT_PIPE" &
 DOCKER_PID=$!
 
 # Initial log rotation
@@ -135,17 +151,19 @@ rotate_logs
 # Counter for periodic log rotation
 event_counter=0
 
-# Read from the pipe
-while read line; do
+# Read from the pipe. The three fields below come straight from the
+# --format string on the docker events command above: container ID,
+# action ("die" or "health_status: unhealthy"), and container name.
+while IFS='|' read -r container_id action name; do
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    container_id=$(echo "$line" | awk '{print $NF}')
-    name=$(docker inspect --format='{{.Name}}' "$container_id" | sed 's/\///g' 2>/dev/null || echo "unknown")
 
     # Only containers matching an entry in MONITORED_CONTAINERS raise an
     # alert; an empty MONITORED_CONTAINERS watches everything (previous
     # behaviour). Matching is a plain substring check against the full
     # container name, so it works regardless of Compose project prefix.
-    if [[ -n "$MONITORED_CONTAINERS" ]]; then
+    # If the name could not be determined, fail OPEN (treat as monitored)
+    # rather than silently dropping an event we can't identify.
+    if [[ -n "$MONITORED_CONTAINERS" && -n "$name" ]]; then
         is_monitored=false
         for _monitored_container in $MONITORED_CONTAINERS; do
             if [[ "$name" == *"$_monitored_container"* ]]; then
@@ -160,9 +178,9 @@ while read line; do
 
     docker logs --tail 1000 "$container_id" &> "$log_file" 2>/dev/null
 
-    if [[ "$line" == *"die"* ]]; then
+    if [[ "$action" == *"die"* ]]; then
         send_alert "Docker ALERT: $name crashed" "Container $name exited at $timestamp" "$log_file"
-    elif [[ "$line" == *"unhealthy"* ]]; then
+    elif [[ "$action" == *"unhealthy"* ]]; then
         send_alert "Docker ALERT: $name became unhealthy" "Container $name is unhealthy as of $timestamp" "$log_file"
     fi
     
