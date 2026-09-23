@@ -125,8 +125,16 @@ for c in "${containers[@]}"; do
             # Check if container exists and is running
             if docker ps --format '{{.Names}}' | grep -q "^$c$"; then
                 absent_reported=false
-                # Follow logs from the container
-                docker logs -f "$c" 2>&1 | grep --line-buffered -Ei "$pattern" | 
+                # Follow logs from the container. --tail 0 means only output
+                # produced from this moment forward is seen -- errors that
+                # occurred while the watcher was not running are missed
+                # entirely. That is deliberate: without it, every restart of
+                # this script (or reconnect after the container restarts)
+                # replays the container's whole history and re-alerts on old,
+                # already-resolved errors, which trains operators to ignore
+                # the alerts -- the exact failure mode this monitoring exists
+                # to prevent.
+                docker logs -f --tail 0 "$c" 2>&1 | grep --line-buffered -Ei "$pattern" | 
                 while read line; do
                     ts=$(date '+%Y-%m-%d %H:%M:%S')
                     send_alert "$c" "[$ts] $line"
