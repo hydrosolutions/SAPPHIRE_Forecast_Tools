@@ -5,7 +5,10 @@
 # Uses rate limiting to prevent email flooding
 
 # Configuration
-containers=("sapphire-frontend-forecast-pentad" "sapphire-frontend-forecast-decad")
+# Override with DASHBOARD_LOG_WATCH_CONTAINERS="name1 name2" for a deployment
+# whose dashboard container is named differently. Names that do not exist on
+# this host are skipped by the loop below.
+read -r -a containers <<< "${DASHBOARD_LOG_WATCH_CONTAINERS:-sapphire-dashboard sapphire-frontend-forecast-pentad sapphire-frontend-forecast-decad}"
 pattern="404|ERROR|Exception"
 MIN_ALERT_INTERVAL=3600  # Minimum seconds between alerts for the same container
 

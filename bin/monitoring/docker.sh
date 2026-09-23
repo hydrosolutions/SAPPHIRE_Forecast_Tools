@@ -14,8 +14,21 @@ LOG_DIR="/var/log/docker_monitor"
 MAX_LOGS=100        # Maximum number of log files to keep
 MAX_LOG_DAYS=30     # Maximum age of log files in days
 
+# Containers that are SUPPOSED to stay running. Only these raise alerts;
+# without this, every normal pipeline task exit ("die") would alert.
+# Override in the environment to suit a deployment. Each entry is matched as
+# a plain substring against the full container name (see the matching loop
+# below), so a bare service name like "luigi-daemon" matches regardless of
+# the Compose project prefix or numeric replica suffix Compose adds
+# (e.g. "sapphire-luigi-daemon-1").
+MONITORED_CONTAINERS="${DOCKER_MONITOR_CONTAINERS:-sapphire-api-gateway sapphire-preprocessing-api sapphire-postprocessing-api sapphire-user-api sapphire-auth-api sapphire-dashboard sapphire-preprocessing-db sapphire-postprocessing-db sapphire-user-db sapphire-auth-db luigi-daemon}"
+
 # Create a pipe for the docker events command
 EVENT_PIPE="${LOG_DIR}/event_pipe"
+# LOG_DIR must exist before mkfifo can create the pipe inside it; the later
+# mkdir -p below is kept for clarity but this one is what makes a fresh
+# install (no /var/log/docker_monitor yet) work.
+mkdir -p "$LOG_DIR"
 [ -p "$EVENT_PIPE" ] || mkfifo "$EVENT_PIPE"
 
 # Signal handling for graceful shutdown
@@ -83,6 +96,11 @@ send_alert() {
     echo "$SMTP_PASS" > "$PASS_FILE"
     chmod 600 "$PASS_FILE"
 
+    # The To: header keeps the comma-separated form (correct for mail
+    # headers), but msmtp takes each recipient as its own argument, so the
+    # commas are converted to spaces only for the argument list below.
+    RECIPIENT_ARGS=${RECIPIENT//,/ }
+
     {
         echo "Subject: $subject"
         echo "To: $RECIPIENT"
@@ -92,11 +110,20 @@ send_alert() {
         [ -f "$log_file" ] && echo -e "\n---- Logs ----\n$(cat $log_file)"
     } | msmtp --host=$SMTP_SERVER --port=$SMTP_PORT --auth=on \
               --user=$SMTP_USER --passwordeval="cat $PASS_FILE" \
-              --tls=on --tls-starttls=on $RECIPIENT
+              --tls=on --tls-starttls=on --from="$SENDER" $RECIPIENT_ARGS
     
     # Clean up the temporary password file
     rm -f "$PASS_FILE"
 }
+
+# NOTE: `docker events` has no "name=" filter key (it is silently ignored,
+# not an error) and its "container=" filter only matches an exact container
+# name/ID or a *prefix* of one -- not an arbitrary substring -- so it cannot
+# express "contains luigi-daemon" once a variable Compose project prefix
+# comes first. So the MONITORED_CONTAINERS check is done in the read loop
+# below (via true substring matching against the full container name)
+# instead of as a `docker events --filter` argument. `docker events` itself
+# is therefore left filtering only by event type, same as before.
 
 # Start docker event monitoring in background and redirect to the named pipe
 docker events --filter event=die --filter event=health_status:unhealthy > "$EVENT_PIPE" &
@@ -113,6 +140,22 @@ while read line; do
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     container_id=$(echo "$line" | awk '{print $NF}')
     name=$(docker inspect --format='{{.Name}}' "$container_id" | sed 's/\///g' 2>/dev/null || echo "unknown")
+
+    # Only containers matching an entry in MONITORED_CONTAINERS raise an
+    # alert; an empty MONITORED_CONTAINERS watches everything (previous
+    # behaviour). Matching is a plain substring check against the full
+    # container name, so it works regardless of Compose project prefix.
+    if [[ -n "$MONITORED_CONTAINERS" ]]; then
+        is_monitored=false
+        for _monitored_container in $MONITORED_CONTAINERS; do
+            if [[ "$name" == *"$_monitored_container"* ]]; then
+                is_monitored=true
+                break
+            fi
+        done
+        [[ "$is_monitored" == true ]] || continue
+    fi
+
     log_file="${LOG_DIR}/${name}_$(date +%Y%m%d%H%M%S).log"
 
     docker logs --tail 1000 "$container_id" &> "$log_file" 2>/dev/null
