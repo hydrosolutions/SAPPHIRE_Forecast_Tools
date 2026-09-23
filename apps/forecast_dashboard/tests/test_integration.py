@@ -38,6 +38,30 @@ def normalize_comma(s):
     return s.replace(",", "")
 
 
+def _fetch_all_long_forecasts(params: dict) -> list[dict]:
+    """Page through /postprocessing/long-forecast/ using skip/limit.
+
+    Mirrors the paging loop used for the pentad/decade branch below, so
+    callers are not silently truncated by the API's default/explicit limit.
+    """
+    page_size = 1000
+    records = []
+    skip = 0
+    while True:
+        resp = requests.get(
+            f"{API_BASE}/postprocessing/long-forecast/",
+            params={**params, "skip": skip, "limit": page_size},
+            timeout=API_TIMEOUT,
+        )
+        resp.raise_for_status()
+        page = resp.json()
+        records.extend(page)
+        if len(page) < page_size:
+            break
+        skip += page_size
+    return records
+
+
 def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
     """Mirror the dashboard's get_bulletin_metadata.
 
@@ -52,19 +76,14 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
     cur_year = dt.datetime.now().year
 
     if horizon == "month":
-        resp = requests.get(
-            f"{API_BASE}/postprocessing/long-forecast/",
-            params={
+        records = _fetch_all_long_forecasts(
+            {
                 "horizon_type":  "month",
                 "horizon_value": 1,
                 "start_date":    f"{cur_year - 1}-12-20",
                 "end_date":      f"{cur_year + 1}-12-31",
-                "limit":         1000,
-            },
-            timeout=API_TIMEOUT,
+            }
         )
-        resp.raise_for_status()
-        records = resp.json()
         records = [r for r in records if str(r.get("code")) in BULLETIN_STATION_CODES]
         if not records:
             raise RuntimeError("No long-forecast (month) records found for bulletin stations")
@@ -77,19 +96,14 @@ def _get_latest_forecast_metadata(horizon: str) -> tuple[dt.date, int, int]:
         return target_from, int(target_from.month), target_from.year
 
     if horizon == "season":
-        resp = requests.get(
-            f"{API_BASE}/postprocessing/long-forecast/",
-            params={
+        records = _fetch_all_long_forecasts(
+            {
                 "horizon_type":  "season",
                 "code":          "15013",  # any station; we only need the latest date
                 "start_date":    f"{cur_year - 1}-12-20",
                 "end_date":      f"{cur_year + 1}-12-31",
-                "limit":         1000,
-            },
-            timeout=API_TIMEOUT,
+            }
         )
-        resp.raise_for_status()
-        records = resp.json()
         records = [r for r in records if str(r.get("code")) in BULLETIN_STATION_CODES]
         if not records:
             raise RuntimeError("No long-forecast (season) records found for bulletin stations")
