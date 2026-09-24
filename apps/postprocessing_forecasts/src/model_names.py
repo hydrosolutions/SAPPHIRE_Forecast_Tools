@@ -15,6 +15,16 @@ AGGREGATED_EM_RAW_MODELS = frozenset({"LR_BASE", "LR_SM"})
 AGGREGATED_ENSEMBLE_MODELS = frozenset({"ENSEMBLE_MEAN", "NAIVE_MEAN", "SKILLED_MEAN"})
 AGGREGATED_SUPPORTED_MODELS = AGGREGATED_EM_RAW_MODELS | AGGREGATED_ENSEMBLE_MODELS
 
+# LR models use native quarterly products; other supported models may be derived.
+# Seasonal eligibility and its fixed two-LR EM remain independent contracts.
+QUARTERLY_RAW_MODELS = AGGREGATED_EM_RAW_MODELS | frozenset({
+    "GBT", "LR_SM_DT", "LR_SM_ROF", "MC_ALD", "SM_GBT", "SM_GBT_LR", "SM_GBT_NORM",
+})
+QUARTERLY_NATIVE_MODELS = frozenset({"LR_BASE", "LR_SM"})
+QUARTERLY_DERIVED_MODELS = QUARTERLY_RAW_MODELS - QUARTERLY_NATIVE_MODELS
+QUARTERLY_SUPPORTED_MODELS = QUARTERLY_RAW_MODELS | AGGREGATED_ENSEMBLE_MODELS
+
+
 
 def canonical_model_short(model_short: object) -> str:
     """Return a case-insensitive canonical model identifier."""

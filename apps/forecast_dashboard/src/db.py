@@ -755,8 +755,7 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
             "valid_from", "month_in_year", "quarter_in_year",
         ]
-        if lead_aware:
-            columns.append("horizon_value")
+        columns.append("horizon_value")
         return pd.DataFrame(columns=columns)
 
     df.rename(columns={
@@ -767,20 +766,23 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
         "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
     }, inplace=True)
     drop_cols = ["id", "horizon_type"]
-    if not lead_aware:
-        drop_cols.append("horizon_value")
     df.drop(columns=drop_cols, inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
     df["month_in_year"] = df["valid_from"].dt.month
-    df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
+    # Stored quarterly skill describes exact calendar quarters. Rolling
+    # windows remain visible, but must not inherit a different window's skill.
+    quarter_start = df["valid_from"].dt.to_period("Q").dt.start_time
+    quarter_end = df["valid_from"].dt.to_period("Q").dt.end_time.dt.normalize()
+    valid_to = pd.to_datetime(df.get("valid_to", pd.Series(pd.NaT, index=df.index)))
+    calendar_aligned = df["valid_from"].eq(quarter_start) & valid_to.eq(quarter_end)
+    df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1).where(calendar_aligned)
     df["Date"] = df["date"]
     df["year"] = df["date"].dt.year
-    # Keep only the latest-by-date row per (code, model_short) — under the
-    # flag, also key on horizon_value (lead) so distinct-lead quarter rows
-    # for the same code/model are not collapsed into one another.
+    # Keep the latest forecast per station/model/lead without collapsing
+    # distinct quarterly products, independently of the skill feature flag.
     if not df.empty and "date" in df.columns and "code" in df.columns and "model_short" in df.columns:
         dedup_subset = ["code", "model_short"]
-        if lead_aware and "horizon_value" in df.columns:
+        if "horizon_value" in df.columns:
             dedup_subset = dedup_subset + ["horizon_value"]
         df = (
             df.sort_values("date", ascending=False)
@@ -1027,12 +1029,8 @@ def _get_data_monthly(
     long_forecasts_quarter = pd.DataFrame()
     quarter_forecast_stats = pd.DataFrame()
     quarter_hin = _horizon_in_year_col("quarter")
-    quarter_merge_keys = ["code", quarter_hin, "model_short"]
-    if lead_aware:
-        # M1 P3: quarter stats merges were period-only; key on lead too so a
-        # period with multiple stored leads doesn't fan out into duplicate
-        # rows or attach the wrong lead's skill metrics.
-        quarter_merge_keys = quarter_merge_keys + ["horizon_value"]
+    # Quarterly skills always identify the actual lead, including flag-OFF.
+    quarter_merge_keys = ["code", quarter_hin, "model_short", "horizon_value"]
     if "quarter" in supported_modes:
         long_forecasts_quarter = i18n_models(add_labels(get_long_forecasts_quarter(station)))
         quarter_forecast_stats = i18n_models(get_forecast_stats("quarter", station))
@@ -1137,12 +1135,7 @@ def _get_data_quarter(
     forecast_stats = i18n_models(get_forecast_stats("quarter", station))
 
     hin = _horizon_in_year_col("quarter")
-    merge_keys = ["code", hin, "model_short"]
-    if skill_lead_aware_enabled():
-        # M1 P3: quarter stats merges were period-only; key on lead too so a
-        # period with multiple stored leads doesn't fan out into duplicate
-        # rows or attach the wrong lead's skill metrics.
-        merge_keys = merge_keys + ["horizon_value"]
+    merge_keys = ["code", hin, "model_short", "horizon_value"]
     can_merge = (
         not forecasts_all.empty
         and not forecast_stats.empty

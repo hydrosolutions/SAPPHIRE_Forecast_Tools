@@ -1165,11 +1165,9 @@ def _write_aggregated_forecasts_to_api(
                 valid_from = f"{year}-{start_month:02d}-01"
                 last_day = calendar.monthrange(year, end_month)[1]
                 valid_to = f"{year}-{end_month:02d}-{last_day:02d}"
-                # Under SAPPHIRE_SKILL_LEAD_AWARE, prefer the row's own
-                # per-lead horizon_value (set by select_operational_issuances
-                # / carried through per-lead aggregation) over the single
-                # deployment-configured lead. Flag OFF: unchanged.
-                if skill_lead_aware_enabled() and pd.notna(row.get("horizon_value")):
+                # Preserve the forecast's explicit lead independently of the
+                # skill feature flag; relabelling changes the product identity.
+                if pd.notna(row.get("horizon_value")):
                     horizon_value = int(row["horizon_value"])
                 else:
                     horizon_value = quarter_horizon_value()
@@ -1198,8 +1196,7 @@ def _write_aggregated_forecasts_to_api(
 
             record_date = valid_from
             if (
-                horizon_type == "season"
-                or (horizon_type == "quarter" and skill_lead_aware_enabled())
+                horizon_type in ("season", "quarter")
             ) and pd.notna(row.get("date")):
                 record_date = str(row["date"])[:10]
 

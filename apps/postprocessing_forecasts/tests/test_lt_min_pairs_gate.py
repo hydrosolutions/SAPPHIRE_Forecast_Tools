@@ -585,26 +585,17 @@ class TestAggregatedOutputFloor:
 
 
 # ---------------------------------------------------------------------------
-# 7. Quarter/season EM membership is fixed-LR (not skill-gated)
+# 7. Quarterly EM requires both skill eligibility and enough pairs
 # ---------------------------------------------------------------------------
 
 
-class TestAggregatedEMFixedMembership:
-    """Quarter/season EM derives from AGGREGATED_EM_RAW_MODELS, not a skill gate.
+class TestQuarterlyEMEligibility:
+    """Enough pairs alone do not qualify a poorly skilled model for EM."""
 
-    The output floor still applies to the EM row, but membership is NOT gated
-    by skill thresholds or n_pairs.
-    """
-
-    def test_quarterly_em_present_when_two_lr_models_available(self):
-        """EM is built from LR_Base + LR_SM regardless of their skill/n_pairs,
-        as long as the resulting n_pairs >= K (output floor)."""
+    def test_quarterly_em_absent_when_lr_models_fail_skill_gate(self):
+        """Poor skill excludes LR models even with enough pairs."""
         n = K_QS  # enough pairs to survive the output floor
         obs_rows = [(STATION, 2010 + i, 2, 100.0 + i * 2) for i in range(n)]
-        # Use very poor NSE values that would fail the skill gate — but EM must
-        # still be formed from the two LR models (membership is fixed-LR).
-        # We set forecast values close to obs so the EM itself has decent NSE,
-        # even if hypothetically we were gating on it (which we are not for EM).
         fcst_rows = [(STATION, 2010 + i, 2, "LR_Base", 102.0 + i) for i in range(n)] + [
             (STATION, 2010 + i, 2, "LR_SM", 98.0 + i) for i in range(n)
         ]
@@ -612,7 +603,7 @@ class TestAggregatedEMFixedMembership:
         fcst = _make_quarterly_fcst(fcst_rows)
         skill_out, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
         em_rows = skill_out[skill_out["model_short"] == "EM"]
-        assert not em_rows.empty, "Quarter EM must be present when both LR models have n_pairs >= K"
+        assert em_rows.empty, "Enough pairs do not override the quarterly EM skill gate"
 
     def test_quarterly_em_output_floor_still_applies(self):
         """EM output row with n_pairs < K is dropped by the output floor."""

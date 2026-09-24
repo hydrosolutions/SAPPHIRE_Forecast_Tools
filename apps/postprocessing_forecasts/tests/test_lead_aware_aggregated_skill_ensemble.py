@@ -110,9 +110,8 @@ def _quarterly_fcst_rows(years, obs, horizon_value, model_short, offset, code="1
 
 
 _GOOD_OFFSET = -2.0
-_BAD_OFFSET = -8.0  # still NSE>0 at this obs scale, so BOTH models qualify
-# for the (relaxed) Skilled Mean pool — only the WEIGHT differs, matching
-# the Skilled Mean weighting contract, rather than one model dropping out.
+_BAD_OFFSET = -5.0  # Both models pass the standard EM gate at this obs scale.
+# Their different MAEs also exercise Skilled Mean weighting per lead.
 
 
 def _two_lead_quarterly_fcst(years_lead1=_YEARS_5, years_lead3=_YEARS_5):
@@ -146,7 +145,7 @@ class TestQuarterlyLeadAwarePointMetricsAndCRPS:
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         base_rows = skill_stats[skill_stats["model_short"] == "LR_BASE"].set_index("horizon_value")
-        # Lead 1 LR_BASE offset -2 (tight fit); lead 3 LR_BASE offset -8
+        # Lead 1 LR_BASE offset -2 (tight fit); lead 3 LR_BASE offset -5
         # (looser fit) — MAE must reflect that, not an averaged-together
         # value from pooling both leads' pairs into one group.
         assert base_rows.loc[1, "mae"] == pytest.approx(abs(_GOOD_OFFSET), abs=1e-6)
@@ -249,22 +248,18 @@ class TestQuarterlyLeadAwareMinNFloorPerLead:
         assert 3 not in set(base_rows["horizon_value"])
 
 
-class TestQuarterlyLeadAwareFlagOffUnchanged:
-    def test_flag_off_still_pools_across_leads(self):
-        """Documents the pre-P2 behavior under flag-OFF: this is the bug
-        P2 fixes under the flag, but flag-OFF must remain byte-identical
-        to trunk (no horizon_value column, single pooled row).
-        """
+class TestQuarterlyLeadAwareFlagOff:
+    def test_flag_off_keeps_quarterly_leads_separate(self):
+        """Disabling issuance selection must not pool different products."""
         obs = _quarterly_obs()
         fcst = _two_lead_quarterly_fcst()
 
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
-        assert "horizon_value" not in skill_stats.columns
         base_rows = skill_stats[skill_stats["model_short"] == "LR_BASE"]
-        # Pooled: one row, 10 pairs (5 years x 2 leads), not split by lead.
-        assert len(base_rows) == 1
-        assert int(base_rows.iloc[0]["n_pairs"]) == 10
+        assert set(base_rows["horizon_value"]) == {1, 3}
+        assert len(base_rows) == 2
+        assert set(base_rows["n_pairs"]) == {5}
 
 
 # ===================================================================

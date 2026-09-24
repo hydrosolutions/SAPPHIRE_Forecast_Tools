@@ -138,7 +138,8 @@ class TestReadQuarterlyForecasts:
                 "code": ["S1"] * 3,
                 "year": [2024] * 3,
                 "month": [1, 2, 3],
-                "model_short": ["LR_Base"] * 3,
+                "date": ["2023-12-25"] * 3,
+                "model_short": ["MC_ALD"] * 3,
                 "q05": [10, 20, 30],
                 "q10": [15, 25, 35],
                 "q25": [20, 30, 40],
@@ -200,6 +201,7 @@ class TestReadQuarterlyForecasts:
                 "code": ["S1"] * 3,
                 "year": [2024] * 3,
                 "month": [1, 2, 3],
+                "date": ["2023-12-25"] * 3,
                 "model_short": ["LR_Base"] * 3,
                 "q05": [10, 20, 30],
                 "q10": [15, 25, 35],
@@ -216,6 +218,7 @@ class TestReadQuarterlyForecasts:
                 "code": ["S1"],
                 "valid_from": pd.to_datetime(["2024-01-01"]),
                 "valid_to": ["2024-03-31"],
+                "date": ["2023-12-25"],
                 "model_type": ["LR_Base"],
                 "q05": [99],
                 "q10": [99],
@@ -242,13 +245,14 @@ class TestReadQuarterlyForecasts:
         assert len(lr_base_rows) == 1
         assert lr_base_rows.iloc[0]["q50"] == 99
 
-    def test_filters_deprecated_models_after_combining_sources(self):
-        """Quarterly reader keeps LR raw models and ensembles, dropping deprecated rows."""
+    def test_keeps_additional_quarterly_models_after_combining_sources(self):
+        """Quarterly reader retains monthly-derived and direct long-term models."""
         monthly = pd.DataFrame(
             {
                 "code": ["S1"] * 6,
                 "year": [2024] * 6,
                 "month": [1, 2, 3, 1, 2, 3],
+                "date": ["2023-12-25"] * 6,
                 "model_short": ["LR_Base"] * 3 + ["GBT"] * 3,
                 "q05": [10, 20, 30, 900, 900, 900],
                 "q10": [15, 25, 35, 925, 925, 925],
@@ -265,6 +269,7 @@ class TestReadQuarterlyForecasts:
                 "code": ["S1", "S1", "S1"],
                 "valid_from": pd.to_datetime(["2024-01-01"] * 3),
                 "valid_to": ["2024-03-31"] * 3,
+                "date": ["2023-12-25"] * 3,
                 "model_type": ["LR_SM", "SM_GBT_Norm", "EM"],
                 "q05": [15, 900, 12],
                 "q10": [20, 925, 17],
@@ -287,8 +292,7 @@ class TestReadQuarterlyForecasts:
         ):
             result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
 
-        assert set(result["model_short"]) == {"LR_Base", "LR_SM", "EM"}
-        assert not {"GBT", "SM_GBT_Norm"} & set(result["model_short"])
+        assert set(result["model_short"]) == {"LR_SM", "EM", "GBT", "SM_GBT_Norm"}
 
     def test_filter_accepts_db_form_lr_and_ensemble_names(self):
         direct_api = pd.DataFrame(
@@ -333,8 +337,10 @@ class TestReadQuarterlyForecasts:
             "ENSEMBLE_MEAN",
             "NAIVE_MEAN",
             "SKILLED_MEAN",
+            'GBT',
+            'LR_SM_DT',
+            'SM_GBT_NORM',
         }
-        assert not set(DEPRECATED_MODEL_FORMS) & set(result["model_short"])
 
     def test_monthly_reader_keeps_deprecated_models(self):
         raw_api = pd.DataFrame(
@@ -414,23 +420,11 @@ class TestReadQuarterlyForecastsLeadAware:
             json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
         )
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        monthly = pd.DataFrame(
-            {
-                "code": ["19999"] * 4,
-                "year": [2024] * 4,
-                "month": [1, 2, 1, 2],
-                "model_short": ["LR_Base"] * 4,
-                "horizon_value": [0, 0, 1, 1],
-                "q05": [10, 20, 11, 21],
-                "q10": [15, 25, 16, 26],
-                "q25": [20, 30, 21, 31],
-                "q50": [30, 40, 31, 41],
-                "q75": [40, 50, 41, 51],
-                "q90": [50, 60, 51, 61],
-                "q95": [60, 70, 61, 71],
-                "forecasted_discharge": [30, 40, 31, 41],
-            }
-        )
+        monthly = pd.DataFrame([
+            {"code": "19999", "year": 2024, "month": month,
+             "model_short": "MC_ALD", "date": issue, "q50": 30.0}
+            for issue in ("2023-12-25", "2024-01-25") for month in (1, 2, 3)
+        ])
         with (
             patch.object(data_reader, "read_monthly_forecasts", return_value=monthly),
             patch.object(data_reader, "_read_long_forecasts_api", return_value=pd.DataFrame()),
@@ -440,36 +434,20 @@ class TestReadQuarterlyForecastsLeadAware:
         assert len(result) == 2
         assert set(result["horizon_value"]) == {0, 1}
 
-    def test_dedup_keeps_distinct_leads_after_combining_sources(
+    def test_native_lr_has_no_monthly_fallback_for_missing_lead(
         self, monkeypatch, long_term_horizon_config
     ):
-        """Two rows sharing (code, year, quarter, model) but differing only
-
-        in horizon_value (one from monthly-aggregation, one from the
-        direct-quarter source) must both survive the combine+dedup step.
-        """
+        """Keep the native lead-1 forecast; do not derive missing lead 0."""
         (long_term_horizon_config / "quarter.json").write_text(
             json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
         )
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
 
-        monthly = pd.DataFrame(
-            {
-                "code": ["19999", "19999"],
-                "year": [2024, 2024],
-                "month": [1, 2],
-                "model_short": ["LR_Base", "LR_Base"],
-                "horizon_value": [0, 0],
-                "q05": [10, 20],
-                "q10": [15, 25],
-                "q25": [20, 30],
-                "q50": [30, 40],
-                "q75": [40, 50],
-                "q90": [50, 60],
-                "q95": [60, 70],
-                "forecasted_discharge": [30, 40],
-            }
-        )
+        monthly = pd.DataFrame([
+            {"code": "19999", "year": 2024, "month": month,
+             "model_short": "LR_Base", "date": "2024-01-25", "q50": 30.0}
+            for month in (1, 2, 3)
+        ])
 
         operational_row = {
             "horizon_type": "quarter",
@@ -503,8 +481,8 @@ class TestReadQuarterlyForecastsLeadAware:
         ):
             result = data_reader.read_quarterly_forecasts(["19999"], 2024, 2024)
 
-        assert len(result) == 2
-        assert set(result["horizon_value"]) == {0, 1}
+        assert len(result) == 1
+        assert set(result["horizon_value"]) == {1}
 
 
 # ===================================================================
@@ -676,7 +654,8 @@ class TestReadLatestQuarterlyForecasts:
                         "2024-06-30",
                     ]
                 ),
-                "model_type": ["LR_Base"] * 6,
+                "model_type": ["MC_ALD"] * 6,
+                "date": ["2023-12-25"] * 3 + ["2024-03-25"] * 3,
                 "q50": [100, 110, 120, 50, 60, 70],
                 "q05": [80, 90, 100, 30, 40, 50],
                 "q10": [85, 95, 105, 35, 45, 55],
@@ -715,7 +694,7 @@ class TestReadLatestQuarterlyForecasts:
             result = data_reader.read_latest_quarterly_forecasts(["S1"])
         assert result.empty
 
-    def test_latest_filters_deprecated_models_after_combining_sources(self):
+    def test_latest_keeps_additional_quarterly_models_after_combining_sources(self):
         import datetime as dt
 
         raw_monthly = pd.DataFrame(
@@ -723,6 +702,7 @@ class TestReadLatestQuarterlyForecasts:
                 "code": ["S1"] * 6,
                 "valid_from": pd.to_datetime(["2024-04-01", "2024-05-01", "2024-06-01"] * 2),
                 "valid_to": pd.to_datetime(["2024-04-30", "2024-05-31", "2024-06-30"] * 2),
+                "date": ["2024-03-25"] * 6,
                 "model_type": ["LR_Base"] * 3 + ["GBT"] * 3,
                 "q50": [50, 60, 70, 1000, 1000, 1000],
                 "q05": [30, 40, 50, 900, 900, 900],
@@ -738,6 +718,7 @@ class TestReadLatestQuarterlyForecasts:
                 "code": ["S1", "S1"],
                 "valid_from": pd.to_datetime(["2024-04-01", "2024-04-01"]),
                 "valid_to": pd.to_datetime(["2024-06-30", "2024-06-30"]),
+                "date": ["2024-03-25"] * 2,
                 "model_type": ["LR_SM", "LR_SM_DT"],
                 "q50": [65, 999],
                 "q05": [45, 900],
@@ -759,8 +740,7 @@ class TestReadLatestQuarterlyForecasts:
                 ["S1"], forecast_date=dt.date(2024, 7, 1)
             )
 
-        assert set(result["model_short"]) == {"LR_Base", "LR_SM"}
-        assert not {"GBT", "LR_SM_DT"} & set(result["model_short"])
+        assert set(result["model_short"]) == {"LR_SM", "GBT", "LR_SM_DT"}
 
     def test_latest_accepts_db_form_lr_and_ensemble_names(self):
         import datetime as dt
@@ -806,8 +786,10 @@ class TestReadLatestQuarterlyForecasts:
             "ENSEMBLE_MEAN",
             "NAIVE_MEAN",
             "SKILLED_MEAN",
+            'MC_ALD',
+            'SM_GBT',
+            'SM_GBT_LR',
         }
-        assert not set(DEPRECATED_MODEL_FORMS) & set(result["model_short"])
 
 
 class TestReadLatestQuarterlyForecastsLeadAware:
@@ -903,7 +885,7 @@ class TestReadLatestQuarterlyForecastsLeadAware:
 
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
 
-        row = self._q1_row("2024-01-01", q50=100.0, horizon_value=1)
+        row = self._q1_row("2023-12-25", q50=100.0, horizon_value=1)
 
         def fake_api(codes, start_year, end_year, horizon_type=None, horizon_value=None):
             if horizon_type != "quarter":
@@ -921,9 +903,10 @@ class TestReadLatestQuarterlyForecastsLeadAware:
             c for c in mock_api.call_args_list if c.kwargs.get("horizon_type") == "quarter"
         ]
         assert quarter_calls, "expected a direct quarter API call"
-        # Flag OFF: byte-identical single-lead filter, no window expansion.
+        # The configured single lead remains filtered, with enough issue
+        # history to cover Q1 forecasts issued in the preceding year.
         assert quarter_calls[0].kwargs.get("horizon_value") == 1
-        assert quarter_calls[0].args[1] == 2023  # start_date.year, NOT expanded
+        assert quarter_calls[0].args[1] == 2022
         assert not result.empty
 
 
@@ -943,13 +926,14 @@ class TestReadLatestQuarterlyForecastsSource1LeadAware:
         # selection. The quarter mode must ALSO carry
         # operational_issue_day so Source 2's flag-ON resolution does not
         # fail loud (its API read is mocked empty to isolate Source 1).
-        (config_dir / "month_1.json").write_text(
-            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
-        )
+        for lead in (1, 2, 3):
+            (config_dir / f"month_{lead}.json").write_text(
+                json.dumps({"operational_month_lead_time": lead, "operational_issue_day": 25})
+            )
         (config_dir / "quarter.json").write_text(
             json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
         )
-        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1,quarter")
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1,month_2,month_3,quarter")
 
     def _month_row(self, valid_from, issue_date, q50, horizon_value=99):
         return {
@@ -957,9 +941,9 @@ class TestReadLatestQuarterlyForecastsSource1LeadAware:
             "horizon_value": horizon_value,
             "code": "19999",
             "date": issue_date,
-            "model_type": "LR_Base",
+            "model_type": "MC_ALD",
             "valid_from": valid_from,
-            "valid_to": valid_from,
+            "valid_to": (pd.Timestamp(valid_from) + pd.offsets.MonthEnd()).strftime("%Y-%m-%d"),
             "q50": q50,
             "q05": q50 - 30,
             "q10": q50 - 25,
@@ -968,19 +952,13 @@ class TestReadLatestQuarterlyForecastsSource1LeadAware:
             "q90": q50 + 25,
             "q95": q50 + 30,
             "id": 1,
-            "model_type_description": "LR_Base",
+            "model_type_description": "MC_ALD",
         }
 
     def _rows(self):
-        # Operational Q1-2024 monthly issuances (lead 1, issue-day 25):
-        #   month 1 issued 2023-12-25, month 2 issued 2024-01-25, q50=100.
-        op1 = self._month_row("2024-01-01", "2023-12-25", q50=100.0)
-        op2 = self._month_row("2024-02-01", "2024-01-25", q50=100.0)
-        # Same-target/same-lead BACKFILL at a NON-operational issue day
-        # (day 10). These must be excluded under the flag.
-        bf1 = self._month_row("2024-01-01", "2023-12-10", q50=500.0)
-        bf2 = self._month_row("2024-02-01", "2024-01-10", q50=500.0)
-        return [op1, op2, bf1, bf2]
+        return [self._month_row(f"2024-{month:02d}-01", issue, q50=value)
+                for issue, value in (("2023-12-25", 100.), ("2023-12-10", 500.))
+                for month in (1, 2, 3)]
 
     def test_flag_on_source1_aggregates_only_operational_monthly(
         self, monkeypatch, long_term_horizon_config
@@ -1008,7 +986,7 @@ class TestReadLatestQuarterlyForecastsSource1LeadAware:
         # ONLY the operational rows (q50=100) survive: the aggregated Q1
         # mean is 100, NOT the backfill-contaminated 300.
         assert float(result.iloc[0]["forecasted_discharge"]) == 100.0
-        assert float(result.iloc[0]["q50"]) == 100.0
+        assert pd.isna(result.iloc[0]["q50"])
         # ...carrying the DERIVED lead (1), not the stale stored 99.
         assert int(result.iloc[0]["horizon_value"]) == 1
 
@@ -1034,9 +1012,9 @@ class TestReadLatestQuarterlyForecastsSource1LeadAware:
 
         assert not result.empty
         assert set(result["quarter_in_year"]) == {1}
-        # Flag OFF: raw path unchanged -- backfill (q50=500) is NOT
-        # excluded, so the Q1 mean over all four rows is 300.
-        assert float(result.iloc[0]["forecasted_discharge"]) == 300.0
+        # Flag OFF keeps raw reads, but selects one complete latest issuance
+        # instead of blending the operational forecast and backfill.
+        assert float(result.iloc[0]["forecasted_discharge"]) == 100.0
 
 
 class TestReadLatestSeasonalForecasts:
@@ -1366,13 +1344,14 @@ class TestLongTermApiHorizonValue:
 
 
 class TestCombinedForecastNormalization:
-    def test_quarter_normalization_still_drops_raw_horizon_value(self):
+    def test_quarter_normalization_preserves_horizon_value(self):
         raw_api = pd.DataFrame(
             {
                 "code": ["19999"],
                 "horizon_value": [1],
                 "valid_from": pd.to_datetime(["2024-01-01"]),
                 "valid_to": ["2024-03-31"],
+                "date": ["2023-12-25"],
                 "model_type": ["LR_Base"],
                 "q50": [30],
             }
@@ -1383,7 +1362,7 @@ class TestCombinedForecastNormalization:
         assert result.iloc[0]["year"] == 2024
         assert result.iloc[0]["quarter_in_year"] == 1
         assert result.iloc[0]["model_short"] == "LR_Base"
-        assert "horizon_value" not in result.columns
+        assert "horizon_value" in result.columns
 
     def test_quarter_normalization_keeps_horizon_value_when_flag_on(self, monkeypatch):
         """Under SAPPHIRE_SKILL_LEAD_AWARE, horizon_value must survive
@@ -1398,6 +1377,7 @@ class TestCombinedForecastNormalization:
                 "horizon_value": [1],
                 "valid_from": pd.to_datetime(["2024-01-01"]),
                 "valid_to": ["2024-03-31"],
+                "date": ["2023-12-25"],
                 "model_type": ["LR_Base"],
                 "q50": [30],
             }
@@ -1406,3 +1386,62 @@ class TestCombinedForecastNormalization:
         result = data_reader._normalize_combined_forecasts(raw_api, "quarter")
 
         assert result.iloc[0]["horizon_value"] == 1
+
+
+@pytest.mark.parametrize("latest", [False, True])
+@pytest.mark.parametrize("lead_aware", [False, True])
+def test_rolling_q2_windows_cannot_replace_march_issued_calendar_quarter(
+    monkeypatch, long_term_horizon_config, latest, lead_aware
+):
+    """The May-issued June--August forecast must not become the Q2 pair."""
+    import datetime as dt
+
+    monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", str(lead_aware).lower())
+    (long_term_horizon_config / "quarter.json").write_text(json.dumps({
+        "operational_month_lead_time": 1, "operational_issue_day": 25,
+    }))
+    rows = pd.DataFrame([
+        {"code": "S1", "model_type": "LR_SM", "date": issue,
+         "valid_from": start, "valid_to": end, "q": value, "horizon_value": 1}
+        for issue, start, end, value in [
+            ("2024-03-25", "2024-04-01", "2024-06-30", 100.),
+            ("2024-04-25", "2024-05-01", "2024-07-31", 200.),
+            ("2024-05-25", "2024-06-01", "2024-08-31", 900.),
+        ]
+    ])
+
+    def api(*args, horizon_type="month", **kwargs):
+        return rows if horizon_type == "quarter" else pd.DataFrame()
+
+    with patch.object(data_reader, "read_monthly_forecasts", return_value=pd.DataFrame()), patch.object(
+        data_reader, "_read_long_forecasts_api", side_effect=api
+    ):
+        result = (data_reader.read_latest_quarterly_forecasts(["S1"], dt.date(2024, 6, 25))
+                  if latest else data_reader.read_quarterly_forecasts(["S1"], 2024, 2024))
+    assert len(result) == 1
+    assert result.iloc[0]["forecasted_discharge"] == 100.
+    assert pd.Timestamp(result.iloc[0]["date"]) == pd.Timestamp("2024-03-25")
+    assert result.iloc[0]["valid_to"] == "2024-06-30"
+    assert result.iloc[0]["horizon_value"] == 1
+
+
+def test_flag_off_quarter_read_expands_issue_year_and_trims_target_year(monkeypatch):
+    monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+    raw = pd.DataFrame([
+        {"code": "S1", "model_type": "LR_SM", "date": f"{year - 1}-12-25",
+         "valid_from": f"{year}-01-01", "valid_to": f"{year}-03-31",
+         "q": 100., "horizon_value": 1}
+        for year in (2024, 2025)
+    ])
+
+    def api(codes, start_year, end_year, **kwargs):
+        issue_year = pd.to_datetime(raw["date"]).dt.year
+        return raw[issue_year.between(start_year, end_year)]
+
+    with patch.object(data_reader, "read_monthly_forecasts", return_value=pd.DataFrame()), patch.object(
+        data_reader, "_read_long_forecasts_api", side_effect=api
+    ):
+        result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
+    assert len(result) == 1
+    assert result.iloc[0]["year"] == 2024
+    assert result.iloc[0]["date"] == pd.Timestamp("2023-12-25")

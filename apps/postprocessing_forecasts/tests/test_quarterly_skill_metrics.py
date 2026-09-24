@@ -262,7 +262,7 @@ class TestQuarterlyMetricsEnsembles:
             models = joint["model_short"].unique()
             assert "Naive Mean" in models
 
-    def test_em_recalc_uses_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
+    def test_em_recalc_excludes_models_failing_standard_thresholds(self, monkeypatch):
         for key, value in {
             "ieasyhydroforecast_efficiency_threshold": "0.6",
             "ieasyhydroforecast_nse_threshold": "0.8",
@@ -301,20 +301,8 @@ class TestQuarterlyMetricsEnsembles:
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
         assert filtered_raw.empty
-        assert len(em_joint) == 5
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
-        assert np.allclose(em_joint["q05"], [80.0] * 5)
-        assert np.allclose(em_joint["q50"], [100.0] * 5)
-        assert np.allclose(em_joint["q95"], [120.0] * 5)
-        assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
-        # EM rows must keep their period key so the write-side NaN guard
-        # (api_writer drops rows with null year/quarter_in_year) persists them.
-        assert "quarter_in_year" in em_joint.columns
-        assert em_joint["quarter_in_year"].notna().all()
-        assert set(em_joint["quarter_in_year"].astype(int)) == {1}
-        assert not em_skill.empty
-        assert int(em_skill.iloc[0]["n_pairs"]) == 5
-        assert pd.notna(em_skill.iloc[0]["crps"])
+        assert em_joint.empty
+        assert em_skill.empty
 
     def test_em_recalc_accepts_db_form_lr_model_names(self, monkeypatch):
         for key, value in {
@@ -333,28 +321,19 @@ class TestQuarterlyMetricsEnsembles:
                 ("S1", 2024, 1, 140.0),
             ]
         )
-        fcst = _make_quarterly_fcst(
-            [
-                ("S1", 2020, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
-                ("S1", 2021, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
-                ("S1", 2022, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
-                ("S1", 2023, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
-                ("S1", 2024, 1, "LR_BASE", -20, -15, -5, 0, 5, 15, 20),
-                ("S1", 2020, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
-                ("S1", 2021, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
-                ("S1", 2022, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
-                ("S1", 2023, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
-                ("S1", 2024, 1, "LR_SM", 180, 185, 195, 200, 205, 215, 220),
-            ]
-        )
+        fcst = _make_quarterly_fcst([
+            ("S1", year, 1, model, q-20, q-15, q-5, q, q+5, q+15, q+20)
+            for year, q in zip(range(2020, 2025), range(100, 150, 10))
+            for model in ("LR_BASE", "LR_SM")
+        ])
 
         skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
         em_joint = joint[joint["model_short"] == "EM"].sort_values("year")
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
         assert len(em_joint) == 5
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
-        assert np.allclose(em_joint["q50"], [100.0] * 5)
+        assert np.allclose(em_joint["forecasted_discharge"], [100, 110, 120, 130, 140])
+        assert np.allclose(em_joint["q50"], [100, 110, 120, 130, 140])
         assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
         assert not em_skill.empty
 
@@ -761,3 +740,29 @@ class TestQFallbackQuarterly:
         # Should return empty stats, not crash
         gbt_stats = stats[stats["model_short"] == "GBT"]
         assert gbt_stats.empty or gbt_stats.iloc[0]["n_pairs"] == 0
+
+
+def test_rolling_forecasts_never_score_against_calendar_quarter_observations(monkeypatch):
+    """Defense in depth for callers bypassing the production reader."""
+    monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+    observations = pd.DataFrame([
+        {"code": "S1", "year": year, "quarter_in_year": 2,
+         "discharge_avg": float(year - 2000), "delta": 1.0}
+        for year in range(2020, 2025)
+    ])
+    forecasts = pd.DataFrame([
+        {"code": "S1", "year": year, "quarter_in_year": 2, "model_short": "LR_SM",
+         "date": f"{year}-{issue_month:02d}-25", "horizon_value": 1,
+         "valid_from": f"{year}-{start_month:02d}-01", "valid_to": f"{year}-{end}",
+         "forecasted_discharge": value}
+        for year in range(2020, 2025)
+        for issue_month, start_month, end, value in [
+            (3, 4, "06-30", float(year - 2000)), (5, 6, "08-31", 999.)
+        ]
+    ])
+    stats, joint, _ = calculate_quarterly_skill_metrics(observations, forecasts)
+    row = stats[stats["model_short"] == "LR_SM"].iloc[0]
+    assert row["n_pairs"] == 5
+    assert row["nse"] == 1.0
+    assert row["horizon_value"] == 1
+    assert set(joint["valid_to"].str[5:]) == {"06-30"}

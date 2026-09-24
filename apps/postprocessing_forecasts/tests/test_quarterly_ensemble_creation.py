@@ -200,7 +200,7 @@ class TestQuarterlyEnsembleEM:
         assert "LR_Base" in comp
         assert "LR_SM" in comp
 
-    def test_em_uses_lr_mean_when_lr_skills_fail_thresholds(self):
+    def test_em_requires_two_models_passing_standard_thresholds(self):
         skill = _make_quarterly_skill(
             [
                 (1, "S1", "LR_Base", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
@@ -219,19 +219,35 @@ class TestQuarterlyEnsembleEM:
         result = create_quarterly_ensemble_forecasts(fcst, skill)
         em = result[result["model_short"] == "EM"]
 
-        assert len(em) == 1
-        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
-        assert np.isclose(em.iloc[0]["q05"], 85.0)
-        assert np.isclose(em.iloc[0]["q50"], 110.0)
-        assert np.isclose(em.iloc[0]["q95"], 130.0)
-        assert str(em.iloc[0]["composition"]) == "LR_Base, LR_SM"
+        assert em.empty  # Only GBT qualifies; two distinct models are required.
+
+    @pytest.mark.parametrize("mc_pairs, expected_count", [(4, 0), (5, 1)])
+    def test_em_uses_qualified_additional_models_and_quarter_min_pairs(
+        self, monkeypatch, mc_pairs, expected_count
+    ):
+        monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term_quarter", "5")
+        skill = _make_quarterly_skill([
+            (1, "S1", "LR_Base", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
+            (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+            (1, "S1", "MC_ALD", 0.3, 0.95, 5.0, 0.90, 1.0, mc_pairs),
+        ])
+        fcst = _make_quarterly_fcst([
+            ("S1", 2025, 1, model, q, q-20, q-15, q-5, q, q+5, q+15, q+20)
+            for model, q in [("LR_Base", 1000), ("GBT", 100), ("MC_ALD", 200)]
+        ])
+        result = create_quarterly_ensemble_forecasts(fcst, skill)
+        em = result[result.model_short.eq("EM")]
+        assert len(em) == expected_count
+        if expected_count:
+            assert em.forecasted_discharge.iloc[0] == pytest.approx(150)
+            assert em.composition.iloc[0] == "GBT, MC_ALD"
 
     def test_em_accepts_db_form_lr_model_names(self):
         skill = _make_quarterly_skill(
             [
-                (1, "S1", "LR_BASE", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
-                (1, "S1", "LR_SM", 0.8, -0.5, 5.0, 0.20, 30.0, 10),
-                (1, "S1", "GBT", 0.3, 0.95, 5.0, 0.90, 1.0, 10),
+                (1, "S1", "LR_BASE", 0.3, 0.95, 5.0, 0.90, 20.0, 10),
+                (1, "S1", "LR_SM", 0.3, 0.95, 5.0, 0.90, 30.0, 10),
+                (1, "S1", "GBT", 0.9, -1.0, 5.0, 0.10, 1.0, 10),
             ]
         )
         fcst = _make_quarterly_fcst(

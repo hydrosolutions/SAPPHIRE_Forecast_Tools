@@ -84,6 +84,7 @@ def _monthly_fc(n_years=3, codes=("S1",), models=("LR_Base", "LR_SM")):
                             "code": code,
                             "year": year,
                             "month": month,
+                            "date": pd.Timestamp(year=year, month=((month - 1) // 3) * 3 + 1, day=25) - pd.DateOffset(months=1),
                             "model_short": model,
                             "q50": q50,
                             "q05": q50 - 20,

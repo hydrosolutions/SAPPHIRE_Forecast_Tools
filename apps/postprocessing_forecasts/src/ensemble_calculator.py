@@ -555,13 +555,16 @@ def create_quarterly_ensemble_forecasts(
     Returns:
         DataFrame with ensemble rows appended to input forecasts.
     """
-    # Under SAPPHIRE_SKILL_LEAD_AWARE, quarter_in_year is the TARGET quarter,
-    # not the issue lead. Add horizon_value to the grouping so EM/Naive/
-    # Skilled Mean are generated per lead instead of pooling across leads
-    # (mirrors the P2 change in skill_metrics.calculate_quarterly_skill_metrics).
+    # Calendar-window skill cannot weight rolling forecasts. Keep each
+    # actual issuance and lead separate when creating quarterly ensembles.
+    from src.aggregation import calendar_quarter_forecasts
+
+    forecasts = calendar_quarter_forecasts(forecasts)
     time_group_cols = ["year", "quarter_in_year", "code"]
-    if skill_lead_aware_enabled():
-        time_group_cols = ["year", "quarter_in_year", "horizon_value", "code"]
+    if "date" in forecasts.columns:
+        time_group_cols.append("date")
+    if "horizon_value" in forecasts.columns:
+        time_group_cols.append("horizon_value")
     return _create_aggregated_ensemble_forecasts(
         forecasts,
         skill_stats,
@@ -665,10 +668,8 @@ def _create_aggregated_ensemble_forecasts(
         )
     _horizon_type_ens = _PERIOD_COL_TO_HORIZON_ENS[period_col]
 
-    # --- EM (two-LR average; not skill-gated for quarter/season) ---
-    # EM membership derives from AGGREGATED_EM_RAW_MODELS (fixed-LR, no skill
-    # gate); `skill_filtered` (computed with min_pairs) feeds only the Skilled
-    # Mean below.
+    # Skilled Mean uses its relaxed gate. Quarterly EM separately uses the
+    # monthly-style standard gate; seasonal EM retains fixed LR membership.
     skill_filtered = filter_for_highly_skilled_forecasts(
         skill_stats,
         min_pairs=_long_term_min_pairs(_horizon_type_ens),
@@ -695,7 +696,7 @@ def _create_aggregated_ensemble_forecasts(
     # exclusion while the groupby still keyed on `horizon_value`, silently
     # dropping NULL-lead rows and letting non-numeric leads leak into
     # ensembles. Drive both off the grouping condition instead.
-    _group_uses_hv = skill_lead_aware_enabled() and "horizon_value" in time_group_cols
+    _group_uses_hv = (skill_lead_aware_enabled() or period_col == "quarter_in_year") and "horizon_value" in time_group_cols
 
     # Under the flag, exclude NULL/non-numeric-lead rows from ensemble
     # GROUPING before the lead-aware groupby (pandas groupby(dropna=True)
@@ -737,8 +738,24 @@ def _create_aggregated_ensemble_forecasts(
         else [period_col, "code", "model_short"]
     )
 
-    model_keys = canonical_model_short_series(joint["model_short"])
-    qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
+    if period_col == "quarter_in_year":
+        # Match monthly EM's standard thresholds; Skilled Mean retains its
+        # separate relaxed gate below. Join each model once per skill key.
+        em_skills = filter_for_highly_skilled_forecasts(
+            skill_stats, min_pairs=_long_term_min_pairs("QUARTER")
+        )
+        em_skills = em_skills.copy()
+        em_skills[period_col] = pd.to_numeric(em_skills[period_col], errors="coerce")
+        em_skills["code"] = em_skills["code"].astype(str)
+        if "horizon_value" in em_skills.columns:
+            em_skills["horizon_value"] = pd.to_numeric(em_skills["horizon_value"], errors="coerce")
+        em_keys = [period_col, "code", "model_short"]
+        if "horizon_value" in joint.columns and "horizon_value" in em_skills.columns:
+            em_keys.append("horizon_value")
+        qualifying = joint.merge(em_skills[em_keys].drop_duplicates(), on=em_keys, how="inner")
+    else:
+        model_keys = canonical_model_short_series(joint["model_short"])
+        qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
     qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
     n_models = qualifying["model_short"].nunique()

@@ -416,21 +416,16 @@ class TestQuarterEnsembleFlagBehaviour:
         raw = _read_long_forecasts_api([STATION], 2025, 2025, horizon_type="quarter")
         assert int(raw["horizon_value"].iloc[0]) == 3
 
-    def test_flag_off_uses_configured_quarter_lead(self, fake_api, monkeypatch):
-        """Flag OFF: legacy behaviour — the writer ignores the row's
-        horizon_value and stamps the single configured quarter lead."""
+    def test_flag_off_preserves_explicit_quarter_lead(self, fake_api, monkeypatch):
+        """A supplied quarterly lead must not be overwritten by config."""
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "off")
-        # Pin the configured lead so the assertion does not depend on
-        # deployment config; prove the row's 3 is NOT used.
+        # Pin a different configured lead to prove the explicit row wins.
         monkeypatch.setattr(api_writer, "quarter_horizon_value", lambda: 1)
 
         _write_quarterly_ensemble_to_api(self._quarter_df(3))
 
         assert len(fake_api.long_records) == 1
-        assert int(fake_api.long_records[0]["horizon_value"]) == 1, (
-            "Flag OFF must use quarter_horizon_value() (1), not the row's "
-            "per-lead horizon_value (3)"
-        )
+        assert int(fake_api.long_records[0]["horizon_value"]) == 3
 
 
 # ===========================================================================

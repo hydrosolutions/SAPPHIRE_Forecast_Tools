@@ -282,12 +282,10 @@ class TestQuarterlyEnsembleWriter:
         result = _write_quarterly_ensemble_to_api(pd.DataFrame())
         assert result is False
 
-    def test_flag_on_row_own_horizon_value_and_date_used(self, monkeypatch):
-        """Under the flag, a row carrying its own horizon_value/date is
-
-        written using ITS OWN values, not quarter_horizon_value()/valid_from.
-        """
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+    @pytest.mark.parametrize("flag", ["true", "false"])
+    def test_row_own_horizon_value_and_date_used(self, monkeypatch, flag):
+        """Explicit quarterly lead and issue date survive with either flag value."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", flag)
         data = pd.DataFrame(
             {
                 "code": ["19999"],
@@ -335,34 +333,18 @@ class TestQuarterlyEnsembleWriter:
         assert records[0]["date"] == "2025-04-01"  # valid_from fallback
 
     def test_flag_on_aggregation_computed_date_round_trips_to_lead(self, monkeypatch):
-        """FIX 6 round-trip: an aggregation-style row (own horizon_value +
-
-        the aggregation-computed representative date = valid_from - hv
-        months, with NO separately-supplied issue date) must write a
-        record whose (date, valid_from) derives EXACTLY horizon_value.
-        """
+        """A complete same-issuance aggregation preserves its real issue date."""
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
         from src.aggregation import aggregate_monthly_fc_to_quarterly
 
-        monthly = pd.DataFrame(
-            {
-                "code": ["19999", "19999"],
-                "year": [2024, 2024],
-                "month": [1, 2],
-                "model_short": ["EM", "EM"],
-                "horizon_value": [1, 1],
-                "q05": [10.0, 20.0],
-                "q10": [15.0, 25.0],
-                "q25": [20.0, 30.0],
-                "q50": [30.0, 40.0],
-                "q75": [40.0, 50.0],
-                "q90": [50.0, 60.0],
-                "q95": [60.0, 70.0],
-                "forecasted_discharge": [30.0, 40.0],
-            }
-        )
+        monthly = pd.DataFrame({
+            "code": ["19999"] * 3, "year": [2024] * 3,
+            "month": [1, 2, 3], "model_short": ["EM"] * 3,
+            "date": ["2023-12-25"] * 3, "horizon_value": [1, 2, 3],
+            "forecasted_discharge": [30., 40., 50.],
+        })
         aggregated = aggregate_monthly_fc_to_quarterly(monthly)
-        assert "date" in aggregated.columns  # FIX 6 carried it through
+        assert "date" in aggregated.columns
 
         with (
             patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
@@ -374,6 +356,9 @@ class TestQuarterlyEnsembleWriter:
         rec = records[0]
         vf = pd.Timestamp(rec["valid_from"])
         d = pd.Timestamp(rec["date"])
+        assert rec["date"] == "2023-12-25"
+        assert rec["q"] == 40.0
+        assert "q50" not in rec or rec["q50"] is None
         derived_lead = (vf.year - d.year) * 12 + (vf.month - d.month)
         assert derived_lead == rec["horizon_value"] == 1
 

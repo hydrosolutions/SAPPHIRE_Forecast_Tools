@@ -16,8 +16,6 @@ import os
 
 import numpy as np
 import pandas as pd
-from skill_lead_aware_flag import skill_lead_aware_enabled
-from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +33,7 @@ QUARTER_MONTHS: dict[int, list[int]] = {
 MONTH_TO_QUARTER: dict[int, int] = {m: q for q, ms in QUARTER_MONTHS.items() for m in ms}
 
 # Minimum months required per quarter (out of 3)
-QUARTER_MIN_MONTHS = 2
+QUARTER_MIN_MONTHS = 3
 
 # Minimum fraction of season months required
 SEASON_MIN_COVERAGE = 0.5
@@ -112,19 +110,24 @@ def aggregate_monthly_obs_to_quarterly(
 
     df = monthly_obs.copy()
     df["quarter_in_year"] = df["month"].map(MONTH_TO_QUARTER)
-
+    df["_month_start"] = pd.to_datetime(df[["year", "month"]].assign(day=1))
+    df = df.drop_duplicates(["code", "_month_start"], keep="last")
+    df["discharge_avg"] = pd.to_numeric(df["discharge_avg"], errors="coerce")
+    df = df[np.isfinite(df["discharge_avg"])].copy()
+    df["_days"] = df["_month_start"].dt.days_in_month
+    df["_weighted"] = df["discharge_avg"] * df["_days"]
     grouped = (
         df.groupby(["code", "year", "quarter_in_year"])
         .agg(
-            discharge_avg=("discharge_avg", "mean"),
-            n_months=("discharge_avg", "count"),
+            _weighted=("_weighted", "sum"),
+            _days=("_days", "sum"),
+            n_months=("month", "nunique"),
         )
         .reset_index()
     )
-
-    # Require >= QUARTER_MIN_MONTHS months present
-    grouped = grouped[grouped["n_months"] >= QUARTER_MIN_MONTHS].copy()
-    grouped = grouped.drop(columns=["n_months"])
+    grouped = grouped[grouped["n_months"] == QUARTER_MIN_MONTHS].copy()
+    grouped["discharge_avg"] = grouped["_weighted"] / grouped["_days"]
+    grouped = grouped.drop(columns=["n_months", "_weighted", "_days"])
 
     if grouped.empty:
         return pd.DataFrame(columns=["code", "year", "quarter_in_year", "discharge_avg", "delta"])
@@ -215,97 +218,90 @@ def aggregate_monthly_obs_to_seasonal(
 _FC_QUANTILE_COLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
 
 
-def aggregate_monthly_fc_to_quarterly(
-    monthly_fc: pd.DataFrame,
-) -> pd.DataFrame:
-    """Aggregate monthly forecasts to quarterly.
+def calendar_quarter_forecasts(forecasts: pd.DataFrame) -> pd.DataFrame:
+    """Keep exact calendar-quarter windows for the Q1--Q4 skill contract.
 
-    Args:
-        monthly_fc: DataFrame with columns [code, year, month,
-            model_short, q05-q95] and optionally [forecasted_discharge,
-            valid_from, valid_to].
-
-    Returns:
-        DataFrame with columns [code, year, quarter_in_year,
-        model_short, q05-q95, forecasted_discharge, valid_from,
-        valid_to].
+    A rolling May--July or June--August forecast must never be scored as
+    April--June merely because its start falls in Q2. Legacy date-less
+    internal frames already declare their calendar quarter explicitly.
     """
-    if monthly_fc.empty:
-        return pd.DataFrame(
-            columns=["code", "year", "quarter_in_year", "model_short"] + _FC_QUANTILE_COLS
-        )
+    if forecasts.empty or not {"valid_from", "valid_to"}.intersection(forecasts.columns):
+        return forecasts.copy()
+    if not {"valid_from", "valid_to"}.issubset(forecasts.columns):
+        logger.warning("Quarterly forecasts missing a target boundary; skipping")
+        return forecasts.iloc[:0].copy()
+    df = forecasts.copy()
+    start = pd.to_datetime(df["valid_from"], format="mixed", errors="coerce")
+    end = pd.to_datetime(df["valid_to"], format="mixed", errors="coerce")
+    expected_end = start + pd.offsets.QuarterEnd(startingMonth=3)
+    valid = start.dt.month.isin([1, 4, 7, 10]) & start.dt.day.eq(1)
+    valid &= end.dt.normalize().eq(expected_end.dt.normalize())
+    if (~valid).any():
+        logger.info("Skipping %d non-calendar quarterly windows from Q1--Q4 evaluation", (~valid).sum())
+    df = df.loc[valid].copy()
+    df["year"] = start.loc[valid].dt.year
+    df["quarter_in_year"] = start.loc[valid].dt.quarter
+    return df
 
+
+def aggregate_monthly_fc_to_quarterly(monthly_fc: pd.DataFrame) -> pd.DataFrame:
+    """Build deterministic calendar quarters from one issuance's three months.
+
+    Group by station, model, actual issue date and calendar target quarter.
+    Require three distinct complete calendar months, derive the quarterly
+    lead from the first target month, and weight discharge by month length.
+    Monthly quantiles cannot identify the distribution of the three-month
+    mean without temporal dependence information, so no quarterly quantiles
+    are inferred. Missing issue dates cannot safely be synthesized.
+    """
+    columns = [
+        "code", "year", "quarter_in_year", "model_short", "date",
+        "horizon_value", "forecasted_discharge", "q", "valid_from", "valid_to",
+    ] + _FC_QUANTILE_COLS
+    if monthly_fc.empty or "date" not in monthly_fc.columns:
+        return pd.DataFrame(columns=columns)
     df = monthly_fc.copy()
-    df["quarter_in_year"] = df["month"].map(MONTH_TO_QUARTER)
-
-    agg_dict: dict = {
-        "n_months": ("month", "count"),
-    }
-    for qcol in _FC_QUANTILE_COLS:
-        if qcol in df.columns:
-            agg_dict[qcol] = (qcol, "mean")
-    if "forecasted_discharge" in df.columns:
-        agg_dict["forecasted_discharge"] = ("forecasted_discharge", "mean")
-    if "q" in df.columns:
-        agg_dict["q"] = ("q", "mean")
-
-    group_cols = ["code", "year", "quarter_in_year", "model_short"]
-    # Under SAPPHIRE_SKILL_LEAD_AWARE, keep distinct monthly leads
-    # (horizon_value) as separate quarterly rows instead of averaging
-    # them together. The QUARTER_MIN_MONTHS coverage filter below then
-    # naturally applies PER LEAD, since n_months is counted within each
-    # group. Flag OFF, or horizon_value absent, is unchanged.
-    if skill_lead_aware_enabled() and "horizon_value" in df.columns:
-        group_cols.append("horizon_value")
-
-    grouped = df.groupby(group_cols).agg(**agg_dict).reset_index()
-    count_quantile_crossings(grouped, _FC_QUANTILE_COLS, label="monthly→quarterly")
-
-    # Require >= QUARTER_MIN_MONTHS
-    grouped = grouped[grouped["n_months"] >= QUARTER_MIN_MONTHS].copy()
-    grouped = grouped.drop(columns=["n_months"])
-
-    if grouped.empty:
-        return pd.DataFrame(
-            columns=["code", "year", "quarter_in_year", "model_short"] + _FC_QUANTILE_COLS
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    if "valid_from" in df.columns:
+        df["_start"] = pd.to_datetime(df["valid_from"], errors="coerce")
+    else:
+        df["_start"] = pd.to_datetime(df[["year", "month"]].assign(day=1), errors="coerce")
+    valid = df["date"].notna() & df["_start"].dt.day.eq(1)
+    if "valid_to" in df.columns:
+        end = pd.to_datetime(df["valid_to"], errors="coerce")
+        valid &= end.dt.normalize().eq((df["_start"] + pd.offsets.MonthEnd(0)).dt.normalize())
+    df = df.loc[valid].copy()
+    df["year"] = df["_start"].dt.year
+    df["quarter_in_year"] = df["_start"].dt.quarter
+    df["_point"] = np.nan
+    for col in ("q", "forecasted_discharge", "q50"):
+        if col in df.columns:
+            df["_point"] = df["_point"].fillna(pd.to_numeric(df[col], errors="coerce"))
+    # Repeated copies of a month are not extra coverage.
+    keys = ["code", "model_short", "date", "year", "quarter_in_year"]
+    df = df.drop_duplicates(keys + ["_start"], keep="last")
+    rows = []
+    for key, group in df.groupby(keys):
+        if len(group) != 3 or not np.isfinite(group["_point"]).all():
+            continue
+        start = group["_start"].min()
+        issue = key[2]
+        lead = (start.year - issue.year) * 12 + start.month - issue.month
+        if lead < 0:
+            continue
+        point = np.average(group["_point"], weights=group["_start"].dt.days_in_month)
+        rows.append(
+            {
+                **dict(zip(keys, key, strict=True)),
+                "horizon_value": lead,
+                "forecasted_discharge": point,
+                "q": point,
+                "valid_from": start.strftime("%Y-%m-%d"),
+                "valid_to": (start + pd.offsets.QuarterEnd()).strftime("%Y-%m-%d"),
+                **dict.fromkeys(_FC_QUANTILE_COLS, np.nan),
+            }
         )
-
-    # Synthesize valid_from/valid_to from quarter boundaries
-    grouped["valid_from"] = grouped.apply(
-        lambda r: f"{int(r['year'])}-{QUARTER_MONTHS[int(r['quarter_in_year'])][0]:02d}-01",
-        axis=1,
-    )
-    grouped["valid_to"] = grouped.apply(
-        lambda r: _quarter_end_date(int(r["year"]), int(r["quarter_in_year"])),
-        axis=1,
-    )
-
-    # Under SAPPHIRE_SKILL_LEAD_AWARE, carry a representative issue `date`
-    # = valid_from - horizon_value months. This is the issue date a
-    # lead-`hv` forecast for the quarter's first month would carry, so a
-    # lead-aware round-trip read derives EXACTLY `hv` from (date,
-    # valid_from) -- rather than the writer fabricating date=valid_from
-    # (lead 0) that contradicts the per-lead horizon_value. Deterministic
-    # regardless of which constituent months are present (NOT min() of
-    # constituent dates, which is off-by-one when the first quarter month
-    # is absent). Flag OFF, or horizon_value absent: no `date` column
-    # added (byte-identical to today). (FIX 6)
-    if skill_lead_aware_enabled() and "horizon_value" in grouped.columns:
-        grouped["date"] = grouped.apply(
-            lambda r: (
-                pd.Timestamp(r["valid_from"]) - pd.DateOffset(months=int(r["horizon_value"]))
-            ).strftime("%Y-%m-%d"),
-            axis=1,
-        )
-
-    # Ensure forecasted_discharge exists (q first, q50 fallback)
-    if "forecasted_discharge" not in grouped.columns:
-        if "q" in grouped.columns:
-            grouped["forecasted_discharge"] = pd.to_numeric(grouped["q"], errors="coerce")
-        elif "q50" in grouped.columns:
-            grouped["forecasted_discharge"] = grouped["q50"].astype(float)
-
-    return grouped
+    return pd.DataFrame(rows, columns=columns)
 
 
 # ---------------------------------------------------------------------------

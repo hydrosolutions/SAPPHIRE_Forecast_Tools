@@ -24,6 +24,8 @@ from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.model_names import (
     AGGREGATED_ENSEMBLE_MODELS,
     AGGREGATED_SUPPORTED_MODELS,
+    QUARTERLY_SUPPORTED_MODELS,
+    QUARTERLY_DERIVED_MODELS,
     canonical_model_short_series,
 )
 from src.postprocessing_tools import count_quantile_crossings
@@ -81,26 +83,64 @@ _QUARTERLY_FC_COLS = [
 
 
 def _quarterly_fc_output_cols() -> list[str]:
-    """Return the canonical quarterly forecast output columns.
+    """Keep the actual issuance and lead through every quarterly path."""
+    return _QUARTERLY_FC_COLS + ["horizon_value", "date"]
 
-    Under SAPPHIRE_SKILL_LEAD_AWARE, extends the base column list with
-    "horizon_value" and "date" so the per-lead selection made by
-    select_operational_issuances() survives into the final output. Flag
-    OFF returns _QUARTERLY_FC_COLS unchanged (columns not present in the
-    frame are filtered out by callers anyway).
+
+def _prepare_quarterly_forecasts(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate calendar windows and retain one issuance per target/lead/model.
+
+    The legacy flag-OFF contract remains single configured lead. Flag-ON
+    may retain several leads, but never several issuances for one annual
+    skill pair. Direct forecasts are concatenated last and take precedence.
     """
-    if skill_lead_aware_enabled():
-        return _QUARTERLY_FC_COLS + ["horizon_value", "date"]
-    return _QUARTERLY_FC_COLS
+    from src.aggregation import calendar_quarter_forecasts
+
+    df = calendar_quarter_forecasts(df)
+    if df.empty:
+        return df
+    if "date" in df.columns and "valid_from" in df.columns:
+        issue = pd.to_datetime(df["date"], errors="coerce")
+        start = pd.to_datetime(df["valid_from"], errors="coerce")
+        lead = (start.dt.year - issue.dt.year) * 12 + start.dt.month - issue.dt.month
+        df["date"] = issue
+        df["horizon_value"] = lead
+        df = df[lead.ge(0)].copy()
+    if not skill_lead_aware_enabled() and "horizon_value" in df.columns:
+        df = df[df["horizon_value"].eq(quarter_horizon_value())].copy()
+    keys = ["code", "year", "quarter_in_year", "model_short", "horizon_value"]
+    order = [c for c in ("_quarter_source", "date") if c in df.columns]
+    if order:
+        df = df.sort_values(order, kind="stable")
+    return df.drop_duplicates([c for c in keys if c in df.columns], keep="last").drop(
+        columns="_quarter_source", errors="ignore"
+    )
 
 
-def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFrame:
+def _aggregate_monthly_forecasts_for_quarterly(monthly: pd.DataFrame) -> pd.DataFrame:
+    """Derive quarters only for models without a native quarterly product.
+
+    LR_Base/LR_SM always use their direct quarterly archive; no monthly
+    fallback may change their meaning or their weight in an ensemble.
+    """
+    from src.aggregation import aggregate_monthly_fc_to_quarterly
+
+    if monthly.empty:
+        return aggregate_monthly_fc_to_quarterly(monthly)
+    eligible = canonical_model_short_series(monthly["model_short"]).isin(QUARTERLY_DERIVED_MODELS)
+    return aggregate_monthly_fc_to_quarterly(monthly.loc[eligible])
+
+
+def _filter_supported_aggregated_forecast_models(
+    df: pd.DataFrame, *, horizon_type: str = "season"
+) -> pd.DataFrame:
     """Keep supported quarter/season raw models plus existing ensemble rows."""
     if df.empty or "model_short" not in df.columns:
         return df
 
     model_keys = canonical_model_short_series(df["model_short"])
-    return df[model_keys.isin(AGGREGATED_SUPPORTED_MODELS)].copy()
+    supported = QUARTERLY_SUPPORTED_MODELS if horizon_type == "quarter" else AGGREGATED_SUPPORTED_MODELS
+    return df[model_keys.isin(supported)].copy()
 
 
 def _drop_tombstone_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -3049,15 +3089,17 @@ def read_quarterly_forecasts(
     """Read quarterly forecasts from aggregated monthly and direct API sources.
 
     Combines two sources:
-    1. Monthly forecasts aggregated to quarterly via
+    LR_Base and LR_SM use only direct quarterly forecasts, with no monthly fallback.
+
+    1. Other supported monthly models aggregated to quarterly via
        ``aggregate_monthly_fc_to_quarterly``.
     2. Direct quarterly forecasts read from the API
        (``horizon_type="quarter"``).
 
     When a model appears in both sources for the same quarter, the
     direct quarterly forecast takes precedence.  Raw model rows are
-    restricted to the supported two-model set (LR_Base, LR_SM) after
-    combining monthly-aggregated and direct quarterly sources.
+    restricted to the supported long-term model set after combining
+    monthly-aggregated and direct quarterly sources.
 
     Args:
         codes: Station codes to read.
@@ -3069,8 +3111,6 @@ def read_quarterly_forecasts(
         model_short, q05-q95, forecasted_discharge, valid_from,
         valid_to].
     """
-    from src.aggregation import aggregate_monthly_fc_to_quarterly
-
     empty_cols = [
         "code",
         "year",
@@ -3079,9 +3119,12 @@ def read_quarterly_forecasts(
     ]
 
     # Source 1: aggregate monthly forecasts to quarterly
-    monthly = read_monthly_forecasts(codes, start_year, end_year)
+    # The API filters issue dates: Q1 lead 1 is issued in December of
+    # the preceding year. The lead-aware monthly reader expands itself.
+    monthly_start = start_year if skill_lead_aware_enabled() else start_year - 1
+    monthly = read_monthly_forecasts(codes, monthly_start, end_year)
     if not monthly.empty:
-        aggregated = aggregate_monthly_fc_to_quarterly(monthly)
+        aggregated = _aggregate_monthly_forecasts_for_quarterly(monthly)
     else:
         aggregated = pd.DataFrame()
 
@@ -3120,7 +3163,7 @@ def read_quarterly_forecasts(
     else:
         raw_q = _read_long_forecasts_api(
             codes,
-            start_year,
+            start_year - _read_window_expansion_years(quarter_horizon_value()),
             end_year,
             horizon_type="quarter",
             horizon_value=quarter_horizon_value(),
@@ -3149,17 +3192,17 @@ def read_quarterly_forecasts(
     else:
         # Concat: aggregated first, direct second.
         # drop_duplicates(keep="last") prefers direct.
-        combined = pd.concat([aggregated, direct], ignore_index=True)
-        dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
-        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
-            dedup_cols = [*dedup_cols, "horizon_value"]
-        available = [c for c in dedup_cols if c in combined.columns]
-        combined = combined.drop_duplicates(subset=available, keep="last")
+        combined = pd.concat(
+            [aggregated.assign(_quarter_source=0), direct.assign(_quarter_source=1)],
+            ignore_index=True,
+        )
 
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    combined = _filter_supported_aggregated_forecast_models(combined)
+    combined = _prepare_quarterly_forecasts(combined)
+    combined = _trim_to_target_year_range(combined, "year", start_year, end_year)
+    combined = _filter_supported_aggregated_forecast_models(combined, horizon_type="quarter")
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
@@ -3309,11 +3352,12 @@ def read_latest_quarterly_forecasts(
     """Read latest quarterly forecasts from aggregated monthly and direct API.
 
     Combines two sources:
-    1. Monthly forecasts (120-day lookback) aggregated to quarterly.
+    1. Non-LR monthly forecasts (120-day lookback) aggregated to quarterly.
+       LR_Base and LR_SM use only their direct quarterly products.
     2. Direct quarterly forecasts from the API.
 
     When a model appears in both sources, the direct forecast wins.
-    Raw model rows are restricted to LR_Base and LR_SM after combining
+    Raw model rows are restricted to supported long-term models after combining
     the two sources; existing ensemble rows are kept.
 
     Args:
@@ -3324,10 +3368,6 @@ def read_latest_quarterly_forecasts(
         DataFrame with quarterly forecasts for the most recent
         quarter. Empty DataFrame if no data.
     """
-    from src.aggregation import (
-        aggregate_monthly_fc_to_quarterly,
-    )
-
     today = forecast_date if forecast_date is not None else dt.date.today()
     start_date = today - dt.timedelta(days=120)
     start_year = start_date.year
@@ -3347,7 +3387,7 @@ def read_latest_quarterly_forecasts(
         if df_m is not None and not df_m.empty:
             if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
                 df_m["forecasted_discharge"] = df_m["q50"].astype(float)
-            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+            aggregated = _aggregate_monthly_forecasts_for_quarterly(df_m)
         else:
             aggregated = pd.DataFrame()
     else:
@@ -3356,7 +3396,7 @@ def read_latest_quarterly_forecasts(
             df_m = _normalize_monthly_forecasts(raw_m)
             if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
                 df_m["forecasted_discharge"] = df_m["q50"].astype(float)
-            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
+            aggregated = _aggregate_monthly_forecasts_for_quarterly(df_m)
         else:
             aggregated = pd.DataFrame()
 
@@ -3396,7 +3436,7 @@ def read_latest_quarterly_forecasts(
     else:
         raw_q = _read_long_forecasts_api(
             codes,
-            start_year,
+            start_year - _read_window_expansion_years(quarter_horizon_value()),
             end_year,
             horizon_type="quarter",
             horizon_value=quarter_horizon_value(),
@@ -3424,17 +3464,16 @@ def read_latest_quarterly_forecasts(
     elif direct.empty:
         combined = aggregated
     else:
-        combined = pd.concat([aggregated, direct], ignore_index=True)
-        dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
-        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
-            dedup_cols = [*dedup_cols, "horizon_value"]
-        available = [c for c in dedup_cols if c in combined.columns]
-        combined = combined.drop_duplicates(subset=available, keep="last")
+        combined = pd.concat(
+            [aggregated.assign(_quarter_source=0), direct.assign(_quarter_source=1)],
+            ignore_index=True,
+        )
 
     if combined.empty:
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
-    combined = _filter_supported_aggregated_forecast_models(combined)
+    combined = _prepare_quarterly_forecasts(combined)
+    combined = _filter_supported_aggregated_forecast_models(combined, horizon_type="quarter")
     if combined.empty:
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
@@ -3754,6 +3793,9 @@ def _normalize_combined_forecasts(
         df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
 
     if horizon_type == "quarter":
+        from src.aggregation import calendar_quarter_forecasts
+
+        df = calendar_quarter_forecasts(df)
         df["year"] = df["valid_from"].dt.year
         month = df["valid_from"].dt.month
         df["quarter_in_year"] = month.map(MONTH_TO_QUARTER)
@@ -3777,17 +3819,21 @@ def _normalize_combined_forecasts(
         elif "q50" in df.columns:
             df["forecasted_discharge"] = df["q50"].astype(float)
 
+    # JSON null quantiles may otherwise stay object/None and fail weighted
+    # ensemble arithmetic when mixed with deterministic quarterly forecasts.
+    for column in ["q", "forecasted_discharge", "q05", "q10", "q25", "q50", "q75", "q90", "q95"]:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
     # Drop API-only columns
     drop_cols = [
         "id",
         "horizon_type",
         "model_type_description",
     ]
-    # Quarter drops the raw horizon_value (single-lead deployment config
-    # historically made it redundant); season always keeps it. Under
-    # SAPPHIRE_SKILL_LEAD_AWARE, quarter keeps it too so the per-lead
-    # selection made by select_operational_issuances() survives.
-    if horizon_type != "season" and not skill_lead_aware_enabled():
+    # Both quarter and season retain lead identity independently of the
+    # operational-issuance feature flag.
+    if horizon_type not in {"season", "quarter"} and not skill_lead_aware_enabled():
         drop_cols.append("horizon_value")
     df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
 

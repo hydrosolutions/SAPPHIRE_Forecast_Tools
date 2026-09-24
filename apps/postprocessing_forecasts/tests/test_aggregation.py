@@ -39,7 +39,7 @@ class TestQuarterConstants:
         assert MONTH_TO_QUARTER[12] == 4
 
     def test_quarter_min_months(self):
-        assert QUARTER_MIN_MONTHS == 2
+        assert QUARTER_MIN_MONTHS == 3
 
 
 # ===================================================================
@@ -148,6 +148,7 @@ class TestAggregateMonthlyObsToQuarterly:
                 ("S1", 2024, 1, 100.0),
                 ("S1", 2024, 2, 110.0),
                 ("S1", 2024, 3, 120.0),
+                ("S1", 2024, 3, 120.0),
             ]
         )
         result = aggregate_monthly_obs_to_quarterly(obs)
@@ -165,8 +166,8 @@ class TestAggregateMonthlyObsToQuarterly:
         result = aggregate_monthly_obs_to_quarterly(obs)
         assert result.empty
 
-    def test_two_months_passes(self):
-        """2 months in quarter passes the filter."""
+    def test_two_months_are_incomplete(self):
+        """A partial quarter must not be evaluated as a complete quarter."""
         obs = _make_monthly_obs(
             [
                 ("S1", 2024, 4, 50.0),
@@ -174,9 +175,7 @@ class TestAggregateMonthlyObsToQuarterly:
             ]
         )
         result = aggregate_monthly_obs_to_quarterly(obs)
-        assert len(result) == 1
-        assert result.iloc[0]["quarter_in_year"] == 2
-        assert abs(result.iloc[0]["discharge_avg"] - 55.0) < 1e-6
+        assert result.empty
 
     def test_delta_computation(self):
         """Delta = 0.674 * std across years for same quarter."""
@@ -202,8 +201,10 @@ class TestAggregateMonthlyObsToQuarterly:
             [
                 ("S1", 2024, 1, 100.0),
                 ("S1", 2024, 2, 110.0),
+                ("S1", 2024, 3, 120.0),
                 ("S2", 2024, 1, 200.0),
                 ("S2", 2024, 2, 220.0),
+                ("S2", 2024, 3, 240.0),
             ]
         )
         result = aggregate_monthly_obs_to_quarterly(obs)
@@ -222,6 +223,7 @@ class TestAggregateMonthlyObsToQuarterly:
             [
                 ("S1", 2024, 1, 100.0),
                 ("S1", 2024, 2, 110.0),
+                ("S1", 2024, 3, 120.0),
                 ("S1", 2024, 7, 50.0),
                 ("S1", 2024, 8, 60.0),
                 ("S1", 2024, 9, 55.0),
@@ -346,190 +348,84 @@ class TestAggregateMonthlyObsToSeasonal:
 
 
 class TestAggregateMonthlyFcToQuarterly:
-    def test_basic_quantile_averaging(self):
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80),
-                ("S1", 2024, 3, "M1", 30, 40, 50, 60, 70, 80, 90),
-            ]
-        )
+    @staticmethod
+    def monthly(issue="2023-12-25", year=2024, months=(1, 2, 3), values=(10., 100., 30.)):
+        return pd.DataFrame({
+            "code": "S1", "model_short": "LR_Base", "date": issue,
+            "year": year, "month": list(months), "q50": list(values),
+        })
+
+    def test_complete_same_issuance_day_weighted_leap_year(self):
+        result = aggregate_monthly_fc_to_quarterly(self.monthly())
+        row = result.iloc[0]
+        assert len(result) == 1
+        assert row["forecasted_discharge"] == (31 * 10 + 29 * 100 + 31 * 30) / 91
+        assert row["horizon_value"] == 1
+        assert row["date"] == pd.Timestamp("2023-12-25")
+        assert row["valid_from"] == "2024-01-01"
+        assert row["valid_to"] == "2024-03-31"
+        # Temporal dependence is unknown: don't invent aggregate quantiles.
+        assert result[["q05", "q50", "q95"]].isna().all().all()
+
+    def test_same_monthly_lead_different_issuances_rejected(self):
+        fc = self.monthly()
+        fc["date"] = ["2023-12-25", "2024-01-25", "2024-02-25"]
+        fc["horizon_value"] = 1
+        assert aggregate_monthly_fc_to_quarterly(fc).empty
+
+    def test_duplicate_cannot_replace_missing_month(self):
+        fc = self.monthly().iloc[:2]
+        assert aggregate_monthly_fc_to_quarterly(pd.concat([fc, fc.iloc[:1]])).empty
+
+    def test_duplicate_does_not_change_weight(self):
+        fc = self.monthly()
+        pd.testing.assert_frame_equal(aggregate_monthly_fc_to_quarterly(fc),
+                                      aggregate_monthly_fc_to_quarterly(pd.concat([fc, fc.iloc[:1]])))
+
+    def test_missing_value_rejected(self):
+        fc = self.monthly()
+        fc.loc[1, "q50"] = np.nan
+        assert aggregate_monthly_fc_to_quarterly(fc).empty
+
+    def test_missing_issue_rejected(self):
+        assert aggregate_monthly_fc_to_quarterly(self.monthly().drop(columns="date")).empty
+
+    def test_partial_month_rejected(self):
+        fc = self.monthly()
+        fc["valid_from"] = ["2024-01-01", "2024-02-01", "2024-03-01"]
+        fc["valid_to"] = ["2024-01-31", "2024-02-28", "2024-03-31"]
+        assert aggregate_monthly_fc_to_quarterly(fc).empty
+
+    def test_distinct_quarter_leads_retained_even_flag_off(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+        fc = pd.concat([self.monthly(), self.monthly(issue="2024-01-25")])
+        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert set(result["horizon_value"]) == {0, 1}
+        assert set(result["date"]) == {pd.Timestamp("2023-12-25"), pd.Timestamp("2024-01-25")}
+
+    def test_monthly_leads_zero_to_three_only_form_quarter_lead_one(self):
+        fc = self.monthly(issue="2024-03-25", months=(3, 4, 5, 6), values=(1, 2, 3, 4))
+        fc["horizon_value"] = [0, 1, 2, 3]
         result = aggregate_monthly_fc_to_quarterly(fc)
         assert len(result) == 1
-        assert abs(result.iloc[0]["q50"] - 50.0) < 1e-6
-        assert abs(result.iloc[0]["q05"] - 20.0) < 1e-6
-
-    def test_coverage_filter(self):
-        """Only 1 month → filtered out."""
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70),
-            ]
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert result.empty
-
-    def test_valid_from_valid_to(self):
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 4, "M1", 10, 20, 30, 40, 50, 60, 70),
-                ("S1", 2024, 5, "M1", 20, 30, 40, 50, 60, 70, 80),
-            ]
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
+        assert result.iloc[0]["horizon_value"] == 1
         assert result.iloc[0]["valid_from"] == "2024-04-01"
-        assert result.iloc[0]["valid_to"] == "2024-06-30"
 
-    def test_multiple_models(self):
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80),
-                ("S1", 2024, 1, "M2", 15, 25, 35, 45, 55, 65, 75),
-                ("S1", 2024, 2, "M2", 25, 35, 45, 55, 65, 75, 85),
-            ]
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert len(result) == 2
-        models = set(result["model_short"])
-        assert models == {"M1", "M2"}
+    def test_no_cross_model_mixing(self):
+        fc = self.monthly()
+        fc.loc[2, "model_short"] = "LR_SM"
+        assert aggregate_monthly_fc_to_quarterly(fc).empty
 
     def test_empty_input(self):
-        result = aggregate_monthly_fc_to_quarterly(pd.DataFrame())
-        assert result.empty
+        assert aggregate_monthly_fc_to_quarterly(pd.DataFrame()).empty
 
-    def test_forecasted_discharge_from_q50(self):
-        """forecasted_discharge synthesized from q50 if not present."""
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80),
-            ]
-        )
-        # Remove forecasted_discharge to test synthesis
-        fc = fc.drop(columns=["forecasted_discharge"])
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert "forecasted_discharge" in result.columns
-        assert abs(result.iloc[0]["forecasted_discharge"] - 45.0) < 1e-6
+    def test_observations_use_identical_weights(self):
+        fc = self.monthly()
+        obs = fc.rename(columns={"q50": "discharge_avg"})
+        assert aggregate_monthly_obs_to_quarterly(obs).iloc[0]["discharge_avg"] == aggregate_monthly_fc_to_quarterly(fc).iloc[0]["forecasted_discharge"]
 
-    # ===============================================================
-    # M1 P1b: lead-aware (SAPPHIRE_SKILL_LEAD_AWARE) per-lead grouping
-    # ===============================================================
-
-    def test_flag_on_mixed_leads_stay_separate_rows(self, monkeypatch):
-        """KEY REGRESSION: under the flag, distinct horizon_value leads in
-
-        the monthly input must NOT be collapsed into a single quarterly
-        row -- each lead gets its own quarterly row.
-        """
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
-                ("S1", 2024, 1, "M1", 11, 21, 31, 41, 51, 61, 71, 1),
-                ("S1", 2024, 2, "M1", 21, 31, 41, 51, 61, 71, 81, 1),
-            ],
-            with_horizon_value=True,
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert len(result) == 2
-        assert set(result["horizon_value"]) == {0, 1}
-
-    def test_flag_off_mixed_leads_still_collapse(self, monkeypatch):
-        """Flag OFF: byte-identical to today -- mixed leads collapse into
-
-        one quarterly row (control for the above regression, must never
-        break).
-        """
-        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
-                ("S1", 2024, 1, "M1", 11, 21, 31, 41, 51, 61, 71, 1),
-                ("S1", 2024, 2, "M1", 21, 31, 41, 51, 61, 71, 81, 1),
-            ],
-            with_horizon_value=True,
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert len(result) == 1
-
-    def test_flag_on_coverage_filter_applies_per_lead(self, monkeypatch):
-        """Under the flag, QUARTER_MIN_MONTHS applies PER LEAD: a lead with
-
-        only 1 of 3 months present is dropped even though another lead
-        covers 2 of 3 months -- no cross-lead mixing to satisfy coverage.
-        """
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        fc = _make_monthly_fc(
-            [
-                # lead 0: 2 of 3 months -> kept
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
-                # lead 1: 1 of 3 months -> dropped
-                ("S1", 2024, 1, "M1", 11, 21, 31, 41, 51, 61, 71, 1),
-            ],
-            with_horizon_value=True,
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert len(result) == 1
-        assert result.iloc[0]["horizon_value"] == 0
-
-    def test_flag_on_carries_representative_issue_date_lead1(self, monkeypatch):
-        """FIX 6: under the flag, an aggregated-quarter row carries a
-
-        representative issue ``date`` = valid_from - horizon_value months,
-        so a lead-aware read derives EXACTLY horizon_value from it (no
-        self-contradicting date/lead pair that the writer would fabricate
-        from valid_from otherwise).
-        """
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 1),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 1),
-            ],
-            with_horizon_value=True,
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert len(result) == 1
-        row = result.iloc[0]
-        assert row["valid_from"] == "2024-01-01"
-        # lead 1 -> date one month before the quarter's first month.
-        assert row["date"] == "2023-12-01"
-        vf = pd.Timestamp(row["valid_from"])
-        d = pd.Timestamp(row["date"])
-        derived_lead = (vf.year - d.year) * 12 + (vf.month - d.month)
-        assert derived_lead == int(row["horizon_value"]) == 1
-
-    def test_flag_on_lead0_date_equals_valid_from(self, monkeypatch):
-        """FIX 6: at lead 0 the representative date equals valid_from."""
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 0),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 0),
-            ],
-            with_horizon_value=True,
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert len(result) == 1
-        row = result.iloc[0]
-        assert row["date"] == row["valid_from"] == "2024-01-01"
-
-    def test_flag_off_adds_no_date_column(self, monkeypatch):
-        """FIX 6 control: flag OFF adds no ``date`` column (byte-identical
-
-        to today's aggregation output).
-        """
-        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
-        fc = _make_monthly_fc(
-            [
-                ("S1", 2024, 1, "M1", 10, 20, 30, 40, 50, 60, 70, 1),
-                ("S1", 2024, 2, "M1", 20, 30, 40, 50, 60, 70, 80, 1),
-            ],
-            with_horizon_value=True,
-        )
-        result = aggregate_monthly_fc_to_quarterly(fc)
-        assert "date" not in result.columns
+    def test_authoritative_q_precedes_quantile_fallback(self):
+        fc = self.monthly()
+        fc["q"] = 123.0
+        fc["forecasted_discharge"] = fc["q50"]
+        assert aggregate_monthly_fc_to_quarterly(fc).iloc[0]["forecasted_discharge"] == 123.0

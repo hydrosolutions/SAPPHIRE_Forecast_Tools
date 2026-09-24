@@ -524,6 +524,7 @@ def _skill_metric_record_19999(horizon, horizon_in_year, model_type, delta):
         "accuracy": 90.0 + delta,
         "mae": 1.0 + delta,
         "n_pairs": 12,
+        **({"horizon_value": 1} if horizon == "quarter" else {}),
         "crps": None,
         "pbias": None,
         "kgelf": None,
@@ -939,6 +940,34 @@ class TestGetDataMonthly:
         assert quarter_row["sdivsigma"].iloc[0] == 4.5
         assert quarter_row["mae"].iloc[0] == 5.0
         assert quarter_row["accuracy"].iloc[0] == 94.0
+
+    @pytest.mark.parametrize("horizon", ["month", "quarter"])
+    def test_rolling_quarter_does_not_inherit_calendar_skill(self, monkeypatch, horizon):
+        """June–August stays visible without an April–June skill score."""
+        forecast = {
+            **_QUARTER_FORECAST_RECORD_19999,
+            "date": "2026-05-25",
+            "valid_from": "2026-06-01",
+            "valid_to": "2026-08-31",
+        }
+        skill = _skill_metric_record_19999("quarter", 2, "LR_Base", 4.0)
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([forecast])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response([skill])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+        data = db.get_data(horizon, "19999", self._all_stations_19999_df())
+        rows = data["long_forecasts_quarter" if horizon == "month" else "forecasts_all"]
+        assert len(rows) == 1
+        assert rows["forecasted_discharge"].iloc[0] == 200.0
+        assert pd.isna(rows["quarter_in_year"].iloc[0])
+        assert pd.isna(rows["mae"].iloc[0])
 
     def test_monthly_quarter_frame_preserves_unmatched_rows_with_nan_metrics(self, monkeypatch):
         """Unmatched quarter forecast models stay present with NaN skill metrics."""
@@ -1711,8 +1740,8 @@ class TestGetLongForecastsQuarterLeadAware:
         )
         assert set(result["horizon_value"]) == {0, 1}
 
-    def test_flag_off_still_collapses_to_single_latest_row(self, monkeypatch):
-        """Flag-OFF golden: distinct leads still collapse to the latest-dated row."""
+    def test_flag_off_preserves_quarter_leads(self, monkeypatch):
+        """Quarterly lead identity is preserved even with the flag disabled."""
         lead0 = {**_QUARTER_FORECAST_RECORD, "id": 5, "horizon_value": 0, "date": "2026-03-01"}
         lead1 = {**_QUARTER_FORECAST_RECORD, "id": 6, "horizon_value": 1, "date": "2026-03-02"}
 
@@ -1723,9 +1752,8 @@ class TestGetLongForecastsQuarterLeadAware:
 
         result = db.get_long_forecasts_quarter(station="99001")
 
-        assert len(result) == 1
-        assert "horizon_value" not in result.columns
-        assert str(result["date"].iloc[0].date()) == "2026-03-02"
+        assert len(result) == 2
+        assert set(result["horizon_value"]) == {0, 1}
 
 
 class TestGetLongForecastsSeason:
@@ -2013,11 +2041,8 @@ class TestGetDataQuarterLeadAware:
         assert fa["horizon_value"].iloc[0] == 0
         assert fa["delta"].iloc[0] == 5.0  # the hv0 stats row, not hv1's 9.0
 
-    def test_flag_off_golden_shows_the_pre_m1_cartesian_merge_baseline(self, monkeypatch):
-        """Flag-OFF golden: documents that WITHOUT the flag, the same setup
-        as above still fans out into duplicate rows (pre-existing baseline
-        behavior — kept byte-identical, not fixed, when the flag is off).
-        """
+    def test_flag_off_quarter_merge_still_matches_actual_lead(self, monkeypatch):
+        """The feature flag cannot permit cross-lead skill attachment."""
         forecast_lead0 = {
             **_QUARTER_FORECAST_RECORD_19999,
             "id": 50,
@@ -2048,12 +2073,8 @@ class TestGetDataQuarterLeadAware:
         )
 
         fa = data["forecasts_all"]
-        # Pre-M1 baseline: the single lead-0 forecast fans out into 2 rows
-        # (one per matching stats row) because horizon_value is not part of
-        # the merge key — a duplication that the flag fixes (see the
-        # companion flag-ON test above).
-        assert len(fa) == 2
-        assert set(fa["delta"]) == {5.0, 9.0}
+        assert len(fa) == 1
+        assert fa["delta"].iloc[0] == 5.0
 
 
 class TestGetDataSeason:

@@ -2435,15 +2435,14 @@ def calculate_quarterly_skill_metrics(
     Returns:
         (skill_stats_df, joint_forecasts_df, timing_stats)
     """
-    # Under SAPPHIRE_SKILL_LEAD_AWARE, quarter_in_year is the TARGET quarter,
-    # not the issue lead — multiple leads can share the same target. Add
-    # horizon_value to the ensemble time-grouping so EM/Naive/Skilled Mean
-    # are generated per lead instead of pooling across leads (P2; the
-    # earlier P1b work only carried horizon_value through, it did not yet
-    # gate the grouping on it).
-    time_group_cols = ["year", "quarter_in_year", "code"]
-    if skill_lead_aware_enabled():
-        time_group_cols = ["year", "quarter_in_year", "horizon_value", "code"]
+    # Q1--Q4 skills require exact calendar windows. Lead and actual issue
+    # date identify separate forecasts even without operational selection.
+    from src.aggregation import calendar_quarter_forecasts
+
+    forecasts = calendar_quarter_forecasts(forecasts)
+    time_group_cols = ["year", "quarter_in_year", "code", "date"]
+    if "horizon_value" in forecasts.columns:
+        time_group_cols = ["year", "quarter_in_year", "horizon_value", "code", "date"]
     return _calculate_aggregated_skill_metrics(
         observations,
         forecasts,
@@ -2634,12 +2633,10 @@ def _calculate_aggregated_skill_metrics(
         is_multi_model_composition,
     )
 
-    # Under SAPPHIRE_SKILL_LEAD_AWARE, stratify the aggregated skill/ensemble
-    # grouping by the operational lead (horizon_value), matching monthly's
-    # GROUP_COLS (PP-038). Flag OFF, or horizon_value absent from the input
-    # (legacy CSV, pre-P1b callers), falls back to the pre-lead-aware 3-key
-    # grouping unchanged.
-    lead_aware = skill_lead_aware_enabled() and "horizon_value" in forecasts.columns
+    # Quarter leads must never be pooled, independently of issuance
+    # selection. Seasonal flag behavior and legacy lead-less frames retain
+    # their existing grouping.
+    lead_aware = (skill_lead_aware_enabled() or period_col == "quarter_in_year") and "horizon_value" in forecasts.columns
     metric_group_cols = (
         [period_col, "horizon_value", "code", "model_short"]
         if lead_aware
@@ -2741,8 +2738,19 @@ def _calculate_aggregated_skill_metrics(
     # --- 4. Ensemble Mean (EM) ---
     joint_forecasts = forecasts.copy()
 
-    model_keys = canonical_model_short_series(merged["model_short"])
-    em_merged = merged[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
+    if period_col == "quarter_in_year":
+        # Same rule as monthly EM: equal-weight all models passing the
+        # standard skill gate for this target period and lead.
+        em_skills = filter_for_highly_skilled_forecasts(
+            skill_stats, min_pairs=_long_term_min_pairs("QUARTER")
+        )
+        em_merged = merged.merge(
+            em_skills[metric_group_cols].drop_duplicates(),
+            on=metric_group_cols, how="inner",
+        )
+    else:
+        model_keys = canonical_model_short_series(merged["model_short"])
+        em_merged = merged[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
     em_merged = em_merged.dropna(subset=["forecasted_discharge"]).copy()
 
     n_models = em_merged["model_short"].nunique()
