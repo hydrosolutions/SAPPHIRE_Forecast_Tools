@@ -155,6 +155,53 @@ if ro:
         print(f"  \033[32m[ OK ]\033[0m discharge data current for all {len(m)} stations")
 PY
     rm -f /tmp/_hc_lrf.json /tmp/_hc_ro.json
+
+    # Long-term (monthly/seasonal) forecasting is optional per deployment, so
+    # detect it before judging it — otherwise a deployment that never runs
+    # long-term forecasting would get a false alarm here, which is exactly
+    # the failure mode this script exists to avoid. The gate variable
+    # `ieasyhydroforecast_ml_long_term_configuration` is required whenever
+    # long-term is used (commented out otherwise — see apps/config/.env_develop
+    # and doc/configuration.md), so its presence in the env is the signal.
+    if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] \
+       && grep -qE '^ieasyhydroforecast_ml_long_term_configuration=.+' "$ENV_FILE" 2>/dev/null; then
+        # Same pagination trap as lr-forecast above (offset/limit, no ORDER
+        # BY) — bound by start_date so an arbitrary old page can't masquerade
+        # as "no recent data". Without start_date, an unbounded limit=N on a
+        # large table returns the oldest rows, not the newest, and max(date)
+        # would report a healthy long-term pipeline as months stale.
+        #
+        # Long-term forecasts are issued monthly/seasonally on deployment-
+        # configured issue days (e.g. the 10th and 25th on one deployment,
+        # the 1st on another) — not every 5-10 days like short-term — so the
+        # window and staleness threshold here are deliberately much wider
+        # than the short-term check's 45-day window / 11-day warn above:
+        # look back 120 days and warn only past 45 days old, so a normal
+        # monthly/seasonal gap is never reported as a problem.
+        LT_SINCE=$(date -d '120 days ago' +%F 2>/dev/null || date -v-120d +%F 2>/dev/null)
+        curl -s --max-time 30 "http://localhost:8003/long-forecast/?start_date=${LT_SINCE}&limit=5000" 2>/dev/null > /tmp/_hc_ltf.json
+        python3 - << 'PY'
+import json, datetime
+def load(p):
+    try: return json.load(open(p))
+    except Exception: return []
+today = datetime.date.today()
+def age(ds):
+    try: return (today - datetime.date.fromisoformat(ds[:10])).days
+    except Exception: return None
+ltf = load("/tmp/_hc_ltf.json")
+if not ltf:
+    print("  \033[33m[WARN]\033[0m no long-term forecasts in the last 120 days — long-term forecasting is configured but appears to have stopped publishing")
+else:
+    latest = max(r.get("date", "") for r in ltf)
+    a = age(latest)
+    tag = "\033[32m[ OK ]\033[0m" if a is not None and a <= 45 else "\033[33m[WARN]\033[0m"
+    print(f"  {tag} long-term forecasts: latest {latest} ({a} days old)")
+PY
+        rm -f /tmp/_hc_ltf.json
+    else
+        skip "long-term forecasting not configured on this deployment (ieasyhydroforecast_ml_long_term_configuration not set in env)"
+    fi
 else
     warn "skipped — API gateway is down"
 fi
