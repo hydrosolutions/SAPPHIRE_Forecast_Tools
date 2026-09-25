@@ -74,7 +74,10 @@ class VirtualAwareFakeSDK:
     """Fake iEH HF SDK with SEPARATE payload queues for the default
     (``virtual=False``) call and the virtual retry (``virtual=True``); see
     the long-horizon test file's identically-named fake for the full
-    rationale. ``get_data_values_for_site`` always returns an empty page so
+    rationale, including ``get_discharge_sites()`` (the regular hydrological
+    registry, needed for the collision exclusion), defined explicitly via
+    ``regular_sites``/``get_discharge_sites_error`` rather than left
+    undefined. ``get_data_values_for_site`` always returns an empty page so
     ``_fetch_sdk_period_actuals`` falls back to the local daily WDDA
     computation deterministically, same as ``FakeSDK`` in
     ``test_short_horizon_norm_decoupling.py``.
@@ -85,13 +88,18 @@ class VirtualAwareFakeSDK:
         default_payloads=(),
         virtual_payloads=(),
         virtual_sites=(),
+        regular_sites=(),
         get_virtual_sites_error=None,
+        get_discharge_sites_error=None,
     ):
         self._default_payloads = list(default_payloads)
         self._virtual_payloads = list(virtual_payloads)
         self._virtual_sites = list(virtual_sites)
+        self._regular_sites = list(regular_sites)
         self._get_virtual_sites_error = get_virtual_sites_error
+        self._get_discharge_sites_error = get_discharge_sites_error
         self.get_virtual_sites_calls = 0
+        self.get_discharge_sites_calls = 0
         self.default_calls: list[tuple] = []
         self.virtual_calls: list[tuple] = []
 
@@ -100,6 +108,12 @@ class VirtualAwareFakeSDK:
         if self._get_virtual_sites_error is not None:
             raise self._get_virtual_sites_error
         return [dict(site) for site in self._virtual_sites]
+
+    def get_discharge_sites(self):
+        self.get_discharge_sites_calls += 1
+        if self._get_discharge_sites_error is not None:
+            raise self._get_discharge_sites_error
+        return [dict(site) for site in self._regular_sites]
 
     def get_norm_for_site(self, code, value_field, norm_period, virtual=False):
         if virtual:
@@ -536,6 +550,15 @@ def test_str_worklist_code_matches_int_virtual_site_code():
 
 # ---------------------------------------------------------------------------
 # 9. D-A collision fixtures: code in both registries.
+#
+# Owner decision, 2026-09-25, after out-of-loop diff review of PREPQ-022
+# finding #1: a code present in BOTH the virtual and regular hydrological
+# registries must NEVER get the virtual retry, on a raise OR a success.
+# get_virtual_station_codes excludes such a code from the set it returns, so
+# by the time _lookup_short_horizon_norms runs, the collision code is simply
+# never in `virtual_codes` -- the raise fixture below therefore goes through
+# the WRITER (which calls get_virtual_station_codes), not a hand-constructed
+# `virtual_codes` set that would beg the question.
 # ---------------------------------------------------------------------------
 def test_da_collision_default_succeeds_uses_regular_norm_no_retry():
     sdk = VirtualAwareFakeSDK(
@@ -551,18 +574,73 @@ def test_da_collision_default_succeeds_uses_regular_norm_no_retry():
     assert sdk.virtual_calls == []
 
 
-def test_da_collision_default_raises_uses_virtual_retry():
+@pytest.mark.parametrize(
+    "default_error_factory",
+    [_sdk_generic_failure, _sdk_no_path_error],
+    ids=["default_500_shaped", "default_no_path"],
+)
+def test_da_collision_default_raises_gets_no_virtual_retry_regular_norm_preserved(
+    default_error_factory,
+):
+    # A collision code's default-call failure -- whatever its shape -- must
+    # be graded exactly as trunk (SDK_FAILED for both fixtures here; short-
+    # horizon grades every raised exception the same way regardless of
+    # shape), with the virtual retry NEVER attempted, and its previously
+    # stored REGULAR pentad norm (period 1) preserved via the same read-
+    # merge a non-virtual station would get.
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_generic_failure()],
-        virtual_payloads=[PENTAD_NORMS],
+        default_payloads=[default_error_factory(), default_error_factory()],
+        virtual_payloads=[[999.0] * 72, [999.0] * 36],  # would be wrong if ever used
         virtual_sites=[{"site_code": CODE}],
+        regular_sites=[{"site_code": CODE}],  # collision: also regular
+    )
+    client = FakeShortHorizonClient(
+        daily_by_year=_daily_fixture(),
+        existing_hydrograph=_existing_pentad_norms(CODE, norm_for_period_1=42.0),
     )
 
-    result = shh._lookup_short_horizon_norms(CODE, "pentad", sdk, virtual_codes=frozenset({CODE}))
+    records = shh.write_short_horizon_hydrograph(
+        codes=[CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=TARGET_YEAR,
+        today=TODAY,
+    )
 
-    assert result.classification is shh._NormClassification.VALID
-    assert result.norms == PENTAD_NORMS
-    assert len(sdk.virtual_calls) == 1
+    assert sdk.virtual_calls == []
+    assert CODE in records.completed_station_codes
+    period_1 = next(
+        r for r in records if r["horizon_type"] == "pentad" and r["horizon_in_year"] == 1
+    )
+    assert period_1["norm"] == 42.0
+    assert period_1["date"] == PERIOD_1_DATE
+
+
+def test_get_discharge_sites_raises_degrades_to_empty_set_pure_virtual_code_gets_no_retry(caplog):
+    # Discovery must fail closed on EITHER listing: if the regular registry
+    # can't be listed, nothing is retried -- not even a code that is a pure
+    # virtual station with no collision at all -- rather than risk excluding
+    # nothing and letting an undetected collision through.
+    sdk = VirtualAwareFakeSDK(
+        default_payloads=[_sdk_no_path_error(), _sdk_no_path_error()],
+        virtual_sites=[{"site_code": CODE}],
+        get_discharge_sites_error=RuntimeError("discharge listing endpoint down"),
+    )
+    client = FakeShortHorizonClient(daily_by_year=_daily_fixture())
+
+    with caplog.at_level("WARNING", logger="sync_long_horizon_hydrograph"):
+        records = shh.write_short_horizon_hydrograph(
+            codes=[CODE],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=TARGET_YEAR,
+            today=TODAY,
+        )
+
+    assert sdk.virtual_calls == []
+    pentad_norms = [r["norm"] for r in records if r["horizon_type"] == "pentad"]
+    assert all(norm is None for norm in pentad_norms)
+    assert any("get_discharge_sites" in message for message in caplog.messages)
 
 
 # ---------------------------------------------------------------------------

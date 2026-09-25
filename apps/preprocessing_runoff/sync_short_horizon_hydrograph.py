@@ -761,7 +761,11 @@ def _lookup_short_horizon_norms(
     default path (short-horizon grades every exception as SDK_FAILED; there
     is no 404-vs-other distinction here, unlike long-horizon). Default
     ``None`` (or an empty set) reproduces today's behaviour exactly: no code
-    is ever treated as virtual.
+    is ever treated as virtual. A code present in BOTH the virtual and
+    regular hydrological registries is never in ``virtual_codes`` in the
+    first place -- see ``sync_long_horizon_hydrograph.get_virtual_station_codes``'s
+    collision exclusion -- so this default call's own exception is always
+    what gets graded for such a code, exactly as if it were never virtual.
     """
     config = _HORIZON_CONFIG[horizon_type]
     try:

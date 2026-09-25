@@ -97,6 +97,11 @@ class _StubSDKWithVirtual:
         self.get_virtual_sites_calls += 1
         return [{"site_code": self._virtual_code}]
 
+    def get_discharge_sites(self):
+        # No collision in this fixture: the virtual code is never also a
+        # regular hydrological-registry code, so the retry is never excluded.
+        return []
+
     def get_norm_for_site(self, code, variable, norm_period=None, virtual=False):
         length = self._NORM_LENGTHS[norm_period]
         if str(code) == self._virtual_code:

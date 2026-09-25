@@ -1,7 +1,7 @@
 # PREPQ-022: Fetch discharge norms for virtual stations (iEH HF SDK `1907a30`)
 
-**Status**: Draft (plan rev 3, 2026-09-25 — rev 1 reviewed out-of-loop by `codex exec` (14 findings),
-rev 2 confirm-fixes pass (3 factual corrections applied); D-A decided: (b))
+**Status**: Draft — implementation in progress on branch fix_preprocessing_runoff_virtual_station_norms
+(P2 done, P3 maintenance run done, P4 review in progress)
 **Module**: `preprocessing_runoff`
 **Priority**: High. Removes the recurring kyg `sdk_failed=4` (PREPQ-014) and gives virtual stations
 a norm.
@@ -42,6 +42,9 @@ Rows are written without norm (PREPQ-015/020), so percent-of-norm is blank.
   = **0** on kyg. Not checked on taj.
 - Which 4 of the 6 are in the kyg work list was not established (P3 shows it). The virtual SDK values
   are kept locally (scratchpad, never committed) as the P3 reference.
+- The SDK's new exact-`station_code` UUID filter (see "What changed upstream" below) was measured
+  value-identical on kyg (180/180 regular-station lookups); taj unmeasured — measure before deploying
+  there.
 
 ## Scope: call sites (owner D1 — operational + maintenance flows of preprocessing_runoff)
 
@@ -66,17 +69,19 @@ grades the SDK-shaped 404 `ValueError` as NORM_ABSENT; short-horizon grades ever
 SDK_FAILED — unchanged).
 
 1. **Virtual set, once per writer invocation.** `write_long_horizon_hydrograph` /
-   `write_short_horizon_hydrograph` call `get_virtual_sites()` once before the station loop
+   `write_short_horizon_hydrograph` call `get_virtual_station_codes()` once before the station loop
    (codes normalised with `str(...).strip()`), and pass the set to the lookup via a new optional
    parameter whose default reproduces today's behaviour. The writer does its own discovery because
    the operational cache path (`preprocessing_runoff.py:344`, cache schema `src.py:6053`) carries no
-   virtual identity; no cache-schema change. Cost: one extra listing call per writer invocation
-   (backfill: per writer per year).
-2. **Discovery failure.** If `get_virtual_sites()` raises: WARNING, empty set → lookups behave
-   exactly as today. Honest limits: this preserves today's grading *where execution reaches the
-   writer*. An earlier discovery failure in uncached station resolution (`setup_library.py:1542`)
-   already aborts before the writer; operational preprocessing (`:214`) and backfill (`:108`) ignore
-   writer statuses, so a later failure there is a log warning only — as today.
+   virtual identity; no cache-schema change. Cost: two extra listing calls per writer invocation
+   (backfill: per writer per year) — `get_virtual_sites()` AND `get_discharge_sites()`, the latter for
+   the collision exclusion below.
+2. **Discovery failure.** If EITHER `get_virtual_sites()` or `get_discharge_sites()` raises: WARNING
+   naming which listing failed, empty set → lookups behave exactly as today for EVERY code, virtual or
+   not. Honest limits: this preserves today's grading *where execution reaches the writer*. An earlier
+   discovery failure in uncached station resolution (`setup_library.py:1542`) already aborts before the
+   writer; operational preprocessing (`:214`) and backfill (`:108`) ignore writer statuses, so a later
+   failure there is a log warning only — as today.
 3. **Routing — depends on D-A** (below).
 4. Existing run summaries already expose norm outcomes (`long:839`, `short:947`); **no new summary
    field**.
@@ -97,6 +102,19 @@ unknown.
 - (a) membership routing: every code in the virtual set goes straight to `virtual=True`. Simpler,
   one call, but silently switches a colliding code from its regular norm to a weighted member sum,
   contradicting the station identity used everywhere else.
+
+**Amended 2026-09-25 by owner after out-of-loop diff review: codes present in the regular registry
+are excluded from the virtual retry; if either listing fails, no retry.** Out-of-loop review of the
+P2 diff (finding #1) identified that option (b) as originally decided still let a colliding code fall
+through to the virtual retry on a default-call **raise** (the caveat above) — including a transient
+failure (e.g. a 500) on that code's own regular lookup, which would then let the virtual
+(weighted-sum-of-members) norm silently overwrite its stored regular norm while the run still reports
+success. The owner amended (b): `get_virtual_station_codes` now excludes any code present in BOTH
+`get_virtual_sites()` and `get_discharge_sites()` (the regular hydrological registry) from the set it
+returns, so a colliding code's default-call exception is graded exactly as if the code were never
+virtual — on a raise as well as on success. If either listing itself fails, the whole retry mechanism
+degrades to "retry nobody" (fail-closed), since excluding nothing when the regular registry can't be
+listed would risk letting an undetected collision through.
 
 ## SDK pin
 
@@ -171,6 +189,24 @@ Tunnel up, `.env_bea_kghm`, venv synced and SDK signature checked. No fresh base
    horizon, API-stored `norm` equals the P1 SDK value. If no work-list virtual station has pentad
    coverage, record that instead of forcing a sample. Regular sample from step 0 unchanged.
 4. Record counts only (no station codes) in this file.
+
+## P3 results (kyg, 2026-09-25, pre-exclusion build)
+
+Counts only, no station codes, from the maintenance run on the build BEFORE the D-A collision
+exclusion (above) was added:
+
+- **Long-horizon**: `total_attempted=62 written=55 norm_absent=7 norm_absent_via_404=0 sdk_failed=0
+  api_failed=0` (was `53/5/4/0` before the virtual-station retry).
+- **Short-horizon pentad**: `pentad_written=11 pentad_norm_absent=50 pentad_sdk_failed=0
+  pentad_api_failed=1`.
+- **Short-horizon decade**: `decade_written=58 decade_norm_absent=3 decade_sdk_failed=0
+  decade_api_failed=1`.
+- The `api_failed=1` station (both horizons) is a virtual station with no daily runoff in the DB
+  (`_ShortHorizonDailyReadError`, pre-existing, same error appears in trunk logs from 2026-09-10) and
+  no norms in iEH HF.
+- API read-back: 3 of 4 work-list virtual stations have stored norms equal to the SDK values for
+  every horizon where iEH HF has norms (month 2, pentad 1, decade 3).
+- 5 sampled regular stations' stored month/pentad/decade norms are unchanged before vs after the run.
 
 ### P4 — Review + PR (depends on P3)
 Out-of-loop diff review (`adversarial-review` skill), re-review any fix round (re-run affected suites

@@ -260,16 +260,21 @@ still raises for virtual stations (the SDK resolves the site UUID from the
 hydrological registry only). Both writers (`write_long_horizon_hydrograph` /
 `write_short_horizon_hydrograph`) call `get_virtual_station_codes` once per
 invocation, before their station loop, to resolve the SDK's virtual-station
-set (`get_virtual_sites()`); if that call fails, it logs a WARNING and
-continues with an empty set, so a code is never wrongly treated as virtual.
-When the default norm lookup for a station raises AND that station's code is
-in the virtual set, the lookup retries once with `virtual=True` and grades
-only the retry's own result/exception (the default call's exception is
-discarded in that case) — a station whose default call succeeds always
-keeps its regular norm, even if it also appears in the virtual-station
-listing. This requires the `ieasyhydro-sdk` pin in `uv.lock` to be at or
-after commit `1907a30` (the commit that added the `virtual` keyword and
-`get_virtual_sites()`).
+set: it lists `get_virtual_sites()` **and** `get_discharge_sites()` (the
+regular hydrological registry) and returns only codes present in the former
+but **not** the latter — a code present in BOTH registries is excluded from
+the virtual retry entirely, even on a raise, so a transient failure on its
+regular lookup can never let a virtual (weighted-sum-of-members) norm
+silently overwrite its stored regular norm. If EITHER listing call fails, it
+logs a WARNING naming which one and continues with an empty set, so no code
+is ever wrongly treated as virtual that run. When the default norm lookup for
+a (non-colliding) station raises AND that station's code is in the resolved
+virtual set, the lookup retries once with `virtual=True` and grades only the
+retry's own result/exception (the default call's exception is discarded in
+that case) — a station whose default call succeeds always keeps its regular
+norm, even if it also appears in the virtual-station listing. This requires
+the `ieasyhydro-sdk` pin in `uv.lock` to be at or after commit `1907a30` (the
+commit that added the `virtual` keyword and `get_virtual_sites()`).
 
 ## Historical Backfill
 

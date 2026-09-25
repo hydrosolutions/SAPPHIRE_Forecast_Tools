@@ -379,13 +379,27 @@ def get_virtual_station_codes(iehhf_sdk: Any) -> frozenset[str]:
     / ``write_short_horizon_hydrograph``), never per station: the operational
     station-resolution cache (``preprocessing_runoff.py``) carries no virtual
     identity, so each writer discovers virtual codes itself before its station
-    loop, at the cost of one extra listing call per writer invocation (and, for
+    loop, at the cost of two extra listing calls per writer invocation (and, for
     ``backfill_discharge_aggregation.py``, per writer per year).
 
-    If ``get_virtual_sites()`` raises for any reason, this logs a WARNING and
+    **Collision exclusion (owner decision, 2026-09-25, after out-of-loop diff
+    review of PREPQ-022 finding #1):** a code present in BOTH the virtual-sites
+    listing AND the regular hydrological registry (``get_discharge_sites()``)
+    is EXCLUDED from the returned set, so it never gets the virtual retry.
+    Without this, a transient failure on that code's REGULAR lookup (e.g. a
+    500) would let the virtual (weighted-sum-of-members) retry succeed and
+    silently overwrite its stored regular norm while the run still reports
+    success -- the regular norm must always win for a colliding code,
+    including on a regular-lookup failure.
+
+    If EITHER listing (``get_virtual_sites()`` or ``get_discharge_sites()``)
+    raises for any reason, this logs a WARNING naming which listing failed and
     returns an empty ``frozenset`` -- callers then see exactly today's
-    behaviour: the default (non-virtual) ``get_norm_for_site`` call, graded
-    exactly as before this helper existed.
+    behaviour for EVERY code, virtual or not: the default (non-virtual)
+    ``get_norm_for_site`` call, graded exactly as before this helper existed.
+    (A failure on the second call is fail-closed the same way: excluding
+    nothing when the regular registry can't be listed would risk letting a
+    collision through, so it degrades to "retry nobody" instead.)
     """
     try:
         virtual_sites = iehhf_sdk.get_virtual_sites()
@@ -397,15 +411,40 @@ def get_virtual_station_codes(iehhf_sdk: Any) -> frozenset[str]:
             exc,
         )
         return frozenset()
-    codes: set[str] = set()
-    for site in virtual_sites:
-        if not isinstance(site, dict):
-            continue
-        raw_code = site.get("site_code")
-        if raw_code is None:
-            continue
-        codes.add(str(raw_code).strip())
-    return frozenset(codes)
+    try:
+        regular_sites = iehhf_sdk.get_discharge_sites()
+    except Exception as exc:
+        logger.warning(
+            "get_virtual_station_codes: get_discharge_sites() failed; treating no "
+            "station as virtual for this run. Error: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return frozenset()
+
+    def _codes(sites: Any) -> set[str]:
+        result: set[str] = set()
+        for site in sites:
+            if not isinstance(site, dict):
+                continue
+            raw_code = site.get("site_code")
+            if raw_code is None:
+                continue
+            result.add(str(raw_code).strip())
+        return result
+
+    virtual_codes = _codes(virtual_sites)
+    regular_codes = _codes(regular_sites)
+    collisions = virtual_codes & regular_codes
+    if collisions:
+        logger.warning(
+            "get_virtual_station_codes: excluding %d code(s) present in both the "
+            "virtual and regular hydrological registries from the virtual retry "
+            "(the regular norm always wins for these): %s",
+            len(collisions),
+            sorted(collisions),
+        )
+    return frozenset(virtual_codes - regular_codes)
 
 
 def _lookup_monthly_norms_virtual_retry(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult:
@@ -500,7 +539,12 @@ def _lookup_monthly_norms(
     and grades the retry's result/exception alone -- the default call's
     exception below is never graded in that case. Default ``None`` (or an
     empty set) reproduces today's behaviour exactly: no code is ever treated
-    as virtual, so the default call's exception is always graded below.
+    as virtual, so the default call's exception is always graded below. A
+    code present in BOTH the virtual and regular hydrological registries is
+    never in ``virtual_codes`` in the first place -- see
+    ``get_virtual_station_codes``'s collision exclusion -- so this default
+    call's own exception is always what gets graded for such a code, exactly
+    as if it were never virtual.
     """
     try:
         norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")

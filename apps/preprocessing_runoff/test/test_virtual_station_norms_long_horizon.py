@@ -68,7 +68,11 @@ class VirtualAwareFakeSDK:
     ``get_virtual_sites()`` returns ``virtual_sites`` (a list of dicts, each
     needing only ``site_code`` for these tests) or raises
     ``get_virtual_sites_error`` if set, mirroring the real SDK's
-    ``ValueError`` on a non-200 listing response.
+    ``ValueError`` on a non-200 listing response. ``get_discharge_sites()``
+    (the regular hydrological registry) is defined explicitly the same way,
+    via ``regular_sites``/``get_discharge_sites_error`` -- never left
+    undefined and relying on the caller's own AttributeError handling -- so a
+    collision (a code in both listings) can be modelled precisely.
     """
 
     def __init__(
@@ -76,13 +80,18 @@ class VirtualAwareFakeSDK:
         default_payloads=(),
         virtual_payloads=(),
         virtual_sites=(),
+        regular_sites=(),
         get_virtual_sites_error=None,
+        get_discharge_sites_error=None,
     ):
         self._default_payloads = list(default_payloads)
         self._virtual_payloads = list(virtual_payloads)
         self._virtual_sites = list(virtual_sites)
+        self._regular_sites = list(regular_sites)
         self._get_virtual_sites_error = get_virtual_sites_error
+        self._get_discharge_sites_error = get_discharge_sites_error
         self.get_virtual_sites_calls = 0
+        self.get_discharge_sites_calls = 0
         self.default_calls: list[tuple] = []
         self.virtual_calls: list[tuple] = []
 
@@ -91,6 +100,12 @@ class VirtualAwareFakeSDK:
         if self._get_virtual_sites_error is not None:
             raise self._get_virtual_sites_error
         return [dict(site) for site in self._virtual_sites]
+
+    def get_discharge_sites(self):
+        self.get_discharge_sites_calls += 1
+        if self._get_discharge_sites_error is not None:
+            raise self._get_discharge_sites_error
+        return [dict(site) for site in self._regular_sites]
 
     def get_norm_for_site(self, code, value_field, norm_period, virtual=False):
         if virtual:
@@ -589,6 +604,18 @@ def test_resolve_sdk_station_codes_int_code_evades_str_manual_set(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # 9. D-A collision fixtures: code in both registries.
+#
+# Owner decision, 2026-09-25, after out-of-loop diff review of PREPQ-022
+# finding #1: a code present in BOTH the virtual and regular hydrological
+# registries must NEVER get the virtual retry, on a raise OR a success --
+# otherwise a transient failure on its REGULAR lookup would let a virtual
+# (weighted-sum-of-members) norm silently overwrite its stored regular norm
+# while the run still reports success. get_virtual_station_codes excludes
+# such a code from the set it returns, so by the time _lookup_monthly_norms
+# runs, the collision code is simply never in `virtual_codes` -- these
+# fixtures therefore exercise the exclusion through the WRITER (which calls
+# get_virtual_station_codes), not by hand-constructing a `virtual_codes` set
+# that begs the question.
 # ---------------------------------------------------------------------------
 def test_da_collision_default_succeeds_uses_regular_norm_no_retry():
     sdk = VirtualAwareFakeSDK(
@@ -604,18 +631,68 @@ def test_da_collision_default_succeeds_uses_regular_norm_no_retry():
     assert sdk.virtual_calls == []
 
 
-def test_da_collision_default_raises_uses_virtual_retry():
+@pytest.mark.parametrize(
+    "default_error",
+    [_sdk_500(), _sdk_no_path_error()],
+    ids=["default_500_shaped", "default_no_path"],
+)
+def test_da_collision_default_raises_gets_no_virtual_retry_regular_norm_preserved(default_error):
+    # A collision code's default-call failure -- whatever its shape -- must
+    # be graded exactly as trunk (SDK_FAILED for both a 500-shaped and a "No
+    # path" default failure; neither is 404-shaped), with the virtual retry
+    # NEVER attempted, and its previously stored REGULAR norm preserved via
+    # the same read-merge a non-virtual station would get.
+    existing = _existing_month_norms(TEST_CODE, {month: float(month) for month in range(1, 13)})
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_404()],
-        virtual_payloads=[_norms()],
+        default_payloads=[default_error],
+        virtual_payloads=[[999.0] * 12],  # would be wrong if ever used
         virtual_sites=[{"site_code": TEST_CODE}],
+        regular_sites=[{"site_code": TEST_CODE}],  # collision: also regular
+    )
+    client = FakeHydrographClient(runoff_by_year={2025: [], 2026: []}, existing_hydrograph=existing)
+
+    records = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
     )
 
-    result = sync_lhh._lookup_monthly_norms(TEST_CODE, sdk, virtual_codes=frozenset({TEST_CODE}))
+    assert sdk.virtual_calls == []
+    assert _status_for(records, TEST_CODE) is sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED
+    monthly_norms = [record["norm"] for record in _records_by_horizon(records, "month")]
+    assert monthly_norms == [float(month) for month in range(1, 13)]
+    stored_month_norms = [
+        r["norm"] for r in client.written_records() if r["horizon_type"] == "month"
+    ]
+    assert sorted(stored_month_norms) == sorted(float(month) for month in range(1, 13))
 
-    assert result.classification is sync_lhh._NormClassification.VALID
-    assert result.norms == _norms()
-    assert len(sdk.virtual_calls) == 1
+
+def test_get_discharge_sites_raises_degrades_to_empty_set_pure_virtual_code_gets_no_retry(caplog):
+    # Discovery must fail closed on EITHER listing: if the regular registry
+    # can't be listed, nothing is retried -- not even a code that is a pure
+    # virtual station with no collision at all -- rather than risk excluding
+    # nothing and letting an undetected collision through.
+    sdk = VirtualAwareFakeSDK(
+        default_payloads=[_sdk_no_path_error()],
+        virtual_sites=[{"site_code": TEST_CODE}],
+        get_discharge_sites_error=RuntimeError("discharge listing endpoint down"),
+    )
+    client = FakeHydrographClient(runoff_by_year={2025: [], 2026: []})
+
+    with caplog.at_level("WARNING", logger="sync_long_horizon_hydrograph"):
+        records = sync_lhh.write_long_horizon_hydrograph(
+            codes=[TEST_CODE],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+    assert sdk.virtual_calls == []
+    assert _status_for(records, TEST_CODE) is sync_lhh.LongHorizonStationWriteStatus.SDK_FAILED
+    assert any("get_discharge_sites" in message for message in caplog.messages)
 
 
 # ---------------------------------------------------------------------------
