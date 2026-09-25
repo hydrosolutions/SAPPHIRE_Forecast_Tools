@@ -255,6 +255,32 @@ Operators should switch to
 `bin/yearly_runoff_hydrograph_aggregation.sh` for all yearly
 hydrograph aggregation runs.
 
+**Virtual-station norms (PREPQ-022).** The default `get_norm_for_site` call
+still raises for virtual-only codes that have no usable UUID in the regular
+hydrological registry (the SDK resolves the site UUID from that registry
+only; a code present in BOTH registries resolves via its regular UUID and
+never raises this way). Both writers (`write_long_horizon_hydrograph` /
+`write_short_horizon_hydrograph`) call `get_virtual_station_codes` once per
+invocation, before their station loop, to resolve the SDK's virtual-station
+set: it lists `get_virtual_sites()` **and** `get_discharge_sites()` (the
+regular hydrological registry) and returns only codes present in the former
+but **not** the latter — a code present in BOTH registries is excluded from
+the virtual retry entirely, even on a raise, so a transient failure on its
+regular lookup can never let a virtual (weighted-sum-of-members) norm
+silently overwrite its stored regular norm. If EITHER listing call fails, it
+logs a WARNING naming which one and continues with an empty set, so no code
+is ever wrongly treated as virtual that run. When the default norm lookup for
+a (non-colliding) station raises AND that station's code is in the resolved
+virtual set, the lookup retries once with `virtual=True` and grades only the
+retry's own result/exception (the default call's exception is discarded in
+that case) — a station whose default call succeeds always keeps its regular
+norm, even if it also appears in the virtual-station listing. This requires
+the `ieasyhydro-sdk` pin in `uv.lock` to be at or after commit `1907a30` (the
+commit that added the `virtual` keyword to `get_norm_for_site` -- a virtual
+UUID lookup plus a `virtual=true` query param -- and the exact-`station_code`
+UUID filter; `get_virtual_sites()` and `get_discharge_sites()` already
+existed at the prior pin, `2cc7953`).
+
 ## Historical Backfill
 
 `backfill_discharge_aggregation.py` (invoked via
@@ -532,7 +558,7 @@ uv run pytest test/ -v
 | `IEASYHYDROHF_PASSWORD` | API password | .env file |
 | `SAPPHIRE_SYNC_MODE` | Operating mode: `operational` (default), `maintenance`, or `initial` | optional |
 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 50) | optional |
-| `IEASYHYDRO_SPOTCHECK_SITES` | Comma-separated site codes for spot-check validation (e.g., `15166,16159,15189`) | optional |
+| `IEASYHYDRO_SPOTCHECK_SITES` | Comma-separated site codes for spot-check validation (e.g., `19999,19998,19997`) | optional |
 | `PREPROCESSING_PROFILING` | Set to `true` to enable performance profiling output | optional |
 | `log_level` | System-wide log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` | optional, default: INFO |
 | `GOOGLE_SHEETS_ENABLED` | Set to `true` to enable Google Sheets discharge ingestion for manual sites | optional, default: false |
@@ -590,7 +616,7 @@ If neither is set, defaults to `INFO`.
 2025-01-12 08:00:01 - INFO - [CONFIG] Timezone: Asia/Bishkek
 2025-01-12 08:00:02 - INFO - [API] Request: 62 sites, WDDA, 2024-09-14 to 2025-01-12
 2025-01-12 08:00:15 - INFO - [API] Response WDDA: 3780 records from 53/62 sites (85.5%)
-2025-01-12 08:00:15 - WARNING - [API] Sites without WDDA data: ['15020', '15025']
+2025-01-12 08:00:15 - WARNING - [API] Sites without WDDA data: ['19999', '19998']
 2025-01-12 08:00:16 - INFO - [MERGE] Complete: 50000 existing + 1200 new = 51200 total
 2025-01-12 08:00:17 - INFO - [OUTPUT] Final: 51200 records, 62 sites, 2020-01-01 to 2025-01-12
 2025-01-12 08:00:17 - INFO - [TIMING] Total: 16.2s (config: 0.1s, sites: 2.0s, data: 13.1s, process: 0.8s, write: 0.2s)

@@ -372,7 +372,133 @@ def _extract_sdk_status_code(exc: Exception) -> int | None:
         return None
 
 
-def _lookup_monthly_norms(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult:
+def get_virtual_station_codes(iehhf_sdk: Any) -> frozenset[str]:
+    """Resolve the set of virtual station codes via the SDK's virtual-sites listing.
+
+    Intended to be called ONCE per writer invocation (``write_long_horizon_hydrograph``
+    / ``write_short_horizon_hydrograph``), never per station: the operational
+    station-resolution cache (``preprocessing_runoff.py``) carries no virtual
+    identity, so each writer discovers virtual codes itself before its station
+    loop, at the cost of two extra listing calls per writer invocation (and, for
+    ``backfill_discharge_aggregation.py``, per writer per year).
+
+    **Collision exclusion (owner decision, 2026-09-25, after out-of-loop diff
+    review of PREPQ-022 finding #1):** a code present in BOTH the virtual-sites
+    listing AND the regular hydrological registry (``get_discharge_sites()``)
+    is EXCLUDED from the returned set, so it never gets the virtual retry.
+    Without this, a transient failure on that code's REGULAR lookup (e.g. a
+    500) would let the virtual (weighted-sum-of-members) retry succeed and
+    silently overwrite its stored regular norm while the run still reports
+    success -- the regular norm must always win for a colliding code,
+    including on a regular-lookup failure.
+
+    If EITHER listing (``get_virtual_sites()`` or ``get_discharge_sites()``)
+    raises for any reason, this logs a WARNING naming which listing failed and
+    returns an empty ``frozenset`` -- callers then see exactly today's
+    behaviour for EVERY code, virtual or not: the default (non-virtual)
+    ``get_norm_for_site`` call, graded exactly as before this helper existed.
+    (A failure on the second call is fail-closed the same way: excluding
+    nothing when the regular registry can't be listed would risk letting a
+    collision through, so it degrades to "retry nobody" instead.)
+    """
+    try:
+        virtual_sites = iehhf_sdk.get_virtual_sites()
+    except Exception as exc:
+        logger.warning(
+            "get_virtual_station_codes: get_virtual_sites() failed; treating no "
+            "station as virtual for this run. Error: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return frozenset()
+    try:
+        regular_sites = iehhf_sdk.get_discharge_sites()
+    except Exception as exc:
+        logger.warning(
+            "get_virtual_station_codes: get_discharge_sites() failed; treating no "
+            "station as virtual for this run. Error: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return frozenset()
+
+    def _codes(sites: Any) -> set[str]:
+        result: set[str] = set()
+        for site in sites:
+            if not isinstance(site, dict):
+                continue
+            raw_code = site.get("site_code")
+            if raw_code is None:
+                continue
+            result.add(str(raw_code).strip())
+        return result
+
+    virtual_codes = _codes(virtual_sites)
+    regular_codes = _codes(regular_sites)
+    collisions = virtual_codes & regular_codes
+    if collisions:
+        logger.warning(
+            "get_virtual_station_codes: excluding %d code(s) present in both the "
+            "virtual and regular hydrological registries from the virtual retry "
+            "(the regular norm always wins for these): %s",
+            len(collisions),
+            sorted(collisions),
+        )
+    return frozenset(virtual_codes - regular_codes)
+
+
+def _lookup_monthly_norms_virtual_retry(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult:
+    """Retry a virtual station's monthly norm lookup with ``virtual=True``.
+
+    Called only from ``_lookup_monthly_norms``, only when the default
+    (non-virtual) call raised AND the code is a known virtual station (D-A
+    option (b): regular norm first, virtual norm only on failure). Grades the
+    RETRY's result/exception alone -- the original default-call exception is
+    discarded, never graded -- using the SAME classification rules as the
+    default path: an SDK-shaped 404 ``ValueError`` -> NORM_ABSENT, any other
+    raise -> SDK_FAILED, and a 200 response is classified by
+    ``_classify_monthly_norms`` exactly like the default path.
+    """
+    try:
+        norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m", virtual=True)
+    except Exception as exc:
+        status_code = _extract_sdk_status_code(exc)
+        if status_code == 404:
+            logger.info(
+                "_lookup_monthly_norms: virtual-station retry for site %s raised with "
+                "HTTP 404 (no norm available); classifying NORM_ABSENT, not SDK_FAILED. "
+                "Error: %s: %s",
+                code,
+                type(exc).__name__,
+                exc,
+            )
+            return _MonthlyNormLookupResult(
+                classification=_NormClassification.NORM_ABSENT,
+                norms=None,
+                exception=exc,
+            )
+        logger.debug(
+            "_lookup_monthly_norms: virtual-station retry for site %s raised "
+            "(status_code=%s); classifying SDK_FAILED. Error: %s: %s",
+            code,
+            status_code,
+            type(exc).__name__,
+            exc,
+        )
+        return _MonthlyNormLookupResult(
+            classification=_NormClassification.SDK_FAILED,
+            norms=None,
+            exception=exc,
+        )
+    return _MonthlyNormLookupResult(
+        classification=_classify_monthly_norms(norms),
+        norms=norms,
+    )
+
+
+def _lookup_monthly_norms(
+    code: str, iehhf_sdk: Any, virtual_codes: frozenset[str] | None = None
+) -> _MonthlyNormLookupResult:
     """Fetch and classify the SDK monthly norms, capturing any raised exception.
 
     A raised exception is graded by the HTTP status code embedded in its
@@ -406,10 +532,25 @@ def _lookup_monthly_norms(code: str, iehhf_sdk: Any) -> _MonthlyNormLookupResult
     INFRA-029), so this line never appears in a production log. The
     aggregate ``norm_absent_via_404`` count in the run summary (see
     ``LongHorizonRunSummary``) is what actually survives that cap.
+
+    ``virtual_codes`` (D-A option (b), regular-first): when the default call
+    above raises AND ``str(code).strip()`` is in ``virtual_codes``, this
+    retries with ``virtual=True`` (see ``_lookup_monthly_norms_virtual_retry``)
+    and grades the retry's result/exception alone -- the default call's
+    exception below is never graded in that case. Default ``None`` (or an
+    empty set) reproduces today's behaviour exactly: no code is ever treated
+    as virtual, so the default call's exception is always graded below. A
+    code present in BOTH the virtual and regular hydrological registries is
+    never in ``virtual_codes`` in the first place -- see
+    ``get_virtual_station_codes``'s collision exclusion -- so this default
+    call's own exception is always what gets graded for such a code, exactly
+    as if it were never virtual.
     """
     try:
         norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="m")
     except Exception as exc:
+        if virtual_codes and str(code).strip() in virtual_codes:
+            return _lookup_monthly_norms_virtual_retry(code, iehhf_sdk)
         status_code = _extract_sdk_status_code(exc)
         if status_code == 404:
             logger.info(
@@ -475,6 +616,7 @@ def write_station_monthly_hydrograph(
     client: Any,
     target_year: int,
     today: dt.date,
+    virtual_codes: frozenset[str] | None = None,
 ) -> LongHorizonStationWriteResult:
     """Build and write monthly hydrograph records for one station.
 
@@ -483,9 +625,15 @@ def write_station_monthly_hydrograph(
     month rows are still written and any previously stored norm is preserved
     via a read-merge. Status stays orthogonal to record existence -- an SDK
     exception no longer skips the station.
+
+    ``virtual_codes`` is forwarded to ``_lookup_monthly_norms`` unchanged (see
+    that function's docstring); default ``None`` reproduces today's behaviour.
+    Callers normally get this set once from ``get_virtual_station_codes`` in
+    the caller's own writer loop (see ``write_long_horizon_hydrograph``)
+    rather than passing it explicitly.
     """
     logger.info("Building long-horizon monthly hydrograph for station %s", code)
-    norm_lookup = _lookup_monthly_norms(code, iehhf_sdk)
+    norm_lookup = _lookup_monthly_norms(code, iehhf_sdk, virtual_codes=virtual_codes)
     norm_classification = norm_lookup.classification
     if norm_classification is _NormClassification.SDK_FAILED:
         exc = norm_lookup.exception
@@ -698,8 +846,16 @@ def write_long_horizon_hydrograph(
     target_year: int,
     today: dt.date,
 ) -> list[dict[str, Any]]:
-    """Build and write monthly hydrograph records for all supplied stations."""
+    """Build and write monthly hydrograph records for all supplied stations.
+
+    Resolves the virtual-station set ONCE, before the station loop, via
+    ``get_virtual_station_codes`` -- not per station -- since the operational
+    station-resolution cache carries no virtual identity. See that helper's
+    docstring for the discovery-failure fallback (WARNING, empty set, today's
+    behaviour unchanged).
+    """
     all_records = _LongHorizonWriteResult()
+    virtual_codes = get_virtual_station_codes(iehhf_sdk)
     for code in codes:
         code_str = str(code)
         all_records.attempted_station_codes.append(code_str)
@@ -710,6 +866,7 @@ def write_long_horizon_hydrograph(
                 client=client,
                 target_year=target_year,
                 today=today,
+                virtual_codes=virtual_codes,
             )
             monthly_records = monthly_result.records
             all_records.extend(monthly_records)

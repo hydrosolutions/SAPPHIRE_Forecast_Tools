@@ -51,6 +51,7 @@ from sync_long_horizon_hydrograph import (
     _API_READ_WRITE_ERRORS,
     _get_preprocessing_client,
     _json_safe,
+    get_virtual_station_codes,
     resolve_sdk_station_codes,
 )
 
@@ -746,13 +747,45 @@ def _classify_short_horizon_norms(norms: Any, periods_per_year: int) -> _NormCla
 
 
 def _lookup_short_horizon_norms(
-    code: str, horizon_type: str, iehhf_sdk: Any
+    code: str,
+    horizon_type: str,
+    iehhf_sdk: Any,
+    virtual_codes: frozenset[str] | None = None,
 ) -> _ShortHorizonNormLookupResult:
-    """Fetch and classify the SDK pentad/decad norms, capturing any raised exception."""
+    """Fetch and classify the SDK pentad/decad norms, capturing any raised exception.
+
+    ``virtual_codes`` (D-A option (b), regular-first): when the default call
+    below raises AND ``str(code).strip()`` is in ``virtual_codes``, this
+    retries with ``virtual=True`` and grades the retry's result/exception
+    alone -- any exception from the retry is still SDK_FAILED, same as the
+    default path (short-horizon grades every exception as SDK_FAILED; there
+    is no 404-vs-other distinction here, unlike long-horizon). Default
+    ``None`` (or an empty set) reproduces today's behaviour exactly: no code
+    is ever treated as virtual. A code present in BOTH the virtual and
+    regular hydrological registries is never in ``virtual_codes`` in the
+    first place -- see ``sync_long_horizon_hydrograph.get_virtual_station_codes``'s
+    collision exclusion -- so this default call's own exception is always
+    what gets graded for such a code, exactly as if it were never virtual.
+    """
     config = _HORIZON_CONFIG[horizon_type]
     try:
         norms = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period=config["norm_period"])
     except Exception as exc:
+        if virtual_codes and str(code).strip() in virtual_codes:
+            try:
+                norms = iehhf_sdk.get_norm_for_site(
+                    code, "discharge", norm_period=config["norm_period"], virtual=True
+                )
+            except Exception as retry_exc:
+                return _ShortHorizonNormLookupResult(
+                    classification=_NormClassification.SDK_FAILED,
+                    norms=None,
+                    exception=retry_exc,
+                )
+            return _ShortHorizonNormLookupResult(
+                classification=_classify_short_horizon_norms(norms, config["periods_per_year"]),
+                norms=norms,
+            )
         return _ShortHorizonNormLookupResult(
             classification=_NormClassification.SDK_FAILED,
             norms=None,
@@ -836,8 +869,15 @@ def write_station_short_horizon(
     client: Any,
     target_year: int,
     today: dt.date,
+    virtual_codes: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Build and write pentad or decad hydrograph records for one station.
+
+    ``virtual_codes`` is forwarded to ``_lookup_short_horizon_norms`` unchanged
+    (see that function's docstring); default ``None`` reproduces today's
+    behaviour. Callers normally get this set once from
+    ``get_virtual_station_codes`` in the caller's own writer loop (see
+    ``write_short_horizon_hydrograph``) rather than passing it explicitly.
 
     Row existence is decoupled from the iEH-HF pentad/decad norm (C1): when
     the norm is absent (any non-``periods_per_year``-finite-numbers return)
@@ -859,7 +899,9 @@ def write_station_short_horizon(
     """
     logger.info("Building short-horizon %s hydrograph for station %s", horizon_type, code)
 
-    norm_lookup = _lookup_short_horizon_norms(code, horizon_type, iehhf_sdk)
+    norm_lookup = _lookup_short_horizon_norms(
+        code, horizon_type, iehhf_sdk, virtual_codes=virtual_codes
+    )
     norms = norm_lookup.norms
     if norm_lookup.classification is _NormClassification.SDK_FAILED:
         exc = norm_lookup.exception
@@ -992,11 +1034,18 @@ def write_short_horizon_hydrograph(
     A ``SHORT-HORIZON RUN SUMMARY`` block, tallying one terminal
     ``_ShortHorizonWriteStatus`` per ``(code, horizon)`` pair, is logged
     before returning (C3).
+
+    Resolves the virtual-station set ONCE, before the station loop, via
+    ``get_virtual_station_codes`` -- not per station, not per horizon -- since
+    the operational station-resolution cache carries no virtual identity. See
+    that helper's docstring for the discovery-failure fallback (WARNING, empty
+    set, today's behaviour unchanged).
     """
     all_records = _ShortHorizonWriteResult()
     status_counts: dict[str, dict[_ShortHorizonWriteStatus, int]] = {
         horizon_type: dict.fromkeys(_ShortHorizonWriteStatus, 0) for horizon_type in _HORIZON_CONFIG
     }
+    virtual_codes = get_virtual_station_codes(iehhf_sdk)
     for code in codes:
         code_str = str(code)
         all_records.attempted_station_codes.append(code_str)
@@ -1011,6 +1060,7 @@ def write_short_horizon_hydrograph(
                     client=client,
                     target_year=target_year,
                     today=today,
+                    virtual_codes=virtual_codes,
                 )
             except (
                 *_API_READ_WRITE_ERRORS,
