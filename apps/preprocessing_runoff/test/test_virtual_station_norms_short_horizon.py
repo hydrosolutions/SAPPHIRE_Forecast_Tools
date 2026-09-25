@@ -19,6 +19,7 @@ values.
 
 import calendar
 import datetime as dt
+import logging
 import os
 import sys
 
@@ -580,7 +581,7 @@ def test_da_collision_default_succeeds_uses_regular_norm_no_retry():
     ids=["default_500_shaped", "default_no_path"],
 )
 def test_da_collision_default_raises_gets_no_virtual_retry_regular_norm_preserved(
-    default_error_factory,
+    default_error_factory, caplog
 ):
     # A collision code's default-call failure -- whatever its shape -- must
     # be graded exactly as trunk (SDK_FAILED for both fixtures here; short-
@@ -588,6 +589,11 @@ def test_da_collision_default_raises_gets_no_virtual_retry_regular_norm_preserve
     # shape), with the virtual retry NEVER attempted, and its previously
     # stored REGULAR pentad norm (period 1) preserved via the same read-
     # merge a non-virtual station would get.
+    #
+    # Exact record counts, captured writes, and the SDK_FAILED grading (via
+    # the run summary) are asserted explicitly -- not inferred from norm
+    # values alone, which a NORM_ABSENT misclassification would also produce
+    # (the read-merge is identical for both classifications).
     sdk = VirtualAwareFakeSDK(
         default_payloads=[default_error_factory(), default_error_factory()],
         virtual_payloads=[[999.0] * 72, [999.0] * 36],  # would be wrong if ever used
@@ -599,36 +605,7 @@ def test_da_collision_default_raises_gets_no_virtual_retry_regular_norm_preserve
         existing_hydrograph=_existing_pentad_norms(CODE, norm_for_period_1=42.0),
     )
 
-    records = shh.write_short_horizon_hydrograph(
-        codes=[CODE],
-        iehhf_sdk=sdk,
-        client=client,
-        target_year=TARGET_YEAR,
-        today=TODAY,
-    )
-
-    assert sdk.virtual_calls == []
-    assert CODE in records.completed_station_codes
-    period_1 = next(
-        r for r in records if r["horizon_type"] == "pentad" and r["horizon_in_year"] == 1
-    )
-    assert period_1["norm"] == 42.0
-    assert period_1["date"] == PERIOD_1_DATE
-
-
-def test_get_discharge_sites_raises_degrades_to_empty_set_pure_virtual_code_gets_no_retry(caplog):
-    # Discovery must fail closed on EITHER listing: if the regular registry
-    # can't be listed, nothing is retried -- not even a code that is a pure
-    # virtual station with no collision at all -- rather than risk excluding
-    # nothing and letting an undetected collision through.
-    sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_no_path_error(), _sdk_no_path_error()],
-        virtual_sites=[{"site_code": CODE}],
-        get_discharge_sites_error=RuntimeError("discharge listing endpoint down"),
-    )
-    client = FakeShortHorizonClient(daily_by_year=_daily_fixture())
-
-    with caplog.at_level("WARNING", logger="sync_long_horizon_hydrograph"):
+    with caplog.at_level("INFO"):
         records = shh.write_short_horizon_hydrograph(
             codes=[CODE],
             iehhf_sdk=sdk,
@@ -638,9 +615,88 @@ def test_get_discharge_sites_raises_degrades_to_empty_set_pure_virtual_code_gets
         )
 
     assert sdk.virtual_calls == []
-    pentad_norms = [r["norm"] for r in records if r["horizon_type"] == "pentad"]
-    assert all(norm is None for norm in pentad_norms)
-    assert any("get_discharge_sites" in message for message in caplog.messages)
+    assert CODE in records.completed_station_codes
+
+    pentad_records = [r for r in records if r["horizon_type"] == "pentad"]
+    decad_records = [r for r in records if r["horizon_type"] == "decade"]
+    assert len(pentad_records) == 72
+    assert len(decad_records) == 36
+    period_1 = next(r for r in pentad_records if r["horizon_in_year"] == 1)
+    assert period_1["norm"] == 42.0
+    assert period_1["date"] == PERIOD_1_DATE
+
+    pentad_write_calls = [c for c in client.write_calls if c and c[0]["horizon_type"] == "pentad"]
+    decad_write_calls = [c for c in client.write_calls if c and c[0]["horizon_type"] == "decade"]
+    assert len(pentad_write_calls) == 1 and len(pentad_write_calls[0]) == 72
+    assert len(decad_write_calls) == 1 and len(decad_write_calls[0]) == 36
+
+    summary_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.INFO)
+    assert "pentad_written=0 pentad_norm_absent=0 pentad_sdk_failed=1 pentad_api_failed=0" in (
+        summary_text
+    )
+    assert "decade_written=0 decade_norm_absent=0 decade_sdk_failed=1 decade_api_failed=0" in (
+        summary_text
+    )
+
+
+def test_get_discharge_sites_raises_degrades_to_empty_set_pure_virtual_code_gets_no_retry(caplog):
+    # Discovery must fail closed on EITHER listing: if the regular registry
+    # can't be listed, nothing is retried -- not even a code that is a pure
+    # virtual station with no collision at all -- rather than risk excluding
+    # nothing and letting an undetected collision through.
+    #
+    # NOTE: `all(norm is None for norm in [])` is vacuously True, so a prior
+    # version of this test passed even under a mutation that wrote ZERO
+    # records (e.g. treating a discovery failure as "abort the station"
+    # instead of "degrade to empty virtual set and continue normally").
+    # Assert the exact record counts and the captured writes, not just the
+    # norm values, and assert SDK_FAILED (not a silently-downgraded
+    # NORM_ABSENT) via the run summary, the same way
+    # test_short_horizon_norm_decoupling.py does.
+    sdk = VirtualAwareFakeSDK(
+        default_payloads=[_sdk_no_path_error(), _sdk_no_path_error()],
+        virtual_sites=[{"site_code": CODE}],
+        get_discharge_sites_error=RuntimeError("discharge listing endpoint down"),
+    )
+    client = FakeShortHorizonClient(daily_by_year=_daily_fixture())
+
+    with caplog.at_level("INFO"):
+        records = shh.write_short_horizon_hydrograph(
+            codes=[CODE],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=TARGET_YEAR,
+            today=TODAY,
+        )
+
+    assert sdk.virtual_calls == []
+
+    pentad_records = [r for r in records if r["horizon_type"] == "pentad"]
+    decad_records = [r for r in records if r["horizon_type"] == "decade"]
+    assert len(pentad_records) == 72
+    assert len(decad_records) == 36
+    assert all(r["norm"] is None for r in pentad_records)
+    assert all(r["norm"] is None for r in decad_records)
+
+    # The full batches were actually captured by write_hydrograph, not just
+    # present in the records object the writer happens to return.
+    pentad_write_calls = [c for c in client.write_calls if c and c[0]["horizon_type"] == "pentad"]
+    decad_write_calls = [c for c in client.write_calls if c and c[0]["horizon_type"] == "decade"]
+    assert len(pentad_write_calls) == 1 and len(pentad_write_calls[0]) == 72
+    assert len(decad_write_calls) == 1 and len(decad_write_calls[0]) == 36
+
+    # Both horizons are graded SDK_FAILED -- the default call's own raise,
+    # never reclassified to NORM_ABSENT just because discovery degraded to
+    # an empty virtual set.
+    summary_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.INFO)
+    assert "pentad_written=0 pentad_norm_absent=0 pentad_sdk_failed=1 pentad_api_failed=0" in (
+        summary_text
+    )
+    assert "decade_written=0 decade_norm_absent=0 decade_sdk_failed=1 decade_api_failed=0" in (
+        summary_text
+    )
+
+    assert any("get_discharge_sites" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
