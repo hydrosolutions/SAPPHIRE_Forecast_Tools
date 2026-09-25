@@ -34,8 +34,15 @@ Citations are to trunk `82946683`. Its postprocessing tree is identical to the #
 - **`horizon_value` = config `operational_month_lead_time`** (kghm 1, tjhm 0;
   `doc/prod/longforecast_quarter_season_hv_convention.md` RESOLUTION). Never overwrite a stored hv with a
   date-derived lead.
-- **Quarterly Ensemble Mean = mean(LR_Base, LR_SM), not skill-gated** (owner, 2026-06-23,
-  `doc/plans/archive/two_model_ensemble_plan.md` M1). **Raw quarter models:**
+- **Quarterly Ensemble Mean**:
+  - **Today:** mean(LR_Base, LR_SM), not skill-gated (owner, 2026-06-23,
+    `doc/plans/archive/two_model_ensemble_plan.md` M1).
+  - **Chunk A** preserves today's membership. **Chunks B and C**, which follow PP-065, preserve PP-065's
+    rule. No chunk of this plan changes EM membership itself.
+  - **PP-065** changes it, per owner decision D10 (2026-09-25): with more than 2 candidates it is
+    long-term-gated.
+
+  **Raw quarter models:**
   - LR_Base and LR_SM are native-only.
   - GBT, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR and SM_GBT_NORM are re-enabled as same-issue
     averages of their monthly forecasts (owner, 2026-09-25). That is implemented by **PP-065**, not here.
@@ -296,7 +303,7 @@ M1 EM tests must stay unchanged.
 
 ## Out of scope
 
-- Re-enabling the seven models for quarter (PP-065); a skill-gated quarterly EM (#521's proposal).
+- Re-enabling the seven models for quarter, and the long-term-gated EM (both PP-065). Short-term-threshold EM gating (#521's proposal) is rejected.
 - Dashboard (FD-029/FD-030). Schedule and target construction (LTF-014).
 - Deleting DB rows (the stale-rows decision).
 - Skill/ensemble-level duplicate window guards. Their inputs come only from the guarded readers or from

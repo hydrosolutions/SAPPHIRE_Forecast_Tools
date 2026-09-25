@@ -2,9 +2,10 @@
 
 **Status**: Draft (2026-09-25, rev 2 after out-of-loop review)
 **Module**: `apps/long_term_forecasting` (tests only) + per-deployment data repos (config)
-**Priority**: **High.** Deadlines:
-- **tjhm by 2026-10-01 06:00** (first calendar Q4 issue; the current config skips it);
-- **kghm by 2026-12-25** (first Q1).
+**Priority**: **High.** Target dates (soft):
+- **tjhm Q4, issue 2026-10-01.** The current config skips it. It can be recovered with `lt_recovery`
+  until 2026-11-30 once P0 is done (`apps/long_term_forecasting/lt_recovery.py:282-306`, `check_recovery_window`), so this is not a reason to skip the P0 gate.
+- **kghm Q1, issue 2026-12-25.**
 
 **Labels**: `long-term`, `quarter`, `config`, `deployment`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
@@ -65,6 +66,25 @@ from March to September:
 
 ### P0 — Change the schedule in the data repos (ops, no code; owner/ops executes)
 
+**Gate: do not edit any config before all three are done.**
+1. **Modeller confirmation (Sandro).**
+   - Why `forecast_months` was set to `[3..9]`. No reason is recorded anywhere (history checked
+     2026-09-25), and his own evaluation script lists Mar–Jun issues only.
+   - Whether LR_Base and LR_SM are valid for the winter issues this change adds:
+     - kghm 25 Dec → Q1;
+     - tjhm 1 Jan → Q1 and 1 Oct → Q4.
+
+     LR_SM depends on snow data. These issue months have never run operationally.
+   - Record his answer in this file.
+2. **Server state read, not assumed.**
+   - On each server, read the two `general_config.json` files and `long_term_configs/quarter.json`, and
+     diff them against the Dropbox copies.
+   - Record the result (aggregate description only).
+   - The local copies (Dropbox, read 2026-09-25) have `forecast_months [3..9]` for both orgs, issue day 1 /
+     lead 0 (tjhm) and 25 / 1 (kghm).
+   - File mtimes are not evidence: the pipeline rewrites these files on every config load.
+3. **Owner approval** of the exact change per org, noted in the PR or in this file.
+
 **Files** (outside this repo: the deployment data repos, which are not git repositories, are shared via
 Dropbox, and are deployed at `/data/<org>_data_forecast_tools`):
 
@@ -103,7 +123,7 @@ Do not change the mode JSONs, the cron lines or the issue days.
    - kghm after 2026-12-25: the same, with `date` 2026-12-25, window 2027-01-01..2027-03-31, `horizon_value` 1.
 
 **Rollback**: restore the `.bak` files. If the tjhm Oct 1 run is missed, recover it with `lt_recovery`
-before 2026-11-30 (`lt_recovery.py:276-279`).
+before 2026-11-30 (`lt_recovery.py:282-306`).
 
 ### P1 — Lock the calendar schedule with additive tests (code agent)
 

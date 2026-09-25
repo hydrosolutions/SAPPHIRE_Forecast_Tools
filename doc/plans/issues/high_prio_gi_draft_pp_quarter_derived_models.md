@@ -27,7 +27,7 @@ configuration.
 - **Season stays LR-only** (`AGGREGATED_SUPPORTED_MODELS`, `src/model_names.py:14-16`, applied by the
   season readers at `src/data_reader.py:3284, 3561`).
 - `horizon_value` = the configured quarter lead (kghm 1, tjhm 0).
-- Quarterly Ensemble Mean = mean(LR_Base, LR_SM) (M1), unless decision D10 says otherwise.
+- The quarterly Ensemble Mean rule changes (owner, D10, 2026-09-25): see Target behaviour item 6.
 - **Averaging weights.** The derived quarter uses an **unweighted** mean of the three monthly values, the
   same rule quarterly observations and preprocessing's quarter norms use today. If PP-064 B4 later adopts
   day-weighting, it changes all three together.
@@ -134,10 +134,41 @@ configuration.
 5. **Output metadata.** Flag-OFF reader output keeps dropping `date`/`horizon_value`
    (`_quarterly_fc_output_cols`, `src/data_reader.py:83-94`), and flag-OFF skill keeps the hv sentinel 0.
    The derivation helper itself always returns `date` and `horizon_value = L`; flag-ON readers expose them.
-6. **Ensemble quantiles (D10, recommended).**
-   - Quarter only: an ensemble's quantile columns are null **when any member of that ensemble's actual
-     contributing pool has null quantiles**.
-     - EM: LR_Base + LR_SM. Unchanged in practice.
+6. **Quarterly Ensemble Mean and ensemble quantiles** (owner decision D10, 2026-09-25).
+   - **EM membership**, per ensemble group, i.e. (station, year, quarter), plus `horizon_value` under
+     flag ON:
+     - **Candidates** = the raw quarter models with a finite point value in the group (LR_Base, LR_SM,
+       and the seven derived models).
+     - **More than 2 candidates → skill-gated with the long-term gate.** EM = the unweighted mean of the
+       candidates that pass
+       `filter_for_highly_skilled_forecasts(..., min_pairs=_long_term_min_pairs("QUARTER"), **_long_term_threshold_overrides())`
+       (NSE > 0 only, **plus the quarter min-pairs floor**). This is the gate the long-term Skilled Mean
+       already uses (`src/skill_metrics.py:108`; `src/ensemble_calculator.py:303-308`, `:672-675`). The
+       operational and recalc paths must use the identical call, so that the same models qualify in both.
+       - This requires at least 2 qualifying models, the existing multi-model rule.
+       - **Assumption to confirm with the owner in the PR:** if fewer than 2 qualify, EM falls back to
+         mean(LR_Base, LR_SM) when both are present, so EM still forms reliably (the goal of M1).
+     - **2 or fewer candidates → unchanged M1 rule:** EM = mean(LR_Base, LR_SM), not skill-gated. Both
+       must be present.
+     - **Per group.** The candidate count and the qualification are evaluated **per group**, not globally
+       (today's EM code counts models globally: `src/ensemble_calculator.py:744`, `src/skill_metrics.py:2748`).
+     - Under flag ON, qualification uses the candidate's skill row **at the same lead**. Do not reuse the
+       existing leadless fallback join (`src/ensemble_calculator.py:722-738`) for this rule. A candidate
+       without a matching skill row does not qualify.
+     - **Empty skill frame (interim).** Until PP-064 B5 is decided and implemented, an **entirely empty**
+       quarter skill frame keeps today's behaviour: no quarterly ensembles at all
+       (`postprocessing_operational_long_term.py:210`, `src/ensemble_calculator.py:632-634`). The fallback
+       above applies only when the skill frame is non-empty but candidates lack qualifying rows.
+     - **EM skill (recalc).** EM skill is computed per `(code, quarter_in_year[, horizon_value])` across
+       years, **not per composition**. Today `src/skill_metrics.py:2784` groups EM skill by `composition`,
+       which with varying membership would split the years and fail K=5, while the writer
+       (`src/api_writer.py:680-683`) persists one row per key without composition.
+       - Keep `composition` on the forecast rows.
+       - Change the grouping for quarter only; season stays as is.
+   - **Ensemble quantiles** (D10): quarter only, an ensemble's quantile columns are null **when any member
+     of that ensemble's actual contributing pool has null quantiles**.
+     - EM: its actual members. The derived models have no quantiles, so an EM that includes any of them
+       has null quantiles; an EM that is only the LR pair keeps its quantiles.
      - Naive Mean: all raw models present.
      - Skilled Mean: the skill-qualified members only. A derived model excluded by the gate must not null
        an otherwise complete Skilled Mean.
@@ -161,15 +192,18 @@ configuration.
   - the quarter model filter in the two raw readers and in `read_quarterly_combined_forecasts`
   - the read-window handling from item 4 (an optional keyword on `read_monthly_forecasts` is allowed)
   - point-value resolution
-- `src/ensemble_calculator.py` and `src/skill_metrics.py`: the quarter-only quantile rule (item 6)
+- `src/ensemble_calculator.py` and `src/skill_metrics.py`: the quarterly EM membership and the quarter-only
+  quantile rule (item 6). Both the operational path (`_create_aggregated_ensemble_forecasts`, EM block
+  ~`:740-771`) and the recalc path (`_calculate_aggregated_skill_metrics`, EM block ~`:2744-2805`) must
+  apply the same rule. Gate it on `period_col == "quarter_in_year"`; the season EM stays M1.
 - Tests: new `tests/test_quarter_derived_models.py`, and the existing-test updates listed below
 
 **Agent instruction**: *"Do NOT change any existing function signatures, data flow logic, or control
 flow. Your changes must be purely additive or modify only the specific behavior described."* The only
 permitted signature changes are new optional keywords with defaults equal to current behaviour. Do not
 change:
-- season behaviour
-- EM membership
+- season behaviour, including the season EM
+- EM membership beyond item 6
 - `api_writer.py`
 - `select_operational_issuances`
 - PP-064's window validation
@@ -179,7 +213,7 @@ change:
 but re-implement narrowly. In this plan, unlike the branch:
 - the lead and issue day are the configured ones, not derived from dates;
 - there is no date-derived hv overwrite;
-- there is no EM skill gate;
+- the EM gate is the long-term gate (NSE > 0), not the short-term thresholds, and applies only with more than 2 candidates;
 - there is no flag-OFF lead stratification.
 
 **Tests** (station `19999`; Arrange → Act → Assert; mock only the API boundary, never
@@ -214,11 +248,28 @@ but re-implement narrowly. In this plan, unlike the branch:
      - genuine ensemble presence is preserved;
      - a fresh monthly-derived row creates a genuine gap even when no direct QUARTER rows exist;
    - they are not merged back by the operational/maintenance paths.
-8. **Ensembles, operational and recalc paths.** Q1 with LR_Base, LR_SM (quantiles present) and GBT
-   (derived, null quantiles):
-   - EM = mean(LR), quantiles kept;
-   - Naive Mean = mean of all three, quantiles **null**;
-   - Skilled Mean with GBT gated out → quantiles kept; with GBT qualifying → null.
+8. **Ensembles, operational and recalc paths, both flags.** Q1 with LR_Base, LR_SM (quantiles present),
+   GBT and MC_ALD (derived, null quantiles):
+   - (i) All four have NSE > 0 → EM = mean of all four, quantiles **null**.
+   - (ii) GBT NSE ≤ 0, the rest > 0 → EM = mean(LR_Base, LR_SM, MC_ALD), quantiles null.
+   - (iii) Only LR_SM has NSE > 0 → fewer than 2 qualify → EM = mean(LR_Base, LR_SM), quantiles kept
+     (the fallback assumption).
+   - (iv) Only LR_Base and LR_SM present (2 candidates), both NSE < 0 → EM = their mean (M1, unchanged).
+   - (v) A candidate with no skill row does not qualify.
+   - Naive Mean = mean of all raw models present, quantiles **null**.
+   - Skilled Mean with GBT gated out → quantiles kept if the remaining members all have quantiles; with
+     GBT qualifying → null.
+   - The same inputs through the recalc path give the same EM values as the operational path.
+   - (vi) **Group isolation:** two groups in one frame, one with 2 candidates and one with 4, and a third
+     at a different lead where the qualification is reversed. Each group's EM follows its own count and
+     its own lead's skill.
+   - (vii) **Min-pairs floor:** a candidate with NSE > 0 but `n_pairs` = K−1 does not qualify; at K it does.
+     Operational and recalc agree.
+   - (viii) **Empty vs partial skill:** an entirely empty skill frame → no quarterly ensembles (interim).
+     A non-empty frame missing one candidate's row → that candidate does not qualify.
+   - (ix) **EM skill across compositions (recalc):** nine target years whose EM compositions are 4/1/4
+     years → one persisted EM skill row per `(code, quarter[, hv])` with `n_pairs` 9, and no erroneous
+     tombstone.
 9. **Season unchanged.** A GBT season row is still excluded; the season goldens pass.
 10. **Skill.** A derived GBT Q2 row for ≥ 5 target years plus calendar observations → a GBT Q2 skill row
     with the expected `n_pairs` and point metrics, CRPS/PIT/sharpness null, and
@@ -235,8 +286,12 @@ but re-implement narrowly. In this plan, unlike the branch:
   - `tests/test_aggregation.py` observation tests and `:41` (`QUARTER_MIN_MONTHS` is not changed here);
   - `tests/test_quarterly_api_writer.py:337-378` (the old aggregator stays);
   - `tests/test_lead_aware_empty_schedules.py:207, 239` (unsupported-quarter schedule behaviour);
-  - the M1 EM tests (`test_lt_min_pairs_gate.py:592-617`, `test_quarterly_ensemble_creation.py:203,458`,
-    `test_quarterly_skill_metrics.py:265,529`).
+  - the LR-only M1 EM tests: `test_lt_min_pairs_gate.py:592-617`, `test_quarterly_skill_metrics.py:265,529`.
+  - the season EM tests, including the three-model **season** test at `test_quarterly_ensemble_creation.py:458`.
+- **Changes meaning, keep the assertion:** `test_quarterly_ensemble_creation.py:203-227` has LR_Base, LR_SM
+  and GBT with only GBT qualifying. Under the new rule, fewer than 2 qualify, so its expected LR mean holds
+  **via the fallback**. Keep the assertion, relabel the test to say so, and mark it as depending on the
+  fallback assumption (D10).
 - **Expected to change:** tests whose fixtures build quarterly rows from monthly rows through the reader's
   Source 1 and assert the old mixed-issue / 2-of-3 / quantile-averaging results. The candidates are
   `tests/test_quarterly_data_reader.py:134, 407, 443, 654, 985, 1015` and
@@ -252,8 +307,15 @@ but re-implement narrowly. In this plan, unlike the branch:
 
 ### P2 — rollout (part of PP-064 Chunk C)
 
-- **Before the recalc:** per org, record QUARTER `skill_metrics` rows for the seven models by
+- **Before the recalc:** per org, record QUARTER `skill_metrics` rows for the seven models and for EM by
   `horizon_value` and `horizon_in_year`, with a private value snapshot.
+- **EM forecast rows after the recalc.** Verify persisted quarterly EM values, composition and null
+  quantiles.
+  - The gap detector treats any existing EM as complete regardless of membership
+    (`src/gap_detector.py:467-479`).
+  - Stale tombstones invalidate **skill**, not forecast rows (`src/stale_tombstones.py:221-238`).
+  - So a group that can no longer emit EM keeps its old EM forecast row. That is PP-041/PP-063's
+    territory; record the count, do not claim it is repaired.
 - **After the recalc, verify the four outcomes** (`src/stale_tombstones.py:29-41, 167-179, 221-228`):
   - kghm flag ON: old hv0 rows tombstoned, new hv1 rows emitted;
   - tjhm flag ON: hv0 rows replaced;
@@ -276,6 +338,6 @@ but re-implement narrowly. In this plan, unlike the branch:
 ## Out of scope
 
 - Season re-enablement.
-- A skill-gated EM; averaging quantiles into derived quarters.
+- Short-term-threshold gating of the quarterly EM; any change to the season EM; averaging quantiles into derived quarters.
 - Day-weighting (PP-064 B4).
 - Deleting Dataset B rows (D8).
