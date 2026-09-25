@@ -297,7 +297,7 @@ wheels = [
 [[package]]
 name = "ieasyhydro-sdk"
 version = "0.3.2"
-source = { git = "https://github.com/hydrosolutions/ieasyhydro-python-sdk?rev=master#2cc795306c1b9333d6c0539fecaf0a36865391c8" }
+source = { git = "https://github.com/hydrosolutions/ieasyhydro-python-sdk?rev=master#1907a3040801398d2537c757add86cf2dcc974a0" }
 dependencies = [
     { name = "requests" },
 ]

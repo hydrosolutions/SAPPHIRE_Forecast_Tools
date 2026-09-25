@@ -255,6 +255,22 @@ Operators should switch to
 `bin/yearly_runoff_hydrograph_aggregation.sh` for all yearly
 hydrograph aggregation runs.
 
+**Virtual-station norms (PREPQ-022).** The default `get_norm_for_site` call
+still raises for virtual stations (the SDK resolves the site UUID from the
+hydrological registry only). Both writers (`write_long_horizon_hydrograph` /
+`write_short_horizon_hydrograph`) call `get_virtual_station_codes` once per
+invocation, before their station loop, to resolve the SDK's virtual-station
+set (`get_virtual_sites()`); if that call fails, it logs a WARNING and
+continues with an empty set, so a code is never wrongly treated as virtual.
+When the default norm lookup for a station raises AND that station's code is
+in the virtual set, the lookup retries once with `virtual=True` and grades
+only the retry's own result/exception (the default call's exception is
+discarded in that case) — a station whose default call succeeds always
+keeps its regular norm, even if it also appears in the virtual-station
+listing. This requires the `ieasyhydro-sdk` pin in `uv.lock` to be at or
+after commit `1907a30` (the commit that added the `virtual` keyword and
+`get_virtual_sites()`).
+
 ## Historical Backfill
 
 `backfill_discharge_aggregation.py` (invoked via
