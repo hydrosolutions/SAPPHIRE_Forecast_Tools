@@ -3,6 +3,7 @@
 Tests pure helpers directly, and API-calling functions with mocked HTTP.
 """
 
+import inspect
 import json
 from datetime import date
 from unittest.mock import MagicMock
@@ -2636,3 +2637,359 @@ class TestGetForecastStatsTombstoneSuppression:
         month2 = data["long_forecasts_by_month_mode"]["month_2"]
         assert not month2.empty  # the month_2 forecast itself is still visible
         assert pd.isna(month2["delta"].iloc[0])  # but no skill metrics — tombstoned
+
+
+# ── FD-005: _read_data_paginated / fixed-limit truncation fix ─────────────
+
+
+# The real postprocessing API's `/forecast/` endpoint defaults `limit` to
+# 100 when the query omits it (sapphire/services/postprocessing/app/main.py
+# `read_forecast`). The fake below must honour that same contract — a fake
+# that instead returns everything when `limit` is missing is more generous
+# than the real API and hides any caller that forgot to paginate.
+_API_DEFAULT_LIMIT = 100
+
+
+def _skip_limit_fake(full_df):
+    """A fake `_read_data` that serves `full_df` page by page via the
+    `skip`/`limit` params, mirroring the real API's pagination contract
+    (including `_read_data`'s own "date" → datetime conversion, so callers
+    that rely on it — e.g. get_ml_forecast — see realistic dtypes)."""
+
+    def fake(service_type, data_type, params=None):
+        params = params or {}
+        # .get with defaults (rather than indexing) so this fake also works
+        # against a non-paginated caller that passes only "limit" (no
+        # "skip") — that path then serves just the first page, which is
+        # exactly the truncation this fix targets. A missing "limit" must
+        # fall back to the real API's default (100), not to "everything" —
+        # otherwise an unpaginated caller would silently see the full
+        # result set here while the real API would truncate it.
+        skip = params.get("skip", 0)
+        limit = params.get("limit", min(_API_DEFAULT_LIMIT, len(full_df)))
+        page = full_df.iloc[skip : skip + limit].reset_index(drop=True).copy()
+        if "date" in page.columns:
+            page["date"] = pd.to_datetime(page["date"])
+        return page
+
+    return fake
+
+
+class TestReadDataPaginated:
+    """Unit tests for the `_read_data_paginated` helper in isolation."""
+
+    def test_returns_complete_result_larger_than_page_size(self, monkeypatch):
+        """FD-005 regression: a result set spanning multiple pages must be
+        returned in full, not truncated to the first page."""
+        full_df = pd.DataFrame({"id": range(7)})
+        monkeypatch.setattr(db, "_read_data", _skip_limit_fake(full_df))
+
+        result = db._read_data_paginated("preprocessing", "runoff", {}, page_size=3)
+
+        assert list(result["id"]) == list(range(7))
+
+    def test_stops_on_short_final_page_no_infinite_loop_no_dropped_rows(self, monkeypatch):
+        """7 rows / page_size 3 → pages of 3, 3, 1. The short (1-row) final
+        page must stop the loop without an extra request."""
+        full_df = pd.DataFrame({"id": range(7)})
+        seen_skips = []
+
+        def fake(service_type, data_type, params=None):
+            seen_skips.append(params["skip"])
+            return _skip_limit_fake(full_df)(service_type, data_type, params)
+
+        monkeypatch.setattr(db, "_read_data", fake)
+
+        result = db._read_data_paginated("preprocessing", "runoff", {}, page_size=3)
+
+        assert len(result) == 7
+        assert seen_skips == [0, 3, 6]
+
+    def test_stops_on_exact_page_multiple_via_empty_next_page(self, monkeypatch):
+        """6 rows / page_size 3 → two full pages, then a 3rd request that
+        comes back empty. Must stop there (no infinite loop) and keep all
+        6 rows (no dropped rows)."""
+        full_df = pd.DataFrame({"id": range(6)})
+        seen_skips = []
+
+        def fake(service_type, data_type, params=None):
+            seen_skips.append(params["skip"])
+            return _skip_limit_fake(full_df)(service_type, data_type, params)
+
+        monkeypatch.setattr(db, "_read_data", fake)
+
+        result = db._read_data_paginated("preprocessing", "runoff", {}, page_size=3)
+
+        assert len(result) == 6
+        assert seen_skips == [0, 3, 6]
+
+    def test_empty_first_page_returns_empty_dataframe_without_error(self, monkeypatch):
+        monkeypatch.setattr(db, "_read_data", lambda *a, **k: pd.DataFrame())
+
+        result = db._read_data_paginated("preprocessing", "runoff", {}, page_size=3)
+
+        assert result.empty
+
+    def test_helper_skip_and_limit_win_over_caller_supplied_values(self, monkeypatch):
+        """The helper builds each page's params as
+        `{**base_params, "skip": skip, "limit": page_size}` — its own
+        computed `skip`/`limit` must win over any caller-supplied keys of
+        the same name, not be overridden by them. Pins current (correct)
+        behavior; no production change accompanies this test."""
+        full_df = pd.DataFrame({"id": range(7)})
+        monkeypatch.setattr(db, "_read_data", _skip_limit_fake(full_df))
+
+        result = db._read_data_paginated(
+            "preprocessing", "runoff", {"skip": 99, "limit": 2}, page_size=3
+        )
+
+        assert list(result["id"]) == list(range(7))
+
+    def test_default_page_size_is_10000(self, monkeypatch):
+        """Latency follow-up to FD-005: the default page size must be large
+        enough that a typical station result set fits in one or a handful
+        of requests, not the ~10 requests a page_size of 1000 caused. This
+        pins the default the helper requests when the caller does not pass
+        `page_size`."""
+        full_df = pd.DataFrame({"id": range(5)})
+        seen_limits = []
+
+        def fake(service_type, data_type, params=None):
+            seen_limits.append(params["limit"])
+            return _skip_limit_fake(full_df)(service_type, data_type, params)
+
+        monkeypatch.setattr(db, "_read_data", fake)
+
+        result = db._read_data_paginated("preprocessing", "runoff", {})
+
+        assert seen_limits == [10000]
+        assert len(result) == 5
+
+    def test_progress_guard_stops_on_unresponsive_skip(self, monkeypatch):
+        """A server that ignores `skip` and always returns a full page must
+        not make the loop run unboundedly. The guard must terminate the
+        loop and log a WARNING, rather than de-duplicating (which would
+        mask the server defect) or looping forever.
+
+        `db.logger` is stubbed directly (rather than via `caplog`) because
+        it is configured with `propagate = False`, which `caplog`'s
+        root-logger handler never sees.
+        """
+        call_count = 0
+        warn_calls = []
+
+        def fake(service_type, data_type, params=None):
+            nonlocal call_count
+            call_count += 1
+            # Ignores params["skip"] entirely: always the same full page.
+            return pd.DataFrame({"id": [1, 2]})
+
+        def fake_warning(msg, *args, **kwargs):
+            warn_calls.append(msg % args if args else msg)
+
+        monkeypatch.setattr(db, "_read_data", fake)
+        monkeypatch.setattr(db.logger, "warning", fake_warning)
+
+        result = db._read_data_paginated("preprocessing", "runoff", {}, page_size=2)
+
+        # Must have stopped well short of an unbounded loop.
+        assert 0 < call_count <= 2000
+        assert not result.empty
+        assert warn_calls
+        assert any("skip" in w.lower() for w in warn_calls)
+
+
+def _ml_forecast_rows(n, forecast_date, target_date="2026-03-25", model_type="LR"):
+    """Build `n` rows sharing `forecast_date`, but with distinct `target`
+    dates (offset by day index from `target_date`) so each row has its own
+    identity. Without this, a `.head(1)` truncation applied after
+    `get_ml_forecast`'s latest-date filter would still leave one row whose
+    `forecast_date` matches the max — passing a count/date-max-only
+    assertion trivially even though rows were silently dropped."""
+    base = pd.Timestamp(target_date)
+    return [
+        {
+            "code": "19999",
+            "date": forecast_date,  # renamed to forecast_date by get_ml_forecast
+            "target": (base + pd.Timedelta(days=i)).strftime("%Y-%m-%d"),  # renamed to date
+            "model_type": model_type,
+            "model_type_description": f"{model_type} description",
+            "q05": 1.0,
+            "q25": 2.0,
+            "q75": 3.0,
+            "q95": 4.0,
+            "forecasted_discharge": 5.0,
+            "flag": 0,
+            "composition": "",
+        }
+        for i in range(n)
+    ]
+
+
+def _read_data_paginated_default_page_size() -> int:
+    """The *current* default `page_size` of `db._read_data_paginated`, read
+    off the function's signature by parameter NAME rather than hardcoded as
+    a literal 1000/10000, and rather than positionally (`__defaults__[-1]`
+    is "the last positional default", not "page_size" — adding any later
+    keyword parameter with its own default silently changes what that
+    position holds).
+
+    FD-005 test-rot history: this test's fixture size used to be hardcoded
+    against the default in effect when the test was written (1000). When the
+    default was later raised to 10000, a 1200-row fixture — sized to span
+    two pages under the *old* default — fit in a single page under the new
+    one, and the test kept passing even with the fix reverted. Deriving the
+    size from the live default here means a future change to it cannot
+    silently disarm this test a second time. Binding by name (via
+    `inspect.signature`) means a signature change that removes `page_size`
+    raises `KeyError` here — loud failure — instead of silently reading an
+    unrelated parameter's default.
+    """
+    return inspect.signature(db._read_data_paginated).parameters["page_size"].default
+
+
+class TestGetMlForecastPagination:
+    """FD-005: get_ml_forecast must not silently drop the true latest
+    forecast_date when the station's row count exceeds one API page.
+
+    Parameterized over an explicit small `page_size` (fast, deterministic,
+    and immune to the real default ever changing) and the real, current
+    default (introspected — see `_read_data_paginated_default_page_size` —
+    never hardcoded). Either way, the fixture is one full page of stale rows
+    plus a second page holding the true latest `forecast_date`; the test
+    must fail if `get_ml_forecast` stops paginating and instead resolves
+    `forecast_date.max()` from a single, truncated page.
+    """
+
+    @pytest.mark.parametrize(
+        "page_size_override",
+        [3, None],
+        ids=["explicit-small-page-size", "real-default-page-size"],
+    )
+    def test_forecast_date_max_reflects_true_latest_not_truncated_slice(
+        self, monkeypatch, page_size_override
+    ):
+        page_size = page_size_override or _read_data_paginated_default_page_size()
+        # One full page of stale rows, plus a second page holding the true
+        # latest forecast_date — the exact shape of the original FD-005 bug.
+        stale_rows = _ml_forecast_rows(page_size, "2025-12-01")
+        latest_rows = _ml_forecast_rows(3, "2026-03-20", target_date="2026-03-20")
+        full_df = pd.DataFrame(stale_rows + latest_rows)
+
+        monkeypatch.setattr(db, "_read_data", _skip_limit_fake(full_df))
+        if page_size_override is not None:
+            # Force `_read_data_paginated`'s own default down to the small
+            # override for the duration of this test, without touching
+            # get_ml_forecast (which never passes page_size explicitly and
+            # so always uses whatever this default is). This exercises the
+            # real pagination loop at a small, fast page size instead of
+            # requiring a fixture larger than the real (10000) default.
+            monkeypatch.setattr(
+                db._read_data_paginated, "__defaults__", (None, page_size_override)
+            )
+
+        result = db.get_ml_forecast("day", "19999")
+
+        assert not result.empty
+        assert result["forecast_date"].max() == pd.Timestamp("2026-03-20")
+        # Every surviving row must belong to the true latest forecast_date —
+        # none of the stale, truncated-page rows should leak through.
+        assert (result["forecast_date"] == pd.Timestamp("2026-03-20")).all()
+        # FD-005: assert the *complete* set of latest-date rows survives —
+        # count AND identity — not merely that some row with the right
+        # forecast_date is present. The three latest rows carry distinct
+        # target dates (see `_ml_forecast_rows`); a `.head(1)` truncation
+        # applied after the latest-date filter would still satisfy both
+        # assertions above trivially (one row, whose forecast_date is the
+        # max) while silently dropping two of the three rows.
+        expected_target_dates = {f"2026-03-{20 + i}" for i in range(3)}
+        assert set(result["date"]) == expected_target_dates
+        assert len(result) == len(expected_target_dates)
+
+
+class TestFetchersUsePagination:
+    """FD-005: the five sibling fetchers (get_forecasts_all,
+    get_forecast_stats, get_long_forecasts, get_long_forecasts_quarter,
+    get_long_forecasts_season) must route through `_read_data_paginated`,
+    not the fixed-limit `_read_data`, so none of them can silently truncate
+    a result set larger than one page."""
+
+    def _fake_paginated(self, calls):
+        def fake(service_type, data_type, params=None, page_size=1000):
+            calls.append(data_type)
+            return pd.DataFrame()
+
+        return fake
+
+    def test_get_forecasts_all_uses_paginated_reads(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(db, "_read_data_paginated", self._fake_paginated(calls))
+
+        db.get_forecasts_all("pentad", "19999")
+
+        assert "forecast" in calls
+        assert "lr-forecast" in calls
+
+    def test_get_forecasts_all_preserves_all_ml_rows_across_multiple_pages(self, monkeypatch):
+        """FD-005: `get_forecasts_all`'s ML result must retain every row of a
+        multi-page result set. This exercises the real (unmocked)
+        `_read_data_paginated` against a fake `_read_data`, with fixture
+        rows carrying distinct `date` identities, and asserts the returned
+        set of rows is complete — count AND identity — not merely
+        non-empty. A `.head(N)` truncation applied anywhere to the ML frame
+        (e.g. after the paginated read) would otherwise pass a weaker
+        non-empty/max-date check while silently dropping rows.
+        """
+        page_size = _read_data_paginated_default_page_size()
+        n = page_size + 5  # forces a second page
+        dates = pd.date_range("2026-01-01", periods=n, freq="D")
+        full_df = pd.DataFrame({"code": ["19999"] * n, "date": dates})
+
+        def fake_read_data(service_type, data_type, params=None):
+            if data_type != "forecast":
+                return pd.DataFrame()
+            params = params or {}
+            skip = params.get("skip", 0)
+            limit = params.get("limit", len(full_df))
+            page = full_df.iloc[skip : skip + limit].reset_index(drop=True).copy()
+            page["date"] = pd.to_datetime(page["date"])
+            return page
+
+        monkeypatch.setattr(db, "_read_data", fake_read_data)
+
+        result = db.get_forecasts_all("pentad", "19999")
+
+        assert len(result) == n
+        assert set(result["date"]) == set(dates)
+
+    def test_get_forecast_stats_uses_paginated_reads(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(db, "_read_data_paginated", self._fake_paginated(calls))
+
+        db.get_forecast_stats("pentad", "19999")
+
+        assert calls == ["skill-metric"]
+
+    def test_get_long_forecasts_uses_paginated_reads(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(db, "_read_data_paginated", self._fake_paginated(calls))
+
+        db.get_long_forecasts(station="19999")
+
+        assert calls == ["long-forecast"]
+
+    def test_get_long_forecasts_quarter_uses_paginated_reads(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(db, "_read_data_paginated", self._fake_paginated(calls))
+
+        db.get_long_forecasts_quarter(station="19999")
+
+        assert calls == ["long-forecast"]
+
+    def test_get_long_forecasts_season_uses_paginated_reads(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(db, "_read_data_paginated", self._fake_paginated(calls))
+
+        db.get_long_forecasts_season(station="19999")
+
+        assert calls == ["long-forecast"]
