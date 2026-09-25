@@ -34,9 +34,13 @@ Citations are to trunk `82946683`. Its postprocessing tree is identical to the #
 - **`horizon_value` = config `operational_month_lead_time`** (kghm 1, tjhm 0;
   `doc/prod/longforecast_quarter_season_hv_convention.md` RESOLUTION). Never overwrite a stored hv with a
   date-derived lead.
-- **Quarter raw models = LR_Base, LR_SM only. Quarterly Ensemble Mean = mean(LR_Base, LR_SM), not
-  skill-gated** (owner, 2026-06-23, `doc/plans/archive/two_model_ensemble_plan.md` M1 / §4;
-  `src/model_names.py:14-16`).
+- **Quarterly Ensemble Mean = mean(LR_Base, LR_SM), not skill-gated** (owner, 2026-06-23,
+  `doc/plans/archive/two_model_ensemble_plan.md` M1). **Raw quarter models:**
+  - LR_Base and LR_SM are native-only.
+  - GBT, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR and SM_GBT_NORM are re-enabled as same-issue
+    averages of their monthly forecasts (owner, 2026-09-25). That is implemented by **PP-065**, not here.
+  - Until PP-065 lands, the trunk filter (`src/model_names.py:14-16`) keeps quarter LR-only; this plan
+    does not change it.
 - **Flag OFF stays byte-identical for calendar-aligned input** (PP-056 `:164`; flag-OFF golden
   `tests/test_skill_lead_aware_golden_baseline.py:93`), except where Chunk B, with owner approval,
   changes it deliberately.
@@ -187,73 +191,78 @@ is unchanged.
 - `git diff --stat` touches only the listed files.
 - `ruff check` / `ruff format --check` are clean on the touched files.
 
-## Chunk B — derived rows, duplicate direct rows, observation policy (owner decision gate)
+## Chunk B — duplicate direct rows, observation coverage, empty skill (owner decision gate)
 
-**What trunk does (verified):**
-- The monthly-derived source (`read_quarterly_forecasts` `:3081-3086`, `read_latest_quarterly_forecasts`
-  `:3345-3361`, `aggregate_monthly_fc_to_quarterly` `aggregation.py:218-308`) averages months from
-  **different issue dates**: the grouping at `aggregation.py:252-259` has no issue date, and coverage is
-  2 of 3 (`QUARTER_MIN_MONTHS=2`, `:38`).
-  - Flag ON: it keeps monthly leads, and the source dedup key includes `horizon_value` (`:3153`). A derived
-    row at a monthly lead ≠ the quarter lead therefore survives **alongside** a native row.
-  - It can produce a later `(year, quarter)` than the native row and become "latest" in
-    `read_latest_quarterly_forecasts`. Traced from code; not measured in production.
-- Its output has been **persisted** (population (c) above) and comes back through the direct source.
-  Removing the live derivation does not remove those rows.
-- Under flag OFF, removing the derived source also removes the only direct-row dedup (Problem 3). Native
-  rows, rewrites (b), persisted derived rows (c) and hindcasts would then all pair with the same observation.
-- Observations: `aggregate_monthly_obs_to_quarterly` (`aggregation.py:97-146`) accepts 2 of 3 months, with
-  an unweighted mean. Preprocessing's quarter norms are also unweighted (`sync_long_horizon_hydrograph.py:638`).
+**Sequencing.** The monthly-derived source is rebuilt by **PP-065**: same issue only, the seven re-enabled
+models only, LR native-only, and legacy direct rows of the seven models ignored. That removes trunk's
+mixed-issue derived rows and the "latest quarter" hijack. Chunk B covers what PP-065 does not. It runs
+**after** PP-065, because both edit the two quarter readers.
+
+**What remains (verified on trunk):**
+- **Duplicate direct LR rows.** Under flag OFF, the only dedup of direct rows is the `keep="last"` over
+  the **whole concatenated frame** at `:3142-3157` (and `:3422-3432`). It runs whenever both sources are
+  non-empty, so any derived row of an unrelated model triggers it. The result is:
+  - with no derived rows, direct duplicates survive;
+  - with any derived rows, duplicates are collapsed arbitrarily, in API order.
+  - Native rows (a), rewrites (b) and persisted old derived LR rows (c, e.g. dated Dec 1) would all pair
+    with the same observation.
+  - Under flag ON, `select_operational_issuances` drops (b) and (c) for kghm, where the issue day (25) or
+    lead does not match. It cannot drop them for tjhm: day 1, lead 0 means `date == valid_from` matches
+    the schedule.
+- **Observations.** `aggregate_monthly_obs_to_quarterly` (`aggregation.py:97-146`) accepts 2 of 3 months,
+  with an unweighted mean. Preprocessing's quarter norms are also unweighted (`sync_long_horizon_hydrograph.py:638`).
+  PP-065's derived forecasts use the **same** weighting rule as the observations.
 
 **Decisions needed (overview D3):**
-- **B5. Empty skill.** Should a fixed-LR quarterly EM be produced when no quarter skill rows exist at all
-  (Problem 8)? If yes:
-  - change `postprocessing_operational_long_term.py:207-212` and `ensemble_calculator.py:632` for the quarter
-    EM only;
-  - update `test_quarterly_ensemble_creation.py:329` to require the fixed-LR EM (the season empty-skill
-    test stays unchanged);
-  - add an operational-orchestration test under both flags.
-- **B1. Derived source.**
-  - Recommended: remove it from both quarter readers.
-  - Alternative: keep it, restricted to the configured **quarter** lead, same-issuance, 3 distinct months,
-    and only where no direct row exists.
-- **B2. Direct-row dedup (required whichever B1 is chosen).** A deterministic dedup of direct quarter rows
-  per `(code, year, quarter, model)` in both readers, under flag OFF.
+- **B2. Direct-row dedup (required).** A deterministic dedup of direct quarter rows per
+  `(code, year, quarter, model)` in both readers, under both flags.
   - Recommended rule: prefer the row whose derived lead (`valid_from` month − `date` month, in months)
     and issue day match the configured quarter schedule (population (a)).
   - Otherwise prefer the earliest `date` that is not equal to `valid_from`.
   - Otherwise the earliest row.
   - This brings PP-049's quarter part into scope.
-- **B3. Persisted derived rows (c) and rewrites (b).** Either accept them (B2 makes them lose to native
-  rows where native exists), or remove them in a reviewed DB step (overview decision on stale rows).
+- **B3. Persisted LR rewrites (b) and old derived LR rows (c).** Either accept them (B2 makes them lose to
+  native rows where native exists), or remove them in a reviewed DB step (D8).
   - For tjhm (day 1, lead 0), rewrites share the native key (PP-061), so they are the same rows.
-- **B4. Observation coverage.** Recommended: require 3 of 3 months and keep the unweighted mean
-  (consistent with preprocessing).
-  - Day-weighting is a separate owner option. If chosen, it must also change preprocessing's quarter norms
-    and be regenerated, so it is out of this chunk.
+- **B4. Observation coverage and weighting.** Recommended: require 3 of 3 months and keep the unweighted
+  mean (consistent with preprocessing norms).
+  - Day-weighting is an owner option. If chosen, it applies to observations, PP-065's derived forecasts
+    and preprocessing's quarter norms together (regenerated).
+- **B5. Empty skill.** Should a fixed-LR quarterly EM be produced when no quarter skill rows exist at all
+  (Problem 8)? If yes:
+  - change `postprocessing_operational_long_term.py:207-212` and `ensemble_calculator.py:632` for the
+    quarter EM only;
+  - update `test_quarterly_ensemble_creation.py:329` to require the fixed-LR EM (the season empty-skill
+    test stays unchanged);
+  - add an operational-orchestration test under both flags.
 
 **Files (after the decisions)**:
-- `src/data_reader.py`: the two quarter readers' derived blocks and the direct-row dedup
+- `src/data_reader.py`: the direct-row dedup in the two quarter readers
 - `src/aggregation.py`: observation coverage
+- `postprocessing_operational_long_term.py`, `src/ensemble_calculator.py`: B5 only
 - tests
 - `doc/data_flow_long_term.md`: the 2-of-3 statement at `:259-262`
 
 **Tests that legitimately change** (each edit states its reason in the PR):
-- `test_aggregation.py:41,168,439,521`
-- `test_quarterly_data_reader.py:134,407,443,654,985,1015`
-- `test_quarterly_workflow_integration.py`
+- the observation-coverage tests in `test_aggregation.py` (e.g. `:41` `QUARTER_MIN_MONTHS == 2`, `:168`,
+  if they concern observations)
+- `test_quarterly_ensemble_creation.py:329` (B5 only)
+
+PP-065 owns the derived-forecast test changes.
 
 **New tests:**
-- Native row + rewrite + persisted derived Dec-1 row for the same Q1 → one row, the native one, under both flags.
-- Native row + monthly-derived row at a different monthly lead under flag ON → only the native row reaches skill.
-- A quarter with no direct row → no LR quarter row (if B1 = remove).
+- Native row + rewrite + persisted old derived Dec-1 row for the same LR Q1 → one row, the native one:
+  - under both flags and both org shapes (kghm day 25 / lead 1, tjhm day 1 / lead 0);
+  - with and without an unrelated derived-model row present;
+  - with shuffled direct-row order.
+- Observations with 2 of 3 months → no quarterly observation (if B4 = 3 of 3).
 
 M1 EM tests must stay unchanged.
 
 ## Chunk C — rollout and verification (ops; mostly no code)
 
 **Order** (as in the overview graph):
-- Chunk A deployed.
+- Chunk A and PP-065 deployed.
 - Then **either** B deployed, **or** the owner approves deferring B, in which case a repeat recalc after B
   deploys is mandatory.
 - Then recalc.
@@ -287,7 +296,7 @@ M1 EM tests must stay unchanged.
 
 ## Out of scope
 
-- Re-enabling non-LR models for quarter; a skill-gated quarterly EM.
+- Re-enabling the seven models for quarter (PP-065); a skill-gated quarterly EM (#521's proposal).
 - Dashboard (FD-029/FD-030). Schedule and target construction (LTF-014).
 - Deleting DB rows (the stale-rows decision).
 - Skill/ensemble-level duplicate window guards. Their inputs come only from the guarded readers or from
