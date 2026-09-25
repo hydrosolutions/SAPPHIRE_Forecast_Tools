@@ -33,21 +33,36 @@ replaces the code approach of its branch `sandro_sapphire_2_quaterly_agg` (see �
 
 | ID | File | Scope | Priority / deadline |
 |---|---|---|---|
-| LTF-014 | `issues/high_prio_gi_draft_ltf_quarter_calendar_schedule.md` | P0 data-repo schedule (ops); P1 lock tests; P2 hindcasts for the new issue months | High. **tjhm P0 by 2026-10-01 06:00**, kghm P0 by 2026-12-25 |
+| LTF-014 | `issues/high_prio_gi_draft_ltf_quarter_calendar_schedule.md` | P0 data-repo schedule (ops); P1 lock tests; P2 hindcasts for the new issue months | High. P0 is gated on the modeller (Sandro: why `[3..9]`, winter validity), the server state and owner approval. Soft targets: tjhm 2026-10-01 (recoverable until 2026-11-30), kghm 2026-12-25 |
 | PP-064 | `issues/high_prio_gi_draft_pp_quarter_calendar_window_validation.md` | A: calendar-window validation, December Q1 through the operational reader (direct rows). B: direct-row dedup, observation coverage, empty-skill EM (decisions). C: recalc rollout | High. **A deployed by 2026-12-25** |
-| PP-065 | `issues/high_prio_gi_draft_pp_quarter_derived_models.md` | Re-enable seven models for quarter as same-issue, unweighted monthly averages (null quantiles), incl. the operational December Q1 monthly read. LR native-only. Legacy direct rows of those models ignored on every input read. Quarter-only ensemble quantile rule in both ensemble paths | High. After PP-064 A; needs D10 |
+| PP-065 | `issues/high_prio_gi_draft_pp_quarter_derived_models.md` | Re-enable seven models for quarter as same-issue, unweighted monthly averages (null quantiles), incl. the operational December Q1 monthly read. LR native-only. Legacy direct rows of those models ignored on every input read. Quarter-only ensemble quantile rule in both ensemble paths | High. After PP-064 A |
 | FD-029 | `issues/mid_prio_gi_draft_fd_quarter_card_calendar_window.md` | Year-safe fetch, per-target-quarter dedup, renderer, caption | Medium. **Deployed by 2026-12-25** |
 | DOC-009 | `issues/mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md` | P1: contract amendments and cleanup warnings. P2: readmes | Medium. P1 merges before or with PP-064 A |
 | FD-030 | `issues/mid_prio_gi_draft_fd_quarter_bulletin_norms_and_model.md` | Quarter norms/last-year value, model and period selection in the bulletin | Medium. Blocked on D6 |
 | LTF-015 | `issues/low_prio_gi_draft_ltf_day1_lead0_early_run_window.md` | Early manual run of a day-1/lead-0 mode gets the previous month's window label | Low. Deferred (D7) |
 
-## Deadlines
+## Target dates
 
-- **2026-10-01 06:00, tjhm Q4.** The current config skips it (the nearest scheduled date is Sep 1).
-  LTF-014 P0 on the tjhm server is the only thing needed. P0 is safe alone: it removes rolling issues and
-  adds calendar ones, and a missed run can be recovered with `lt_recovery` until 2026-11-30.
+- **tjhm Q4, issue 2026-10-01.** The current config skips it. After LTF-014 P0 it can be recovered with
+  `lt_recovery` until 2026-11-30, so it does not justify bypassing P0's gate:
+  - the modeller confirms why `[3..9]` and whether winter issues are valid;
+  - the server config is read;
+  - the owner approves.
 - **2026-12-25, kghm Q1.** Needs LTF-014 P0 on kghm, PP-064 A (flag-ON trim), FD-029 (fetch window), and
-  therefore DOC-009 P1.
+  therefore DOC-009 P1. PP-065 should land by then too, so that the seven models' Q1 appears.
+
+## Why quarter diverged (history, researched 2026-09-25)
+
+- **The calendar intent was documented** in the 2026-02-06 postprocessing plan (Dec 25→Q1 … Sep 25→Q4,
+  averaged from all 9 monthly models) and implemented in `aggregation.py` on 2026-03-04.
+- **The long-term module built a rolling "next 3 months" quarter mode.** `forecast_months [3..9]` was set in
+  the data-repo configs around 2026-02-21, with no recorded reason.
+- **PR #295 (2026-03-27) merged the two** by relabelling rolling rows with the quarter of their first month.
+  That is the #521 bug.
+- **A 2026-06-21 investigation took the hindcast CSVs as the product specification** ("7 rolling windows,
+  not calendar"). The 2026-06-22 service-owner answer spoke only to `horizon_value`, but was later cited as
+  settling the product.
+- **PP-065 restores the original design**, calendar quarters from monthly models, in a same-issue form.
 
 ## Decisions needed
 
@@ -61,8 +76,8 @@ replaces the code approach of its branch `sandro_sapphire_2_quaterly_agg` (see �
 | D6 | Bulletin quarterly section: eligible quarter and issuance cutoff, published model and fallback, reopen semantics, in-progress quarter display, shared vs per-reservoir period, norm reference year for a December-issued Q1 | Owner | FD-030; DOC-009 #10 wording |
 | D7 | Early-run fix: relabel from the scheduled date (recommended) or refuse | Owner | LTF-015 |
 | D8 | Delete stale rows from `long_forecasts` (one-way SQL; no API path; colleague-owned service) | Owner + service owner | Nothing hard. Rolling-window rows are inert after PP-064 A and FD-029. **Calendar-shaped** rewrites and persisted derived rows are **not** inert: a window filter cannot tell them apart. They are handled by the PP-064 B2 dedup and the FD-029 selection rule until D8 deletes them (MIG-008 / PP-041) |
-| D9 | ~~Re-enable the seven models for quarter~~ **Decided 2026-09-25: yes**, as same-issue monthly averages → PP-065. #521's skill-gated quarterly EM stays out of scope unless D10 reopens it | Owner | — |
-| D10 | Quarterly ensembles with nine raw models: EM stays mean(LR_Base, LR_SM) (M1, recommended) or changes. Naive/Skilled Mean pools grow to all nine (existing semantics). **Ensemble quantiles null when any member lacks quantiles** (recommended; derived quarters have none) | Owner | PP-065 |
+| D9 | **Decided 2026-09-25: yes.** Re-enable the seven models for quarter as same-issue monthly averages → PP-065 | Owner | — |
+| D10 | **Decided 2026-09-25.** Quarterly EM includes the seven models. With more than 2 candidate models it is skill-gated with the **long-term gate** (NSE > 0, `_long_term_threshold_overrides`); with 2 or fewer it stays mean(LR_Base, LR_SM) (M1). Ensemble quantiles are null when any contributing member lacks quantiles. **Open assumption:** fewer than 2 qualifying → fall back to mean(LR_Base, LR_SM) | Owner | — (confirm the fallback in the PP-065 PR) |
 
 ## Relationship to #521
 
@@ -72,7 +87,7 @@ replaces the code approach of its branch `sandro_sapphire_2_quaterly_agg` (see �
     with LR native-only (PP-065). This differs from the branch: the configured quarter lead and issue day
     only, and no date-derived lead.
 - **Not kept**:
-  - the EM skill gate (D10);
+  - short-term-threshold EM gating (D10 uses the long-term NSE > 0 gate instead);
   - overwriting stored `horizon_value` with a date-derived lead;
   - flag-OFF behaviour and write-key changes;
   - its dashboard edits.
@@ -103,15 +118,15 @@ Stages: **merge** = code/doc PR merged; **deploy** = on the servers; **ops** = m
 ```json
 {
   "phases": {
-    "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": [], "deadline": "2026-10-01" },
-    "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": [], "deadline": "2026-12-25" },
+    "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["P0-gate: modeller + server state + owner"], "target": "2026-10-01, recoverable until 2026-11-30" },
+    "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": ["P0-gate: modeller + server state + owner"], "target": "2026-12-25" },
     "LTF-014.P1":      { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "LTF-014.P2":      { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm", "LTF-014.P0.kghm", "D2"] },
     "DOC-009.P1":      { "stage": "merge",  "depends_on": ["D4"], "parallel_agents": 1 },
     "DOC-009.P2":      { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A":        { "stage": "merge",  "depends_on": ["DOC-009.P1"], "parallel_agents": 1 },
     "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A"], "deadline": "2026-12-25" },
-    "PP-065":          { "stage": "merge",  "depends_on": ["PP-064.A", "D10"], "parallel_agents": 1 },
+    "PP-065":          { "stage": "merge",  "depends_on": ["PP-064.A"], "parallel_agents": 1 },
     "PP-065.deploy":   { "stage": "deploy", "depends_on": ["PP-065"] },
     "PP-064.B":        { "stage": "merge",  "depends_on": ["PP-065", "D3", "LTF-014.P0.tjhm"], "parallel_agents": 1, "note": "after PP-065: both edit the two quarter readers" },
     "PP-064.B.deploy": { "stage": "deploy", "depends_on": ["PP-064.B"] },
