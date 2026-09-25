@@ -27,9 +27,15 @@ appear on an exit-4 run. The short-horizon writer counts the same stations as
 `pentad_sdk_failed`/`decade_sdk_failed` and can still exit 0 (`sync_short_horizon_hydrograph.py:1189`).
 
 Rows are written without a norm only when NO previously stored norm can be preserved by the
-read-merge (PREPQ-015/020) — a station with a stored norm from an earlier run keeps it across a
-norm-absent/SDK-failed rerun, so "normless" and "percent-of-norm blank" describe a never-normed or
-first-run station specifically, not every SDK lookup failure. This lookup-level degradation (the norm
+read-merge (PREPQ-015/020) — this is per-PERIOD (month/pentad/decade), not per-station: the
+read-merge (`_read_existing_month_norms` / `_read_existing_period_norms`) preserves whatever was
+PREVIOUSLY stored for EACH period independently, keyed by that period. So "normless"/"percent-of-norm
+blank" describe a never-normed or first-run PERIOD specifically, and a partially-normed station is
+possible: one classification outcome (e.g. a single SDK_FAILED for the whole 12/72/36-length lookup)
+still triggers the SAME read-merge for every period of that station, but the read-merge itself
+returns whatever HISTORY it finds period-by-period — some periods can come back with a preserved
+norm while others (never stored) stay blank in that SAME run, even though the SDK outcome that
+triggered the read-merge was identical for all of them. This lookup-level degradation (the norm
 call itself raising or returning an unusable shape) is also distinct from a short-horizon WRITE
 failure such as `_ShortHorizonDailyReadError` (raised when a station has no usable daily runoff at
 all across the climatology window): that drops the horizon's write entirely, rather than writing a
@@ -214,10 +220,11 @@ listed would risk letting an undetected collision through.
   does its own virtual-station discovery regardless of the station-list cache. The real cached
   station-list handoff (`preprocessing_runoff.py:344`) was verified live in P3's operational run, not
   by a unit test.
-  (iii) Test results: `preprocessing_runoff` 557 passed / 2 skipped — the 2 skips are the pre-existing
-  unconditional placeholders tracked as **PREPQ-017** (`test_src.py`), an accepted pre-existing
-  exception to the zero-skip gate, not introduced by this change. Full `run_tests.sh` on the final
-  code: all 16 suites passed, 0 failures.
+  (iii) Test results: `preprocessing_runoff` 557 passed / 2 skipped — the 2 skipped = the pre-existing
+  unconditional placeholders tracked as **PREPQ-017** (`test_src.py`); they do not qualify for
+  CLAUDE.md's dependency-gated exception and remain an unresolved pre-existing zero-skip violation,
+  not introduced by this change. Full `run_tests.sh` on the final code: all 16 suites passed, 0
+  failures.
 
 ### P3 — Live kyg verification (depends on P2)
 Tunnel up, `.env_bea_kghm`, venv synced and SDK signature checked. No fresh baseline run (owner D2).

@@ -256,8 +256,10 @@ Operators should switch to
 hydrograph aggregation runs.
 
 **Virtual-station norms (PREPQ-022).** The default `get_norm_for_site` call
-still raises for virtual stations (the SDK resolves the site UUID from the
-hydrological registry only). Both writers (`write_long_horizon_hydrograph` /
+still raises for virtual-only codes that have no usable UUID in the regular
+hydrological registry (the SDK resolves the site UUID from that registry
+only; a code present in BOTH registries resolves via its regular UUID and
+never raises this way). Both writers (`write_long_horizon_hydrograph` /
 `write_short_horizon_hydrograph`) call `get_virtual_station_codes` once per
 invocation, before their station loop, to resolve the SDK's virtual-station
 set: it lists `get_virtual_sites()` **and** `get_discharge_sites()` (the

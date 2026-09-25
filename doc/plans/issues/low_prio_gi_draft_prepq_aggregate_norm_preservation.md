@@ -51,10 +51,12 @@ the repo writes a `season`/`quarter` hydrograph row independently of this same-r
 production occurrence of this gap has been verified.
 
 However, the state is not merely hypothetical: the preprocessing service's `POST /hydrograph/`
-endpoint (`sapphire/services/preprocessing/app/main.py:101-105`, read only) accepts a
-`HydrographCreate` (`schemas.py:41-64`) with any `HorizonType` including `QUARTER`/`SEASON`
-(`models.py:6-13`) and a `norm` field, with NO validation linking a `quarter`/`season` row to its
-constituent `month` rows anywhere in the request/response schema. `crud.create_hydrograph`
+endpoint (`sapphire/services/preprocessing/app/main.py:101-105`, read only) takes a
+`HydrographBulkCreate` — `{"data": [HydrographCreate, ...]}` (`schemas.py:73-74`, wrapping
+`HydrographCreate` at `:63` / `HydrographBase` at `:41-60`) — where each `HydrographCreate` carries
+any `HorizonType` including `QUARTER`/`SEASON` (`models.py:6-13`) and a `norm` field, with NO
+validation linking a `quarter`/`season` row to its constituent `month` rows anywhere in the
+request/response schema. `crud.create_hydrograph`
 (`crud.py:88`, field-by-field `setattr` upsert at `:110`) applies whatever fields are supplied,
 independently of any other row. So an aggregate norm CAN be seeded today — by an operator's manual
 `POST`, a migration/backfill tool, or a partial historical write — without this writer having
@@ -85,9 +87,14 @@ Either direction is acceptable; the owner should decide based on whether a non-d
 - If direction 1 is chosen, this fixture must pass: a station with an EXISTING stored `season` norm
   and an EXISTING stored Q2 (`quarter=2`, April–June) norm — pre-seeded via `POST /hydrograph/` (an
   operator/migration write, not this writer's own prior run) or via a partial historical write — and
-  11 of its 12 month norms stored, with APRIL specifically the one missing; this run's SDK lookup
-  returns absent for April. Expected: the stored `season` norm is preserved (April is one of its 6
-  constituent months and is still missing after the monthly read-merge) AND the stored Q2 norm is
+  11 of its 12 MONTH norms already stored (in the same sense: available for
+  `_read_existing_month_norms` to read back), with APRIL specifically the one never stored. This
+  run's SDK monthly lookup returns an absent/unusable result for the WHOLE year (e.g. `[]`, not a
+  per-month response — `get_norm_for_site(..., norm_period="m")` returns all 12 months in one call),
+  which classifies NORM_ABSENT/SDK_FAILED and triggers the read-merge for all 12 months; the
+  read-merge then reproduces 11 populated months from storage and leaves April `None` (never stored,
+  so nothing to preserve there). Expected: the stored `season` norm is preserved (April is one of its
+  6 constituent months and is still missing after the monthly read-merge) AND the stored Q2 norm is
   preserved (April is also one of Q2's 3 constituent months) — while Q1/Q3/Q4 continue to derive
   normally (none of their constituent months are affected by April's absence). Also: a never-normed
   station's `season`/`quarter` stays `None` as today; a failed preservation read does not write nulls
@@ -103,10 +110,19 @@ Either direction is acceptable; the owner should decide based on whether a non-d
   `None` in the OUTGOING RECORD with a previously stored value, exactly as the MONTH read-merge
   replaces a norm-absent month's `None` today. The derivation functions themselves are never
   modified to stop being all-or-nothing.
-- No change to the byte-for-byte output of the CURRENT test suite: every `season`/`quarter` row built
-  by today's tests is a same-run derivation with no pre-existing stored aggregate to fall back to, so
-  direction 1's preservation step is a no-op for all of them (there is nothing to fall back to) and
-  the existing derived-`None` behaviour for those cases is unchanged.
+- No change to the byte-for-byte output of the CURRENT test suite. Two existing tests DO rerun the
+  writer against one `FakeHydrographClient` that already holds `season`/`quarter` rows from an
+  earlier iteration —
+  `test_valid_then_norm_absent_preserves_norms_but_updates_local_values_then_sdk_failed`
+  (`test_sync_long_horizon_hydrograph.py:1181-1234`) and
+  `test_mixed_batch_carries_station_statuses` (`:1246`) — so "no pre-existing stored aggregate"
+  would be the wrong reason this issue leaves them unaffected. The real reason: in both, every rerun
+  keeps its 12 MONTH norms complete via the existing monthly read-merge (a never-normed month never
+  occurs), so `_seasonal_field_mean`/`_quarterly_field_mean` always derive a real value and direction
+  1's preservation step is a no-op for them — not because nothing is stored, but because derivation
+  never needs the fallback. A regression test for THIS issue must differ from both by leaving a
+  CONSTITUENT month missing from storage (never populated, not merely read-merge-preserved) so
+  derivation actually returns `None` and the preservation step is exercised.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff` — zero failures, zero
   unexpected skips.
 
