@@ -124,19 +124,31 @@ def test_compute_backfill_records_virtual_station_norms_present_in_all_horizons(
     )
 
     horizon_types = {record["horizon_type"] for record in records}
-    assert horizon_types <= {"pentad", "decade", "month", "quarter", "season"}
-    assert len(records) > 0
+    # Exact set, not a subset check -- a subset check would also pass on an
+    # EMPTY set of records (e.g. if every horizon silently failed), which is
+    # exactly the kind of false-positive this test must not produce.
+    assert horizon_types == {"pentad", "decade", "month", "quarter", "season"}
+
+    counts = {
+        horizon_type: len([r for r in records if r["horizon_type"] == horizon_type])
+        for horizon_type in ("pentad", "decade", "month", "quarter", "season")
+    }
+    assert counts == {"pentad": 72, "decade": 36, "month": 12, "quarter": 4, "season": 1}
 
     pentad_norms = {r["norm"] for r in records if r["horizon_type"] == "pentad"}
     decade_norms = {r["norm"] for r in records if r["horizon_type"] == "decade"}
     month_norms = {r["norm"] for r in records if r["horizon_type"] == "month"}
+    quarter_norms = {r["norm"] for r in records if r["horizon_type"] == "quarter"}
+    season_norms = {r["norm"] for r in records if r["horizon_type"] == "season"}
     assert pentad_norms == {2.0}
     assert decade_norms == {2.0}
     assert month_norms == {2.0}
-    # quarter/season derive their norm as a mean of the monthly norms, so the
-    # constant 2.0 monthly norm rolls up unchanged (no other value possible).
-    assert {r["norm"] for r in records if r["horizon_type"] == "quarter"} <= {2.0}
-    assert {r["norm"] for r in records if r["horizon_type"] == "season"} <= {2.0}
+    # quarter/season derive their norm as a mean of the monthly norms; since
+    # every monthly norm is the constant virtual-station value (2.0), every
+    # rollup is EXACTLY 2.0 too -- an explicit expected value, not a subset
+    # check that would also pass on an empty (i.e. missing) set of records.
+    assert quarter_norms == {2.0}
+    assert season_norms == {2.0}
 
     # Called once per writer (short-horizon, long-horizon) per year -- not
     # once per station, and not zero (i.e. not skipped).

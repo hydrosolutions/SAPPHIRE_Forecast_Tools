@@ -44,6 +44,21 @@ def _sdk_500(code=TEST_CODE):
     return ValueError(f"Could not retrieve discharge norm for site {code}, got status code 500")
 
 
+def _sdk_no_path_error():
+    """The REAL default-call failure for a virtual station: the SDK's own
+    site-UUID lookup fails (no HTTP call to the norm endpoint is ever made,
+    so no status code is embedded). ``_extract_sdk_status_code`` returns
+    ``None`` for this message, so the pre-existing (non-retry) exception
+    grading in ``_lookup_monthly_norms`` classifies it SDK_FAILED -- unlike a
+    404-shaped default failure, which that SAME pre-existing grading already
+    classifies NORM_ABSENT on its own. Tests that need to prove the virtual
+    retry actually ran (not just that the pre-existing default-exception
+    grading coincidentally produced the same answer) MUST use this fixture
+    for the default call, never ``_sdk_404()``.
+    """
+    return ValueError("No path provided or the provided path is None")
+
+
 class VirtualAwareFakeSDK:
     """Fake iEH HF SDK with SEPARATE payload queues for the default
     (``virtual=False``) call and the virtual retry (``virtual=True``), so a
@@ -229,9 +244,17 @@ def test_virtual_code_default_raises_retry_succeeds_norm_written():
 #    stays normless, a failed preservation read writes no nulls).
 # ---------------------------------------------------------------------------
 def test_virtual_code_empty_list_norm_absent_preserves_existing_stored_norm():
+    # The default call must raise the REAL virtual-station failure ("No
+    # path..."), not a 404-shaped ValueError: the pre-existing (non-retry)
+    # exception grading in _lookup_monthly_norms already classifies a
+    # 404-shaped default failure NORM_ABSENT on its own, which would make
+    # this test pass even with the virtual retry deleted entirely. "No
+    # path..." has no parseable status code, so the pre-existing grading
+    # gives SDK_FAILED without the retry -- only the retry (returning `[]`)
+    # can produce NORM_ABSENT here.
     existing = _existing_month_norms(TEST_CODE, {month: float(month) for month in range(1, 13)})
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_404()],
+        default_payloads=[_sdk_no_path_error()],
         virtual_payloads=[[]],
         virtual_sites=[{"site_code": TEST_CODE}],
     )
@@ -248,11 +271,25 @@ def test_virtual_code_empty_list_norm_absent_preserves_existing_stored_norm():
     monthly_norms = [record["norm"] for record in _records_by_horizon(records, "month")]
     assert monthly_norms == [float(month) for month in range(1, 13)]
     assert _status_for(records, TEST_CODE) is sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT
+    # The retry itself must have fired exactly once.
+    assert len(sdk.virtual_calls) == 1
+    # Check the fake STORE directly (what was actually captured/written by
+    # write_hydrograph), not only the records object write_long_horizon_
+    # hydrograph happens to return.
+    stored_month_norms = [
+        r["norm"] for r in client.written_records() if r["horizon_type"] == "month"
+    ]
+    assert sorted(stored_month_norms, key=lambda v: v) == sorted(
+        float(month) for month in range(1, 13)
+    )
 
 
 def test_virtual_code_empty_list_never_normed_station_stays_normless():
+    # See test_virtual_code_empty_list_norm_absent_preserves_existing_stored_norm
+    # above for why the default call must be "No path...", not a 404-shaped
+    # ValueError.
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_404()],
+        default_payloads=[_sdk_no_path_error()],
         virtual_payloads=[[]],
         virtual_sites=[{"site_code": TEST_CODE}],
     )
@@ -268,6 +305,16 @@ def test_virtual_code_empty_list_never_normed_station_stays_normless():
 
     monthly_norms = [record["norm"] for record in _records_by_horizon(records, "month")]
     assert monthly_norms == [None] * 12
+    # A never-normed station's records staying all-None holds regardless of
+    # which path produced them (NORM_ABSENT or SDK_FAILED both read-merge
+    # from an empty store), so the classification and virtual-call-count
+    # checks below are what actually pin this to the retry having run.
+    assert _status_for(records, TEST_CODE) is sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT
+    assert len(sdk.virtual_calls) == 1
+    stored_month_norms = [
+        r["norm"] for r in client.written_records() if r["horizon_type"] == "month"
+    ]
+    assert stored_month_norms == [None] * 12
 
 
 def test_virtual_code_empty_list_failed_preservation_read_writes_no_nulls():
@@ -275,8 +322,15 @@ def test_virtual_code_empty_list_failed_preservation_read_writes_no_nulls():
     # caught inside write_station_monthly_hydrograph; it propagates to
     # write_long_horizon_hydrograph's API_FAILED boundary, so nothing is
     # written for this station at all -- never an all-None batch.
+    #
+    # NOTE: this outcome (API_FAILED, zero records, zero writes) is IDENTICAL
+    # whether the read-merge was reached via NORM_ABSENT or via SDK_FAILED --
+    # write_station_monthly_hydrograph read-merges for both classifications.
+    # So even with the "No path..." default failure, the outcome alone does
+    # not prove the retry ran; only the explicit virtual-call-count assertion
+    # below does (0 under a deleted retry branch, 1 here).
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_404()],
+        default_payloads=[_sdk_no_path_error()],
         virtual_payloads=[[]],
         virtual_sites=[{"site_code": TEST_CODE}],
     )
@@ -296,6 +350,7 @@ def test_virtual_code_empty_list_failed_preservation_read_writes_no_nulls():
     assert list(_records_by_horizon(records, "month")) == []
     assert _status_for(records, TEST_CODE) is sync_lhh.LongHorizonStationWriteStatus.API_FAILED
     assert client.write_calls == []
+    assert len(sdk.virtual_calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -349,16 +404,68 @@ def test_get_virtual_sites_raises_regular_station_unaffected():
 # 5. Virtual retry raises -> SDK_FAILED; 404-shaped ValueError -> NORM_ABSENT.
 # ---------------------------------------------------------------------------
 def test_virtual_retry_404_shaped_valueerror_classifies_norm_absent():
+    # The default call raises the REAL virtual-station failure ("No
+    # path..."); ONLY the retry's payload is 404-shaped. Under the
+    # pre-existing (non-retry) grading, "No path..." classifies SDK_FAILED,
+    # so this test can only pass if the retry actually ran and its OWN
+    # exception (not the default's) was graded.
+    retry_exc = _sdk_404()
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_404()],
-        virtual_payloads=[_sdk_404()],
+        default_payloads=[_sdk_no_path_error()],
+        virtual_payloads=[retry_exc],
         virtual_sites=[{"site_code": TEST_CODE}],
     )
 
     result = sync_lhh._lookup_monthly_norms(TEST_CODE, sdk, virtual_codes=frozenset({TEST_CODE}))
 
     assert result.classification is sync_lhh._NormClassification.NORM_ABSENT
-    assert isinstance(result.exception, ValueError)
+    # Identity, not merely type: the graded exception must be the RETRY's
+    # own exception object, never the default call's (discarded) exception.
+    assert result.exception is retry_exc
+    assert len(sdk.virtual_calls) == 1
+
+
+def test_virtual_retry_404_vs_empty_list_norm_absent_via_404_flag():
+    """norm_absent_via_404 (LongHorizonStationWriteResult) distinguishes a
+    NORM_ABSENT reached via a graded 404 exception (retry raises) from one
+    reached via a 200-with-`[]` response (retry succeeds, empty payload) --
+    both classify NORM_ABSENT, but only the former is "via 404".
+    """
+    sdk_404 = VirtualAwareFakeSDK(
+        default_payloads=[_sdk_no_path_error()],
+        virtual_payloads=[_sdk_404()],
+        virtual_sites=[{"site_code": TEST_CODE}],
+    )
+    client_404 = FakeHydrographClient(runoff_by_year={2025: [], 2026: []})
+    result_404 = sync_lhh.write_station_monthly_hydrograph(
+        code=TEST_CODE,
+        iehhf_sdk=sdk_404,
+        client=client_404,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+        virtual_codes=frozenset({TEST_CODE}),
+    )
+    assert result_404.status is sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT
+    assert result_404.norm_absent_via_404 is True
+    assert len(sdk_404.virtual_calls) == 1
+
+    sdk_empty = VirtualAwareFakeSDK(
+        default_payloads=[_sdk_no_path_error()],
+        virtual_payloads=[[]],
+        virtual_sites=[{"site_code": TEST_CODE}],
+    )
+    client_empty = FakeHydrographClient(runoff_by_year={2025: [], 2026: []})
+    result_empty = sync_lhh.write_station_monthly_hydrograph(
+        code=TEST_CODE,
+        iehhf_sdk=sdk_empty,
+        client=client_empty,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+        virtual_codes=frozenset({TEST_CODE}),
+    )
+    assert result_empty.status is sync_lhh.LongHorizonStationWriteStatus.NORM_ABSENT
+    assert result_empty.norm_absent_via_404 is False
+    assert len(sdk_empty.virtual_calls) == 1
 
 
 def test_virtual_retry_non_404_status_code_classifies_sdk_failed():

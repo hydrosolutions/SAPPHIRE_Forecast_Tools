@@ -58,6 +58,18 @@ def _sdk_generic_failure(code=CODE):
     return ValueError(f"Could not retrieve discharge norm for site {code}, got status code 500")
 
 
+def _sdk_no_path_error():
+    """The REAL default-call failure for a virtual station: the SDK's own
+    site-UUID lookup fails, before any HTTP call to the norm endpoint is
+    made. Short-horizon grades EVERY raised exception SDK_FAILED regardless
+    of message shape, so unlike long-horizon this fixture doesn't change
+    _lookup_short_horizon_norms' own classification -- but using the message
+    a real virtual station actually produces keeps these tests honest about
+    what they're proving.
+    """
+    return ValueError("No path provided or the provided path is None")
+
+
 class VirtualAwareFakeSDK:
     """Fake iEH HF SDK with SEPARATE payload queues for the default
     (``virtual=False``) call and the virtual retry (``virtual=True``); see
@@ -265,8 +277,13 @@ def test_virtual_code_empty_list_norm_absent_preserves_stored_period_1_norm():
 
 
 def test_virtual_code_empty_list_never_normed_period_stays_normless():
+    # The default call must raise the REAL virtual-station failure ("No
+    # path..."), and the status/virtual-call assertions below (not just the
+    # None-norm check, which holds regardless of which path produced it,
+    # since both SDK_FAILED and NORM_ABSENT read-merge identically from an
+    # empty store) are what actually prove the retry ran.
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_generic_failure()],
+        default_payloads=[_sdk_no_path_error()],
         virtual_payloads=[[]],
         virtual_sites=[{"site_code": CODE}],
     )
@@ -276,14 +293,23 @@ def test_virtual_code_empty_list_never_normed_period_stays_normless():
 
     period_1 = next(r for r in records if r["horizon_in_year"] == 1)
     assert period_1["norm"] is None
+    assert records.status is shh._ShortHorizonWriteStatus.NORM_ABSENT
+    assert len(sdk.virtual_calls) == 1
 
 
 def test_virtual_code_empty_list_failed_preservation_read_writes_no_nulls():
     # _read_existing_period_norms wraps any client.read_hydrograph failure in
     # _ShortHorizonNormReadError; write_short_horizon_hydrograph's per-horizon
     # boundary catches that and does not write the horizon at all.
+    #
+    # NOTE: this outcome (pentad API_FAILED, no pentad records/writes) is
+    # IDENTICAL whether the read-merge was reached via NORM_ABSENT (retry
+    # succeeds, returns `[]`) or via SDK_FAILED (retry never ran) -- both
+    # classifications read-merge the same way in write_station_short_horizon.
+    # Only the explicit virtual-call-count assertion below (0 under a deleted
+    # retry branch, 1 here) actually proves the retry fired.
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_generic_failure(), PENTAD_NORMS],
+        default_payloads=[_sdk_no_path_error(), PENTAD_NORMS],
         virtual_payloads=[[]],
         virtual_sites=[{"site_code": CODE}],
     )
@@ -306,6 +332,7 @@ def test_virtual_code_empty_list_failed_preservation_read_writes_no_nulls():
         rec[0]["horizon_type"] != "pentad" for rec in client.write_calls if rec
     )
     assert CODE in records.failed_station_codes
+    assert len(sdk.virtual_calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -334,18 +361,35 @@ def test_get_virtual_sites_raises_degrades_to_empty_set_and_logs_warning(caplog)
     assert CODE in records.completed_station_codes
 
 
-def test_get_virtual_sites_raises_regular_station_unaffected():
+def test_get_virtual_sites_raises_regular_station_unaffected(caplog):
+    # Calling write_station_short_horizon directly (as this test previously
+    # did) never exercises discovery at all -- get_virtual_station_codes is
+    # only called by write_short_horizon_hydrograph, before its station loop.
+    # Drive it through the writer so discovery (and its failure path) is
+    # actually reached, and assert on the discovery call count and the
+    # logged WARNING, not just the regular station's unaffected output.
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[PENTAD_NORMS],
+        default_payloads=[PENTAD_NORMS, DECAD_NORMS],
         get_virtual_sites_error=RuntimeError("virtual listing endpoint down"),
     )
     client = FakeShortHorizonClient(daily_by_year=_daily_fixture())
 
-    records = _write_pentad(sdk, client)
+    with caplog.at_level("WARNING", logger="sync_long_horizon_hydrograph"):
+        records = shh.write_short_horizon_hydrograph(
+            codes=[CODE],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=TARGET_YEAR,
+            today=TODAY,
+        )
 
-    norms = [record["norm"] for record in records]
-    assert norms == PENTAD_NORMS
-    assert records.status is shh._ShortHorizonWriteStatus.WRITTEN
+    pentad_norms = [r["norm"] for r in records if r["horizon_type"] == "pentad"]
+    decad_norms = [r["norm"] for r in records if r["horizon_type"] == "decade"]
+    assert pentad_norms == PENTAD_NORMS
+    assert decad_norms == DECAD_NORMS
+    assert sdk.get_virtual_sites_calls == 1
+    assert sdk.virtual_calls == []
+    assert any("get_virtual_sites" in message for message in caplog.messages)
 
 
 # ---------------------------------------------------------------------------
@@ -353,32 +397,46 @@ def test_get_virtual_sites_raises_regular_station_unaffected():
 #    SDK_FAILED, no 404-vs-other distinction, unlike long-horizon).
 # ---------------------------------------------------------------------------
 def test_virtual_retry_raises_classifies_sdk_failed_pentad():
+    # SDK_FAILED is also exactly what the pre-existing (non-retry) default-
+    # exception grading gives for ANY raised exception, so the classification
+    # assertion alone cannot distinguish "the retry ran and also failed" from
+    # "the retry branch doesn't exist at all". The virtual-call-count and
+    # exception-identity assertions below are what actually prove the retry
+    # fired and that ITS exception (not the default's) was the one graded.
+    retry_exc = _sdk_generic_failure()
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_generic_failure()],
-        virtual_payloads=[_sdk_generic_failure()],
+        default_payloads=[_sdk_no_path_error()],
+        virtual_payloads=[retry_exc],
         virtual_sites=[{"site_code": CODE}],
     )
 
     result = shh._lookup_short_horizon_norms(CODE, "pentad", sdk, virtual_codes=frozenset({CODE}))
 
     assert result.classification is shh._NormClassification.SDK_FAILED
+    assert len(sdk.virtual_calls) == 1
+    assert result.exception is retry_exc
 
 
 def test_virtual_retry_404_shaped_valueerror_still_classifies_sdk_failed_short_horizon():
     # Long-horizon grades an SDK-shaped 404 ValueError as NORM_ABSENT; the
     # asymmetry is intentional -- short-horizon grades EVERY raised exception
-    # as SDK_FAILED, 404 included.
+    # as SDK_FAILED, 404 included. See the note in the test above: the
+    # classification alone doesn't prove the retry ran, so this also checks
+    # the virtual-call count and the exception's identity.
+    retry_exc = ValueError(
+        f"Could not retrieve discharge norm for site {CODE}, got status code 404"
+    )
     sdk = VirtualAwareFakeSDK(
-        default_payloads=[_sdk_generic_failure()],
-        virtual_payloads=[
-            ValueError(f"Could not retrieve discharge norm for site {CODE}, got status code 404")
-        ],
+        default_payloads=[_sdk_no_path_error()],
+        virtual_payloads=[retry_exc],
         virtual_sites=[{"site_code": CODE}],
     )
 
     result = shh._lookup_short_horizon_norms(CODE, "pentad", sdk, virtual_codes=frozenset({CODE}))
 
     assert result.classification is shh._NormClassification.SDK_FAILED
+    assert len(sdk.virtual_calls) == 1
+    assert result.exception is retry_exc
 
 
 # ---------------------------------------------------------------------------
