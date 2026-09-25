@@ -2,7 +2,10 @@
 
 Covers the ``get_virtual_station_codes`` / ``_lookup_monthly_norms_virtual_retry``
 addition to ``sync_long_horizon_hydrograph.py`` (iEH HF SDK commit ``1907a30``
-adds ``get_norm_for_site(..., virtual=...)`` and ``get_virtual_sites()``).
+adds the ``virtual`` keyword to ``get_norm_for_site`` -- a virtual UUID
+lookup plus a ``virtual=true`` query param -- and the exact-``station_code``
+UUID filter; ``get_virtual_sites()`` and ``get_discharge_sites()`` already
+existed at the prior pin, ``2cc7953``).
 D-A option (b), decided by the owner: the default (non-virtual) norm call is
 always tried first; a virtual-station retry (``virtual=True``) is attempted
 ONLY when that default call raises AND the code is a known virtual station.

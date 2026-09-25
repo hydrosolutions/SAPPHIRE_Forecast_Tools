@@ -2,10 +2,13 @@
 
 **Status**: Draft (2026-09-25)
 **Module**: `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py`
-**Priority**: **Low** — this writer only ever derives `quarter`/`season` norms from `month` rows it
-just built in the same run, so the gap has no known way to manifest through it today. Filed as a
-pre-existing, latent structural gap found while mapping the module for PREPQ-022, not something
-PREPQ-022 introduced or changed.
+**Priority**: **Low** — the preprocessing API's `POST /hydrograph/` accepts an independently-written
+`quarter`/`season` norm today and does not enforce consistency with the constituent monthly rows (see
+"Why this is Low, not higher" below), so the state this issue describes is API-seedable, not merely
+hypothetical. Held at Low because no independent scheduled producer of such a row was found in this
+repo, and no production occurrence has been verified — only the API-level seedability is confirmed.
+Filed as a pre-existing, latent structural gap found while mapping the module for PREPQ-022, not
+something PREPQ-022 introduced or changed.
 **Labels**: `preprocessing_runoff`, `long-horizon`, `norm`, `read-merge`
 **Found**: 2026-09-25, out-of-loop diff review of PREPQ-022
 (`high_prio_gi_draft_prepq_virtual_station_norms.md`).
@@ -30,23 +33,35 @@ horizons:
   anywhere in either function, and no fallback to a previously-stored `season`/`quarter` norm.
 
 **Consequence.** If a `season` or `quarter` row's norm was ever written by something OTHER than this
-same-run derivation from all 12 fresh month rows — e.g. a one-off migration, a manual backfill, or a
-future writer that populates these rows independently — the next time this writer runs for that
-station with even one month's norm absent (a legitimate `NORM_ABSENT`/`SDK_FAILED` outcome, which
-PREPQ-022 and PREPQ-020/PREPQ-015 explicitly made a non-fatal, expected occurrence), the stored
-`season`/`quarter` norm is silently overwritten with `null` via the API's field-by-field upsert —
-the exact "read-merge to avoid clobbering a stored value" failure mode that
-`_read_existing_month_norms` exists specifically to prevent for MONTH rows, but does not prevent
-here.
+same-run derivation from all 12 fresh month rows — e.g. a one-off migration, a partial historical
+write, or a direct `POST /hydrograph/` call seeding it via the API (see below) — the next time this
+writer runs for that station, IF a CONSTITUENT month (one of the season's 6 months, April–September,
+or that quarter's 3 months) is STILL missing AFTER the monthly read-merge
+(`_read_existing_month_norms`) has had its chance to preserve it, the stored `season`/`quarter` norm
+is silently overwritten with `null` via the API's field-by-field upsert. An absent SDK response ALONE
+does not erase an aggregate: if every constituent month's norm is complete (fresh or read-merge-
+preserved), the aggregate derives and writes normally. This is the exact "read-merge to avoid
+clobbering a stored value" failure mode that `_read_existing_month_norms` exists specifically to
+prevent for MONTH rows, but does not prevent for `season`/`quarter` rows.
 
 **Why this is Low, not higher.** `write_long_horizon_hydrograph` always builds `monthly_records` in
 the SAME call before building the seasonal/quarterly records from them (`write_long_horizon_hydrograph`,
-`sync_long_horizon_hydrograph.py:842-905`), and no other code path in this module or elsewhere
-in the repo writes a `season`/`quarter` hydrograph row. So today, a stored `season`/`quarter` norm is
-*always* exactly what the all-or-nothing mean of that same run's 12 month norms produced — there is
-no scenario in the current codebase where an "external" aggregate norm exists to be clobbered. The
-gap is real but currently unreachable; it becomes live only if a future change writes these rows
-some other way (a migration importer, a manual correction tool, etc.).
+`sync_long_horizon_hydrograph.py:842-905`), and no PRODUCTION code path in this module or elsewhere in
+the repo writes a `season`/`quarter` hydrograph row independently of this same-run derivation — so no
+production occurrence of this gap has been verified.
+
+However, the state is not merely hypothetical: the preprocessing service's `POST /hydrograph/`
+endpoint (`sapphire/services/preprocessing/app/main.py:101-105`, read only) accepts a
+`HydrographCreate` (`schemas.py:41-64`) with any `HorizonType` including `QUARTER`/`SEASON`
+(`models.py:6-13`) and a `norm` field, with NO validation linking a `quarter`/`season` row to its
+constituent `month` rows anywhere in the request/response schema. `crud.create_hydrograph`
+(`crud.py:88`, field-by-field `setattr` upsert at `:110`) applies whatever fields are supplied,
+independently of any other row. So an aggregate norm CAN be seeded today — by an operator's manual
+`POST`, a migration/backfill tool, or a partial historical write — without this writer having
+produced it; that seeded value is exactly what this issue's read-merge gap would then null on this
+writer's next run under the trigger condition above. No independent SCHEDULED producer of such a
+row was found in a repo sweep, and no production occurrence is verified — the gap is real and
+API-reachable, but currently unexercised by any known automated path.
 
 ## Proposed direction (not implemented here — pick one, or document and close)
 
@@ -67,17 +82,31 @@ Either direction is acceptable; the owner should decide based on whether a non-d
 
 ## Acceptance criteria
 
-- If direction 1 is chosen: a station with 11 of 12 month norms present (one `NORM_ABSENT`) and a
-  previously-stored `season`/`quarter` norm from an EARLIER run keeps that stored norm instead of
-  being nulled; a never-normed station's `season`/`quarter` stays `None` as today; a failed
-  preservation read does not write nulls (same anti-clobber contract as the MONTH read-merge).
+- If direction 1 is chosen, this fixture must pass: a station with an EXISTING stored `season` norm
+  and an EXISTING stored Q2 (`quarter=2`, April–June) norm — pre-seeded via `POST /hydrograph/` (an
+  operator/migration write, not this writer's own prior run) or via a partial historical write — and
+  11 of its 12 month norms stored, with APRIL specifically the one missing; this run's SDK lookup
+  returns absent for April. Expected: the stored `season` norm is preserved (April is one of its 6
+  constituent months and is still missing after the monthly read-merge) AND the stored Q2 norm is
+  preserved (April is also one of Q2's 3 constituent months) — while Q1/Q3/Q4 continue to derive
+  normally (none of their constituent months are affected by April's absence). Also: a never-normed
+  station's `season`/`quarter` stays `None` as today; a failed preservation read does not write nulls
+  (same anti-clobber contract as the MONTH read-merge).
 - If direction 2 is chosen: the documented invariant is stated in the module docstring (or README)
   near the existing MONTH read-merge documentation, so both design choices for THIS module live in
   one place.
-- Either way: no change to the byte-for-byte output of the CURRENT test suite (all `season`/`quarter`
-  rows are still same-run derivations there, so direction 1's read-merge would only ever fall back
-  when the freshly-derived mean is already `None` — the existing derived-`None` behaviour, an
-  intentional all-or-nothing design, must not be altered by the read-merge fallback itself).
+- Either way, no ambiguity between the derivation helpers and the new preservation step:
+  `_seasonal_field_mean`/`_quarterly_field_mean` STAY all-or-nothing exactly as today — they still
+  return `None` if any constituent month is missing, and this issue does not change that. What
+  direction 1 adds is a SEPARATE preservation step, applied AFTER derivation (the same shape as
+  `_read_existing_month_norms` applied after `_lookup_monthly_norms`): it MAY replace a derived
+  `None` in the OUTGOING RECORD with a previously stored value, exactly as the MONTH read-merge
+  replaces a norm-absent month's `None` today. The derivation functions themselves are never
+  modified to stop being all-or-nothing.
+- No change to the byte-for-byte output of the CURRENT test suite: every `season`/`quarter` row built
+  by today's tests is a same-run derivation with no pre-existing stored aggregate to fall back to, so
+  direction 1's preservation step is a no-op for all of them (there is nothing to fall back to) and
+  the existing derived-`None` behaviour for those cases is unchanged.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff` — zero failures, zero
   unexpected skips.
 

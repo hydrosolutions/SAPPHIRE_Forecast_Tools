@@ -1,7 +1,7 @@
 # PREPQ-022: Fetch discharge norms for virtual stations (iEH HF SDK `1907a30`)
 
-**Status**: Draft — implementation in progress on branch fix_preprocessing_runoff_virtual_station_norms
-(P2 done, P3 maintenance run done, P4 review in progress)
+**Status**: In Progress — implemented on branch fix_preprocessing_runoff_virtual_station_norms
+(pushed); P2+P3 done; P4 out-of-loop reviews done, PR not yet opened.
 **Module**: `preprocessing_runoff`
 **Priority**: High. Removes the recurring kyg `sdk_failed=4` (PREPQ-014) and gives virtual stations
 a norm.
@@ -12,15 +12,28 @@ stays separate), PREPQ-010 (local norm derivation — not replaced by this).
 ## Problem
 
 `get_norm_for_site(code, "discharge", ...)` raises `ValueError("No path provided or the provided
-path is None")` for every virtual station: the SDK resolves the site UUID from the hydrological
-registry only. On kyg, 4 virtual stations are in the preprocessing work list. The long-horizon writer
-reports `total_attempted=62 written=53 norm_absent=5 sdk_failed=4`, its CLI exits 4 (partial SDK
-failure; `sync_long_horizon_hydrograph.py:799` ff. — 5 = API failure takes precedence, 6 = all SDK
-failed). `run_locally.sh:988` deliberately shows exit 4 as neither a failure nor a result row. The SDK
-failures surface as per-station warnings and in the full CLI summary (`:953`); the writer's
-`DEGRADED:` line (`:809`) counts NORM_ABSENT, not SDK_FAILED, and need not appear on an exit-4 run. The short-horizon writer counts the same stations as
-`pentad_sdk_failed`/`decade_sdk_failed` and can still exit 0 (`sync_short_horizon_hydrograph.py:1139`).
-Rows are written without norm (PREPQ-015/020), so percent-of-norm is blank.
+path is None")` for virtual-only codes that have no usable UUID in the regular hydrological registry
+(measured: all 6 kyg virtual codes hit this — see Evidence; not "every virtual station" universally,
+since a code present in BOTH registries resolves via its regular UUID and never raises this way). On
+kyg, 4 virtual stations are in the preprocessing work list. The long-horizon writer reports
+`total_attempted=62 written=53 norm_absent=5 sdk_failed=4`, its CLI exits 4 (partial SDK failure;
+`_exit_code_for_long_horizon_summary`, `sync_long_horizon_hydrograph.py:934`, decisions `:957-963` —
+5 = API failure takes precedence, 6 = all SDK failed). `run_locally.sh:988` deliberately shows exit 4
+as neither a failure nor a result row. The SDK failures surface as per-station warnings and in the
+full CLI summary (`print(_format_long_horizon_run_summary_artifact(...))`,
+`sync_long_horizon_hydrograph.py:1111`); the writer's `DEGRADED:` line
+(`_degraded_long_horizon_summary_line`, `:966-974`) counts NORM_ABSENT, not SDK_FAILED, and need not
+appear on an exit-4 run. The short-horizon writer counts the same stations as
+`pentad_sdk_failed`/`decade_sdk_failed` and can still exit 0 (`sync_short_horizon_hydrograph.py:1189`).
+
+Rows are written without a norm only when NO previously stored norm can be preserved by the
+read-merge (PREPQ-015/020) — a station with a stored norm from an earlier run keeps it across a
+norm-absent/SDK-failed rerun, so "normless" and "percent-of-norm blank" describe a never-normed or
+first-run station specifically, not every SDK lookup failure. This lookup-level degradation (the norm
+call itself raising or returning an unusable shape) is also distinct from a short-horizon WRITE
+failure such as `_ShortHorizonDailyReadError` (raised when a station has no usable daily runoff at
+all across the climatology window): that drops the horizon's write entirely, rather than writing a
+normless row.
 
 ## What changed upstream (diff `2cc7953..1907a30`, verified by reviewer)
 
@@ -50,16 +63,16 @@ Rows are written without norm (PREPQ-015/020), so percent-of-norm is blank.
 
 | Call site | Reached by |
 |---|---|
-| `sync_short_horizon_hydrograph.py:754` `_lookup_short_horizon_norms` (`p`, `d`) | `preprocessing_runoff.py:214` on HF-backed runs in both modes (skipped for legacy iEasyHydro / no HF SDK, `:546`) — this includes Docker/Luigi maintenance, whose image CMD runs only `preprocessing_runoff.py` (`Dockerfile:36`, `pipeline_docker.py:1753`); standalone `main()`; `backfill_discharge_aggregation.py` |
-| `sync_long_horizon_hydrograph.py:411` `_lookup_monthly_norms` (`m`) | local `run_locally.sh:961/968` maintenance step; `bin/yearly_runoff_hydrograph_aggregation.sh:202` (server); `backfill_discharge_aggregation.py` |
+| `_lookup_short_horizon_norms` (`sync_short_horizon_hydrograph.py:749`; SDK call `:772`) (`p`, `d`) | `preprocessing_runoff.py:214` on HF-backed runs in both modes (skipped for legacy iEasyHydro / no HF SDK, `:546`) — this includes Docker/Luigi maintenance, whose image CMD runs only `preprocessing_runoff.py` (`Dockerfile:36`, `pipeline_docker.py:1753`); standalone `main()`; `backfill_discharge_aggregation.py` |
+| `_lookup_monthly_norms` (`sync_long_horizon_hydrograph.py:499`; SDK call `:550`) (`m`) | local `run_locally.sh:961/968` maintenance step; `bin/yearly_runoff_hydrograph_aggregation.sh:202` (server); standalone `sync_long_horizon_hydrograph.py main()` CLI; `backfill_discharge_aggregation.py` |
 
 **Legacy check (owner D1): confirmed legacy, out of scope.** Whole-repo sweep (incl. `apps/pipeline`,
 Dockerfiles, `bin/`), independently re-verified by the reviewer:
-- `forecast_library.write_pentad_hydrograph_data` (`:4760`) / `write_decad_hydrograph_data`
-  (`:5134`): no production caller; API write retired in M2 (`:4901`, `:5394`; guarded by
+- `forecast_library.write_pentad_hydrograph_data` (`:4665`) / `write_decad_hydrograph_data`
+  (`:4953`): no production caller; API write retired in M2 (`:4901`, `:5394`; guarded by
   `iEasyHydroForecast/tests/test_legacy_short_horizon_writers_retired_m2.py`). Tests only.
-- `write_decad_hydrograph_data_first_version` (`:5665`): no caller.
-- `write_month_hydrograph_data` (`:5557`): only via `sync_monthly_norms.py`, `DEPRECATED
+- `write_decad_hydrograph_data_first_version` (`:5609`): no caller.
+- `write_month_hydrograph_data` (`:5504`): only via `sync_monthly_norms.py`, `DEPRECATED
   (2026-06-02)`, invoked by nothing.
 
 ## Design
@@ -83,25 +96,35 @@ SDK_FAILED — unchanged).
    writer; operational preprocessing (`:214`) and backfill (`:108`) ignore writer statuses, so a later
    failure there is a log warning only — as today.
 3. **Routing — depends on D-A** (below).
-4. Existing run summaries already expose norm outcomes (`long:839`, `short:947`); **no new summary
-   field**.
+4. Existing run summaries already expose norm outcomes (`_format_long_horizon_run_summary_artifact`,
+   `sync_long_horizon_hydrograph.py:984-1003`; `_log_short_horizon_run_summary`,
+   `sync_short_horizon_hydrograph.py:974-998`); **no new summary field**.
 
-### D-A — DECIDED 2026-09-25 by owner: option (b). Which norm a code gets when it is in both registries
+### D-A — DECIDED 2026-09-25 by owner: option (b), then AMENDED same day. Which norm a code gets when it is in both registries
 
 `get_all_forecast_sites_from_HF_SDK` appends virtual sites after regular ones and keeps the first
-occurrence (`setup_library.py:1538, 1556`) — but only among **forecast-enabled** objects
-(`forecast_library.py:7538`), so a colliding code is the regular station only if its regular entry
-is forecast-enabled; otherwise the enabled virtual entry wins. Kyg has 0 collisions (measured); taj
-unknown.
+occurrence (`setup_library.py:1545` extend, `:1551-1560` dedup-keeps-first loop) — but only among
+**forecast-enabled** objects (`forecast_library.py:7538`), so a colliding code is the regular station
+only if its regular entry is forecast-enabled; otherwise the enabled virtual entry wins. Kyg has 0
+collisions (measured); taj unknown. Note this registry-merge logic is itself untouched by this
+change — see the amendment below for why the collision exclusion this issue implements does not
+depend on it.
 
-- **(b) — recommended: regular first, virtual on failure.** Default call as today; only if it
-  raises **and** the code is in the virtual set, retry with `virtual=True` and grade the retry's
-  result/exception alone. Preserves today's output for every code whose default call does not raise.
-  Caveat: a colliding code whose default call raises (outage, or an unregistered regular entry) gets
-  the virtual norm. An outage costs one extra failing call per virtual station.
-- (a) membership routing: every code in the virtual set goes straight to `virtual=True`. Simpler,
-  one call, but silently switches a colliding code from its regular norm to a weighted member sum,
-  contradicting the station identity used everywhere else.
+**The (b)/(a) framing immediately below is SUPERSEDED decision history, kept only for context** — the
+amended rule further below (virtual ∧ ¬regular, fail-closed on either listing's failure) is the SOLE
+current behaviour; nothing routes purely on original-(b)'s "regular first, virtual on ANY failure"
+rule any more.
+
+- **(b) — originally decided, labelled "recommended" at the time: regular first, virtual on
+  failure.** Default call as today; only if it raises **and** the code is in the virtual set, retry
+  with `virtual=True` and grade the retry's result/exception alone. Preserves today's output for
+  every code whose default call does not raise. Caveat, closed by the amendment below: under this
+  ORIGINAL framing, a colliding code whose default call raised (outage, or an unregistered regular
+  entry) got the virtual norm. An outage costs one extra failing call per virtual station.
+- (a) — rejected at the time, unaffected by the amendment: membership routing, every code in the
+  virtual set goes straight to `virtual=True`. Simpler, one call, but silently switches a colliding
+  code from its regular norm to a weighted member sum, contradicting the station identity used
+  everywhere else.
 
 **Amended 2026-09-25 by owner after out-of-loop diff review: codes present in the regular registry
 are excluded from the virtual retry; if either listing fails, no retry.** Out-of-loop review of the
@@ -127,7 +150,13 @@ listed would risk letting an undetected collision through.
   existing venv) and verify the installed SDK commit is `1907a30` (install metadata) and has the `virtual`
   parameter before P2 tests and P3.
 - Other 10 locks stay on `2cc7953`. Follow-up re-pin only where a module actually calls SDK norm
-  lookups (today: none outside preprocessing_runoff).
+  lookups: **no active production norm-lookup flow exists outside `preprocessing_runoff`**; legacy
+  `forecast_library` writers still call `get_norm_for_site` (see Scope's Legacy check above —
+  confirmed legacy, no production caller). Because `iEasyHydroForecast`/`forecast_library` is
+  installed as an editable dependency INTO the `preprocessing_runoff` venv, any of its OWN
+  `get_norm_for_site` calls executed from within that venv (a test, a manual invocation) already get
+  the new SDK's exact-`station_code` UUID filter too — they simply have no reachable production
+  caller to benefit from it.
 
 ## Phases
 
@@ -161,7 +190,8 @@ listed would risk letting an undetected collision through.
   8. Code-type robustness: int work-list code vs str virtual-set code and vice versa; a virtual code
      that is also locally "manual" in `config_all_stations_library.json`. Document the existing
      behaviour without changing it: standalone/backfill resolution excludes manual codes, except
-     that `resolve_sdk_station_codes` (`:860`) compares before stringifying, so an int code evades
+     that `resolve_sdk_station_codes` (`:1011`, compare-before-stringify `:1017`) compares before
+     stringifying, so an int code evades
      the str manual set; `preprocessing_runoff.py` passes manual codes through.
   9. D-A collision fixtures: code in both registries (i) default succeeds, (ii) default raises;
      plus the forecast-eligibility case (regular entry disabled, virtual enabled).
@@ -172,6 +202,22 @@ listed would risk letting an undetected collision through.
 - **Acceptance**: from repo root, `SAPPHIRE_TEST_ENV=True bash apps/run_tests.sh preprocessing_runoff`
   and `... iEasyHydroForecast` → zero fail / zero unexpected skip. (Full `run_tests.sh` runs once in P4,
   as CLAUDE.md requires before a PR.)
+- **Scope as implemented** (added post-P2, verified against the final diff):
+  (i) Test item 9's "forecast-eligibility case (regular entry disabled, virtual enabled)" is NOT a
+  unit test in this change — it lives entirely in `setup_library.get_all_forecast_sites_from_HF_SDK`'s
+  registry-merge logic (see D-A above), outside `sync_long_horizon_hydrograph.py` /
+  `sync_short_horizon_hydrograph.py`. The collision exclusion actually implemented in
+  `get_virtual_station_codes` is independent of forecast eligibility: it compares the FULL
+  `get_virtual_sites()`/`get_discharge_sites()` listings directly, never the forecast-enabled subset
+  `get_all_forecast_sites_from_HF_SDK` merges.
+  (ii) Test item 11 ("operational cache-hit path") is exercised at the WRITER level only — the writer
+  does its own virtual-station discovery regardless of the station-list cache. The real cached
+  station-list handoff (`preprocessing_runoff.py:344`) was verified live in P3's operational run, not
+  by a unit test.
+  (iii) Test results: `preprocessing_runoff` 557 passed / 2 skipped — the 2 skips are the pre-existing
+  unconditional placeholders tracked as **PREPQ-017** (`test_src.py`), an accepted pre-existing
+  exception to the zero-skip gate, not introduced by this change. Full `run_tests.sh` on the final
+  code: all 16 suites passed, 0 failures.
 
 ### P3 — Live kyg verification (depends on P2)
 Tunnel up, `.env_bea_kghm`, venv synced and SDK signature checked. No fresh baseline run (owner D2).
@@ -190,7 +236,9 @@ Tunnel up, `.env_bea_kghm`, venv synced and SDK signature checked. No fresh base
    coverage, record that instead of forcing a sample. Regular sample from step 0 unchanged.
 4. Record counts only (no station codes) in this file.
 
-## P3 results (kyg, 2026-09-25, pre-exclusion build)
+## P3 results (kyg, 2026-09-25)
+
+### First run, commits `62d5d454`+`021889e8` (pre-exclusion build)
 
 Counts only, no station codes, from the maintenance run on the build BEFORE the D-A collision
 exclusion (above) was added:
@@ -207,6 +255,23 @@ exclusion (above) was added:
 - API read-back: 3 of 4 work-list virtual stations have stored norms equal to the SDK values for
   every horizon where iEH HF has norms (month 2, pentad 1, decade 3).
 - 5 sampled regular stations' stored month/pentad/decade norms are unchanged before vs after the run.
+
+### Final build (`45b2b8c8`; `fef7aa5f` is test-only)
+
+Counts only, no station codes. Evidence logs are local, not committed.
+
+**Operational run** (default mode, 62 sites loaded from the station cache): short-horizon
+`pentad_written=11 pentad_norm_absent=50 pentad_sdk_failed=0 pentad_api_failed=1`,
+`decade_written=58 decade_norm_absent=3 decade_sdk_failed=0 decade_api_failed=1` — identical to the
+first run above; module passed. `run_locally.sh` exited 1 only because the follow-up
+`api_validation` step found no `postprocessing_forecasts` venv in this fresh worktree (an environment
+gap in this checkout, not a code defect from this change).
+
+**Maintenance run**: long-horizon `62/55/7/0/0/0` (`total_attempted/written/norm_absent/
+norm_absent_via_404/sdk_failed/api_failed`); short-horizon identical to the operational-run counts
+above; exit 0. Stored norms of the 11 sampled stations (5 regular, 6 virtual) are identical to the
+pre-exclusion run above. No collision warning was logged (kyg has 0 collisions, as measured in
+Evidence).
 
 ### P4 — Review + PR (depends on P3)
 Out-of-loop diff review (`adversarial-review` skill), re-review any fix round (re-run affected suites
