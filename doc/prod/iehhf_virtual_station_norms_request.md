@@ -1,8 +1,9 @@
 # Request to the iEasyHydro HF SDK developer: discharge norms for virtual stations
 
-**Status**: **Sent 2026-08-17** — maintainer acknowledged and will look into it. Awaiting an answer
-to the three questions below; PREPQ-014 stays open pending that reply. Retained here as the record
-of what was asked.
+**Status**: **Answered 2026-09 by SDK commit `1907a30`** ("virtual norms sdk support") and consumed
+by `preprocessing_runoff` in PR #524 (PREPQ-022, merged 2026-09-25) — see
+[Resolution](#resolution-2026-09-25) at the end. Sent 2026-08-17; the text below is retained
+unedited as the record of what was asked.
 **Requested by**: SAPPHIRE Forecast Tools
 **Concerns**: `ieasyhydro-python-sdk` @ `2cc7953` (current `master` HEAD), `get_norm_for_site`
 **Origin**: PREPQ-014 — see
@@ -124,3 +125,39 @@ might make here, rather than as the unrelated aside we framed it as.
 as of 2026-08-17, installed identically across all 11 dependent modules. We are not behind; the
 `fix_norm_retrieval` and `virtual_station_weights` branches are both already merged into what we
 run.
+
+## Resolution (2026-09-25)
+
+The maintainer answered with SDK commit `1907a30` ("virtual norms sdk support"). Read from the
+`2cc7953..1907a30` diff and the SDK README:
+
+1. **Supported by design.** Discharge norms are defined for virtual stations.
+2. **Opt-in keyword, not a new site type.** `get_norm_for_site(code, "discharge", norm_period=...,
+   virtual=True)` resolves the UUID via `stations/{org}/virtual` and adds `virtual=true` to the
+   request; the path stays `hydrological-norms/{uuid}`. Without the keyword the routing is unchanged
+   (regular registry only), so a virtual-only code still raises `No path provided or the provided
+   path is None`; the default lookup does pick up the exact-code UUID filter described below.
+3. **Aggregated server-side**, as we preferred: a virtual norm is the weighted sum of its member
+   stations' norms, using the same association weights as the discharge calculation. **Discharge
+   only** — other norm types with `virtual=True` raise `ValueError`. The backend returns `[]` for any
+   period in which not every member station has a norm, rather than a partial sum.
+
+The `sites[0]` station-identity note was also addressed: `_get_site_uuid_for_site_code` now keeps only
+rows whose `station_code` equals the requested code before matching `station_type`.
+
+**How we consume it** (PREPQ-022, `doc/plans/issues/high_prio_gi_draft_prepq_virtual_station_norms.md`):
+the regular norm call is made first, unchanged; only if it raises for a code that is in
+`get_virtual_sites()` and not in `get_discharge_sites()` is it retried with `virtual=True`. A code in
+both registries always keeps its regular norm.
+
+**Measured on kghm (2026-09-25):** 6 virtual stations are listed. With `virtual=True`, monthly norms
+came back for 3, pentad for 1 and decadal for 4; 2 return `[]` for every period. That is consistent
+with at least one member station lacking an uploaded norm (the cause the SDK README names), but the
+member-station norms were not checked, so the diagnosis is unverified. The
+long-horizon writer went from `sdk_failed=4` to `0`. Regular-station norms were value-identical under
+both SDK versions (60 stations × 3 periods).
+
+**What we are running now:** `preprocessing_runoff` is pinned to `1907a3040801398d2537c757add86cf2dcc974a0`.
+The other 10 modules still lock `2cc7953`; none has an active norm-lookup flow. The new exact-code
+UUID filter has not been measured on tjhm — compare regular-station norms under both SDK versions
+before deploying there.
