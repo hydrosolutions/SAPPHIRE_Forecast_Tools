@@ -832,7 +832,13 @@ def get_long_forecasts_quarter(
             `_resolve_station` and used to filter the request.
         horizon_value: Optional explicit lead override for the API
             request; resolved from the deployment's quarter config
-            (`_resolve_quarter_horizon_value`) when omitted.
+            (`_resolve_quarter_horizon_value`) when omitted. V3: this
+            override is honoured for the API request's `horizon_value`
+            filter and for sizing the fetch window ONLY (`fetch_lead`
+            above). Eligibility and the native predicate always follow
+            the configured schedule's own `lead_time`, never this
+            override — no production caller passes `horizon_value`
+            explicitly today.
         today: The reference date for the fetch window (item 1) and the
             eligibility cutoff (item 4). Defaults to `date.today()` at
             call time — never evaluated at import time, unlike the
@@ -1075,7 +1081,18 @@ def get_long_forecasts_quarter(
     # every row there, so this would otherwise hide every LR row.
     if not degraded:
         is_lr = df["model_short"].isin(["LR_Base", "LR_SM"])
-        df = df[~(is_lr & ~df["is_native"])].copy()
+        non_native_lr_mask = is_lr & ~df["is_native"]
+        # V2: this drop was silent — log ONE aggregated WARNING with the
+        # count (no station codes; this function can be called for many
+        # stations, and the drop rate is what an operator cares about).
+        n_non_native_lr_dropped = int(non_native_lr_mask.sum())
+        if n_non_native_lr_dropped:
+            logger.warning(
+                "get_long_forecasts_quarter: dropped %d non-native LR_Base/LR_SM "
+                "row(s) (flag-OFF rewrite or persisted-derived — never shown).",
+                n_non_native_lr_dropped,
+            )
+        df = df[~non_native_lr_mask].copy()
 
     # Keep only one row per target quarter — under the flag, also key on
     # horizon_value (lead) so distinct-lead quarter rows for the same

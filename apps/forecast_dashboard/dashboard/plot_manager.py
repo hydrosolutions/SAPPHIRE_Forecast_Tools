@@ -442,10 +442,33 @@ class PlotManager:
         # target quarter. Under mixed native/rewrite/derived dating, "latest
         # date" alone can pick a different quarter per model and hide some
         # of them from the card (Problem 3).
-        if "valid_from" in filtered.columns and filtered["valid_from"].notna().any():
-            selected = filtered[filtered["valid_from"] == filtered["valid_from"].max()].copy()
+        #
+        # V1: compute that selection only over rows the RENDERER would
+        # actually display — model_short in model_checkbox.options (the
+        # same filter create_forecast_summary_table applies via
+        # `model_selection.options.values()`, src/vizualization.py) and a
+        # non-null forecasted_discharge (the renderer's own null-discharge
+        # drop, same file). Selecting over every row, including ones the
+        # renderer would drop anyway, can pick a quarter whose displayable
+        # rows are ALL filtered out downstream — an empty table with a
+        # caption for that quarter, where trunk fell back to older
+        # displayable rows.
+        displayable_models = set(self._wm.model_checkbox.options.values())
+        if "model_short" in filtered.columns and "forecasted_discharge" in filtered.columns:
+            displayable = filtered[
+                filtered["model_short"].isin(displayable_models)
+                & filtered["forecasted_discharge"].notna()
+            ]
         else:
-            selected = filtered.copy()
+            displayable = filtered.iloc[0:0]
+        if displayable.empty:
+            card.visible = False
+            return
+
+        if "valid_from" in displayable.columns and displayable["valid_from"].notna().any():
+            selected = filtered[filtered["valid_from"] == displayable["valid_from"].max()].copy()
+        else:
+            selected = displayable.copy()
         if selected.empty:
             card.visible = False
             return

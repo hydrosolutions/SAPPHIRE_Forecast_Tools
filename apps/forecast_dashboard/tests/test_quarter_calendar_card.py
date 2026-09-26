@@ -221,6 +221,67 @@ class TestCardSelectionThroughPlotManager:
         assert "25th of December 2026" in caption, caption
         assert "1st of January 2027" not in caption, caption
 
+    def test_v1_selection_falls_back_when_newest_quarter_is_not_displayable(self):
+        """V1: the "latest eligible target quarter" selection must be
+        computed only over rows the renderer would actually display —
+        model_short in model_checkbox.options and a non-null
+        forecasted_discharge (kghm, today 2026-07-02). Q2 has a
+        displayable native LR_Base row (2026-03-25); Q3 (the LATER
+        quarter by valid_from) has only a model NOT in the options
+        (LR_SM_DT) plus an LR_Base row with a null discharge — every Q3
+        row would be dropped by the renderer anyway. Selecting Q3
+        (max(valid_from) over ALL rows, the pre-fix behavior) would show
+        an empty table with a Q3 caption; the fix must fall back to Q2,
+        which trunk (pre-FD-029) showed."""
+        quarterly_df = pd.DataFrame(
+            [
+                _quarter_row(
+                    model_short="LR_Base",
+                    is_native=True,
+                    forecasted_discharge=150.0,
+                    accuracy=90.0,
+                ),
+                _quarter_row(
+                    model_short="LR_SM_DT",
+                    date=pd.Timestamp("2026-06-25"),
+                    valid_from=pd.Timestamp("2026-07-01"),
+                    valid_to=pd.Timestamp("2026-09-30"),
+                    quarter_in_year=3,
+                    quarter_issue_date=pd.Timestamp("2026-06-25"),
+                    is_native=True,
+                    forecasted_discharge=200.0,
+                    accuracy=95.0,
+                ),
+                _quarter_row(
+                    model_short="LR_Base",
+                    date=pd.Timestamp("2026-06-25"),
+                    valid_from=pd.Timestamp("2026-07-01"),
+                    valid_to=pd.Timestamp("2026-09-30"),
+                    quarter_in_year=3,
+                    quarter_issue_date=pd.Timestamp("2026-06-25"),
+                    is_native=True,
+                    forecasted_discharge=np.nan,
+                    accuracy=92.0,
+                ),
+            ]
+        )
+        pm, _site = _make_stub_pm(quarterly_df)
+
+        pm.update_quarterly_summary_tabulator()
+
+        assert pm.summary_table_q_card.visible is True
+        table = pm._wm.forecast_tabulator_q.value
+        assert len(table) == 1, (
+            f"Expected the Q2 fallback row on the card, got {len(table)} row(s): "
+            f"{table.to_dict('records')!r}"
+        )
+        assert set(table["Model"]) == {"LR_Base"}
+        assert table["Forecasted discharge"].iloc[0] == 150.0
+
+        caption = pm._wm.forecast_info_q.object
+        assert "Apr 2026" in caption and "Jun 2026" in caption, caption
+        assert "Jul 2026" not in caption, caption
+
 
 # ---------------------------------------------------------------------------
 # Test 6: caption uses the selected rows, never stale site attributes
@@ -295,6 +356,34 @@ class TestDeltaBoundsOnCard:
         assert table.loc["Skilled Mean", "Forecast upper bound"] == 105.0
         assert pd.isna(table.loc["Naive Mean", "Forecast lower bound"])
         assert pd.isna(table.loc["Naive Mean", "Forecast upper bound"])
+
+    def test_delta_fill_preserves_native_bounds(self):
+        """V4(d): a row with NATIVE Q25/Q75 already present must keep
+        them unchanged — the delta-fill only applies when Q25/Q75 are
+        null. A mutant that drops the `Q25.isna()` check (i.e.
+        `need_lower = delta.notna()` alone) would overwrite this row's
+        native lower bound of 90 with forecast-delta = 95."""
+        quarterly_df = pd.DataFrame(
+            [
+                _quarter_row(
+                    model_short="LR_Base",
+                    is_native=True,
+                    delta=5.0,
+                    forecasted_discharge=100.0,
+                    Q25=90.0,
+                    Q75=110.0,
+                    accuracy=85.0,
+                ),
+            ]
+        )
+        pm, _site = _make_stub_pm(quarterly_df)
+
+        pm.update_quarterly_summary_tabulator()
+
+        assert pm.summary_table_q_card.visible is True
+        table = pm._wm.forecast_tabulator_q.value.set_index("Model")
+        assert table.loc["LR_Base", "Forecast lower bound"] == 90.0
+        assert table.loc["LR_Base", "Forecast upper bound"] == 110.0
 
 
 # ---------------------------------------------------------------------------
