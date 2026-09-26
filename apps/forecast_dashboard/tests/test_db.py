@@ -3297,6 +3297,33 @@ class TestGetLongForecastsQuarterEligibility:
         assert (result["year"] == 2027).all()
 
 
+class TestGetLongForecastsQuarterIssueDayClamping:
+    def test_issue_day_31_clamps_to_month_length_no_exception(self, monkeypatch, tmp_path):
+        """A configured issue_day of 31 with lead 1 shifts Q3's issue month
+        back to June (30 days) -> June 31 does not exist.
+        pd.to_datetime on an unclamped day=31 would raise ValueError,
+        crashing the monthly dashboard load / reservoir bulletin instead of
+        degrading. The issue day must clamp to the issue month's own
+        length (June 30), mirroring
+        long_term_forecasting.lt_utils.nearest_scheduled_issue_date."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=31)
+        gbt_q3 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 160, "model_type": "GBT",
+            "date": "2026-06-30", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([gbt_q3])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert result["quarter_issue_date"].iloc[0] == pd.Timestamp("2026-06-30")
+        assert bool(result["is_native"].iloc[0]) is True
+
+
 class TestGetLongForecastsQuarterDegraded:
     def test_degraded_schedule_no_native_preference(self, monkeypatch):
         """No `operational_issue_day` configured (the module's own autouse

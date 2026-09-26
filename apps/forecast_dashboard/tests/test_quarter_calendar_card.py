@@ -146,6 +146,46 @@ class TestCardSelectionThroughPlotManager:
             f"Expected all three models on the card, got {shown_models!r}"
         )
 
+    def test_two_eligible_quarters_card_shows_only_the_latest(self):
+        """Two DIFFERENT target quarters (Q2 Apr-Jun and Q3 Jul-Sep), both
+        already eligible, same model (GBT) so the card can't cheat by
+        distinguishing on model name alone. Item 6: the card must select
+        only the station's LATEST eligible target quarter (max
+        valid_from) -- a mutation that instead passed every row through
+        unfiltered (`selected = filtered.copy()`) would show both
+        quarters' rows and build the caption from whichever row sorts
+        first, not necessarily Q3."""
+        q2 = _quarter_row(
+            model_short="GBT", date=pd.Timestamp("2026-03-25"),
+            valid_from=pd.Timestamp("2026-04-01"), valid_to=pd.Timestamp("2026-06-30"),
+            quarter_in_year=2, year=2026, quarter_issue_date=pd.Timestamp("2026-03-25"),
+            is_native=True, forecasted_discharge=111.0, accuracy=60.0,
+        )
+        q3 = _quarter_row(
+            model_short="GBT", date=pd.Timestamp("2026-06-25"),
+            valid_from=pd.Timestamp("2026-07-01"), valid_to=pd.Timestamp("2026-09-30"),
+            quarter_in_year=3, year=2026, quarter_issue_date=pd.Timestamp("2026-06-25"),
+            is_native=True, forecasted_discharge=222.0, accuracy=90.0,
+        )
+        quarterly_df = pd.DataFrame([q2, q3])
+        pm, _site = _make_stub_pm(quarterly_df)
+
+        pm.update_quarterly_summary_tabulator()
+
+        assert pm.summary_table_q_card.visible is True
+        table = pm._wm.forecast_tabulator_q.value
+        assert len(table) == 1, (
+            f"Expected only the Q3 row on the card, got {len(table)} row(s): "
+            f"{table.to_dict('records')!r}"
+        )
+        assert table["Forecasted discharge"].iloc[0] == 222.0, (
+            "The Q2 row (forecasted_discharge=111.0) must not be on the card"
+        )
+
+        caption = pm._wm.forecast_info_q.object
+        assert "Jul 2026" in caption and "Sep 2026" in caption, caption
+        assert "25th of June 2026" in caption, caption
+
 
 # ---------------------------------------------------------------------------
 # Test 6: caption uses the selected rows, never stale site attributes

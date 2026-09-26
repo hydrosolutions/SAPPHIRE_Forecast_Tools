@@ -947,10 +947,23 @@ def get_long_forecasts_quarter(
         )
         issue_year = total_months // 12
         issue_month = total_months % 12 + 1
+        # Clamp the configured issue day to the issue month's own length
+        # (e.g. issue_day=31 in a 30-day June -> June 30), mirroring
+        # long_term_forecasting's lt_utils.nearest_scheduled_issue_date. An
+        # out-of-range day would otherwise raise ValueError from
+        # pd.to_datetime below and crash the monthly dashboard load / the
+        # reservoir bulletin instead of degrading.
+        issue_month_start = pd.to_datetime(pd.DataFrame({
+            "year": issue_year.astype("int64"),
+            "month": issue_month.astype("int64"),
+            "day": 1,
+        }))
+        days_in_issue_month = (issue_month_start + pd.offsets.MonthEnd(0)).dt.day
+        clamped_issue_day = np.minimum(int(schedule.issue_day), days_in_issue_month)
         df["quarter_issue_date"] = pd.to_datetime(pd.DataFrame({
             "year": issue_year.astype("int64"),
             "month": issue_month.astype("int64"),
-            "day": schedule.issue_day,
+            "day": clamped_issue_day.astype("int64"),
         }))
 
     if degraded:
