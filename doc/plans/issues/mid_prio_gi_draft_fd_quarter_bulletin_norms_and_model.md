@@ -130,8 +130,11 @@ flow. Your changes must be purely additive or modify only the specific behavior 
      issue-date tag) it reads `quarter_issue_date`, never the row's `date`;
    - selects the D6b-eligible quarter, then the D6a product with its fallback order. `EM` is never a
      candidate (FD-029 already excludes it; the helper keeps the guard).
-   - A fallback quarter has no LR row (FD-029 "Behaviour after", item 6; round-2 decision 3), so a named
-     LR product is absent there and D6a's fallback order applies.
+   - A fallback quarter has no LR row on kghm; on tjhm a monthly-derived LR row may appear as native
+     until PP-065 P1b + decision F (tjhm interim, FD-029 item 5) (FD-029 "Behaviour after", item 6;
+     round-2 decision 3). On kghm a named LR product is absent there and D6a's fallback order applies;
+     on tjhm, until the interim resolves, the apparently-native LR row is picked up as an ordinary LR
+     product instead.
 2. **δ bounds (overview decision D).** When the chosen row has null `Q25`/`Q75`, set the bounds to
    forecast ∓ δ, so `Q_MIN`/`Q_MAX` and `V_MIN`/`V_MAX` are filled. The bulletin path has no skill merge
    (the blocks call `get_long_forecasts_quarter` directly), so the helper reads
