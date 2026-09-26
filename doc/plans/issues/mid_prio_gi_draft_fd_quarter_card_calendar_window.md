@@ -47,8 +47,10 @@ For tjhm (issue day 1, lead 0) a (b) row has the native key and is the same DB r
 (decision F) cleans those. The seven derived models and the Naive Mean / Skilled Mean rows (PP-065) are
 dated `valid_from` under flag OFF and carry the row's issue `date` under flag ON (`api_writer.py:1264-1269`,
 PP-064 branch).
-Old quarterly EM rows remain in the DB for past quarters (accepted, round-2 decision 2); no new ones are
-written, and P1 no longer returns them (Behaviour after, item 5).
+Old quarterly EM rows remain in the DB for past quarters (accepted, round-2 decision 2), **and fresh ones
+continue to be written until PP-065 P1b ships** (Behaviour after, item 5, "EM interim"): the writer does
+not stop emitting quarter EM on its own — this plan is what hides them. P1 drops both the old and any
+fresh quarter EM row before returning (Behaviour after, item 5).
 
 ## Problems (trunk `82946683`)
 

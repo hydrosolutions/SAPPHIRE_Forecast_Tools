@@ -145,19 +145,30 @@ Resolved since rev 2:
    - The long-term quarter mode still runs **monthly Mar–Sep**. Only the calendar issues are published:
      kghm Mar/Jun/Sep 25 → Q2/Q3/Q4, and tjhm Apr/Jul 1 → Q2/Q3. The rolling issues are ignored.
    - **Q1 (both orgs) and tjhm Q4 now appear.** They are built from monthly forecasts (the seven models plus
-     Naive/Skilled Mean), with no LR row shown. The caption still shows the scheduled issue date.
+     Naive/Skilled Mean). **On kghm**, no LR row is shown for these quarters from the moment PP-064 A and
+     FD-029 deploy (the fallback LR is not persisted, round-2 decision 3). **On tjhm**, until PP-065 P1b and
+     the decision-F cleanup land (see the tjhm interim above), a monthly-derived LR_Base/LR_SM row may
+     still be shown for these quarters — as native LR, indistinguishable from a genuine issuance (round 4,
+     decision 1). Only once PP-065 P1b + decision F land does tjhm also show no LR row for these quarters,
+     like kghm. The caption still shows the scheduled issue date throughout, on both orgs.
    - Seven more models appear in the quarterly outputs.
    - The quarterly ensembles are now Naive Mean and Skilled Mean, as for monthly. **No quarterly Ensemble
      Mean is shown** — FD-029 hides every quarter `EM` row on the dashboard and in the bulletin input
-     already, but postprocessing itself still **writes** them today (`api_writer.py` maps
-     `ENSEMBLE_MEAN` to `EM`) until PP-065 stops that write. A quarter whose only rows are `EM` plus a
-     non-native LR row shows **nothing** on the card.
+     already (both old, persisted rows and any fresh ones), but postprocessing itself still **writes**
+     fresh quarter `EM` rows today: `ensemble_calculator.py:765` sets `model_short = "EM"` directly (in
+     `_create_aggregated_ensemble_forecasts`), and `api_writer.py:1157-1158` (on the PP-064 A branch,
+     `fix_pp_quarter_calendar_window`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"`
+     entry — not an `"ENSEMBLE_MEAN"`-to-`"EM"` mapping, which is a separate entry used only by the
+     skill-metrics write path. PP-065 P1b is what stops this write. Until then, a quarter whose only rows
+     are `EM` plus a non-native LR row shows **nothing** on the card.
    - **tjhm interim, accepted:** until PP-065 P1b and the decision-F cleanup land, tjhm's monthly-derived
      LR_Base/LR_SM rows are shown as native LR (round 4, decision 1 above) — kghm is unaffected.
    - Bounds for models without quantiles are ±δ on the dashboard. Until FD-030 lands, the bulletin range
      can be blank.
-   - For those quarters LR is included in the ensembles but not shown as a row. This holds for as long as
-     the schedule change stays deferred, which has no date yet.
+   - **For fallback-derived quarters, LR is included in the ensembles but not shown as its own row** — on
+     kghm, unconditionally, since the fallback is never persisted; on tjhm, only once PP-065 P1b + decision
+     F land (before that, see the tjhm interim above — a monthly-derived LR row may be shown there). This
+     holds for as long as the schedule change stays deferred, which has no date yet.
    - Stored quarterly skill values change, some of them sharply. This is a corrected verification method,
      not a model change; include before/after distributions per org.
    - The `validate_pipeline` quarter checks report FAIL on admitted-but-inactive days (INFRA-022).
@@ -212,8 +223,9 @@ Stages:
     "LTF-017":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A":        { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A"], "deadline": "2026-12-25" },
+    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). Read-only; also FD-029.deploy's own precondition (its degraded-mode limitation)" },
     "FD-029":          { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
-    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029"], "deadline": "2026-12-25", "note": "restart the dashboard container" },
+    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029", "PP-064.C.step0"], "deadline": "2026-12-25", "note": "restart the dashboard container" },
     "PP-065.P1a":      { "stage": "merge",  "depends_on": ["PP-064.A"], "parallel_agents": 1 },
     "PP-065.P1b":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
     "PP-065.P1c":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
