@@ -1079,7 +1079,7 @@ def _write_aggregated_forecasts_to_api(
     """
     import calendar
 
-    from src.aggregation import QUARTER_MONTHS, get_season_months
+    from src.aggregation import QUARTER_MONTHS, get_season_months, local_calendar_date
 
     if data is None or data.empty:
         logger.info("No %s forecast data to write to API", label)
@@ -1194,29 +1194,47 @@ def _write_aggregated_forecasts_to_api(
             # Calendar-window guard (PP-064 Chunk A, quarter branch only):
             # a row whose own valid_from/valid_to disagree with the
             # synthesized calendar window for (year, quarter_in_year) --
-            # a rolling window, or a calendar valid_from paired with a
-            # null valid_to -- is dropped rather than written with the
-            # synthesized window. Both null keeps today's synthesized-
-            # window behavior (checked below, before the override).
+            # a rolling window, a calendar valid_from paired with a null
+            # valid_to, or a present-but-unparseable value -- is dropped
+            # rather than written with the synthesized window. Both null
+            # keeps today's synthesized-window behavior. Parsed via
+            # local_calendar_date (not a str(...)[:10] prefix compare,
+            # which accepted a garbage time-of-day like
+            # "2024-06-30T99:00:00" and rejected a same-date value in a
+            # different format like "2024/06/30" or "20240630" that the
+            # reader's own calendar-window check already accepts).
             # Season is unaffected.
             if horizon_type == "quarter":
                 row_has_valid_from = pd.notna(row.get("valid_from"))
                 row_has_valid_to = pd.notna(row.get("valid_to"))
                 both_present = row_has_valid_from and row_has_valid_to
-                skip_row = (row_has_valid_from or row_has_valid_to) and (
-                    not both_present
-                    or str(row["valid_from"])[:10] != valid_from
-                    or str(row["valid_to"])[:10] != valid_to
-                )
+                if both_present:
+                    parsed_valid_from = local_calendar_date(pd.Series([row["valid_from"]])).iloc[0]
+                    parsed_valid_to = local_calendar_date(pd.Series([row["valid_to"]])).iloc[0]
+                    mismatch = (
+                        pd.isna(parsed_valid_from)
+                        or pd.isna(parsed_valid_to)
+                        or parsed_valid_from != pd.Timestamp(valid_from)
+                        or parsed_valid_to != pd.Timestamp(valid_to)
+                    )
+                else:
+                    mismatch = True
+                skip_row = (row_has_valid_from or row_has_valid_to) and mismatch
                 if skip_row:
                     dropped_calendar_rows += 1
                     continue
 
-            # Use existing valid_from/valid_to if present
-            if pd.notna(row.get("valid_from")):
-                valid_from = str(row["valid_from"])[:10]
-            if pd.notna(row.get("valid_to")):
-                valid_to = str(row["valid_to"])[:10]
+            # Use existing valid_from/valid_to if present. Quarter rows
+            # that reach this point already had their own values
+            # verified equal to the synthesized calendar window above,
+            # so they keep writing the synthesized ISO dates (not the
+            # row's own, possibly differently-formatted, string) --
+            # season is unaffected, unchanged from before.
+            if horizon_type != "quarter":
+                if pd.notna(row.get("valid_from")):
+                    valid_from = str(row["valid_from"])[:10]
+                if pd.notna(row.get("valid_to")):
+                    valid_to = str(row["valid_to"])[:10]
 
             record_date = valid_from
             if (

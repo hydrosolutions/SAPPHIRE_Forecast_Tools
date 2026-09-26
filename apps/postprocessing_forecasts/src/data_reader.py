@@ -3485,9 +3485,8 @@ def read_latest_quarterly_forecasts(
             if dropped_future_issue_rows:
                 logger.info(
                     "Dropped %d quarterly direct forecast row(s) dated after "
-                    "forecast_date (flag-OFF postprocessing writes these rows "
-                    "with date = valid_from, the quarter start, not the real "
-                    "issue date)",
+                    "forecast_date (back-dated run, or flag-OFF rows dated at "
+                    "the quarter start)",
                     dropped_future_issue_rows,
                 )
         if lead_aware and quarter_schedules and not direct.empty:

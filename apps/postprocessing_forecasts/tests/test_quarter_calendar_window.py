@@ -28,6 +28,7 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -590,6 +591,72 @@ class TestA7WriterGuard:
         assert result is False
         self.mock_client.write_long_forecasts.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "valid_to",
+        [
+            "2024-06-30T99:00:00",
+            "2024-06-30garbage",
+        ],
+    )
+    def test_unparseable_valid_to_skipped(self, valid_to):
+        """Q2: the guard parses the row's own values with
+
+        local_calendar_date, not a str(...)[:10] prefix compare, which
+        accepted a garbage time-of-day/suffix like this (its first 10
+        chars happen to match the synthesized date) and would have
+        written it anyway. (Mutation: restoring the [:10] prefix
+        compare makes this test fail.)
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2024],
+                "quarter_in_year": [2],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+                "valid_from": ["2024-04-01"],
+                "valid_to": [valid_to],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "valid_from,valid_to",
+        [
+            ("2024/04/01", "2024/06/30"),
+            ("20240401", "20240630"),
+        ],
+    )
+    def test_differently_formatted_same_date_accepted_and_serialized_as_iso(
+        self, valid_from, valid_to
+    ):
+        """Q2: a same-date value in a different format (accepted by the
+
+        reader's own calendar-window check, src.aggregation's
+        local_calendar_date) must also be accepted here -- and written
+        as the synthesized ISO date, not the row's own differently
+        formatted string (which would otherwise be written literally
+        and malform the API payload).
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2024],
+                "quarter_in_year": [2],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+                "valid_from": [valid_from],
+                "valid_to": [valid_to],
+            }
+        )
+        result = self._write(data)
+        assert result is True
+        records = self.mock_client.write_long_forecasts.call_args[0][0]
+        assert records[0]["valid_from"] == "2024-04-01"
+        assert records[0]["valid_to"] == "2024-06-30"
+
     def test_one_aggregated_log_line_for_multiple_dropped_rows(self, caplog):
         data = pd.DataFrame(
             {
@@ -967,8 +1034,8 @@ class TestRegressionIssueYearMaskTooPermissive:
 # tz-aware and tz-naive strings makes `pd.to_datetime(..., format="mixed")`
 # return an object-dtype Series, so a subsequent `.dt` access raises
 # AttributeError -- aborting the whole quarterly read where trunk's plain
-# string comparison never would have. `_issue_date_local_calendar_date`
-# fixes this by parsing only the first 10 characters (the calendar date).
+# string comparison never would have. `local_calendar_date` fixes this by
+# parsing each value's LOCAL calendar date (tz dropped).
 # ===========================================================================
 
 
@@ -1059,8 +1126,9 @@ class TestRegressionMixedTimezoneIssueDate:
 # tz-aware and tz-naive strings across rows makes that parse return an
 # object-dtype Series, so .dt.normalize() raises AttributeError; the
 # combined reader's try/except then swallows it and returns ZERO rows
-# where trunk returned both. _local_calendar_date fixes this the same way
-# data_reader's _issue_date_local_calendar_date does.
+# where trunk returned both. local_calendar_date (shared with
+# data_reader, which imports it from here) fixes this by parsing each
+# value's LOCAL calendar date (tz dropped).
 # ===========================================================================
 
 
@@ -1369,6 +1437,16 @@ class TestP1LocalCalendarDateParsing:
             float("nan"),
             pd.NA,
             pd.NaT,
+            # Q1: pd.Timestamp accepts dates outside the datetime64[ns]
+            # range (~1677-09-21..2262-04-11) at second resolution, but
+            # casting to ns overflows -- these must come back NaT, not
+            # raise OutOfBoundsDatetime.
+            "9999-12-31",
+            "0001-04-01",
+            "2500-04-01",
+            dt.date(3000, 1, 1),
+            pd.Timestamp("2500-01-01"),
+            np.datetime64("2500-01-01"),
         ],
     )
     def test_rejected_values_are_nat(self, value):
@@ -1380,10 +1458,72 @@ class TestP1LocalCalendarDateParsing:
         result = local_calendar_date(s)
         assert list(result) == [pd.Timestamp("2024-06-30"), pd.Timestamp("2024-09-30")]
 
+    def test_midnight_normalization(self):
+        """Q5: a value with a non-midnight time-of-day is normalized to
+
+        midnight. (Mutation: removing .normalize() in
+        _parse_local_calendar_date makes this fail.)
+        """
+        result = local_calendar_date(pd.Series(["2024-04-01T13:45:00"])).iloc[0]
+        assert result == pd.Timestamp("2024-04-01 00:00:00")
+
+    def test_deduped_result_matches_non_deduped_on_repetitive_mixed_input(self):
+        """Q3: proves the factorize-based dedup broadcast is equivalent
+
+        to parsing every row individually, on a repetitive input mixing
+        NaNs and value types (the case the dedup optimizes for).
+        """
+        from src.aggregation import _parse_local_calendar_date
+
+        distinct = [
+            "2024-04-01",
+            "2024-04-01T00:00:00+06:00",
+            None,
+            float("nan"),
+            pd.NaT,
+            pd.Timestamp("2024-07-01"),
+            dt.date(2024, 8, 1),
+            "garbage",
+            "9999-12-31",
+            "2024/04/01",
+        ]
+        s = pd.Series(distinct * 50).sample(frac=1.0, random_state=0).reset_index(drop=True)
+
+        non_deduped = pd.to_datetime(
+            pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object)
+        )
+        deduped = local_calendar_date(s)
+
+        pd.testing.assert_series_equal(deduped, non_deduped, check_names=False)
+
     def test_empty_series_returns_empty_datetime64(self):
         result = local_calendar_date(pd.Series([], dtype=object))
         assert result.empty
-        assert result.dtype.kind == "M"
+        assert result.dtype == "datetime64[ns]"
+
+    def test_empty_tz_aware_series_returns_naive_datetime64(self):
+        """Q4: an empty tz-aware input (datetime64[ns, UTC]) must still
+
+        come back naive datetime64[ns] -- not tz-aware, which .kind=="M"
+        alone would not catch.
+        """
+        result = local_calendar_date(pd.Series([], dtype="datetime64[ns, UTC]"))
+        assert result.empty
+        assert result.dtype == "datetime64[ns]"
+
+    def test_all_null_tz_aware_series_returns_naive_datetime64(self):
+        """Q4: a non-empty, entirely-null tz-aware input must also come
+
+        back naive datetime64[ns] with NaT rows, not left tz-aware.
+        """
+        result = local_calendar_date(pd.Series([pd.NaT, pd.NaT], dtype="datetime64[ns, UTC]"))
+        assert result.dtype == "datetime64[ns]"
+        assert result.isna().all()
+
+    def test_all_null_object_series_returns_naive_datetime64(self):
+        result = local_calendar_date(pd.Series([None, float("nan"), pd.NaT]))
+        assert result.dtype == "datetime64[ns]"
+        assert result.isna().all()
 
     def test_slash_date_accepted_and_garbage_hour_rejected_through_the_filter(self):
         """Fails on 1259efa4: the old helper flips both outcomes -- it
@@ -1403,3 +1543,111 @@ class TestP1LocalCalendarDateParsing:
         assert dropped == 1
         assert len(kept) == 1
         assert kept["valid_from"].iloc[0] == pd.Timestamp("2024-04-01")
+
+
+# ===========================================================================
+# Q1 (confirm review of 8c9cfc2a, Important): out-of-range dates crash.
+# pd.Timestamp accepts dates outside the datetime64[ns] range at second
+# resolution, but the OUTER pd.to_datetime cast (or, separately,
+# valid_from + DateOffset(months=3) for a valid_from within ~3 months of
+# the ns upper limit) then raises OutOfBoundsDatetime/OverflowError,
+# outside the per-value try. Both direct readers abort; the combined
+# reader's try/except swallows it and returns empty, losing valid
+# companion rows. All of these must fail (raise) on 8c9cfc2a.
+# ===========================================================================
+
+
+class TestRegressionOutOfRangeDatesDoNotCrash:
+    def _valid_row(self):
+        return _quarter_row("2024-04-01", "2024-06-30", "2024-03-25", model="LR_Base", q=100.0)
+
+    def _all_companions(self):
+        return [
+            # valid_to outside the datetime64[ns] range.
+            _quarter_row("2024-10-01", "9999-12-31", "2024-09-25", model="OOB_VALID_TO"),
+            # valid_from outside the range.
+            _quarter_row("2500-04-01", "2500-06-30", "2024-03-25", model="OOB_VALID_FROM"),
+            # valid_from in range, but + 3 months overflows the ns upper
+            # limit (~2262-04-11) even though 2262-02-01 itself parses.
+            _quarter_row("2262-02-01", "2262-04-30", "2024-03-25", model="OOB_OFFSET"),
+            # valid_from at a quarter-start month, past the safety
+            # margin -- excluded conservatively, per spec, without
+            # attempting the (safe, in this one case) arithmetic.
+            _quarter_row("2262-01-01", "2262-03-31", "2024-03-25", model="NEAR_LIMIT"),
+            # issue date outside the range (a genuinely calendar Q3 2024
+            # window otherwise).
+            _quarter_row("2024-07-01", "2024-09-30", "0001-01-01", model="OOB_ISSUE_DATE"),
+        ]
+
+    def _fake_returning_all(self, rows):
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(rows)
+
+        return fake
+
+    def test_read_quarterly_forecasts_flag_off_survives(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [self._valid_row(), *self._all_companions()]
+        fake = self._fake_returning_all(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2024, 2024)
+
+        q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2024) == 1
+        assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0
+
+    def test_read_latest_quarterly_forecasts_flag_off_survives(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [self._valid_row(), *self._all_companions()]
+        fake = self._fake_returning_all(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2024, 10, 1)
+            )
+
+        assert not result.empty
+        q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2024) == 1
+        assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0
+
+    def test_read_latest_quarterly_forecasts_flag_on_survives(self, monkeypatch):
+        """OOB_ISSUE_DATE is omitted here: it is a genuine calendar
+
+        window, so (unlike the other companions, which the calendar
+        filter excludes before select_operational_issuances ever runs)
+        it would reach select_operational_issuances' own unrelated,
+        pre-existing, out-of-scope plain pd.to_datetime(date_col) parse,
+        which raises on '0001-01-01' regardless of this fix. Covered for
+        flag OFF above, where select_operational_issuances is not
+        invoked.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        companions = [c for c in self._all_companions() if c["model_type"] != "OOB_ISSUE_DATE"]
+        rows = [self._valid_row(), *companions]
+        fake = self._fake_returning_all(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2024, 10, 1)
+            )
+
+        assert not result.empty
+        q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2024) == 1
+        assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0
+
+    def test_read_quarterly_combined_forecasts_survives(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [self._valid_row(), *self._all_companions()]
+        client = _mock_combined_client(rows)
+        with (
+            patch.object(data_reader, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
+            patch.object(data_reader, "SapphirePostprocessingClient", return_value=client),
+        ):
+            result = data_reader.read_quarterly_combined_forecasts(codes=[CODE])
+
+        q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2024) == 1
+        assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0

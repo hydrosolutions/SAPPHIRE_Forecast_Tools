@@ -43,21 +43,31 @@ def _parse_local_calendar_date(v) -> pd.Timestamp:
     date, unlike ``tz_convert`` which would shift the underlying instant
     to UTC first.
 
+    The ``.as_unit("ns")`` cast happens INSIDE this try, not left to a
+    later vectorized ``pd.to_datetime`` call: ``pd.Timestamp`` accepts
+    dates outside the datetime64[ns] range (e.g. ``"9999-12-31"``,
+    ``"0001-04-01"``, year 2500) by holding them at second resolution,
+    but casting such a Timestamp to ns raises
+    ``OutOfBoundsDatetime`` -- a ``ValueError`` subclass, so it is caught
+    the same way an unparseable value is, and gives ``NaT`` instead of
+    aborting the caller.
+
     Args:
         v: A single raw value (string, Timestamp, date, or null).
 
     Returns:
-        A naive, midnight-normalized ``pd.Timestamp``, or ``pd.NaT``.
+        A naive, midnight-normalized ``pd.Timestamp`` at ns resolution,
+        or ``pd.NaT``.
     """
     try:
         ts = pd.Timestamp(v)
+        if pd.isna(ts):
+            return pd.NaT
+        if ts.tzinfo is not None:
+            ts = ts.tz_localize(None)
+        return ts.normalize().as_unit("ns")
     except (ValueError, TypeError, OverflowError):
         return pd.NaT
-    if pd.isna(ts):
-        return pd.NaT
-    if ts.tzinfo is not None:
-        ts = ts.tz_localize(None)
-    return ts.normalize()
 
 
 def local_calendar_date(s: pd.Series) -> pd.Series:
@@ -76,14 +86,35 @@ def local_calendar_date(s: pd.Series) -> pd.Series:
     ``"2024-04-01garbage"`` and rejected ``"2024/04/01"``), so it is not
     used here.
 
+    Each DISTINCT raw value is parsed only once (``pd.factorize``, which
+    is NaN-safe: ``None``/``NaN``/``NaT`` all collapse to one sentinel
+    and are excluded from the unique values), then broadcast back to
+    every row -- at scale, most values repeat (the same handful of
+    issue/target dates across many rows), and ``pd.Timestamp`` parsing
+    per row dominates runtime otherwise.
+
     Args:
         s: Raw date-like column (strings, Timestamps, dates, or null).
 
     Returns:
-        Series of naive datetime64[ns] (or NaT). Empty input returns an
-        empty datetime64[ns] Series.
+        Series of naive datetime64[ns] (or NaT), same index as `s`.
+        Empty input, and input that is entirely null regardless of its
+        own dtype (e.g. an empty or all-NaT tz-aware column), both
+        return naive datetime64[ns].
     """
-    return pd.to_datetime(s.map(_parse_local_calendar_date))
+    if len(s) == 0:
+        return pd.Series(pd.array([], dtype="datetime64[ns]"), index=s.index)
+
+    codes, uniques = pd.factorize(s, use_na_sentinel=True)
+    parsed_uniques = pd.to_datetime(
+        pd.Series([_parse_local_calendar_date(v) for v in uniques], dtype=object)
+    ).to_numpy(dtype="datetime64[ns]")
+    # `codes == -1` marks a null-like entry in `s`; such entries have no
+    # corresponding row in `uniques`/`parsed_uniques`, so look them up
+    # via one extra NaT appended past the end of the lookup array.
+    lookup = np.append(parsed_uniques, np.datetime64("NaT", "ns"))
+    values = lookup[np.where(codes == -1, len(parsed_uniques), codes)]
+    return pd.Series(values, index=s.index)
 
 
 def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -143,8 +174,19 @@ def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int
     # Last day of the quarter's third month, same year: adding 3 months
     # then subtracting a day stays within the same year for all four
     # quarter-start months (including Oct -> Dec 31 of the same year).
-    expected_valid_to = valid_from + pd.DateOffset(months=3) - pd.Timedelta(days=1)
-    is_calendar_window = is_quarter_start & valid_to.eq(expected_valid_to)
+    # datetime64[ns] tops out at 2262-04-11, so this arithmetic can
+    # overflow for an in-range valid_from within ~3 months of that limit
+    # (e.g. 2262-02-01) even though valid_from itself parsed fine.
+    # Compute it only for rows whose valid_from year is <= 2261 (a
+    # generous margin below the actual limit); any other row's window
+    # cannot be verified this way and is simply not a calendar quarter.
+    safe_for_offset = valid_from.dt.year <= 2261
+    expected_valid_to = pd.Series(pd.NaT, index=valid_from.index, dtype="datetime64[ns]")
+    if safe_for_offset.any():
+        expected_valid_to.loc[safe_for_offset] = (
+            valid_from.loc[safe_for_offset] + pd.DateOffset(months=3) - pd.Timedelta(days=1)
+        )
+    is_calendar_window = is_quarter_start & safe_for_offset & valid_to.eq(expected_valid_to)
 
     mask = valid_from.notna() & valid_to.notna() & is_calendar_window
 
