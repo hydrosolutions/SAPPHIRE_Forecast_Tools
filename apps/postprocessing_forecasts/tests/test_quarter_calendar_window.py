@@ -433,11 +433,18 @@ class TestA7WriterGuard:
                 "valid_to": ["2025-07-31"],
             }
         )
-        with caplog.at_level(logging.INFO, logger="src.api_writer"):
+        with caplog.at_level(logging.WARNING, logger="src.api_writer"):
             result = self._write(data)
         assert result is False
         self.mock_client.write_long_forecasts.assert_not_called()
-        assert "Dropped 1" in caplog.text
+        drop_records = [r for r in caplog.records if "Dropped 1" in r.message]
+        assert len(drop_records) == 1
+        # W1: a drop here means an upstream invariant broke (the readers
+        # already filter non-calendar windows out), unlike the reader
+        # filters' by-design, every-run INFO drops -- and INFO never
+        # reaches the logs from production entry points anyway
+        # (INFRA-029). Mutation: setting this back to INFO fails here.
+        assert drop_records[0].levelname == "WARNING"
 
     def test_calendar_window_disagreeing_with_year_quarter_dropped(self):
         # A genuine calendar window (Q3), but the row's OWN
@@ -705,11 +712,12 @@ class TestA7WriterGuard:
                 "valid_to": ["2025-07-31", "2025-10-31"],
             }
         )
-        with caplog.at_level(logging.INFO, logger="src.api_writer"):
+        with caplog.at_level(logging.WARNING, logger="src.api_writer"):
             self._write(data)
         drop_lines = [r for r in caplog.records if "non-calendar quarter window" in r.message]
         assert len(drop_lines) == 1
         assert "Dropped 2" in drop_lines[0].message
+        assert drop_lines[0].levelname == "WARNING"
 
     def test_year_2262_q1_rejected_even_with_both_null(self):
         """S2: the writer must match the reader's conservative

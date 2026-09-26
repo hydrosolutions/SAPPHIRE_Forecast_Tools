@@ -1295,7 +1295,14 @@ def _write_aggregated_forecasts_to_api(
             records.append(record)
 
         if dropped_calendar_rows:
-            logger.info(
+            # WARNING, not INFO: unlike the reader filters (which drop
+            # rolling windows on every run by design), a drop here means
+            # an upstream invariant broke -- the readers already filter
+            # non-calendar windows out, so this row should never have
+            # reached the writer with one. INFO also never reaches the
+            # logs from production entry points (setup_library caps the
+            # root logger at WARNING on import -- INFRA-029).
+            logger.warning(
                 "Dropped %d %s forecast record(s) with a non-calendar quarter window",
                 dropped_calendar_rows,
                 label,
