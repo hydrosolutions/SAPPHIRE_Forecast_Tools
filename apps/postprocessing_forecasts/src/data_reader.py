@@ -3140,8 +3140,20 @@ def read_quarterly_forecasts(
                 target_period_col="quarter_in_year",
             )
             direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
-        elif not lead_aware and not direct.empty:
-            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
+        elif not lead_aware and not direct.empty and "year" in direct.columns:
+            # Drop only the EXTRA rows the start_year - 1 read-window
+            # widening above admits (target year < start_year). Trunk's
+            # flag-OFF direct read never trimmed the upper bound, so a
+            # target year > end_year (e.g. a Dec-end_year issue's
+            # next-year Q1) must still survive here unchanged -- it is
+            # what lets a direct row win over Source 1 (monthly-derived)
+            # for that same target in the drop_duplicates(keep="last")
+            # combine below. A two-sided trim to end_year here would
+            # drop it and let the monthly-derived value win instead,
+            # reversing direct-source precedence (regression found by
+            # out-of-loop review of the initial Problem 7 fix).
+            years = pd.to_numeric(direct["year"], errors="coerce")
+            direct = direct[years.isna() | (years >= start_year)].copy()
     else:
         direct = pd.DataFrame()
 

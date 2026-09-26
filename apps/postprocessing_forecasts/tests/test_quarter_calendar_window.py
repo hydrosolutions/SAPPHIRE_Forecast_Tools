@@ -584,16 +584,123 @@ class TestA9BackDatedRun:
 
 
 class TestA10FirstYearQ1FlagOff:
-    def test_december_issued_q1_of_first_year_is_read_next_year_trimmed(self, monkeypatch):
+    def test_december_issued_q1_of_first_year_is_read(self, monkeypatch):
+        """Problem 7: a Dec-issued Q1 of the FIRST requested year is read
+
+        even though its issue date's year is start_year - 1 -- the
+        start_year - 1 read-window widening's whole purpose.
+
+        NOTE: an earlier version of this test also asserted that a row
+        issued 2025-12-25 targeting Q1 2026 was excluded by this same
+        call. That assertion relied on a two-sided (start_year, end_year)
+        trim that an out-of-loop review found to be a regression: it also
+        trimmed a genuine next-year DIRECT row that must survive to win
+        over a same-target monthly-derived (Source 1) row in the later
+        drop_duplicates(keep="last") combine -- see
+        TestRegressionDirectPrecedenceSurvivesLowerBoundWidening below,
+        which now owns that scenario. The fix trims only target years
+        BELOW start_year (the actual extra rows the widening admits); it
+        does not trim target years above end_year. This test now checks
+        only the first-year Q1 read, not any next-year exclusion.
+        """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
-        rows = [
-            _quarter_row("2025-01-01", "2025-03-31", "2024-12-25", model="LR_Base"),
-            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base"),
-        ]
+        rows = [_quarter_row("2025-01-01", "2025-03-31", "2024-12-25", model="LR_Base")]
         fake = _quarter_api_fake(rows)
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
             result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
 
-        assert len(result) == 1
-        assert int(result["year"].iloc[0]) == 2025
-        assert int(result["quarter_in_year"].iloc[0]) == 1
+        q1_2025 = result[(result["year"] == 2025) & (result["quarter_in_year"] == 1)]
+        assert len(q1_2025) == 1
+        assert float(q1_2025["forecasted_discharge"].iloc[0]) == 100.0
+
+    def test_widened_window_still_trims_target_years_below_start_year(self, monkeypatch):
+        """The start_year - 1 widening's LOWER bound IS trimmed: a normal
+
+        (non-cross-year) issue within start_year - 1 that targets
+        start_year - 1 itself must not leak through the widening into a
+        read for [start_year, end_year].
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [_quarter_row("2024-04-01", "2024-06-30", "2024-03-25", model="LR_Base")]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        assert result.empty
+
+
+# ===========================================================================
+# Regression (out-of-loop review of commit 899ae20d): the Problem-7 fix's
+# lower-bound widening must not ALSO trim next-year DIRECT rows that trunk
+# kept. Maintenance calling read_quarterly_forecasts(codes, Y, Y) to fill
+# only year-Y gaps must still let a Dec-issued direct row targeting Q1 of
+# Y+1 win over a same-target monthly-derived (Source 1) row -- exactly as
+# on trunk, where drop_duplicates(keep="last") prefers direct because
+# concat puts it last.
+# ===========================================================================
+
+
+def _quarter_and_month_api_fake(quarter_rows, monthly_rows):
+    """Fake `_read_long_forecasts_api` serving BOTH sources, filtering by
+
+    requested issue-date years, `horizon_value` AND `horizon_type` (the
+    monthly source uses the default horizon_type="month").
+    """
+
+    def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+        wanted_codes = {str(c) for c in codes}
+        src = quarter_rows if horizon_type == "quarter" else monthly_rows
+        out = []
+        for r in src:
+            if str(r["code"]) not in wanted_codes:
+                continue
+            issue_year = int(str(r["date"])[:4])
+            if not (start_year <= issue_year <= end_year):
+                continue
+            if horizon_value is not None and int(r.get("horizon_value", -1)) != horizon_value:
+                continue
+            out.append(dict(r))
+        return pd.DataFrame(out) if out else pd.DataFrame()
+
+    return fake
+
+
+class TestRegressionDirectPrecedenceSurvivesLowerBoundWidening:
+    def _monthly_rows(self):
+        # Two months (Jan, Feb 2026) per model -> QUARTER_MIN_MONTHS (2)
+        # satisfied -> aggregate_monthly_fc_to_quarterly synthesizes a
+        # Q1 2026 row per model, issued within 2025 so it survives the
+        # (unwidened) monthly read window [2025, 2025].
+        rows = []
+        for model, value in (("LR_Base", 200.0), ("LR_SM", 220.0)):
+            for month in (1, 2):
+                rows.append(
+                    {
+                        "code": CODE,
+                        "date": "2025-11-25",
+                        "model_type": model,
+                        "valid_from": f"2026-{month:02d}-01",
+                        "valid_to": f"2026-{month:02d}-28",
+                        "forecasted_discharge": value,
+                        "q50": value,
+                        "horizon_value": 1,
+                    }
+                )
+        return rows
+
+    def _direct_rows(self):
+        return [
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0),
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_SM", q=120.0),
+        ]
+
+    def test_direct_next_year_q1_wins_over_monthly_derived(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        fake = _quarter_and_month_api_fake(self._direct_rows(), self._monthly_rows())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
+        got = dict(zip(q1_2026["model_short"], q1_2026["forecasted_discharge"], strict=False))
+        assert got.get("LR_Base") == 100.0
+        assert got.get("LR_SM") == 120.0
