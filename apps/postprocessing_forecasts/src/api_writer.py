@@ -1149,6 +1149,7 @@ def _write_aggregated_forecasts_to_api(
             return False
 
         records = []
+        dropped_calendar_rows = 0
         for _, row in data.iterrows():
             code = str(row["code"]).replace(".0", "")
 
@@ -1190,6 +1191,27 @@ def _write_aggregated_forecasts_to_api(
                     valid_to = f"{end_year}-{end_m:02d}-{last_day:02d}"
                 horizon_value = int(row[period_col])
 
+            # Calendar-window guard (PP-064 Chunk A, quarter branch only):
+            # a row whose own valid_from/valid_to disagree with the
+            # synthesized calendar window for (year, quarter_in_year) --
+            # a rolling window, or a calendar valid_from paired with a
+            # null valid_to -- is dropped rather than written with the
+            # synthesized window. Both null keeps today's synthesized-
+            # window behavior (checked below, before the override).
+            # Season is unaffected.
+            if horizon_type == "quarter":
+                row_has_valid_from = pd.notna(row.get("valid_from"))
+                row_has_valid_to = pd.notna(row.get("valid_to"))
+                both_present = row_has_valid_from and row_has_valid_to
+                skip_row = (row_has_valid_from or row_has_valid_to) and (
+                    not both_present
+                    or str(row["valid_from"])[:10] != valid_from
+                    or str(row["valid_to"])[:10] != valid_to
+                )
+                if skip_row:
+                    dropped_calendar_rows += 1
+                    continue
+
             # Use existing valid_from/valid_to if present
             if pd.notna(row.get("valid_from")):
                 valid_from = str(row["valid_from"])[:10]
@@ -1228,6 +1250,13 @@ def _write_aggregated_forecasts_to_api(
                 record["composition"] = str(comp)
 
             records.append(record)
+
+        if dropped_calendar_rows:
+            logger.info(
+                "Dropped %d %s forecast record(s) with a non-calendar quarter window",
+                dropped_calendar_rows,
+                label,
+            )
 
         if not records:
             logger.info("No %s forecast records to write to API", label)

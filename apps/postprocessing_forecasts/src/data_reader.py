@@ -3118,9 +3118,14 @@ def read_quarterly_forecasts(
             horizon_type="quarter",
         )
     else:
+        # Problem 7: read issue years from start_year - 1 (rather than
+        # start_year) so a December-issued Q1 of the first requested
+        # year is read; the horizon_value filter is unchanged. Trimmed
+        # back down to [start_year, end_year] by target year below,
+        # mirroring the flag-ON branch.
         raw_q = _read_long_forecasts_api(
             codes,
-            start_year,
+            start_year - 1,
             end_year,
             horizon_type="quarter",
             horizon_value=quarter_horizon_value(),
@@ -3134,6 +3139,8 @@ def read_quarterly_forecasts(
                 target_year_col="year",
                 target_period_col="quarter_in_year",
             )
+            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
+        elif not lead_aware and not direct.empty:
             direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
     else:
         direct = pd.DataFrame()
@@ -3403,6 +3410,15 @@ def read_latest_quarterly_forecasts(
         )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
+        # Problem 6: under both flags, a direct row issued after
+        # forecast_date cannot be an operational issuance for this run
+        # (guards the widened target-year trim below against a
+        # back-dated run picking a later issue). Rows with a null or
+        # unparseable date are kept, unaffected by the bound.
+        if not direct.empty and "date" in direct.columns:
+            issue_date = pd.to_datetime(direct["date"], format="mixed", errors="coerce")
+            keep_mask = issue_date.isna() | (issue_date.dt.normalize() <= pd.Timestamp(today))
+            direct = direct[keep_mask].copy()
         if lead_aware and quarter_schedules and not direct.empty:
             direct = select_operational_issuances(
                 direct,
@@ -3410,7 +3426,10 @@ def read_latest_quarterly_forecasts(
                 target_year_col="year",
                 target_period_col="quarter_in_year",
             )
-            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
+            # Problem 6: admit end_year + 1 so a 25 Dec issue's next-year
+            # Q1 survives (the date bound above prevents a back-dated
+            # run from picking a later issue through this wider bound).
+            direct = _trim_to_target_year_range(direct, "year", start_year, end_year + 1)
     else:
         direct = pd.DataFrame()
 
@@ -3740,9 +3759,23 @@ def _normalize_combined_forecasts(
     Extracts year/quarter/season from valid_from, renames model_type
     to model_short, adds derived columns.
     """
-    from src.aggregation import MONTH_TO_QUARTER, get_season_year
+    from src.aggregation import MONTH_TO_QUARTER, filter_calendar_quarter_windows, get_season_year
 
     df = df.copy()
+
+    # Calendar-window validation (PP-064 Chunk A): a non-calendar quarter
+    # window is excluded here, at the single choke point for every direct
+    # quarter read, rather than relabelled. Season is unaffected. This also
+    # writes a normalized valid_from back into df, so the parse below
+    # cannot raise on mixed date-only / timestamp strings.
+    if horizon_type == "quarter":
+        df, dropped_calendar_rows = filter_calendar_quarter_windows(df)
+        if dropped_calendar_rows:
+            logger.info(
+                "Dropped %d non-calendar %s forecast window row(s)",
+                dropped_calendar_rows,
+                horizon_type,
+            )
 
     # Parse valid_from for year extraction
     df["valid_from"] = pd.to_datetime(df["valid_from"])

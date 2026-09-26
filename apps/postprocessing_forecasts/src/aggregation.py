@@ -34,6 +34,75 @@ QUARTER_MONTHS: dict[int, list[int]] = {
 
 MONTH_TO_QUARTER: dict[int, int] = {m: q for q, ms in QUARTER_MONTHS.items() for m in ms}
 
+
+def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Keep only rows whose window is an exact calendar-quarter window.
+
+    A calendar quarter window has ``valid_from`` on the 1st of
+    Jan/Apr/Jul/Oct and ``valid_to`` on the last day of the third month
+    of that same quarter, of the SAME year (e.g. 2024-04-01..2024-06-30).
+    A rolling window (different start day, different end month/year, or
+    a mismatched span) is dropped -- never relabelled into a quarter.
+
+    ``valid_from`` and ``valid_to`` are parsed with
+    ``format="mixed", errors="coerce"`` and normalized to midnight,
+    because reader output mixes date-only strings and timestamps. The
+    normalized ``valid_from`` is written back into the returned frame so
+    that a subsequent plain ``pd.to_datetime(df["valid_from"])`` cannot
+    raise on the mixed formats this helper already resolved. ``valid_to``
+    is left with the dtype it came in with.
+
+    Column-presence rules:
+    - Neither ``valid_from`` nor ``valid_to`` present: returned unchanged
+      (0 dropped) -- there is nothing to validate.
+    - Exactly one of the two columns present: every row is invalid (the
+      window cannot be verified), so the result is empty and the dropped
+      count is the full row count.
+    - Both present: a row with either value null or unparseable is
+      invalid and dropped.
+
+    Args:
+        df: Frame that may contain ``valid_from`` / ``valid_to`` columns.
+
+    Returns:
+        Tuple of (filtered frame, number of rows dropped).
+    """
+    has_valid_from = "valid_from" in df.columns
+    has_valid_to = "valid_to" in df.columns
+
+    if not has_valid_from and not has_valid_to:
+        return df, 0
+
+    df = df.copy()
+
+    if not has_valid_from or not has_valid_to:
+        # Only one of the two columns is present: no row's window can be
+        # verified as a calendar quarter, so every row is invalid.
+        dropped = len(df)
+        if has_valid_from:
+            df["valid_from"] = pd.to_datetime(
+                df["valid_from"], format="mixed", errors="coerce"
+            ).dt.normalize()
+        return df.iloc[0:0].copy(), dropped
+
+    valid_from = pd.to_datetime(df["valid_from"], format="mixed", errors="coerce").dt.normalize()
+    valid_to = pd.to_datetime(df["valid_to"], format="mixed", errors="coerce").dt.normalize()
+
+    is_quarter_start = valid_from.dt.day.eq(1) & valid_from.dt.month.isin([1, 4, 7, 10])
+    # Last day of the quarter's third month, same year: adding 3 months
+    # then subtracting a day stays within the same year for all four
+    # quarter-start months (including Oct -> Dec 31 of the same year).
+    expected_valid_to = valid_from + pd.DateOffset(months=3) - pd.Timedelta(days=1)
+    is_calendar_window = is_quarter_start & valid_to.eq(expected_valid_to)
+
+    mask = valid_from.notna() & valid_to.notna() & is_calendar_window
+
+    df["valid_from"] = valid_from
+    kept = df[mask].copy()
+    dropped = len(df) - len(kept)
+    return kept, dropped
+
+
 # Minimum months required per quarter (out of 3)
 QUARTER_MIN_MONTHS = 2
 
