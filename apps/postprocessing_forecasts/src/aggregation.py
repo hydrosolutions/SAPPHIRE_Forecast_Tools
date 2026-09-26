@@ -34,6 +34,250 @@ QUARTER_MONTHS: dict[int, list[int]] = {
 
 MONTH_TO_QUARTER: dict[int, int] = {m: q for q, ms in QUARTER_MONTHS.items() for m in ms}
 
+
+_LOCAL_CALENDAR_DATE_LOWER_BOUND = pd.Timestamp("1677-09-22")
+
+
+def _parse_local_calendar_date(v) -> pd.Timestamp:
+    """Return one raw value's LOCAL calendar date as a naive midnight Timestamp.
+
+    Element-wise helper behind ``local_calendar_date``. Any tz offset is
+    dropped via ``tz_localize(None)`` -- which keeps the LOCAL wall-clock
+    date, unlike ``tz_convert`` which would shift the underlying instant
+    to UTC first.
+
+    The ``.as_unit("ns")`` cast happens INSIDE this try, not left to a
+    later vectorized ``pd.to_datetime`` call: ``pd.Timestamp`` accepts
+    dates outside the datetime64[ns] range (e.g. ``"9999-12-31"``,
+    ``"0001-04-01"``, year 2500) by holding them at second resolution,
+    but casting such a Timestamp to ns raises ``OutOfBoundsDatetime``.
+
+    A value just above the OTHER end of the range (``pd.Timestamp.min``,
+    1677-09-21 00:12:43...) is rejected explicitly, BEFORE
+    ``.normalize()``: normalizing such a value truncates its
+    time-of-day DOWN to that day's midnight, which is earlier than the
+    representable minimum, and pandas does not raise for this -- it
+    silently wraps around to a bogus date near the UPPER limit instead
+    (observed: 2262-04-11).
+
+    The whole parse is wrapped in a broad ``except Exception`` -- not a
+    fixed tuple of expected exception types -- because this function
+    must NEVER raise for ANY input: ``pd.Timestamp(v)`` can invoke
+    arbitrary methods on an arbitrary object `v` (e.g. its ``__str__``),
+    which can raise anything.
+
+    Args:
+        v: A single raw value (string, Timestamp, date, or null).
+
+    Returns:
+        A naive, midnight-normalized ``pd.Timestamp`` at ns resolution,
+        or ``pd.NaT``.
+    """
+    try:
+        ts = pd.Timestamp(v)
+        if pd.isna(ts):
+            return pd.NaT
+        if ts.tzinfo is not None:
+            ts = ts.tz_localize(None)
+        if ts < _LOCAL_CALENDAR_DATE_LOWER_BOUND:
+            return pd.NaT
+        return ts.normalize().as_unit("ns")
+    except Exception:
+        return pd.NaT
+
+
+def _local_calendar_date_per_value(s: pd.Series) -> pd.Series:
+    """Path (c): parse every value individually, with no de-duplication.
+
+    The fallback every OTHER path in ``local_calendar_date`` reduces to
+    when it cannot safely vectorize or dedup: unconditionally correct,
+    just not fast.
+    """
+    parsed = pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object, index=s.index)
+    return pd.to_datetime(parsed)
+
+
+def local_calendar_date(s: pd.Series) -> pd.Series:
+    """Return a raw date-like column's LOCAL calendar date as naive datetime64.
+
+    Parses each value with ``pd.Timestamp`` (not a bare
+    ``pd.to_datetime(s, format="mixed", errors="coerce")``, which raises
+    ``AttributeError`` on a subsequent ``.dt`` access when `s` mixes
+    tz-aware and tz-naive strings across rows -- e.g. ``"2024-06-30"``
+    next to ``"2024-09-30T00:00:00+06:00"`` -- because "mixed" then
+    returns an object-dtype Series of Python objects rather than
+    datetime64). A previous version of this helper instead sliced the
+    string form to its first 10 characters and parsed with a fixed
+    ``format="%Y-%m-%d"``; that changed which values parse in BOTH
+    directions relative to ``format="mixed"`` (e.g. it silently accepted
+    ``"2024-04-01garbage"`` and rejected ``"2024/04/01"``), so it is not
+    used here.
+
+    This function must return EXACTLY what applying
+    ``_parse_local_calendar_date`` to every value individually would
+    return, for every input, in any row order. An earlier version
+    de-duplicated by a generic "type + string representation" key; each
+    of three review rounds found a NEW way to break that key (a
+    same-instant tz-aware value at two different UTC offsets; 0/False
+    and 1/True/1.0, all ``==`` in Python but parsed differently;
+    ``str()``/``repr()`` collisions between unrelated types; a
+    ``__str__`` that raises). Rather than patch a fourth collision
+    class, de-duplication here is restricted to the ONE case where it is
+    correct BY CONSTRUCTION, not by enumeration:
+
+    - (a) A ``datetime64`` column (naive or tz-aware, any unit) is
+      handled fully vectorized: tz-aware is stripped to LOCAL wall time
+      via ``.dt.tz_localize(None)`` (never ``tz_convert``, which would
+      shift the instant). If the result is exactly ``datetime64[ns]``,
+      ``.dt.normalize()`` plus the same lower-bound cutoff as
+      ``_parse_local_calendar_date`` reproduces it exactly, with no
+      Python-level loop. Any other unit (a non-ns cast could itself
+      overflow for an extreme value) falls back to (c).
+    - (b) Otherwise, only values that are EXACTLY ``str`` (``type(v) is
+      str``, never a subclass or another type that merely looks like a
+      date) are de-duplicated, keyed on the string itself. Two equal
+      Python strings are, by definition, the same input to
+      ``_parse_local_calendar_date`` -- a pure function of its argument
+      -- so caching by the string value cannot collide with anything,
+      for any other value of any other type. This also means a
+      ``Categorical``/``StringDtype`` column is simply iterated (its
+      actual per-row values, of whatever type they are), not special-cased.
+    - (c) Every other value (``Timestamp``, ``datetime``, ``date``,
+      ``np.datetime64``, a number, a bool, ``None``/``NaN``/``NA``/
+      ``NaT``, or any other object -- including one that is unhashable,
+      e.g. a list) is parsed individually, every time, with no key at
+      all.
+
+    Args:
+        s: Raw date-like column (strings, Timestamps, dates, or null).
+
+    Returns:
+        Series of naive datetime64[ns] (or NaT), same index as `s`.
+        Empty input, and input that is entirely null regardless of its
+        own dtype (e.g. an empty or all-NaT tz-aware column), both
+        return naive datetime64[ns].
+    """
+    if len(s) == 0:
+        return pd.Series(pd.array([], dtype="datetime64[ns]"), index=s.index)
+
+    dtype = s.dtype
+    is_tz_aware = isinstance(dtype, pd.DatetimeTZDtype)
+    is_naive_datetime = not is_tz_aware and getattr(dtype, "kind", None) == "M"
+
+    if is_tz_aware or is_naive_datetime:
+        # Path (a): datetime64 dtype, any unit, naive or tz-aware.
+        working = s.dt.tz_localize(None) if is_tz_aware else s
+        if working.dtype == "datetime64[ns]":
+            # The lower-bound check must run on the ORIGINAL values,
+            # BEFORE normalize(): normalize() on a value already close
+            # to pd.Timestamp.min can itself silently wrap to a bogus
+            # date near the upper limit (the same failure mode
+            # _parse_local_calendar_date guards against), so checking
+            # the NORMALIZED result here would be too late for exactly
+            # that value.
+            too_low = working < _LOCAL_CALENDAR_DATE_LOWER_BOUND
+            normalized = working.dt.normalize()
+            return normalized.where(~too_low, pd.NaT)
+        # A non-ns unit: casting to ns to normalize it could itself
+        # overflow for an extreme value, so parse per value instead.
+        return _local_calendar_date_per_value(working)
+
+    # Path (b)/(c): de-duplicate ONLY exact `str` values, keyed on the
+    # string itself. `for v in s` yields the actual per-row values for
+    # object, Categorical, and StringDtype columns alike.
+    cache: dict[str, pd.Timestamp] = {}
+    values = []
+    for v in s:
+        if type(v) is str:
+            parsed = cache.get(v)
+            if parsed is None:
+                parsed = _parse_local_calendar_date(v)
+                cache[v] = parsed
+            values.append(parsed)
+        else:
+            values.append(_parse_local_calendar_date(v))
+    return pd.to_datetime(pd.Series(values, dtype=object, index=s.index))
+
+
+def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Keep only rows whose window is an exact calendar-quarter window.
+
+    A calendar quarter window has ``valid_from`` on the 1st of
+    Jan/Apr/Jul/Oct and ``valid_to`` on the last day of the third month
+    of that same quarter, of the SAME year (e.g. 2024-04-01..2024-06-30).
+    A rolling window (different start day, different end month/year, or
+    a mismatched span) is dropped -- never relabelled into a quarter.
+
+    ``valid_from`` and ``valid_to`` are parsed via ``local_calendar_date``
+    (their LOCAL calendar date, tz dropped) and normalized to midnight,
+    because reader output mixes date-only strings, timestamps, and --
+    across rows -- tz-aware and tz-naive strings; a bare
+    ``format="mixed"`` parse can raise on the latter. The normalized
+    ``valid_from`` is written back into the returned frame so that a
+    subsequent plain ``pd.to_datetime(df["valid_from"])`` cannot raise on
+    the mixed formats this helper already resolved. ``valid_to`` is left
+    with the dtype it came in with.
+
+    Column-presence rules:
+    - Neither ``valid_from`` nor ``valid_to`` present: returned unchanged
+      (0 dropped) -- there is nothing to validate.
+    - Exactly one of the two columns present: every row is invalid (the
+      window cannot be verified), so the result is empty and the dropped
+      count is the full row count.
+    - Both present: a row with either value null or unparseable is
+      invalid and dropped.
+
+    Args:
+        df: Frame that may contain ``valid_from`` / ``valid_to`` columns.
+
+    Returns:
+        Tuple of (filtered frame, number of rows dropped).
+    """
+    has_valid_from = "valid_from" in df.columns
+    has_valid_to = "valid_to" in df.columns
+
+    if not has_valid_from and not has_valid_to:
+        return df, 0
+
+    df = df.copy()
+
+    if not has_valid_from or not has_valid_to:
+        # Only one of the two columns is present: no row's window can be
+        # verified as a calendar quarter, so every row is invalid.
+        dropped = len(df)
+        if has_valid_from:
+            df["valid_from"] = local_calendar_date(df["valid_from"]).dt.normalize()
+        return df.iloc[0:0].copy(), dropped
+
+    valid_from = local_calendar_date(df["valid_from"]).dt.normalize()
+    valid_to = local_calendar_date(df["valid_to"]).dt.normalize()
+
+    is_quarter_start = valid_from.dt.day.eq(1) & valid_from.dt.month.isin([1, 4, 7, 10])
+    # Last day of the quarter's third month, same year: adding 3 months
+    # then subtracting a day stays within the same year for all four
+    # quarter-start months (including Oct -> Dec 31 of the same year).
+    # datetime64[ns] tops out at 2262-04-11, so this arithmetic can
+    # overflow for an in-range valid_from within ~3 months of that limit
+    # (e.g. 2262-02-01) even though valid_from itself parsed fine.
+    # Compute it only for rows whose valid_from year is <= 2261 (a
+    # generous margin below the actual limit); any other row's window
+    # cannot be verified this way and is simply not a calendar quarter.
+    safe_for_offset = valid_from.dt.year <= 2261
+    expected_valid_to = pd.Series(pd.NaT, index=valid_from.index, dtype="datetime64[ns]")
+    if safe_for_offset.any():
+        expected_valid_to.loc[safe_for_offset] = (
+            valid_from.loc[safe_for_offset] + pd.DateOffset(months=3) - pd.Timedelta(days=1)
+        )
+    is_calendar_window = is_quarter_start & safe_for_offset & valid_to.eq(expected_valid_to)
+
+    mask = valid_from.notna() & valid_to.notna() & is_calendar_window
+
+    df["valid_from"] = valid_from
+    kept = df[mask].copy()
+    dropped = len(df) - len(kept)
+    return kept, dropped
+
+
 # Minimum months required per quarter (out of 3)
 QUARTER_MIN_MONTHS = 2
 
