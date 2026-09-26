@@ -443,22 +443,30 @@ class PlotManager:
         # date" alone can pick a different quarter per model and hide some
         # of them from the card (Problem 3).
         #
-        # V1: compute that selection only over rows the RENDERER would
-        # actually display — model_short in model_checkbox.options (the
-        # same filter create_forecast_summary_table applies via
-        # `model_selection.options.values()`, src/vizualization.py) and a
-        # non-null forecasted_discharge (the renderer's own null-discharge
-        # drop, same file). Selecting over every row, including ones the
-        # renderer would drop anyway, can pick a quarter whose displayable
-        # rows are ALL filtered out downstream — an empty table with a
-        # caption for that quarter, where trunk fell back to older
-        # displayable rows.
+        # V1/Y2: compute that selection only over rows the RENDERER would
+        # actually display. Names the three renderer filters it mirrors
+        # (create_forecast_summary_table, src/vizualization.py):
+        #   - model_short in model_checkbox.options (via
+        #     `model_selection.options.values()`);
+        #   - a non-null forecasted_discharge (the renderer's own
+        #     null-discharge drop);
+        #   - a non-null date (Y2: the renderer's `date <= date_picker +
+        #     1 day` comparison is always False against a NaT `date`, so
+        #     it drops those rows too — a single in-options row with a
+        #     NaT `date` would otherwise pass this selection but render
+        #     an empty table).
+        # Selecting over every row, including ones the renderer would
+        # drop anyway, can pick a quarter whose displayable rows are ALL
+        # filtered out downstream — an empty table with a caption for
+        # that quarter, where trunk fell back to older displayable rows.
         displayable_models = set(self._wm.model_checkbox.options.values())
         if "model_short" in filtered.columns and "forecasted_discharge" in filtered.columns:
             displayable = filtered[
                 filtered["model_short"].isin(displayable_models)
                 & filtered["forecasted_discharge"].notna()
             ]
+            if "date" in filtered.columns:
+                displayable = displayable[displayable["date"].notna()]
         else:
             displayable = filtered.iloc[0:0]
         if displayable.empty:

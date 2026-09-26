@@ -282,6 +282,28 @@ class TestCardSelectionThroughPlotManager:
         assert "Apr 2026" in caption and "Jun 2026" in caption, caption
         assert "Jul 2026" not in caption, caption
 
+    def test_y2_nat_dated_row_hides_the_card(self):
+        """Y2: a NaT `date` must be treated as non-displayable, like the
+        renderer's own `date <= date_picker + 1 day` comparison (always
+        False against NaT). A single in-options row (LR_Base, non-null
+        forecasted_discharge) with date=NaT would otherwise pass the
+        `displayable` selection (model + discharge filters alone) and
+        render a visible card with an empty table."""
+        quarterly_df = pd.DataFrame(
+            [
+                _quarter_row(
+                    model_short="LR_Base",
+                    date=pd.NaT,
+                    forecasted_discharge=100.0,
+                ),
+            ]
+        )
+        pm, _site = _make_stub_pm(quarterly_df)
+
+        pm.update_quarterly_summary_tabulator()
+
+        assert pm.summary_table_q_card.visible is False
+
 
 # ---------------------------------------------------------------------------
 # Test 6: caption uses the selected rows, never stale site attributes

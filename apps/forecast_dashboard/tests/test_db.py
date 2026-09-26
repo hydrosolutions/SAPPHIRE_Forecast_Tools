@@ -3471,13 +3471,16 @@ class TestGetLongForecastsQuarterNativeSelection:
         assert bool(result["is_native"].iloc[0]) is False
         assert result["quarter_issue_date"].iloc[0] == pd.Timestamp("2026-06-25")
 
-    def test_v2_non_native_lr_drop_logs_one_aggregated_warning(self, monkeypatch, tmp_path, caplog):
-        """V2: dropping non-native LR_Base/LR_SM rows was silent. Must
-        log ONE aggregated WARNING with the COUNT of dropped rows (no
-        station codes — this function is called per station, and the
-        count is what an operator cares about). Two non-native LR rows
-        (LR_Base rewrite, LR_SM rewrite) plus one native GBT row
-        (unaffected, not counted)."""
+    def test_v2_non_native_lr_drop_logs_one_aggregated_info_line(self, monkeypatch, tmp_path, caplog):
+        """V2/Y1: dropping non-native LR_Base/LR_SM rows was silent. Must
+        log ONE aggregated line with the COUNT of dropped rows and the
+        station `code` (matching the neighbouring INFO/"no data" lines
+        in this function; dashboard logs are local and already log
+        codes). INFO, not WARNING: under flag OFF, a persisted LR
+        rewrite dated at `valid_from` is non-native in STEADY STATE, so
+        this fires on every reservoir-station load — not an anomaly.
+        Two non-native LR rows (LR_Base rewrite, LR_SM rewrite) plus one
+        native GBT row (unaffected, not counted)."""
         _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
         lr_base_rewrite = {
             **_QUARTER_FORECAST_RECORD_19999, "id": 191, "model_type": "LR_Base",
@@ -3502,20 +3505,21 @@ class TestGetLongForecastsQuarterNativeSelection:
         # handler lives on the ROOT logger, so it never sees this
         # logger's records unless propagation is (temporarily) restored.
         monkeypatch.setattr(db.logger, "propagate", True)
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("INFO"):
             result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
 
         assert set(result["model_short"]) == {"GBT"}
-        drop_warnings = [
+        drop_lines = [
             r for r in caplog.records
-            if r.levelname == "WARNING" and "non-native LR" in r.getMessage()
+            if "non-native LR" in r.getMessage()
         ]
-        assert len(drop_warnings) == 1, (
-            f"Expected exactly one aggregated warning, got {len(drop_warnings)}: "
-            f"{[r.getMessage() for r in drop_warnings]}"
+        assert len(drop_lines) == 1, (
+            f"Expected exactly one aggregated line, got {len(drop_lines)}: "
+            f"{[r.getMessage() for r in drop_lines]}"
         )
-        assert "2" in drop_warnings[0].getMessage()
-        assert "19999" not in drop_warnings[0].getMessage()
+        assert drop_lines[0].levelname == "INFO"
+        assert "2" in drop_lines[0].getMessage()
+        assert "19999" in drop_lines[0].getMessage()
 
     def test_backfilled_older_quarter_does_not_hide_newer_quarter(self, monkeypatch, tmp_path):
         """Problem 2: dedup by issue date alone means a later backfill of

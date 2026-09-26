@@ -1082,15 +1082,20 @@ def get_long_forecasts_quarter(
     if not degraded:
         is_lr = df["model_short"].isin(["LR_Base", "LR_SM"])
         non_native_lr_mask = is_lr & ~df["is_native"]
-        # V2: this drop was silent — log ONE aggregated WARNING with the
-        # count (no station codes; this function can be called for many
-        # stations, and the drop rate is what an operator cares about).
+        # V2/Y1: this drop was silent — log ONE aggregated line with the
+        # count and the station `code` (matching the neighbouring INFO
+        # and "no data" lines in this function; dashboard logs are local
+        # and already log codes). INFO, not WARNING: under flag OFF
+        # (kghm), a persisted LR rewrite dated at `valid_from` is
+        # non-native in STEADY STATE, so this fires on every reservoir-
+        # station load and every bulletin site — not an anomaly.
         n_non_native_lr_dropped = int(non_native_lr_mask.sum())
         if n_non_native_lr_dropped:
-            logger.warning(
+            logger.info(
                 "get_long_forecasts_quarter: dropped %d non-native LR_Base/LR_SM "
-                "row(s) (flag-OFF rewrite or persisted-derived — never shown).",
-                n_non_native_lr_dropped,
+                "row(s) for station %s (flag-OFF rewrite or persisted-derived — "
+                "never shown).",
+                n_non_native_lr_dropped, code,
             )
         df = df[~non_native_lr_mask].copy()
 
