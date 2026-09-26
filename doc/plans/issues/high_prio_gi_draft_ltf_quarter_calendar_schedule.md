@@ -83,6 +83,17 @@ from March to September:
 **Executor:** the server steps are run by the owner or by hydromet IT; the PR that records the gate names
 who. Code agents do not run P0.
 
+> **Owner decision 2026-09-26: P0 is DEFERRED; the configs stay at `forecast_months [3..9]` for now.**
+> - Why `[3..9]` was chosen cannot be answered without the modeller.
+> - This does **not** block the code plans:
+>   - PP-064 makes the Mar–Sep rolling issues inert (excluded).
+>   - PP-065 supplies Q1 (both orgs) and tjhm Q4 from monthly forecasts: the seven models, plus LR via the
+>     decision-G fallback, which becomes the standing source for those quarters.
+> - Deferred with P0: **P0b** (moot, because no native Oct-1 quarter run is due), **P2**, and PP-065 **P3**.
+> - The owner **confirmed that LR_Base/LR_SM are valid for winter issues** (gate item 1, second part).
+> - **D2 is resolved**: the P2 procedure (scratch config copy, scratch output, CSV only, filtered import,
+>   durable publication) is approved for when P0 resumes.
+
 **Gate: do not edit any config before all three are done.**
 1. **Modeller confirmation (Sandro).** Record his answers in this file.
    - Why `forecast_months` was set to `[3..9]`. No reason is recorded anywhere (history checked
@@ -234,6 +245,8 @@ Do not change the mode JSONs, the cron lines or the issue days.
 **P0b** before 2026-11-30.
 
 ### P0b — Recover tjhm Q4 2026 if the Oct 1 run is missed (ops; owner decision 2026-09-26, option a)
+
+**Status:** moot while P0 is deferred (2026-09-26); kept for when P0 resumes.
 
 **When:** only if tjhm P0 is in place and no genuine Oct-1 quarter run exists. Genuine means the LT
 module's own `<model>_forecast.csv` has no 2026-10-01 quarter row. Any time before 2026-11-30

@@ -40,6 +40,16 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
   forecasts where no native LR row exists. PP-065 P3 removes the fallback afterwards.
 - **H. LTF-015:** refuse early runs that fall in a different calendar month than the scheduled issue date.
 
+**2026-09-26, round 3**
+- **LTF-014 P0 is deferred; the configs stay at `[3..9]`.** The reason for `[3..9]` cannot be answered
+  without the modeller. This does not block the code plans:
+  - PP-064 excludes the rolling issues;
+  - PP-065's derived models and the decision-G LR fallback supply Q1 and tjhm Q4.
+  - Deferred with P0: P0b (moot), LTF-014 P2, PP-065 P3, and DOC-009 row 11.
+- **Winter issues are valid for LR_Base/LR_SM** (owner).
+- **D1:** accept the offset target.
+- **D2:** the P2 procedure is approved.
+
 **2026-09-26, round 2**
 1. No quarterly EM (see B).
 2. **Old persisted ensemble rows are accepted for now.** This covers the fixed-LR EM and the old Naive and
@@ -87,8 +97,8 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
 
 | # | Decision | Who | Blocks |
 |---|---|---|---|
-| D1 | Keep the 90-day offset target relabelled as the quarter (measured median bias ≤ 2 %, except kghm Q2 −1.7 %), or add the monthly-style ratio adjustment in quarter mode | Owner + modeller | Nothing |
-| D2 | The hindcast write set for the new issue months (LTF-014 P2) | Modeller + owner | LTF-014 P2 → PP-065 P3 |
+| D1 | ~~90-day offset target vs calendar-exact~~ **Decided 2026-09-26: accept the offset target** (measured median bias ≤ 2 %) | Owner | — |
+| D2 | ~~Hindcast write set~~ **Decided 2026-09-26: the LTF-014 P2 procedure** (scratch config copy, scratch output, CSV only, filtered import, durable publication). Applies when P0 resumes | Owner | — |
 | D3 | PP-064 B5: empty quarter skill is handled as for monthly, i.e. no ensembles at all, Naive Mean included. Confirm. B2, B4 and B6 moved into PP-065 | Owner | PP-064 B → recalc |
 | D4 | The service owner acknowledges the convention-doc amendment; the owner signs off the decision-request amendment | Service owner, owner | DOC-009 P1b only |
 | D6 | Bulletin quarterly section (FD-030's D6a–D6c): the product published (Skilled Mean / Naive Mean / a model), presentation in months 2–3 of a quarter, the norm reference year, and an optional point-value/model tag (a template change) | Owner | FD-030 |
@@ -170,9 +180,9 @@ Stages:
     "DOC-009.P1a":     { "stage": "merge",  "depends_on": [] },
     "DOC-009.P1b":     { "stage": "merge",  "depends_on": ["D4"] },
     "DOC-009.P2":      { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm", "PP-065.P1d"] },
-    "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "target": "2026-10-01, recoverable until 2026-11-30" },
+    "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
     "LTF-014.P0b":     { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm"], "deadline": "2026-11-30", "note": "only if the Oct-1 run was missed: pause crons, export, delete the tjhm 2026-10-01 QUARTER rows (service owner), lt_recovery, resume, verify" },
-    "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "target": "2026-12-25" },
+    "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
     "LTF-014.P1":      { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "LTF-014.P2":      { "stage": "ops",    "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm", "D2"] },
     "LTF-015":         { "stage": "merge",  "depends_on": ["LTF-014.P1"], "parallel_agents": 1 },
