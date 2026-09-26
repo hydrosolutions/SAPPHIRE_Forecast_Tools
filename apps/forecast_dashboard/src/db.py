@@ -10,6 +10,7 @@ from dashboard.logger import setup_logger
 from long_term_horizon_resolver import (
     LongTermHorizonResolverError,
     operational_lead_for_mode,
+    operational_schedule_for_mode,
     quarter_horizon_value,
     seasonal_config_name,
     seasonal_horizon_value,
@@ -814,15 +815,154 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
 
 
 @_timed
-def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame:
-    """Fetch long-term quarterly forecasts and reshape to match monthly format."""
+def get_long_forecasts_quarter(
+    station=None, horizon_value=None, today: date | None = None
+) -> pd.DataFrame:
+    """Fetch long-term quarterly forecasts and reshape to match monthly format.
+
+    FD-029 P1: the fetch window is resolved at call time (never at import
+    time), only calendar quarters (Q1-Q4) are ever returned, a target
+    quarter is only returned once its configured issue date has arrived,
+    and — among the rows for a given target quarter — the model's genuine
+    operational ("native") issuance is preferred over a later rewrite or a
+    persisted derived row.
+
+    Args:
+        station: Optional station code or label; resolved via
+            `_resolve_station` and used to filter the request.
+        horizon_value: Optional explicit lead override for the API
+            request; resolved from the deployment's quarter config
+            (`_resolve_quarter_horizon_value`) when omitted. V3: this
+            override is honoured for the API request's `horizon_value`
+            filter and for sizing the fetch window ONLY (`fetch_lead`
+            above). Eligibility and the native predicate always follow
+            the configured schedule's own `lead_time`, never this
+            override — no production caller passes `horizon_value`
+            explicitly today.
+        today: The reference date for the fetch window (item 1) and the
+            eligibility cutoff (item 4). Defaults to `date.today()` at
+            call time — never evaluated at import time, unlike the
+            module-level `CURRENT_YEAR`/`PREVIOUS_YEAR` constants used by
+            other functions in this file.
+
+    Returns:
+        DataFrame with one row per (code, model_short[, horizon_value])
+        and eligible target calendar quarter. Two additional columns:
+        `is_native` (True iff the row is that model's genuine operational
+        issuance for the target quarter — always False when the
+        operational schedule cannot be resolved, i.e. "degraded" mode) and
+        `quarter_issue_date` (the schedule-computed issue date of the
+        target quarter; NaT when degraded).
+    """
     code = _resolve_station(station) if station else None
     resolved_horizon_value = _resolve_quarter_horizon_value(horizon_value)
+    today = today or date.today()
+
+    # FD-029 P1 item 3: resolve the operational schedule once per call —
+    # used both for the fetch window's lower bound (R2, immediately below)
+    # and for the eligibility cutoff / native predicate further down. When
+    # it cannot be resolved (a lead-only config, or none at all — e.g.
+    # this file's own test fixture), run degraded: no native preference,
+    # no LR strictness, and fall back to `date <= today` for eligibility.
+    # Mirrors `_safe_lead`. FD-031 (filed, pre-existing): on the DEFAULT
+    # horizon_value path, `_resolve_quarter_horizon_value` above already
+    # raises the same errors first, so a missing quarter.json never
+    # actually reaches this degraded branch unless `horizon_value` was
+    # passed explicitly.
+    try:
+        schedule = operational_schedule_for_mode("quarter")
+        degraded = False
+    except (LongTermHorizonResolverError, FileNotFoundError) as exc:
+        logger.warning(
+            "get_long_forecasts_quarter: operational schedule unavailable (%s); "
+            "running degraded (no native preference, no LR strictness).", exc,
+        )
+        schedule = None
+        degraded = True
+
+    # `_require_int_field` (long_term_horizon_resolver.py) only checks that
+    # `operational_issue_day` is an int, not that it is a valid day-of-month
+    # — a misconfigured 0 or negative value would otherwise reach the date
+    # construction below and raise ValueError, aborting the monthly
+    # dashboard load / the reservoir bulletin. Degrade the same way as an
+    # unresolvable schedule rather than inventing a day (no clamp up to 1):
+    # an invalid config should degrade visibly. The upper clamp further
+    # below (issue_day > days-in-month) is unaffected.
+    if not degraded and schedule.issue_day < 1:
+        logger.warning(
+            "get_long_forecasts_quarter: configured operational_issue_day=%d is not a "
+            "valid day-of-month; running degraded (no native preference, no LR "
+            "strictness).", schedule.issue_day,
+        )
+        schedule = None
+        degraded = True
+
+    # FD-029 P1 item 1 / R2/C1/W1/X1: the fetch window must cover ANY
+    # eligible target quarter's rows, whichever of the three date
+    # populations happens to be the only one present for it — the native
+    # issuance (a, dated at the schedule's own issue date), a flag-OFF
+    # rewrite (b, dated at the quarter's own `valid_from`), or a persisted
+    # derived row (c). Edge-by-edge patching of a tightly schedule-derived
+    # window kept missing cases (a lead>=4 config's flag-OFF row can be
+    # dated well into the NEXT quarter's `valid_from`; a lead-0 config's
+    # issue day can push the window's start past an eligible OLDER
+    # quarter in early January), so widen generously in both directions
+    # instead:
+    #   - lower bound: the first day of the month (12 + lead) months
+    #     before the start of today's calendar quarter — at least four
+    #     quarters back (X1: this is ALWAYS at or before the original
+    #     fixed spec bound, {today.year-1}-12-01 — even at its latest,
+    #     lead=0 and today in Q4, it lands on {today.year-1}-10-01 — so
+    #     the spec bound never wins and is dropped rather than kept as a
+    #     no-op `min`; a Claude-reviewer oracle sweep, every day 2025-2028
+    #     x leads 0-4 x issue days 1/25/31 x 0-5 missing quarters, found 0
+    #     mismatches up to 3 missing quarters — a partial older quarter
+    #     (Problem 3) appears at the window's edge only after FOUR or more
+    #     consecutive missing quarters (accepted)).
+    #   - upper bound: whichever reaches further FORWARD between the
+    #     original fixed spec bound and the last day of the month
+    #     (lead + 1) months after today's month — the latest eligible
+    #     target quarter starts at most `lead` months after today's month
+    #     (plus less than a month more from the issue day), and a flag-OFF
+    #     row for it is dated at its own `valid_from` (that quarter's
+    #     START, up to a further 3 months later than its issue date). This
+    #     `max` IS load-bearing (unlike the lower bound's dropped `min`):
+    #     for lead<=2 in most of the year the fixed spec bound alone still
+    #     wins.
+    # `fetch_lead`: prefer the larger of the schedule's own lead_time and
+    # the resolved API horizon_value when the schedule resolves (W2: an
+    # explicit `horizon_value` override can exceed the config's own lead)
+    # — `resolved_horizon_value` is always an int today (FD-031: it would
+    # already have raised above otherwise), but the `is not None`
+    # fallback below is kept defensive rather than assuming that stays
+    # true. In degraded mode, prefer the resolved horizon_value; fall
+    # back to 3 only when even that is unavailable.
+    fetch_lead = (
+        max(schedule.lead_time, resolved_horizon_value or 0) if not degraded
+        else (resolved_horizon_value if resolved_horizon_value is not None else 3)
+    )
+    # A negative lead (a misconfigured operational_month_lead_time, or a
+    # negative explicit horizon_value in degraded mode) is a
+    # misconfiguration; the window must never be narrower than for lead 0.
+    fetch_lead = max(fetch_lead, 0)
+    current_quarter_start_month = ((today.month - 1) // 3) * 3 + 1
+    lower_total_months = (
+        today.year * 12 + (current_quarter_start_month - 1) - (12 + fetch_lead)
+    )
+    lower_year, lower_month0 = divmod(lower_total_months, 12)
+    start_date = date(lower_year, lower_month0 + 1, 1)
+
+    upper_total_months = today.year * 12 + (today.month - 1) + (fetch_lead + 1)
+    upper_year, upper_month0 = divmod(upper_total_months, 12)
+    schedule_derived_end = (
+        pd.Timestamp(year=upper_year, month=upper_month0 + 1, day=1) + pd.offsets.MonthEnd(0)
+    ).date()
+    end_date = max(date(today.year + 1, 3, 31), schedule_derived_end)
     params = {
         "horizon_type": "quarter",
         "horizon_value": resolved_horizon_value,
-        "start_date": f"{PREVIOUS_YEAR}-12-20",
-        "end_date": f"{CURRENT_YEAR}-12-31",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
     }
     if code:
         params["code"] = code
@@ -837,10 +977,16 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
             "forecasted_discharge", "flag",
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
             "valid_from", "month_in_year", "quarter_in_year",
+            "is_native", "quarter_issue_date",
         ]
         if lead_aware:
             columns.append("horizon_value")
-        return pd.DataFrame(columns=columns)
+        empty_result = pd.DataFrame(columns=columns)
+        # C3: an empty-columns-only DataFrame defaults every column to
+        # object dtype, breaking the docstring's promise of a datetime
+        # `quarter_issue_date` (NaT when degraded) on this path too.
+        empty_result["quarter_issue_date"] = pd.to_datetime(empty_result["quarter_issue_date"])
+        return empty_result
 
     df.rename(columns={
         "model_type": "model_short",
@@ -849,28 +995,139 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
         "q05": "Q5", "q10": "Q10", "q25": "Q25",
         "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
     }, inplace=True)
-    drop_cols = ["id", "horizon_type"]
+    # FD-029 P1 item 5: `id` is part of the tie-break for the dedup below,
+    # so it is kept through to there and dropped afterward instead of here.
+    drop_cols = ["horizon_type"]
     if not lead_aware:
         drop_cols.append("horizon_value")
     df.drop(columns=drop_cols, inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
+    df["valid_to"] = pd.to_datetime(df["valid_to"])
     df["month_in_year"] = df["valid_from"].dt.month
-    df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
     df["Date"] = df["date"]
-    df["year"] = df["date"].dt.year
-    # Keep only the latest-by-date row per (code, model_short) — under the
-    # flag, also key on horizon_value (lead) so distinct-lead quarter rows
-    # for the same code/model are not collapsed into one another.
-    if not df.empty and "date" in df.columns and "code" in df.columns and "model_short" in df.columns:
-        dedup_subset = ["code", "model_short"]
+
+    # FD-029 P1 item 2: calendar quarters only. A rolling/backfilled window
+    # (or a null valid_to) is not a target quarter and must never compete
+    # in the dedup below.
+    is_calendar_quarter = (
+        (df["valid_from"].dt.day == 1)
+        & df["valid_from"].dt.month.isin([1, 4, 7, 10])
+        & df["valid_to"].notna()
+        & (df["valid_to"] == (df["valid_from"] + pd.DateOffset(months=3) - pd.Timedelta(days=1)))
+    )
+    n_dropped = int((~is_calendar_quarter).sum())
+    logger.info(
+        "get_long_forecasts_quarter: dropped %d non-calendar-quarter row(s) for station %s",
+        n_dropped, code,
+    )
+    df = df[is_calendar_quarter].copy()
+
+    # FD-029 P1 item 5: quarter EM is retired (round-2 decision 1); old rows
+    # stay in the DB but are never shown (round-2 decision 2).
+    df = df[~df["model_short"].astype(str).str.upper().isin(["EM", "ENSEMBLE_MEAN"])].copy()
+
+    # FD-029 P1 item 5: `year` comes from valid_from, not the issue date
+    # (Problem 5) — a Dec 25 kghm Q1 gets the target year, not the issue year.
+    df["year"] = df["valid_from"].dt.year
+    df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
+
+    # FD-029 P1 item 3: `schedule`/`degraded` were already resolved above
+    # (before the fetch window, for R2) — reused here for the native
+    # predicate (item 5) and the eligibility cutoff (item 4).
+    if degraded or df.empty:
+        df["quarter_issue_date"] = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+    else:
+        # (y, m) = the target quarter's first month (valid_from's month),
+        # shifted back by the schedule's lead_time months, year-aware.
+        total_months = (
+            df["valid_from"].dt.year * 12 + (df["valid_from"].dt.month - 1) - schedule.lead_time
+        )
+        issue_year = total_months // 12
+        issue_month = total_months % 12 + 1
+        # Clamp the configured issue day to the issue month's own length
+        # (e.g. issue_day=31 in a 30-day June -> June 30), mirroring
+        # long_term_forecasting's lt_utils.nearest_scheduled_issue_date. An
+        # out-of-range day would otherwise raise ValueError from
+        # pd.to_datetime below and crash the monthly dashboard load / the
+        # reservoir bulletin instead of degrading.
+        issue_month_start = pd.to_datetime(pd.DataFrame({
+            "year": issue_year.astype("int64"),
+            "month": issue_month.astype("int64"),
+            "day": 1,
+        }))
+        days_in_issue_month = (issue_month_start + pd.offsets.MonthEnd(0)).dt.day
+        clamped_issue_day = np.minimum(int(schedule.issue_day), days_in_issue_month)
+        df["quarter_issue_date"] = pd.to_datetime(pd.DataFrame({
+            "year": issue_year.astype("int64"),
+            "month": issue_month.astype("int64"),
+            "day": clamped_issue_day.astype("int64"),
+        }))
+
+    if degraded:
+        df["is_native"] = False
+        eligible = df["date"].dt.normalize() <= pd.Timestamp(today)
+    else:
+        # A row is native iff its issue `date` equals the target quarter's
+        # schedule-computed issue date (the PP-064 Contract rule).
+        df["is_native"] = df["date"].dt.normalize() == df["quarter_issue_date"].dt.normalize()
+        eligible = df["quarter_issue_date"] <= pd.Timestamp(today)
+    df["is_native"] = df["is_native"].astype(bool)
+    df = df[eligible].copy()
+
+    # FD-029 P1 item 5: LR_Base/LR_SM are native-only (stricter) — a
+    # non-native LR row ((b) the flag-OFF rewrite, or (c) a persisted
+    # derived row) is never shown, even when it is the only row for that
+    # quarter. Skipped when degraded (item 3): `is_native` is False for
+    # every row there, so this would otherwise hide every LR row.
+    if not degraded:
+        is_lr = df["model_short"].isin(["LR_Base", "LR_SM"])
+        non_native_lr_mask = is_lr & ~df["is_native"]
+        # V2/Y1: this drop was silent — log ONE aggregated line with the
+        # count and the station `code` (matching the neighbouring INFO
+        # and "no data" lines in this function; dashboard logs are local
+        # and already log codes). INFO, not WARNING: under flag OFF
+        # (kghm), a persisted LR rewrite dated at `valid_from` is
+        # non-native in STEADY STATE, so this fires on every reservoir-
+        # station load and every bulletin site — not an anomaly.
+        n_non_native_lr_dropped = int(non_native_lr_mask.sum())
+        if n_non_native_lr_dropped:
+            logger.info(
+                "get_long_forecasts_quarter: dropped %d non-native LR_Base/LR_SM "
+                "row(s) for station %s (flag-OFF rewrite or persisted-derived — "
+                "never shown).",
+                n_non_native_lr_dropped, code,
+            )
+        df = df[~non_native_lr_mask].copy()
+
+    # Keep only one row per target quarter — under the flag, also key on
+    # horizon_value (lead) so distinct-lead quarter rows for the same
+    # code/model are not collapsed into one another. Prefer the native
+    # issuance; otherwise the latest `date`, ties broken by the highest API
+    # `id` (kept through to here for exactly this purpose). `kind="stable"`
+    # preserves today's order when there is no `id` column to break a tie.
+    if not df.empty and "code" in df.columns and "model_short" in df.columns:
+        dedup_subset = ["code", "model_short", "year", "quarter_in_year"]
         if lead_aware and "horizon_value" in df.columns:
             dedup_subset = dedup_subset + ["horizon_value"]
+        sort_cols = ["is_native", "date"]
+        ascending = [False, False]
+        if "id" in df.columns:
+            sort_cols.append("id")
+            ascending.append(False)
         df = (
-            df.sort_values("date", ascending=False)
+            df.sort_values(sort_cols, ascending=ascending, kind="stable")
               .drop_duplicates(subset=dedup_subset, keep="first")
               .reset_index(drop=True)
         )
-    return _convert_na_to_nan(df.sort_values("Date"))
+    df.drop(columns=["id"], inplace=True, errors="ignore")
+    result = _convert_na_to_nan(df.sort_values("Date"))
+    # R3: `_convert_na_to_nan`'s `infer_objects()` cannot tell an all-NaT
+    # (degraded-mode) datetime column from an all-NaN float column, so it
+    # comes back as float64 NaN — breaking the docstring's promise of NaT.
+    # Re-cast explicitly; a no-op when the column is already datetime64.
+    if "quarter_issue_date" in result.columns:
+        result["quarter_issue_date"] = pd.to_datetime(result["quarter_issue_date"])
+    return result
 
 
 @_timed

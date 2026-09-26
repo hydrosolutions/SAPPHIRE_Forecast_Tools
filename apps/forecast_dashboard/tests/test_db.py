@@ -1674,6 +1674,10 @@ class TestGetLongForecastsQuarter:
 
         assert result.empty
         assert "quarter_in_year" in result.columns
+        # C3: an empty pd.DataFrame(columns=[...]) defaults every column to
+        # object dtype — `quarter_issue_date` must still be datetime64 on
+        # this early-return path, matching the non-empty path's dtype.
+        assert pd.api.types.is_datetime64_any_dtype(result["quarter_issue_date"])
 
 
 class TestGetLongForecastsQuarterLeadAware:
@@ -2993,3 +2997,935 @@ class TestFetchersUsePagination:
         db.get_long_forecasts_season(station="19999")
 
         assert calls == ["long-forecast"]
+
+
+# ── FD-029 P1: year-safe fetch, eligibility cutoff, native LR selection ────
+#
+# These tests need a FULL operational schedule (lead + issue day), unlike
+# the module's autouse `_long_term_resolver_env` fixture (lead only, no
+# `operational_issue_day`) — that fixture's shape is required so trunk's
+# existing quarter tests keep exercising the degraded path (see item 3 of
+# the plan). Tests below that need the real schedule write their own
+# `quarter.json` into a fresh config dir via `_configure_quarter_schedule`.
+
+
+def _configure_quarter_schedule(monkeypatch, tmp_path, lead, issue_day, dirname="quarter_schedule"):
+    """Point the resolver at a quarter.json carrying BOTH schedule fields."""
+    config_dir = tmp_path / dirname
+    config_dir.mkdir()
+    (config_dir / "quarter.json").write_text(json.dumps({
+        "operational_month_lead_time": lead,
+        "operational_issue_day": issue_day,
+    }))
+    monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", dirname)
+    monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
+
+
+class TestGetLongForecastsQuarterFetchWindow:
+    def test_fetch_window_year_safe_at_dec25(self, monkeypatch):
+        """Problem 1: on 2026-12-25 the OLD window ({PREV_YEAR}-12-20 ..
+        {CUR_YEAR}-12-31, frozen at import) never covers a row dated
+        2027-01-01 (kghm Q1's flag-OFF derived/ensemble rows). The new
+        window is resolved at CALL time from `today`."""
+        seen_params = []
+
+        def mock_get(url, **kwargs):
+            seen_params.append(kwargs["params"])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        db.get_long_forecasts_quarter(station="19999", today=date(2026, 12, 25))
+
+        params = seen_params[0]
+        assert params["start_date"] <= "2026-12-25"
+        assert params["end_date"] >= "2027-01-01"
+
+    def test_lead1_previous_quarter_still_fetched_early_january(self, monkeypatch, tmp_path):
+        """R2: the lower bound must cover the station's still-ELIGIBLE
+        PREVIOUS calendar quarter too, not just the one containing
+        `today`. kghm-shaped (lead 1): on 2027-01-02, with only a Q4 2026
+        row dated 2026-09-25 in the backend, the fixed lower bound
+        ({today.year-1}-12-01 = 2026-12-01) never covered it, so the card
+        would silently disappear once Q1 2027 has no rows of its own yet."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        q4_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 170, "model_type": "GBT",
+            "date": "2026-09-25", "valid_from": "2026-10-01", "valid_to": "2026-12-31",
+        }
+
+        def mock_get(url, **kwargs):
+            # Simulates a real API that filters by the requested window,
+            # unlike `_make_mock_response`'s callers elsewhere in this
+            # file — the fetch window itself is what's under test here.
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q4_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q4_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 2))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 4
+
+    def test_lead2_current_q1_still_fetched_in_january(self, monkeypatch, tmp_path):
+        """R2: a lead>=2 config's CURRENT Q1 is issued in November, and
+        stays eligible well into January — the lower bound must reach
+        back far enough to still fetch it."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=2, issue_day=25)
+        q1_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 171, "model_type": "GBT",
+            "date": "2026-11-25", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q1_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q1_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 1
+
+    def test_c1_missed_lt_run_does_not_narrow_below_the_spec_window(self, monkeypatch, tmp_path):
+        """C1/W1/X1 regression: a missed LT run for the previous calendar
+        quarter must not make the card/bulletin go empty. A
+        schedule-derived lower bound sized to reach back only (3 + lead)
+        months (the shape before W1) is narrower than the spec's original
+        window ({today.year-1}-12-01) for most of the year. kghm lead 1:
+        the backend only has a Q2 2026 row (issued 2026-03-25); on
+        2026-11-10 (Q4) a (3 + lead)-months-back bound alone would start
+        at 2026-06-01, excluding it. W1's (12 + lead)-months-back lower
+        bound reaches back far enough to cover this on its own — X1: that
+        bound is always AT OR BEFORE the original spec bound (worst case,
+        lead=0 and today in Q4, it lands on {today.year-1}-10-01), so no
+        `min` with the spec bound is needed for the lower bound; see the
+        W1 tests below for the lead>=4 / lead-0-in-January edges that
+        still need the UPPER bound's `max` with the spec bound."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        q2_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 172, "model_type": "GBT",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q2_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q2_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 11, 10))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 2
+
+    def test_c2_degraded_window_uses_resolved_horizon_value_as_lead(self, monkeypatch, tmp_path):
+        """C2: in degraded mode (a lead-only quarter.json, no
+        operational_issue_day), the fetch window must use the RESOLVED
+        horizon_value (here 4, from the same lead-only config) as the
+        lead for sizing purposes, not a fixed guess. Early January, the
+        previous quarter's row dated exactly 7 months (3 + lead) before
+        the current quarter starts must still be returned."""
+        config_dir = tmp_path / "lead_only"
+        config_dir.mkdir()
+        (config_dir / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 4})
+        )
+        monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "lead_only")
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
+
+        # Q4 2026 row, dated 2026-06-01 -- exactly 7 months before Q1
+        # 2027 (2027-01-01), i.e. 3 + lead(4) months back.
+        q4_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 173, "model_type": "GBT",
+            "date": "2026-06-01", "valid_from": "2026-10-01", "valid_to": "2026-12-31",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q4_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q4_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 4
+
+    def test_w1_lead4_flag_off_row_dated_next_quarter_start_is_fetched(self, monkeypatch, tmp_path):
+        """W1: for lead>=4, a flag-OFF row (dated at its own `valid_from`)
+        of an eligible target quarter can be dated well into the NEXT
+        quarter relative to `today` — the old fixed upper bound
+        ({today.year+1}-03-31) missed it. kghm lead 4, issue day 25,
+        today 2026-12-26: Q2 2027 (Apr-Jun) is already eligible (issue
+        date 2026-12-25), and its flag-OFF GBT row is dated 2027-04-01
+        (Q2's own valid_from) — one day past the old upper bound."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=4, issue_day=25)
+        q2_2027_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 180, "model_type": "GBT",
+            "date": "2027-04-01", "valid_from": "2027-04-01", "valid_to": "2027-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q2_2027_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q2_2027_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 12, 26))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 2
+        assert result["year"].iloc[0] == 2027
+
+    def test_w1_lead0_early_january_still_reaches_older_eligible_quarter(
+        self, monkeypatch, tmp_path
+    ):
+        """W1: a lead-0 config's issue day (25) can still push a
+        (3 + lead)-months-back schedule-derived lower bound past an
+        eligible OLDER quarter in early January. tjhm-shaped lead 0,
+        issue day 25, today 2027-01-05, Q4 2026 missing entirely: the
+        native Q3 2026 row (issued 2026-07-25) must still be reachable."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=0, issue_day=25)
+        q3_2026_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 181, "model_type": "GBT",
+            "date": "2026-07-25", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q3_2026_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q3_2026_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 3
+        assert bool(result["is_native"].iloc[0]) is True
+
+    def test_w2_explicit_horizon_value_widens_window_beyond_schedule_lead(
+        self, monkeypatch, tmp_path
+    ):
+        """W2/X2: the non-degraded half of C2
+        (max(schedule.lead_time, resolved_horizon_value or 0)) was
+        untested for the case where the RESOLVED horizon_value exceeds
+        the schedule's own configured lead. Schedule lead 1, issue day
+        25; an explicit `horizon_value=3` override must widen the window
+        to lead 3's reach, not stay narrowed to lead 1's.
+
+        In-contract construction (X2): the 3 quarters nearest to `today`
+        (Q4/Q3/Q2 2026) are missing entirely -- the backend has only a
+        row for the 4th-latest quarter, Q1 2026 (valid_from 2026-01-01),
+        and it is dated at valid_from MINUS 3 months (2025-10-01) — a
+        persisted row derived from monthly forecasts issued at lead 3
+        (population (c) of "How quarter rows are dated"; this deployment
+        may have run at operational_month_lead_time=3 when that row was
+        produced, before the schedule's current lead=1). That date sits
+        exactly at the lower bound reached by lead=3 ((12+3)=15 months
+        before today's Q1 2027 start) and strictly before the bound
+        reached by lead=1 alone ((12+1)=13 months back) — so only the
+        hv=3-widened window returns it. V3: `horizon_value` only widens
+        the FETCH WINDOW here — eligibility and the native predicate
+        always use the schedule's own lead=1 regardless, so this row's
+        `is_native` (not asserted below) is False under lead=1 no matter
+        which lead actually produced it; no production caller passes
+        `horizon_value`, this is a request-filter/window-sizing-only
+        edge case."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        q1_2026_derived_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 182, "model_type": "GBT",
+            "date": "2025-10-01", "valid_from": "2026-01-01", "valid_to": "2026-03-31",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q1_2026_derived_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q1_2026_derived_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(
+            station="19999", today=date(2027, 1, 5), horizon_value=3
+        )
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 1
+        assert result["year"].iloc[0] == 2026
+
+    def test_negative_configured_lead_does_not_narrow_below_lead_zero(self, monkeypatch, tmp_path):
+        """Confirm-pass on cd30158e: dropping the lower bound's `min` is
+        safe only for lead >= 0. Neither the resolver's `int()` cast nor
+        an explicit `horizon_value` rejects a negative
+        operational_month_lead_time, so a misconfigured lead=-5 would
+        otherwise ADD 5 months to the (12 + lead) months-back reach
+        instead of subtracting, narrowing the window past even the old
+        fixed spec bound. `fetch_lead` must clamp to 0 (never negative)
+        before sizing the window. Lead -5, issue day 25, today
+        2026-10-01: a Q3 2025 row dated 2025-12-25 must still be fetched."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=-5, issue_day=25)
+        q3_2025_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 183, "model_type": "GBT",
+            "date": "2025-12-25", "valid_from": "2025-07-01", "valid_to": "2025-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q3_2025_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q3_2025_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 10, 1))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 3
+        assert result["year"].iloc[0] == 2025
+
+    def test_window_anchors_on_quarter_start_not_todays_month(self, monkeypatch, tmp_path):
+        """V4(b): the lower bound must anchor on the START of today's
+        calendar quarter, not on today's own month. lead 0, today
+        2026-11-20 (Q4, which starts in October) -> start_date =
+        2025-10-01 ((12 + 0) months back from Oct 2026). A mutant
+        anchoring on today's month (November) instead would give
+        2025-11-01."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=0, issue_day=25)
+        seen_params = []
+
+        def mock_get(url, **kwargs):
+            seen_params.append(kwargs["params"])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        db.get_long_forecasts_quarter(station="19999", today=date(2026, 11, 20))
+
+        assert seen_params[0]["start_date"] == "2025-10-01"
+
+    def test_degraded_window_uses_resolved_lead_not_a_constant(self, monkeypatch, tmp_path):
+        """V4(c): in degraded mode, the window must size itself from the
+        RESOLVED horizon_value (here 5, from a lead-only quarter.json),
+        not a fixed constant. Today 2026-01-15 (Q1), lead 5 ->
+        start_date = 2024-08-01 ((12 + 5) months back from Jan 2026). A
+        mutant that hardcodes fetch_lead=3 in the degraded branch
+        (ignoring the resolved lead) would give 2024-10-01 instead."""
+        config_dir = tmp_path / "lead_only_v4c"
+        config_dir.mkdir()
+        (config_dir / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 5})
+        )
+        monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "lead_only_v4c")
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
+        seen_params = []
+
+        def mock_get(url, **kwargs):
+            seen_params.append(kwargs["params"])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        db.get_long_forecasts_quarter(station="19999", today=date(2026, 1, 15))
+
+        assert seen_params[0]["start_date"] == "2024-08-01"
+
+
+class TestGetLongForecastsQuarterCalendarOnly:
+    def test_rolling_window_excluded(self, monkeypatch):
+        """Problem 2: a rolling Jun-Aug row (issued later than the calendar
+        Apr-Jun row) must not win the dedup by virtue of a later date."""
+        calendar_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 60, "date": "2026-03-25",
+            "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        rolling_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 61, "date": "2026-05-25",
+            "valid_from": "2026-06-01", "valid_to": "2026-08-31",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([calendar_row, rolling_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert str(result["valid_from"].iloc[0].date()) == "2026-04-01"
+
+    def test_valid_to_mismatch_excluded(self, monkeypatch):
+        """R4(a): `valid_from` alone is a clean quarter start (day 1,
+        month 4), so only the `valid_to` equality predicate — not the
+        day/month checks — can catch a `valid_to` that is one month too
+        long (Jul 31 instead of the Q2-correct Jun 30)."""
+        bad_valid_to_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 62,
+            "valid_from": "2026-04-01", "valid_to": "2026-07-31",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([bad_valid_to_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert result.empty
+
+
+class TestGetLongForecastsQuarterNativeSelection:
+    def test_native_row_preferred_over_rewrite(self, monkeypatch, tmp_path):
+        """Problem 2: the flag-OFF rewrite (b) is dated LATER than the
+        native row (a) but must not win — the caption must read the
+        native issue date, not the rewrite's."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        native = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 70, "date": "2026-03-25",
+            "valid_from": "2026-04-01", "valid_to": "2026-06-30", "q": 200.0,
+        }
+        rewrite = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 71, "date": "2026-04-01",
+            "valid_from": "2026-04-01", "valid_to": "2026-06-30", "q": 999.0,
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([native, rewrite])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert str(result["date"].iloc[0].date()) == "2026-03-25"
+        assert result["forecasted_discharge"].iloc[0] == 200.0
+        assert bool(result["is_native"].iloc[0]) is True
+        # dtype contract (non-degraded): quarter_issue_date must be a
+        # real datetime column, not object/float64, in the common case too.
+        assert pd.api.types.is_datetime64_any_dtype(result["quarter_issue_date"])
+
+        from dashboard.plot_manager import _format_quarterly_forecast_info
+        caption = _format_quarterly_forecast_info(
+            lambda s: s, None, None,
+            valid_from=result["valid_from"].iloc[0],
+            valid_to=result["valid_to"].iloc[0],
+            quarter_issue_date=result["quarter_issue_date"].iloc[0],
+        )
+        assert "25th of March 2026" in caption
+
+    def test_is_native_checks_full_date_not_just_day(self, monkeypatch, tmp_path):
+        """V4(a): `is_native` must compare the FULL date (year, month,
+        day) against the schedule-computed `quarter_issue_date`, not
+        just the day-of-month. A row dated 2026-05-25 for Q3 2026
+        (issue day 25 matches, but the month is one early — the true
+        issue date under lead 1 is 2026-06-25) must NOT be marked
+        native. A mutant that reduces the predicate to `date.dt.day ==
+        quarter_issue_date.dt.day` would wrongly mark this row native."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        wrong_month_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 190, "model_type": "GBT",
+            "date": "2026-05-25", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([wrong_month_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert bool(result["is_native"].iloc[0]) is False
+        assert result["quarter_issue_date"].iloc[0] == pd.Timestamp("2026-06-25")
+
+    def test_v2_non_native_lr_drop_logs_one_aggregated_info_line(self, monkeypatch, tmp_path, caplog):
+        """V2/Y1: dropping non-native LR_Base/LR_SM rows was silent. Must
+        log ONE aggregated line with the COUNT of dropped rows and the
+        station `code` (matching the neighbouring INFO/"no data" lines
+        in this function; dashboard logs are local and already log
+        codes). INFO, not WARNING: under flag OFF, a persisted LR
+        rewrite dated at `valid_from` is non-native in STEADY STATE, so
+        this fires on every reservoir-station load — not an anomaly.
+        Two non-native LR rows (LR_Base rewrite, LR_SM rewrite) plus one
+        native GBT row (unaffected, not counted)."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        lr_base_rewrite = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 191, "model_type": "LR_Base",
+            "date": "2026-04-01", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        lr_sm_rewrite = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 192, "model_type": "LR_SM",
+            "date": "2026-04-01", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        native_gbt = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 193, "model_type": "GBT",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([lr_base_rewrite, lr_sm_rewrite, native_gbt])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        # db.logger is `dashboard.logger`'s single shared named logger,
+        # with `propagate = False` (dashboard/logger.py) — caplog's
+        # handler lives on the ROOT logger, so it never sees this
+        # logger's records unless propagation is (temporarily) restored.
+        monkeypatch.setattr(db.logger, "propagate", True)
+        with caplog.at_level("INFO"):
+            result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert set(result["model_short"]) == {"GBT"}
+        drop_lines = [
+            r for r in caplog.records
+            if "non-native LR" in r.getMessage()
+        ]
+        assert len(drop_lines) == 1, (
+            f"Expected exactly one aggregated line, got {len(drop_lines)}: "
+            f"{[r.getMessage() for r in drop_lines]}"
+        )
+        assert drop_lines[0].levelname == "INFO"
+        assert "2" in drop_lines[0].getMessage()
+        assert "19999" in drop_lines[0].getMessage()
+
+    def test_backfilled_older_quarter_does_not_hide_newer_quarter(self, monkeypatch, tmp_path):
+        """Problem 2: dedup by issue date alone means a later backfill of
+        an OLDER quarter (Q2, dated Jul 2) must not hide the same model's
+        NEWER quarter (Q3, dated Jun 25)."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        q3_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 80, "model_type": "GBT",
+            "date": "2026-06-25", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+        q2_backfill = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 81, "model_type": "GBT",
+            "date": "2026-07-02", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([q2_backfill, q3_row])  # shuffled order
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 7, 10))
+
+        assert set(result["quarter_in_year"]) == {2, 3}
+        latest_quarter_row = result.loc[result["valid_from"].idxmax()]
+        assert latest_quarter_row["quarter_in_year"] == 3
+
+    def test_id_tie_break_on_equal_date(self, monkeypatch, tmp_path):
+        """The `id` drop moved to AFTER the dedup so a same-date tie can be
+        broken by the highest API id."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        lower_id = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 200, "model_type": "GBT",
+            "date": "2026-03-22", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+            "q": 100.0,
+        }
+        higher_id = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 201, "model_type": "GBT",
+            "date": "2026-03-22", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+            "q": 555.0,
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([lower_id, higher_id])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert result["forecasted_discharge"].iloc[0] == 555.0
+        assert "id" not in result.columns
+
+    def test_flag_on_native_wins_over_later_legacy(self, monkeypatch, tmp_path):
+        """Fresh vs legacy rows, flag ON: a fresh NATIVE row dated at the
+        issue date must win over a legacy row dated LATER (at valid_from)."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        fresh_gbt = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 130, "model_type": "GBT",
+            "date": "2026-12-25", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+            "q": 111.0,
+        }
+        legacy_gbt = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 131, "model_type": "GBT",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+            "q": 222.0,
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([legacy_gbt, fresh_gbt])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert len(result) == 1
+        assert result["forecasted_discharge"].iloc[0] == 111.0
+        assert str(result["date"].iloc[0].date()) == "2026-12-25"
+        assert bool(result["is_native"].iloc[0]) is True
+
+    def test_flag_off_fresh_wins_over_earlier_legacy(self, monkeypatch, tmp_path):
+        """Fresh vs legacy rows, flag OFF: the fresh row (dated at
+        valid_from) is returned over an earlier legacy row."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        fresh_naive = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 140, "model_type": "Naive Mean",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+            "q": 333.0,
+        }
+        legacy_naive = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 141, "model_type": "Naive Mean",
+            "date": "2026-12-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+            "q": 444.0,
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([legacy_naive, fresh_naive])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert len(result) == 1
+        assert result["forecasted_discharge"].iloc[0] == 333.0
+        assert str(result["date"].iloc[0].date()) == "2027-01-01"
+
+    def test_no_quarter_em_returned(self, monkeypatch, tmp_path):
+        """Quarterly EM is retired; old EM rows must never be shown."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        gbt = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 150, "model_type": "GBT",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        naive_mean = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 151, "model_type": "Naive Mean",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        old_em = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 152, "model_type": "EM",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([gbt, naive_mean, old_em])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert "EM" not in set(result["model_short"])
+        assert set(result["model_short"]) == {"GBT", "Naive Mean"}
+
+    def test_no_quarter_em_returned_case_insensitive(self, monkeypatch, tmp_path):
+        """R4(b) / C4: the EM filter's `.str.upper()` must catch any
+        casing of both spellings ('EM' and 'ENSEMBLE_MEAN'), not just an
+        exact match — including a bare lowercase/mixed-case 'EM' itself,
+        not only the longer 'ENSEMBLE_MEAN' spelling."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        gbt = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 153, "model_type": "GBT",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        lower_ensemble_mean = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 154, "model_type": "ensemble_mean",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        upper_ensemble_mean = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 155, "model_type": "ENSEMBLE_MEAN",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        lower_em = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 156, "model_type": "em",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        mixed_em = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 157, "model_type": "Em",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response(
+                [gbt, lower_ensemble_mean, upper_ensemble_mean, lower_em, mixed_em]
+            )
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert set(result["model_short"]) == {"GBT"}
+
+
+class TestGetLongForecastsQuarterEligibility:
+    def test_tjhm_eligibility_hides_not_yet_issued_quarter(self, monkeypatch, tmp_path):
+        """tjhm (lead 0, issue day 1): Q4 2026 (fallback-derived, dated
+        2026-10-01) must be hidden on 2026-09-26; the native Q3 row
+        (issued 2026-07-01) is returned and correctly marked native."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=0, issue_day=1)
+        naive_q4 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 110, "model_type": "Naive Mean",
+            "date": "2026-10-01", "valid_from": "2026-10-01", "valid_to": "2026-12-31",
+        }
+        lr_q3 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 111, "model_type": "LR_Base",
+            "date": "2026-07-01", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([naive_q4, lr_q3])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 26))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 3
+        assert bool(result["is_native"].iloc[0]) is True
+
+        from dashboard.plot_manager import _format_quarterly_forecast_info
+        caption = _format_quarterly_forecast_info(
+            lambda s: s, None, None,
+            valid_from=result["valid_from"].iloc[0],
+            valid_to=result["valid_to"].iloc[0],
+            quarter_issue_date=result["quarter_issue_date"].iloc[0],
+        )
+        assert "Jul 2026" in caption and "Sep 2026" in caption
+        assert "1st of July 2026" in caption
+
+    def test_kghm_dec25_next_year_q1_becomes_eligible(self, monkeypatch, tmp_path):
+        """kghm (lead 1, issue day 25): Q1 2027 becomes eligible exactly on
+        2026-12-25, although its flag-OFF Skilled Mean row is dated at
+        valid_from (2027-01-01)."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        skilled_mean = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 120, "model_type": "Skilled Mean",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+        lr_base = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 121, "model_type": "LR_Base",
+            "date": "2026-12-25", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+        lr_sm = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 122, "model_type": "LR_SM",
+            "date": "2026-12-25", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([skilled_mean, lr_base, lr_sm])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 12, 25))
+
+        assert set(result["model_short"]) == {"Skilled Mean", "LR_Base", "LR_SM"}
+        assert (result["quarter_in_year"] == 1).all()
+        assert (result["year"] == 2027).all()
+
+
+class TestGetLongForecastsQuarterIssueDayClamping:
+    def test_issue_day_31_clamps_to_month_length_no_exception(self, monkeypatch, tmp_path):
+        """A configured issue_day of 31 with lead 1 shifts Q3's issue month
+        back to June (30 days) -> June 31 does not exist.
+        pd.to_datetime on an unclamped day=31 would raise ValueError,
+        crashing the monthly dashboard load / reservoir bulletin instead of
+        degrading. The issue day must clamp to the issue month's own
+        length (June 30), mirroring
+        long_term_forecasting.lt_utils.nearest_scheduled_issue_date."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=31)
+        gbt_q3 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 160, "model_type": "GBT",
+            "date": "2026-06-30", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([gbt_q3])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert result["quarter_issue_date"].iloc[0] == pd.Timestamp("2026-06-30")
+        assert bool(result["is_native"].iloc[0]) is True
+
+    @pytest.mark.parametrize("bad_issue_day", [0, -1])
+    def test_non_positive_issue_day_degrades_instead_of_crashing(
+        self, monkeypatch, tmp_path, bad_issue_day
+    ):
+        """`_require_int_field` (long_term_horizon_resolver.py) only checks
+        that operational_issue_day is an int, not that it is a valid
+        day-of-month. A misconfigured 0 or negative value must not reach
+        the date construction (ValueError, aborting the monthly dashboard
+        load / reservoir bulletin) — it must degrade the same way an
+        unresolvable schedule does, not invent a day."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=bad_issue_day)
+        gbt_q3 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 161, "model_type": "GBT",
+            "date": "2026-06-25", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([gbt_q3])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert not result["is_native"].any()
+        assert result["quarter_issue_date"].isna().all()
+
+
+class TestGetLongForecastsQuarterDegraded:
+    def test_degraded_schedule_no_native_preference(self, monkeypatch):
+        """No `operational_issue_day` configured (the module's own autouse
+        fixture shape) -> degraded: no native preference/LR strictness,
+        eligibility falls back to `date <= today`, caption shows 'issue
+        date not available'."""
+        lr_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 95, "model_type": "LR_Base",
+            "date": "2026-03-22", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        gbt_q2 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 96, "model_type": "GBT",
+            "date": "2026-03-22", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        gbt_q3 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 97, "model_type": "GBT",
+            "date": "2026-06-22", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([lr_row, gbt_q2, gbt_q3])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 5, 1))
+
+        assert len(result) == 2
+        assert set(result["model_short"]) == {"LR_Base", "GBT"}
+        assert not result["is_native"].any()
+        assert result["quarter_issue_date"].isna().all()
+        # R3: must be NaT (datetime), not float64 NaN — `_convert_na_to_nan`
+        # + `infer_objects()` cannot tell an all-null datetime column from
+        # an all-null float column apart on its own.
+        assert pd.api.types.is_datetime64_any_dtype(result["quarter_issue_date"])
+
+        from dashboard.plot_manager import _format_quarterly_forecast_info
+        caption = _format_quarterly_forecast_info(
+            lambda s: s, None, None,
+            valid_from=result["valid_from"].iloc[0],
+            valid_to=result["valid_to"].iloc[0],
+            quarter_issue_date=None,
+        )
+        assert "issue date not available" in caption
+
+    def test_kghm_fallback_quarter_no_native_lr(self, monkeypatch, tmp_path):
+        """Round-2 decision 3: a fallback quarter (no native LR row) shows
+        the derived models/ensembles but never a non-native LR row."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        lr_rewrite = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 100, "model_type": "LR_Base",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+        gbt = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 101, "model_type": "GBT",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+        naive_mean = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 102, "model_type": "Naive Mean",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+        skilled_mean = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 103, "model_type": "Skilled Mean",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([lr_rewrite, gbt, naive_mean, skilled_mean])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert set(result["model_short"]) == {"GBT", "Naive Mean", "Skilled Mean"}
+        assert not result["is_native"].any()
+
+        from dashboard.plot_manager import _format_quarterly_forecast_info
+        caption = _format_quarterly_forecast_info(
+            lambda s: s, None, None,
+            valid_from=result["valid_from"].iloc[0],
+            valid_to=result["valid_to"].iloc[0],
+            quarter_issue_date=result["quarter_issue_date"].iloc[0],
+        )
+        assert "Jan 2027" in caption and "Mar 2027" in caption
+        assert "25th of December 2026" in caption
+
+    def test_tjhm_fallback_derived_q1_caption_from_schedule(self, monkeypatch, tmp_path):
+        """tjhm (lead 0): a fallback-derived Q1 2027 (no native LR row)
+        still gets its issue date from the schedule, not 'unavailable'."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=0, issue_day=1)
+        gbt = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 90, "model_type": "GBT",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+        naive_mean = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 91, "model_type": "Naive Mean",
+            "date": "2027-01-01", "valid_from": "2027-01-01", "valid_to": "2027-03-31",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([gbt, naive_mean])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 2))
+
+        assert len(result) == 2
+        assert not (result["model_short"] == "LR_Base").any()
+        assert (result["quarter_issue_date"] == pd.Timestamp("2027-01-01")).all()
+
+        from dashboard.plot_manager import _format_quarterly_forecast_info
+        caption = _format_quarterly_forecast_info(
+            lambda s: s, None, None,
+            valid_from=result["valid_from"].iloc[0],
+            valid_to=result["valid_to"].iloc[0],
+            quarter_issue_date=result["quarter_issue_date"].iloc[0],
+        )
+        assert "Jan 2027" in caption and "Mar 2027" in caption
+        assert "1st of January 2027" in caption
