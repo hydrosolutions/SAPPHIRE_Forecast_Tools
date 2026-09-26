@@ -197,6 +197,30 @@ class TestCardSelectionThroughPlotManager:
         assert "25th of June 2026" in caption, caption
         assert "Apr 2026" not in caption, caption
 
+    def test_caption_issue_date_is_the_schedule_date_not_the_row_date(self):
+        """R1: a fallback-derived Q1 2027 row (kghm, flag OFF) is dated at
+        its own `valid_from` (2027-01-01), but the row's `quarter_issue_date`
+        (computed from the schedule, lead 1 / issue_day 25) is 2026-12-25.
+        The caption's issue-date wiring must read `quarter_issue_date`, not
+        the row's own `date` -- a mutation swapping in the rows' max
+        `date` instead would show the wrong day entirely undetected,
+        since the only other card-level caption test (above) has
+        date == quarter_issue_date by construction."""
+        row = _quarter_row(
+            model_short="Skilled Mean", date=pd.Timestamp("2027-01-01"),
+            valid_from=pd.Timestamp("2027-01-01"), valid_to=pd.Timestamp("2027-03-31"),
+            quarter_in_year=1, year=2027, quarter_issue_date=pd.Timestamp("2026-12-25"),
+            is_native=False, forecasted_discharge=150.0, accuracy=70.0,
+        )
+        quarterly_df = pd.DataFrame([row])
+        pm, _site = _make_stub_pm(quarterly_df)
+
+        pm.update_quarterly_summary_tabulator()
+
+        caption = pm._wm.forecast_info_q.object
+        assert "25th of December 2026" in caption, caption
+        assert "1st of January 2027" not in caption, caption
+
 
 # ---------------------------------------------------------------------------
 # Test 6: caption uses the selected rows, never stale site attributes

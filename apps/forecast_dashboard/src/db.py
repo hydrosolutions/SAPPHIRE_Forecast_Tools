@@ -851,7 +851,61 @@ def get_long_forecasts_quarter(
     code = _resolve_station(station) if station else None
     resolved_horizon_value = _resolve_quarter_horizon_value(horizon_value)
     today = today or date.today()
-    start_date = date(today.year - 1, 12, 1)
+
+    # FD-029 P1 item 3: resolve the operational schedule once per call —
+    # used both for the fetch window's lower bound (R2, immediately below)
+    # and for the eligibility cutoff / native predicate further down. When
+    # it cannot be resolved (a lead-only config, or none at all — e.g.
+    # this file's own test fixture), run degraded: no native preference,
+    # no LR strictness, and fall back to `date <= today` for eligibility.
+    # Mirrors `_safe_lead`. FD-031 (filed, pre-existing): on the DEFAULT
+    # horizon_value path, `_resolve_quarter_horizon_value` above already
+    # raises the same errors first, so a missing quarter.json never
+    # actually reaches this degraded branch unless `horizon_value` was
+    # passed explicitly.
+    try:
+        schedule = operational_schedule_for_mode("quarter")
+        degraded = False
+    except (LongTermHorizonResolverError, FileNotFoundError) as exc:
+        logger.warning(
+            "get_long_forecasts_quarter: operational schedule unavailable (%s); "
+            "running degraded (no native preference, no LR strictness).", exc,
+        )
+        schedule = None
+        degraded = True
+
+    # `_require_int_field` (long_term_horizon_resolver.py) only checks that
+    # `operational_issue_day` is an int, not that it is a valid day-of-month
+    # — a misconfigured 0 or negative value would otherwise reach the date
+    # construction below and raise ValueError, aborting the monthly
+    # dashboard load / the reservoir bulletin. Degrade the same way as an
+    # unresolvable schedule rather than inventing a day (no clamp up to 1):
+    # an invalid config should degrade visibly. The upper clamp further
+    # below (issue_day > days-in-month) is unaffected.
+    if not degraded and schedule.issue_day < 1:
+        logger.warning(
+            "get_long_forecasts_quarter: configured operational_issue_day=%d is not a "
+            "valid day-of-month; running degraded (no native preference, no LR "
+            "strictness).", schedule.issue_day,
+        )
+        schedule = None
+        degraded = True
+
+    # FD-029 P1 item 1 / R2: the lower bound must cover the station's
+    # still-eligible PREVIOUS calendar quarter too, not just the one
+    # containing `today` — the spec's contract is "latest ELIGIBLE target
+    # quarter" (item 4), and Q4 stays eligible through all of Q1; a
+    # lead>=2 config's current Q1 stays eligible into Q2. Lower bound =
+    # the first day of the month (3 + lead) months before the start of
+    # today's calendar quarter. In degraded mode (no schedule) use lead=3
+    # for coverage, since the actual configured lead is unknown.
+    fetch_lead = schedule.lead_time if not degraded else 3
+    current_quarter_start_month = ((today.month - 1) // 3) * 3 + 1
+    fetch_total_months = (
+        today.year * 12 + (current_quarter_start_month - 1) - (3 + fetch_lead)
+    )
+    fetch_start_year, fetch_start_month0 = divmod(fetch_total_months, 12)
+    start_date = date(fetch_start_year, fetch_start_month0 + 1, 1)
     end_date = date(today.year + 1, 3, 31)
     params = {
         "horizon_type": "quarter",
@@ -921,39 +975,9 @@ def get_long_forecasts_quarter(
     df["year"] = df["valid_from"].dt.year
     df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
 
-    # FD-029 P1 item 3: the operational schedule identifies the native row
-    # (item 5) and the eligibility cutoff (item 4). When it cannot be
-    # resolved (a lead-only config, or none at all — e.g. this file's own
-    # test fixture), run degraded: no native preference, no LR strictness,
-    # and fall back to `date <= today` for eligibility. Mirrors `_safe_lead`.
-    try:
-        schedule = operational_schedule_for_mode("quarter")
-        degraded = False
-    except (LongTermHorizonResolverError, FileNotFoundError) as exc:
-        logger.warning(
-            "get_long_forecasts_quarter: operational schedule unavailable (%s); "
-            "running degraded (no native preference, no LR strictness).", exc,
-        )
-        schedule = None
-        degraded = True
-
-    # `_require_int_field` (long_term_horizon_resolver.py) only checks that
-    # `operational_issue_day` is an int, not that it is a valid day-of-month
-    # — a misconfigured 0 or negative value would otherwise reach the date
-    # construction below and raise ValueError, aborting the monthly
-    # dashboard load / the reservoir bulletin. Degrade the same way as an
-    # unresolvable schedule rather than inventing a day (no clamp up to 1):
-    # an invalid config should degrade visibly. The upper clamp above
-    # (issue_day > days-in-month) is unaffected.
-    if not degraded and schedule.issue_day < 1:
-        logger.warning(
-            "get_long_forecasts_quarter: configured operational_issue_day=%d is not a "
-            "valid day-of-month; running degraded (no native preference, no LR "
-            "strictness).", schedule.issue_day,
-        )
-        schedule = None
-        degraded = True
-
+    # FD-029 P1 item 3: `schedule`/`degraded` were already resolved above
+    # (before the fetch window, for R2) — reused here for the native
+    # predicate (item 5) and the eligibility cutoff (item 4).
     if degraded or df.empty:
         df["quarter_issue_date"] = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
     else:
@@ -1024,7 +1048,14 @@ def get_long_forecasts_quarter(
               .reset_index(drop=True)
         )
     df.drop(columns=["id"], inplace=True, errors="ignore")
-    return _convert_na_to_nan(df.sort_values("Date"))
+    result = _convert_na_to_nan(df.sort_values("Date"))
+    # R3: `_convert_na_to_nan`'s `infer_objects()` cannot tell an all-NaT
+    # (degraded-mode) datetime column from an all-NaN float column, so it
+    # comes back as float64 NaN — breaking the docstring's promise of NaT.
+    # Re-cast explicitly; a no-op when the column is already datetime64.
+    if "quarter_issue_date" in result.columns:
+        result["quarter_issue_date"] = pd.to_datetime(result["quarter_issue_date"])
+    return result
 
 
 @_timed
