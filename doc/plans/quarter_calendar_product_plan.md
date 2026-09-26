@@ -1,129 +1,222 @@
 # Quarter forecast = calendar Q1–Q4: overview plan
 
-**Status**: Not started (plans drafted 2026-09-25; rev 2 after out-of-loop review by two `codex exec`
-passes and one fresh-context Claude reviewer)
-**Owner decisions (2026-09-25)**:
-- Kyrgyz Hydromet and Tajik Hydromet both issue the quarterly forecast for **calendar quarters Q1–Q4**,
-  once per quarter. **Q1 is required.**
-- GBT, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR and SM_GBT_NORM are **re-enabled for quarter**, as
-  same-issue averages of their monthly forecasts for the quarter's three months. This reverses that part
-  of the 2026-06-23 decision for quarter only; season stays LR-only.
-**Trigger**: GitHub issue #521 (quarterly target-window matching). The bug it reports is real. This plan set
-replaces the code approach of its branch `sandro_sapphire_2_quaterly_agg` (see § Relationship to #521).
-**This file owns the dependency graph.** The child plans refer to it and do not repeat it.
+**Status**: Not started. Plans rev 6, 2026-09-26, after five review rounds plus confirm passes. The latest round (after the P0 deferral) covered codex, consistency and implementation readiness.
+**This file owns the decisions and the dependency graph.** Child plans refer to it.
+**Trigger**: GitHub #521 (quarterly target-window matching). The bug is real. This plan set replaces the code
+approach of branch `sandro_sapphire_2_quaterly_agg`.
+
+## Owner decisions
+
+**2026-09-25**
+- **Calendar quarters.** Kyrgyz and Tajik Hydromet issue the quarterly forecast for **calendar quarters
+  Q1–Q4**, once per quarter, **Q1 included**.
+  - kghm: day 25 of the preceding month, lead 1.
+  - tjhm: day 1, lead 0.
+- **`horizon_value` = config lead** (kghm 1, tjhm 0).
+- **Seven models re-enabled for quarter:** GBT, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR, SM_GBT_NORM,
+  as same-issue averages of their monthly forecasts. LR_Base/LR_SM stay native. Season is unchanged.
+- **The schedule change (LTF-014 P0) is gated** on modeller confirmation, a server-state read and owner
+  approval.
+
+**2026-09-26**
+- **A. Derived quarters** use the monthly forecasts produced **on the quarter's issue date**, for the **next
+  three months** (leads `L`, `L+1`, `L+2`).
+  - They are identified by (issue date, `horizon_value`), not by the stored window.
+  - Fixing the labels at source is a follow-up: **LTF-016**.
+- **B. Quarterly ensembles are computed like monthly ensembles** (refined in round 2, decision 1). This
+  replaces the 2026-06-23 fixed-LR EM (M1) and the 2026-09-25 "D10" rule, **for quarter only**.
+  - **Naive Mean:** all models, no gate.
+  - **Skilled Mean:** long-term gate (NSE > 0) plus min-pairs, 1/MAE-weighted.
+  - **No quarterly Ensemble Mean.** This follows monthly, where EM is being removed (PP-059, owner
+    2026-08-18).
+  - Quarterly gap detection keys on Naive Mean.
+- **C. Quarter min-pairs K = 10.**
+- **D. Bounds for rows without quantiles** = forecast ∓ δ (the delta method, as for short-term), applied at
+  display time.
+- **E. Bulletin:** publish whatever is available until FD-030. No interim guard.
+- **F. tjhm LR quarter rows holding postprocessing aggregates:** re-import the native hindcast values before
+  the recalc.
+- **G. Temporary LR fallback.** Until LTF-014 P0/P2 are deployed, LR quarters are derived from monthly
+  forecasts where no native LR row exists. PP-065 P3 removes the fallback afterwards.
+- **H. LTF-015:** refuse early runs that fall in a different calendar month than the scheduled issue date.
+
+**2026-09-26, round 3**
+- **LTF-014 P0 is deferred; the configs stay at `[3..9]`.** The reason for `[3..9]` cannot be answered
+  without the modeller. This does not block the code plans:
+  - PP-064 excludes the rolling issues;
+  - PP-065's derived models and the decision-G LR fallback supply Q1 and tjhm Q4.
+  - Deferred with P0: P0b (moot; expires 2026-11-30), LTF-014 P1 and P2, PP-065 P3, and DOC-009 P2b (row 11).
+- **Winter issues are valid for LR_Base/LR_SM** (owner).
+- **D1:** accept the offset target.
+- **D2:** the P2 procedure is approved.
+
+**2026-09-26, round 2**
+1. No quarterly EM (see B).
+2. **Old persisted ensemble rows are accepted for now.** This covers the fixed-LR EM and the old Naive and
+   Skilled Mean rows. They stay in `long_forecasts` (D8 / PP-041).
+3. **Fallback LR rows are not persisted and are accepted as invisible.** The dashboard card and the bulletin
+   show no LR row for fallback quarters until LTF-014 P0/P2.
+4. **Decision F is by provenance.** Remove tjhm LR QUARTER rows with `date = valid_from` that have no
+   counterpart in the LT module CSV, in any quarter, 2026 included.
+   - Option (a), the standalone clear-and-recover step LTF-014 P0b, is **moot** while P0 is deferred.
+     F's provenance predicate therefore **again covers the tjhm rows dated 2026-10-01**, and any
+     trunk-written 2027-01-01 rows, in any year. If P0b ever runs, F preserves its recovered rows.
+   - Take a preserve manifest, a dry run and a backup first.
+5. **PP-065 is on the 2026-12-25 critical path.** Its fallback guarantees a kghm Q1 even without LTF-014 P0.
+6. **Early kghm runs** on the 20th–24th are accepted but produce no quarter product. They log a WARNING.
 
 ## What is wrong today
 
-| Layer | Implemented today | Required |
+| Layer | Today | Plan |
 |---|---|---|
-| Schedule (data-repo model configs) | `forecast_months: [3..9]` for quarter LR_Base/LR_SM in **both** orgs: a rolling 3-month window is issued monthly Mar–Sep, and **Q1 is never issued** | kghm (day 25, lead 1) `[3,6,9,12]`; tjhm (day 1, lead 0) `[1,4,7,10]` |
-| Model target | A fixed 90-day mean shifted by `offset` (kghm 95, tjhm 90), **relabelled** as the quarter (e.g. kghm 25 Dec learns 31 Dec – 30 Mar). The same approximation already applies to today's Q2–Q4 | Owner/modeller decision D1 |
-| Quarter model set | LR_Base/LR_SM only since 2026-06-23. The existing monthly-derived path averages across issue dates and 2-of-3 months | PP-065: seven models re-enabled as same-issue derived quarters; LR native-only |
-| Postprocessing | The quarter label is the `valid_from` month only; skill joins on `[code, year, quarter_in_year]`. Rolling windows are scored against another quarter's observations (#521). With the flag ON, a December-issued Q1 is **trimmed out** of the operational reader. Three date populations of quarter rows exist (native, flag-OFF rewrites dated `valid_from`, persisted monthly-derived) | PP-064 |
-| Dashboard quarterly card | The fetch window is keyed on issue date and frozen at import (misses 2027-dated Q1 rows on Dec 25–31). Latest-by-issue-date per model, whatever the window. The renderer keeps the max-date rows only. The caption trusts stale site attributes / lead-1 arithmetic | FD-029 |
-| Bulletin quarterly section | Monthly norm used as the quarter norm; `head(1)` model pick | FD-030 (blocked on decisions) |
-| Docs / data governance | The convention doc and MIG-008 say "7 rolling windows, not calendar quarters". The runbook cleanup signature "calendar hv1, `date` = quarter start" matches kghm flag-OFF rewrites and regenerated ensembles, and any date-equality-only variant would match **tjhm native rows** (hv0, issued on the quarter start) | DOC-009 |
-
-**Works already:**
-- The producer's window **label** handles the Dec 25 → next-year Jan–Mar rollover.
-- Observations, hydrograph quarter norms and stored quarter skill are keyed by calendar quarter.
-- The models are refitted on every run, so the schedule change needs no retraining (only new hindcasts).
+| Schedule (data-repo model configs) | `forecast_months [3..9]` in both orgs: a rolling window is issued monthly Mar–Sep, and there is **no Q1** | LTF-014 |
+| Postprocessing | The quarter label comes from the `valid_from` month only, and skill joins on the calendar quarter, so rolling windows are scored against another quarter (#521). Flag ON: a Dec-issued Q1 is trimmed out. Quarter rows come in three date populations | PP-064 |
+| Quarter model set and ensembles | LR-only since 2026-06-23. The old monthly-derived path averages across issue dates and accepts 2 of 3 months | PP-065 |
+| Monthly labels (stored data) | Pre-Feb-2026 hindcast rows carry offset windows (both orgs, mostly tjhm) and wrong January years (kghm GBT family). The producer is already fixed on trunk; the DB rows are stale and mis-score monthly skill | LTF-016 |
+| GBT-family climatological bounds | `_add_climatological_quantile_bounds` takes the σ month from the raw `valid_from` and leave-one-out from `today.year`, so the Q25/Q75 of GBT-family monthly models use the wrong month's σ for many issue months: kghm month_1–3 (month-dependent) and tjhm month_3 (Jul and Dec issues). **Live since 2026-04-14** | LTF-017 |
+| Dashboard quarterly card | The fetch window is set at import time. The latest issue wins whatever window it covers. The renderer keeps only rows at the max date. The caption relies on lead-1 arithmetic | FD-029 |
+| Bulletin quarterly section | Uses the monthly norm, picks a model with `head(1)`, and shows a range only | FD-030 |
+| Docs | Describe quarter as "rolling, not calendar". EM-parity and "0 deprecated rows" gates would false-fail. Cleanup predicates would delete product rows | DOC-009 |
+| Early manual runs of issue-day-1 modes | The value is ratio-adjusted to the wrong month. This is live for the tjhm month modes | LTF-015 |
 
 ## The plans
 
-| ID | File | Scope | Priority / deadline |
-|---|---|---|---|
-| LTF-014 | `issues/high_prio_gi_draft_ltf_quarter_calendar_schedule.md` | P0 data-repo schedule (ops); P1 lock tests; P2 hindcasts for the new issue months | High. **tjhm P0 by 2026-10-01 06:00**, kghm P0 by 2026-12-25 |
-| PP-064 | `issues/high_prio_gi_draft_pp_quarter_calendar_window_validation.md` | A: calendar-window validation, December Q1 through the operational reader (direct rows). B: direct-row dedup, observation coverage, empty-skill EM (decisions). C: recalc rollout | High. **A deployed by 2026-12-25** |
-| PP-065 | `issues/high_prio_gi_draft_pp_quarter_derived_models.md` | Re-enable seven models for quarter as same-issue, unweighted monthly averages (null quantiles), incl. the operational December Q1 monthly read. LR native-only. Legacy direct rows of those models ignored on every input read. Quarter-only ensemble quantile rule in both ensemble paths | High. After PP-064 A; needs D10 |
-| FD-029 | `issues/mid_prio_gi_draft_fd_quarter_card_calendar_window.md` | Year-safe fetch, per-target-quarter dedup, renderer, caption | Medium. **Deployed by 2026-12-25** |
-| DOC-009 | `issues/mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md` | P1: contract amendments and cleanup warnings. P2: readmes | Medium. P1 merges before or with PP-064 A |
-| FD-030 | `issues/mid_prio_gi_draft_fd_quarter_bulletin_norms_and_model.md` | Quarter norms/last-year value, model and period selection in the bulletin | Medium. Blocked on D6 |
-| LTF-015 | `issues/low_prio_gi_draft_ltf_day1_lead0_early_run_window.md` | Early manual run of a day-1/lead-0 mode gets the previous month's window label | Low. Deferred (D7) |
+| ID | File (`issues/`) | Priority / target |
+|---|---|---|
+| LTF-014 | `high_prio_gi_draft_ltf_quarter_calendar_schedule.md` | **Deferred** (P0, P0b, P1, P2). Configs stay `[3..9]`. P0b expires 2026-11-30 |
+| PP-064 | `high_prio_gi_draft_pp_quarter_calendar_window_validation.md` | High. **A deployed by 2026-12-25** |
+| PP-065 | `high_prio_gi_draft_pp_quarter_derived_models.md` | High. **Deployed by 2026-12-25.** Four agent phases (P1a–P1d), then rollout. P3 removes the LR fallback |
+| LTF-016 | `high_prio_gi_draft_ltf_monthly_window_labels.md` | High. A data fix (re-import and delete) plus verification; no producer change. Independent of the quarter chain |
+| LTF-017 | `high_prio_gi_draft_ltf_climatological_bounds_raw_month.md` | High (live). Independent |
+| FD-029 | `mid_prio_gi_draft_fd_quarter_card_calendar_window.md` | Medium. **Deployed and restarted by 2026-12-25** |
+| DOC-009 | `mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md` | P1a (safety warnings) before PP-065 deploys; P1b after D4 |
+| FD-030 | `mid_prio_gi_draft_fd_quarter_bulletin_norms_and_model.md` | Medium. Blocked on D6 |
+| LTF-015 | `mid_prio_gi_draft_ltf_day1_early_run_refusal.md` | Medium |
 
-## Deadlines
-
-- **2026-10-01 06:00, tjhm Q4.** The current config skips it (the nearest scheduled date is Sep 1).
-  LTF-014 P0 on the tjhm server is the only thing needed. P0 is safe alone: it removes rolling issues and
-  adds calendar ones, and a missed run can be recovered with `lt_recovery` until 2026-11-30.
-- **2026-12-25, kghm Q1.** Needs LTF-014 P0 on kghm, PP-064 A (flag-ON trim), FD-029 (fetch window), and
-  therefore DOC-009 P1.
-
-## Decisions needed
+## Open decisions
 
 | # | Decision | Who | Blocks |
 |---|---|---|---|
-| D1 | Keep the 90-day offset target relabelled as the quarter, or make the training target calendar-exact (`lt_forecasting` library change, incl. leap-year Q1) | Owner + modeller | Nothing here; declaring the product "exact" |
-| D2 | Hindcast write set for the new issue months (new months only / CSV + filtered import / historical cutoff). The plain command overwrites operational rows of every configured month and flips them to flag 1 | Modeller + owner | LTF-014 P2 |
-| D3 | PP-064 B2 (deterministic direct-row dedup rule, required), B3 (accept or delete persisted LR rewrites / old derived LR rows), B4 (3-of-3 observation months; unweighted recommended; if day-weighting is chosen it changes observations, PP-065's derived forecasts and preprocessing norms together), B5 (fixed-LR EM also when no quarter skill exists; changes a locked test) | Owner | PP-064 B, C |
-| D4 | Service owner acknowledges the amendment to their RESOLUTION (hv rule unchanged; windows are calendar). Owner signs off the decision-request amendment | Service owner, owner | DOC-009 P1 merge |
-| D5 | Dashboard caption issue date: accept "latest date before `valid_from`" (can pick a persisted derived row's date), or read the configured issue day in the dashboard | Owner | FD-029 detail only |
-| D6 | Bulletin quarterly section: eligible quarter and issuance cutoff, published model and fallback, reopen semantics, in-progress quarter display, shared vs per-reservoir period, norm reference year for a December-issued Q1 | Owner | FD-030; DOC-009 #10 wording |
-| D7 | Early-run fix: relabel from the scheduled date (recommended) or refuse | Owner | LTF-015 |
-| D8 | Delete stale rows from `long_forecasts` (one-way SQL; no API path; colleague-owned service) | Owner + service owner | Nothing hard. Rolling-window rows are inert after PP-064 A and FD-029. **Calendar-shaped** rewrites and persisted derived rows are **not** inert: a window filter cannot tell them apart. They are handled by the PP-064 B2 dedup and the FD-029 selection rule until D8 deletes them (MIG-008 / PP-041) |
-| D9 | ~~Re-enable the seven models for quarter~~ **Decided 2026-09-25: yes**, as same-issue monthly averages → PP-065. #521's skill-gated quarterly EM stays out of scope unless D10 reopens it | Owner | — |
-| D10 | Quarterly ensembles with nine raw models: EM stays mean(LR_Base, LR_SM) (M1, recommended) or changes. Naive/Skilled Mean pools grow to all nine (existing semantics). **Ensemble quantiles null when any member lacks quantiles** (recommended; derived quarters have none) | Owner | PP-065 |
+| D1 | ~~90-day offset target vs calendar-exact~~ **Decided 2026-09-26: accept the offset target** (measured median bias ≤ 2 %) | Owner | — |
+| D2 | ~~Hindcast write set~~ **Decided 2026-09-26: the LTF-014 P2 procedure** (scratch config copy, scratch output, CSV only, filtered import, durable publication). Applies when P0 resumes | Owner | — |
+| D3 | PP-064 B5: empty quarter skill is handled as for monthly, i.e. no ensembles at all, Naive Mean included. Confirm. B2, B4 and B6 moved into PP-065 | Owner | PP-064 B → recalc |
+| D4 | The service owner acknowledges the convention-doc amendment; the owner signs off the decision-request amendment | Service owner, owner | DOC-009 P1b only |
+| D6 | Bulletin quarterly section (FD-030's D6a–D6c): the product published (Skilled Mean / Naive Mean / a model), presentation in months 2–3 of a quarter, the norm reference year, and an optional point-value/model tag (a template change) | Owner | FD-030 |
+| D8 | Delete legacy rows in `long_forecasts` (one-way SQL; colleague-owned service) | Owner + service owner | Nothing |
 
-## Relationship to #521
+Resolved since rev 2:
+- **D5** (caption issue date): resolved by the schedule-based native-row rule.
+- **D7** (early runs): refuse.
+- **D9 and D10**: superseded by decisions B and C.
 
-- **Kept**, re-implemented narrowly:
-  - exact calendar-window validation before labelling (PP-064);
-  - re-enabling the seven models as same-issue, complete-quarter monthly averages with null quantiles,
-    with LR native-only (PP-065). This differs from the branch: the configured quarter lead and issue day
-    only, and no date-derived lead.
-- **Not kept**:
-  - the EM skill gate (D10);
-  - overwriting stored `horizon_value` with a date-derived lead;
-  - flag-OFF behaviour and write-key changes;
-  - its dashboard edits.
-- Its "1,847 passed, 1 xfail" was reproduced. The xfail is the pre-existing `test_min_n_stale_integration.py:405`.
-- **The #521 body names a real station code with its skill values on a public repo.** Ask the author to
-  redact it to `19999`.
+## Rollout and communication
 
-## Implemented drift noted while planning
+1. **Server reads, per org, before any change.**
+   - The live env used by the postprocessing and dashboard containers: `SAPPHIRE_SKILL_LEAD_AWARE` and
+     `ieasyhydroforecast_ml_long_term_supported_modes`. The local `.env_kghm_server` has no
+     `SAPPHIRE_SKILL_LEAD_AWARE` line, so it defaults to OFF.
+   - The quarter configs (the LTF-014 gate).
+   - The crontab LT line.
+   - `ieasyhydroforecast_min_pairs_long_term_quarter`. An explicit 5 on a server would cancel decision C.
+2. **Who executes.** Each PR names who runs the server steps (the owner or hydromet IT). Image pull and
+   restart per module follow `doc/prod/update_deployment_checklist.md`.
+3. **Order.** Steps 1–3 are all deployed before 2026-12-25.
+   1. PP-064 A and FD-029. Deploy both and restart the dashboard.
+   2. DOC-009 P1a.
+   3. PP-065 and PP-064 B (the B5 check). Then, **in one window between LT cron days** (kghm 10/25,
+      tjhm 1): deploy, run the tjhm decision-F step, and run **one recalc per org** after a DB export.
+   4. LTF-014 P0 when its gate clears.
+   5. LTF-014 P2.
+   6. PP-065 P3, deployed.
+   7. The second recalc.
+4. **Notice to the Kyrgyz and Tajik hydromets, before the recalc.**
+   - The long-term quarter mode still runs **monthly Mar–Sep**. Only the calendar issues are published:
+     kghm Mar/Jun/Sep 25 → Q2/Q3/Q4, and tjhm Apr/Jul 1 → Q2/Q3. The rolling issues are ignored.
+   - **Q1 (both orgs) and tjhm Q4 now appear.** They are built from monthly forecasts (the seven models plus
+     Naive/Skilled Mean), with no LR row shown. The caption still shows the scheduled issue date.
+   - Seven more models appear in the quarterly outputs.
+   - The quarterly ensembles are now Naive Mean and Skilled Mean, as for monthly. There is no quarterly
+     Ensemble Mean.
+   - Bounds for models without quantiles are ±δ on the dashboard. Until FD-030 lands, the bulletin range
+     can be blank.
+   - For those quarters LR is included in the ensembles but not shown as a row. This holds for as long as
+     the schedule change stays deferred, which has no date yet.
+   - Stored quarterly skill values change, some of them sharply. This is a corrected verification method,
+     not a model change; include before/after distributions per org.
+   - The `validate_pipeline` quarter checks report FAIL on admitted-but-inactive days (INFRA-022).
+5. **#521.** Tell Sandro which parts of his branch the plans adopt. His PR stays open until PP-064 and
+   PP-065 land.
 
-- M1 says quarterly EM is not skill-gated. The operational run nevertheless skips all quarterly ensembles
-  on an **entirely empty** skill frame (`postprocessing_operational_long_term.py:210`,
-  `ensemble_calculator.py:632`). A test locks this (`tests/test_quarterly_ensemble_creation.py:329`).
-  Decision D3/B5.
+## Why quarter diverged (history, researched 2026-09-25)
+
+- **The calendar intent was documented and implemented.** The 2026-02-06 plan maps Dec 25 → Q1 … Sep 25 → Q4
+  from all nine monthly models; `aggregation.py` implemented it on 2026-03-04.
+- **The long-term module built a rolling mode instead.** Its "next 3 months" mode came with
+  `forecast_months [3..9]`, set in the data repos around 2026-02-21 with no recorded reason.
+- **PR #295 merged the two** by relabelling rolling rows. That is the #521 bug.
+- **The CSVs were then read as the specification.** A 2026-06-21 investigation took the hindcast CSVs as the
+  product definition. The 2026-06-22 service-owner answer concerned only `horizon_value`, but was later cited
+  as settling the product.
 
 ## Deferred findings (not filed)
 
 - `apps/forecast_skill_eval` reads quarter `horizon_value` as the quarter number (`dashboard/app.py:385-386`,
   `cli.py:195`). It is an analysis tool; confirm before filing.
-- `apps/forecast_dashboard/src/db.py:29-30` fixes `CURRENT_YEAR`/`PREVIOUS_YEAR` at import for every
-  horizon. FD-029 fixes only the quarter fetch.
-- `validate_pipeline` quarter check (`validate_pipeline.py:554-590`) FAILs on admitted-but-inactive days,
-  in 8 of 12 months after LTF-014 instead of 5. This widens INFRA-022; no new issue.
+- `apps/forecast_dashboard/src/db.py:29-30` fixes `CURRENT_YEAR`/`PREVIOUS_YEAR` at import for every horizon.
+  FD-029 fixes only the quarter fetch.
+- The hydrology review suggested empirical error quantiles from hindcast residuals as a better band than ±δ.
+  Not pursued; decision D chose δ.
+- NSE > 0 on small samples passes no-skill models often (40–45 % at n = 5–10). K = 10 mitigates this.
+  Leave-one-year-out member selection would remove the in-sample selection bias; it is not planned.
 
 ## Dependency graph
 
-Stages: **merge** = code/doc PR merged; **deploy** = on the servers; **ops** = manual step.
+Stages:
+- **merge**: PR merged;
+- **deploy**: on the servers;
+- **ops**: manual step.
 
 ```json
 {
   "phases": {
-    "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": [], "deadline": "2026-10-01" },
-    "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": [], "deadline": "2026-12-25" },
-    "LTF-014.P1":      { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
-    "LTF-014.P2":      { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm", "LTF-014.P0.kghm", "D2"] },
-    "DOC-009.P1":      { "stage": "merge",  "depends_on": ["D4"], "parallel_agents": 1 },
-    "DOC-009.P2":      { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
-    "PP-064.A":        { "stage": "merge",  "depends_on": ["DOC-009.P1"], "parallel_agents": 1 },
+    "DOC-009.P1a":     { "stage": "merge",  "depends_on": [] },
+    "DOC-009.P1b":     { "stage": "merge",  "depends_on": ["D4"] },
+    "DOC-009.P2a":     { "stage": "merge",  "depends_on": ["PP-065.P1d"], "note": "rows 10 and 12; released with the PP-065 deploy" },
+    "DOC-009.P2b":     { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm"], "note": "row 11 (LT readme schedule); deferred with P0" },
+    "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
+    "LTF-014.P0b":     { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm"], "status": "MOOT while P0 is deferred; expires 2026-11-30 (recovery window)" },
+    "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
+    "LTF-014.P1":      { "stage": "merge",  "depends_on": ["LTF-014.P0 resumes"], "status": "DEFERRED with P0 (lock tests for configs not deployed)" },
+    "LTF-014.P2":      { "stage": "ops",    "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm", "D2"] },
+    "LTF-015":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1, "note": "shares test files with LTF-014 P1; whichever lands second rebases" },
+    "LTF-016.P0":      { "stage": "ops",    "depends_on": [] },
+    "LTF-016.P1":      { "stage": "ops",    "depends_on": ["LTF-016.P0"], "note": "verification: deployed LT image >= 99c5a552, server CSV labels" },
+    "LTF-016.P2":      { "stage": "ops",    "depends_on": ["LTF-016.P1"], "note": "re-import and delete with the service owner, then the monthly recalc" },
+    "LTF-017":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
+    "PP-064.A":        { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A"], "deadline": "2026-12-25" },
-    "PP-065":          { "stage": "merge",  "depends_on": ["PP-064.A", "D10"], "parallel_agents": 1 },
-    "PP-065.deploy":   { "stage": "deploy", "depends_on": ["PP-065"] },
-    "PP-064.B":        { "stage": "merge",  "depends_on": ["PP-065", "D3", "LTF-014.P0.tjhm"], "parallel_agents": 1, "note": "after PP-065: both edit the two quarter readers" },
-    "PP-064.B.deploy": { "stage": "deploy", "depends_on": ["PP-064.B"] },
-    "PP-064.C":        { "stage": "ops",    "depends_on": ["PP-064.A.deploy", "PP-065.deploy", "PP-064.B.deploy | D3-deferral-approved"], "note": "recalc; if B was deferred, a repeat recalc after PP-064.B.deploy is mandatory; rerun after LTF-014.P2 if Q1 history is wanted" },
     "FD-029":          { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
-    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029"], "deadline": "2026-12-25" },
-    "FD-030":          { "stage": "merge",  "depends_on": ["FD-029", "D6"], "parallel_agents": 1 },
-    "LTF-015":         { "stage": "merge",  "depends_on": ["D7"], "parallel_agents": 1 }
+    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029"], "deadline": "2026-12-25", "note": "restart the dashboard container" },
+    "PP-065.P1a":      { "stage": "merge",  "depends_on": ["PP-064.A"], "parallel_agents": 1 },
+    "PP-065.P1b":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
+    "PP-065.P1c":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
+    "PP-065.P1d":      { "stage": "merge",  "depends_on": ["PP-065.P1b", "PP-065.P1c"], "parallel_agents": 1 },
+    "PP-064.B":        { "stage": "merge",  "depends_on": ["PP-065.P1d", "D3"], "parallel_agents": 1, "note": "the B5 check only" },
+    "deploy.pp":       { "stage": "deploy", "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a"], "deadline": "2026-12-25" },
+    "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp"], "note": "decision F, with the service owner" },
+    "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export" },
+    "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "recalc.1"] },
+    "PP-065.P3.deploy":{ "stage": "deploy", "depends_on": ["PP-065.P3"] },
+    "recalc.2":        { "stage": "ops",    "depends_on": ["LTF-014.P2", "PP-065.P3.deploy"] },
+    "FD-030":          { "stage": "merge",  "depends_on": ["FD-029", "D6"], "parallel_agents": 1 }
   }
 }
 ```
 
-LTF-014.P1, DOC-009, PP-064.A and FD-029 touch disjoint code files and can run in parallel. DOC-009 and
-the index both edit `doc/plans/module_issues.md` (MIG-008 row vs the new rows), so merge those
-sequentially.
+**Shared files, strictly sequential:**
+- `src/data_reader.py` quarter readers: PP-064 A → PP-065 P1b → PP-065 P3. PP-064 B no longer edits them.
+- `apps/long_term_forecasting/tests/test_lt_utils.py`: LTF-015, and LTF-014 P1 if it resumes. Whichever
+  lands second rebases.
+- `doc/plans/module_issues.md`: DOC-009 and the index updates.
+
+Everything else touches disjoint files and can run in parallel, including LTF-016 and FD-029.
