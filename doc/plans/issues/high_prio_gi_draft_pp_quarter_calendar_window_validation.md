@@ -18,8 +18,9 @@ graph lives there only. Owner decisions of 2026-09-26 are cited by letter (A–H
 ("round-2 decision 1–6").
 **Supersedes the code approach of**: GitHub #521 / branch `sandro_sapphire_2_quaterly_agg` (f0a83352)
 **Related**:
-- PP-065 (derived models, native-row selection, quarterly Naive/Skilled Mean, LR fallback), FD-029
-  (card), LTF-014, LTF-016
+- PP-065 (derived models, native-row selection, quarterly Naive/Skilled Mean, LR fallback), PP-066
+  (`select_operational_issuances`'s own unclamped issue-day match and mixed-tz crash — neither fixed
+  here, Contract below), FD-029 (card), LTF-014, LTF-016
 - PP-056 (quarter skill at hv=0), PP-041 (no forecast-side invalidation), PP-063 (gap detector
   presence-only), PP-049 (flag-OFF `keep="last"` API-order dependence), PP-061 (aggregated writer
   `date=valid_from` key collisions), PP-020 (quantile averaging)
@@ -50,10 +51,11 @@ step 0 reads the real state per org. Both flag states are in scope.
   - Both values come from `operational_schedule_for_mode("quarter")`
     (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:112-142`), which `data_reader` reaches via
     `_operational_schedules_for_horizon_type("quarter")` (`src/data_reader.py:141`).
-  - **Caveat:** `select_operational_issuances`'s own match (`:346-349`) compares `date.day` to the
+  - **Caveat:** `select_operational_issuances`'s own match (`:349-353`) compares `date.day` to the
     configured `issue_day` **unclamped** — it does not itself apply the clamp above. This plan does not
-    touch that function (Contract, below); flagged here so a clamped-day genuine issuance is not assumed
-    already handled.
+    touch that function (Contract, below); the unclamped match is PP-066's scope
+    ("`select_operational_issuances` robustness: mixed-tz dates and unclamped issue day"), not
+    acknowledged-but-unowned here.
 - **Quarterly ensembles.** Today EM = mean(LR_Base, LR_SM), not skill-gated (2026-06-23 M1). Chunk A
   preserves today's membership; PP-065 removes quarterly EM (owner, 2026-09-26). No chunk of this plan
   changes ensemble membership.
@@ -65,8 +67,9 @@ step 0 reads the real state per org. Both flag states are in scope.
     (`src/model_names.py:14-16`) keeps quarter LR-only; this plan does not change it.
 - **Flag OFF stays byte-identical for calendar-aligned input** (PP-056 `:164`; flag-OFF golden
   `tests/test_skill_lead_aware_golden_baseline.py:93`), except for these intended changes:
-  - Chunk A: the configured-lead Q1 of `start_year` issued in `start_year − 1` is read (Dec 25 for
-    kghm; see the "First-year Q1 (Problem 7)" section below for why no issue-month check is needed);
+  - Chunk A: any prior-year row targeting Q1 of `start_year` at the configured `horizon_value` is read,
+    whatever its issue month or day (Dec 25 for kghm with on-schedule data; see the "First-year Q1
+    (Problem 7)" section below for why the mask does not check the issue date);
   - Chunk A: direct rows dated after `forecast_date` are ignored by the latest reader (Problem 6);
   - Chunk A: the writer drops a calendar `valid_from` with a null `valid_to`.
   - Chunk B makes no code change. PP-065 changes flag-OFF quarter output (owner-approved), including the
@@ -128,8 +131,8 @@ step 0 reads the real state per org. Both flag states are in scope.
    - Widening that bound alone lets a **back-dated** run pick a later issue: the reader keeps only the
      maximum (year, quarter) (`:3448-3453`). The flag-OFF read already admits any row dated in
      `today.year`, so this is live under flag OFF today.
-7. **Flag-OFF reads miss the configured-lead Q1 of the first requested year issued in the previous
-   year** (Dec 25 for kghm; justification below). `read_quarterly_forecasts`
+7. **Flag-OFF reads miss a prior-year row targeting Q1 of the first requested year** (Dec 25 for kghm
+   with on-schedule data; justification below). `read_quarterly_forecasts`
    flag OFF reads issue years from `start_year` (`:3120-3127`); flag ON widens the read
    (`:3110-3111`) and trims by target year (`:3137`).
    - Recalc: Q1 of the first recalc year is lost.
@@ -147,8 +150,8 @@ step 0 reads the real state per org. Both flag states are in scope.
 **Goal**:
 - A non-calendar quarter row is excluded (never relabelled) at the direct-read choke point and at the writer.
 - The prior-year-issued Q1 survives the operational reader; a back-dated run cannot pick a later issue.
-- Under flag OFF, the configured-lead Q1 of `start_year` issued in `start_year − 1` is read (Dec 25 for
-  kghm).
+- Under flag OFF, a prior-year row targeting Q1 of `start_year` at the configured `horizon_value` is
+  read, whatever its issue month or day (Dec 25 for kghm with on-schedule data).
 
 **Files (only these may be modified; final shape, `ac2a5a51`)**:
 - `apps/postprocessing_forecasts/src/aggregation.py`:
@@ -288,16 +291,22 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3148`) here — an earlier version
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
 - **Invariant:** the flag-OFF direct set = trunk's set (every row with issue year in
-  `[start_year, end_year]`, any target year) **plus only** the configured-lead Q1 of `start_year` issued
-  in `start_year − 1` (Dec 25 for kghm). Nothing else is added, nothing else is removed.
-- **Why no issue-month check is needed:** the flag-OFF direct read keeps the single-lead API filter
-  unchanged (`horizon_value=quarter_horizon_value()`, comment at `:3088-3095`), so every direct row
-  already has `horizon_value` == the org's one configured lead. A row with issue year `< start_year`
-  that targets Q1 of `start_year` is therefore *by construction* that org's configured-lead issue (kghm
-  lead 1 → issued Dec 25 of `start_year − 1`; tjhm lead 0 issues Jan 1 of `start_year` itself, already
-  inside `[start_year, end_year]`, so no widening exception is even exercised for it). The mask below
-  checks target year and `quarter_in_year` only — no issue-month/day check — because the API-side
-  `horizon_value` filter already did that narrowing.
+  `[start_year, end_year]`, any target year) **plus** any prior-year row targeting Q1 of `start_year`
+  that is stored at the configured `horizon_value` (`quarter_horizon_value()`), **whatever its actual
+  issue month or day**. Nothing else is added, nothing else is removed.
+- **The mask does not check the issue date at all, by design.** `horizon_value` is a stored data
+  attribute the API filters on (`:3132-3138`) — not a schedule check against the row's own `date`; the
+  code never verifies that a prior-year Q1 row was genuinely issued on the org's configured issue day.
+  The mask itself (`:3173-3181`) checks only target year `== start_year` and `quarter_in_year == 1`;
+  `select_operational_issuances`, which *would* validate `date` against the schedule, runs only under
+  flag ON (`:3141`), never in this branch. With **on-schedule data** — the only kind LTF-015 (a
+  producer-side change, refuses an early run that falls in a different calendar month than its
+  scheduled issue date) allows to exist — this reduces in practice to: kghm lead 1 → the Dec 25 issue of
+  `start_year − 1`; tjhm lead 0 → issued Jan 1 of `start_year` itself, already inside
+  `[start_year, end_year]`, so the widening exception is never even exercised for it. Off-schedule
+  issue dates reaching this mask are the **producer's** concern (LTF-015), not this reader's — the
+  reader's own contract is exactly what it admits above, not what a well-behaved producer happens to
+  send it.
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
   checked via **both** target year `== start_year` **and** `quarter_in_year == 1`, not target year
   alone. Checking target year alone (an earlier, round-2 version of this fix) was still too permissive:

@@ -10,6 +10,9 @@ graph lives there only.
 **Related**:
 - PP-064: calendar-window validation and the native-row rule (its Contract). This plan comes after its
   Chunk A and absorbs its rev-3 rules B2, B4 and B6.
+- PP-066: owns `select_operational_issuances`' own unclamped issue-day match (`data_reader.py:349-353`).
+  This plan's native-row helper (item 2) applies the clamp on its own comparison; it does not touch, and
+  does not need, the selector PP-066 fixes.
 - LTF-016: fix the monthly window labels upstream.
 - PP-056: superseded for the seven models by this plan (see DOC-009).
 - PP-059 (its "KEEP quarter EM" is superseded; DOC-009 adds the note).
@@ -190,11 +193,15 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
 2. **Readers** (`read_quarterly_forecasts`, `read_latest_quarterly_forecasts`).
    - **Direct rows, native-row selection.** One shared helper, used by both readers under **both** flags:
      it parses `date` (quarter `date` arrives unparsed) and applies PP-064's Contract rule (`date.day` ==
-     quarter `issue_day` and year-aware lead == `lead_time`) **to LR rows only**. Non-native LR rows
-     (rewrites, persisted monthly-derived rows) are never selected.
+     quarter `issue_day`, **clamped to the length of the issue month** — the same clamp the producer
+     applies, `apps/long_term_forecasting/lt_utils.py:170-172 nearest_scheduled_issue_date`, and the same
+     rule FD-029 already implements — and year-aware lead == `lead_time`) **to LR rows only**. Non-native
+     LR rows (rewrites, persisted monthly-derived rows) are never selected. Add a test: issue day
+     configured as 31, a native row dated on the 30th of a 30-day issue month → selected as native.
    - **Stored leads (flag ON).** Before `select_operational_issuances`, drop and count direct rows whose
      stored `horizon_value` differs from the derived lead, then call it with `lead_output_cols=()` so the
-     stored value is preserved. `select_operational_issuances` itself is not modified.
+     stored value is preserved. `select_operational_issuances` itself is not modified — it keeps matching
+     the **unclamped** issue day (PP-066, which owns that gap).
    - **Derived rows.** Read raw monthly rows via `_read_long_forecasts_api` for issue years
      `start_year − 1 … end_year`. In the latest reader, also require issue date ≤ `forecast_date`. Derive
      for the seven models; while the fallback is active, also derive each LR model for (code, year,
@@ -381,6 +388,9 @@ lead 0):
   derived Dec-1 row for the same LR Q1 → the native row, in both readers; with and without an unrelated
   derived-model row; with shuffled row order. (For tjhm, rewrites and hv0 derived rows share the native
   key, PP-061; decision F handles them, so no tjhm variant of this case.)
+- **Native-row selection, clamped issue day.** `operational_issue_day` configured as 31, issue month a
+  30-day month (e.g. June): a native row dated on the 30th (the producer's own clamp,
+  `lt_utils.py:170-172`) → selected as native by the shared helper, in both readers.
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next

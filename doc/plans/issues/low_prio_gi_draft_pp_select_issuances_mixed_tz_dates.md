@@ -1,15 +1,19 @@
-# PP-066: `select_operational_issuances` crashes on a mixed tz-aware/naive `date` column
+# PP-066: `select_operational_issuances` robustness: mixed-tz dates and unclamped issue day
 
 **Status**: Draft (2026-09-26)
 **Module**: `apps/postprocessing_forecasts`
-**Priority**: Low — pre-existing on trunk; **latent** today (API rows carry date-only strings).
-**Related**: PP-064 (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md`) fixed the same
-failure mode at its own two call sites via `local_calendar_date` (`apps/postprocessing_forecasts/src/aggregation.py`),
-but explicitly left `select_operational_issuances` unmodified (Contract: "It only has to receive
-calendar-only rows."). This issue is the follow-up that touches the function PP-064 deliberately did
-not.
+**Priority**: Low — both problems pre-existing on trunk; both **latent** today (Problem 1: API rows
+carry date-only strings; Problem 2: configured issue days are 25 (kghm) and 1 (tjhm), neither near a
+month-length boundary).
+**Related**: PP-064 (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md`) fixed the mixed-tz
+failure mode at its own two call sites via `local_calendar_date`
+(`apps/postprocessing_forecasts/src/aggregation.py`), and added the CLAMPED issue-day rule to its own
+Contract and to FD-029's card, but explicitly left `select_operational_issuances` unmodified (Contract:
+"It only has to receive calendar-only rows."). PP-065 P1b's own native-row helper applies the clamp on
+its own, separate comparison — it does not touch this selector either. This issue is the follow-up that
+owns both gaps in the one function PP-064 and PP-065 deliberately did not touch.
 
-## Problem
+## Problem 1: mixed tz-aware/naive `date` column crashes
 
 `select_operational_issuances` (`apps/postprocessing_forecasts/src/data_reader.py:225-398`, def at
 `:225`) parses its issue-date column with a bare `pd.to_datetime(candidates[date_col])`
@@ -17,14 +21,36 @@ not.
 (e.g. `"2024-12-25"` next to `"2025-03-25T00:00:00+06:00"`) raises `ValueError` there, aborting the
 whole call. Both quarterly readers call this function under `SAPPHIRE_SKILL_LEAD_AWARE=true`:
 `read_quarterly_forecasts`'s flag-ON direct branch and `read_latest_quarterly_forecasts`'s flag-ON
-direct branch (both in the same file). Every other `select_operational_issuances` caller (monthly,
-seasonal) is exposed to the same crash if its `date` column ever mixes formats.
+direct branch (both in the same file). Every other caller that passes an **unparsed** `date` column
+straight through is exposed to the same crash — confirmed for the monthly caller: `_normalize_monthly_forecasts`
+(`:1479-1505`) parses `valid_from` but never touches `date`, so it too reaches
+`select_operational_issuances` raw. The **seasonal** caller is different, not exposed to this crash: its
+`date` column is already coerced (lossily, not raised on) upstream before it ever reaches this function
+— see "Out of scope, deferred" below, which owns that separate failure mode.
 
 Pre-existing on trunk, not introduced by PP-064. Latent: the postprocessing API returns `date` as a
 date-only string today, so no live batch mixes formats yet — same latency class as the mixed-format
 crash PP-064 found and fixed at its own two call sites.
 
-## Evidence
+## Problem 2: the day match is unclamped, unlike every other native-row check in the codebase
+
+`select_operational_issuances` compares the raw, unclamped `date.day` to the configured `issue_day`
+(`data_reader.py:349-353`: `issue_day = candidates[date_col].dt.day`, then `allowed_schedules =
+{(s.lead_time, s.issue_day) for s in schedules.values()}`, matched via `(lead, day) in
+allowed_schedules`). The producer clamps the issue day to the issue month's own length before ever
+issuing a forecast (`apps/long_term_forecasting/lt_utils.py:170-172 nearest_scheduled_issue_date`:
+`min(issue_day, calendar.monthrange(year, month)[1])`), and both PP-064's Contract (native quarter row
+rule) and FD-029's card (`is_native` predicate) apply that same clamp when deciding whether a row is
+native. This selector is the one place in the codebase that still compares unclamped — a genuinely
+native row issued on a clamped day (e.g. `operational_issue_day = 31`, issued on the 30th of a 30-day
+month) would never match here, and would silently fall out of the operational-issuance selection under
+flag ON (monthly, seasonal, and quarterly readers alike, since they all share this one function).
+
+**Latent today**: neither deployed org's configured `operational_issue_day` is anywhere near a
+month-length boundary (kghm 25, tjhm 1), so no live schedule currently exercises a clamped day. This is
+the same latency class as Problem 1, not a live incident.
+
+## Evidence (Problem 1)
 
 - Trunk `28ee535d`: `apps/postprocessing_forecasts/src/data_reader.py:335` —
   `candidates[date_col] = pd.to_datetime(candidates[date_col])`.
@@ -39,7 +65,7 @@ crash PP-064 found and fixed at its own two call sites.
   compare offset-naive and offset-aware datetimes` from `sort_values(by=date_col)` (`:390`) — the
   tie-break this function relies on (see Proposed fix).
 
-## Proposed fix
+## Proposed fix (Problem 1)
 
 Once PP-064 Chunk A has merged, its `local_calendar_date` helper
 (`apps/postprocessing_forecasts/src/aggregation.py:100-199`, added by that branch — not in
@@ -85,6 +111,18 @@ raise at all; it silently coerces the tz-aware row to `NaT` (data loss, not a cr
 issue's crash) on a separate code path; explicitly deferred, not covered by this issue's fix or
 tests.
 
+## Proposed fix (Problem 2)
+
+Clamp the issue day to the issue month's own length before matching, mirroring the producer
+(`lt_utils.py:170-172`) and PP-064/FD-029's own native-row predicates: for each row, compute
+`clamped_issue_day = min(s.issue_day, days_in_month(derived issue year, derived issue month))` per
+schedule `s`, and match against `(lead, day) in {(s.lead_time, min(s.issue_day, days_in_that_month))
+for s in schedules.values()}` — the clamp target depends on the *row's own* derived issue year/month
+(from `derived_lead`), not a fixed month, since the same configured `issue_day` clamps differently in a
+28-day February versus a 30-day June. Do not change the function's signature, its selection grain, or
+the tie-break `select_operational_issuances` uses elsewhere (Problem 1's fix). Keep the exact-match
+semantics for every issue day that never needs clamping (the overwhelming majority — any day ≤ 28).
+
 ## Tests
 
 - Direct rows for Q1 2025 issued `"2024-12-25"` and Q2 2025 issued
@@ -102,11 +140,18 @@ tests.
   value, matching today's (pre-crash) tie-break contract. This is the regression test for the
   ordering risk above; if the fix explicitly changes the contract instead, this test documents and
   asserts the new, chosen behaviour rather than being silently invalidated.
+- **Clamped issue day, flag ON (Problem 2).** Schedule configured with `operational_issue_day = 31`,
+  lead 1, target month July (a target whose issue month — June, one lead-month back — has 30 days): a
+  row dated `date = <year>-06-30` (the producer's own clamp for a 31-configured day in a 30-day June),
+  `valid_from` = July 1 → selected as the operational issuance through `select_operational_issuances`,
+  both directly and through both quarterly readers under flag ON. Fails before this fix (the row's raw
+  `date.day` = 30 never equals the configured `issue_day` = 31, so `is_candidate` is False and the row
+  is dropped as a "no operational candidate" unit).
 
 ## Acceptance
 
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` passes, zero unexpected skips.
-- No existing test edited; the new tests fail on trunk (and on the PP-064 branch, pre-fix) with
-  `ValueError`.
+- No existing test edited; the new tests fail on trunk (and on the PP-064 branch, pre-fix) — Problem 1's
+  with `ValueError`, Problem 2's with the row silently dropped (no exception, just missing output).
 - `git diff --stat` limited to `apps/postprocessing_forecasts/src/data_reader.py` and its tests.
 - Station code `19999` in any fixture; no real station codes.
