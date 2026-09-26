@@ -1,7 +1,8 @@
 # LTF-015: Refuse an early long-term run that falls in a different calendar month than its scheduled issue date
 
-**Status**: Draft (2026-09-26, rev 3). Fix contract decided by the owner on 2026-09-26 (overview decision H /
-D7: refuse, no relabel). Ready to implement after LTF-014 P1.
+**Status**: Draft (2026-09-26, rev 4 after the second review round). Fix contract decided by the owner on
+2026-09-26 (overview decision H / D7: refuse, no relabel; round-2 decision 6: warn on same-month early
+runs). Ready to implement after LTF-014 P1.
 **Module**: `apps/long_term_forecasting`
 **Priority**: Medium. Live today for the tjhm month modes, independent of LTF-014; it reaches the tjhm
 quarter once LTF-014 P0 adds the Jan 1 and Oct 1 issues. It affects **direct/manual runs** made 1–5 days
@@ -39,27 +40,44 @@ review round
 - tjhm `seasonal_april` (issue day 1, fixed target Apr–Sep) keeps a correct label but issues from March
   data; the rule below refuses it too.
 
-## Fix (owner decision H)
+## Fix (owner decision H and round-2 decision 6)
 
 In `check_valid_forecast_issue_date`, after the existing ±5-day window check and before the late snap:
 if the run is early (`day_offset < 0`) and `today` is in a different calendar month (year, month) than
-`scheduled_issue_date`, log one clear line and return **None**.
+`scheduled_issue_date`, log one clear line and return **None**. If the run is early and in the **same**
+calendar month, log the new WARNING below and continue as today.
 
 - The line names the model, the run date and the scheduled issue date, says the run is refused because it
   falls in a different calendar month, and tells the operator to run on the scheduled date. Tests match on
   the phrase "different calendar month".
 - Returning None reuses the existing path: the caller logs the skip and counts it as a failure
   (`run_forecast.py:345-347`); the model shows as FAILED in the run summary (`:527-529`) and dependent
-  models are skipped (`:496-501`). The process exit status is not changed by this issue.
+  models are skipped (`:496-501`).
+- **The refusal is visible only in the log.** This issue does not change the exit status or the schedule:
+  - without `--recover` the process exits 0 (`run_forecast.py:618-625`: `run_forecast()` returns, no
+    `sys.exit`);
+  - the schedule query still reports the mode as active (`lt_schedule_query.py:100-127`: issue-day
+    distance ≤ 10 and a model scheduled within 10 days), so the Luigi `LTScheduleQuery`
+    (`apps/pipeline/pipeline_docker.py:2110`) and the `run_locally.sh` gate (`query_lt_schedule`,
+    `apps/run_locally.sh:336-381`) start the mode as usual.
+
+  The operator finds the refusal in the new log line and the FAILED summary, nowhere else.
 - No relabelling, no forward snap, no new parameters. Same-month early runs (e.g. kghm 20th–24th, or
-  day-10 modes on the 5th–9th) keep today's date and the existing warning, exactly as now.
+  day-10 modes on the 5th–9th) keep today's date and the existing warning (`lt_utils.py:219-227`).
+- **Same-month early runs also get one new WARNING line** (round-2 decision 6), logged in addition to the
+  existing warning. It says that rows dated before the scheduled issue date produce **no quarterly
+  product** downstream, because PP-065 derives quarters only from monthly rows dated on the configured
+  issue day. Tests match on the phrase "no quarterly product". The run itself is still accepted.
 - The rule is general, not keyed on issue day 1; the window makes it inert for issue days above 5.
 
 **Files (only these may be modified)**:
 - `apps/long_term_forecasting/lt_utils.py` (`check_valid_forecast_issue_date` body only)
 - `apps/long_term_forecasting/tests/test_lt_utils.py`
-- `apps/long_term_forecasting/readme.md` (one added bullet under "When Forecasts Run", `:165-180`, for the
-  new refusal)
+- `apps/long_term_forecasting/readme.md`, section "When Forecasts Run" (`:165-180`) only:
+  - one added bullet for the new refusal;
+  - a correction of `:178`. Its claim that a run ">5 days off … refuses to run and raises an error" is
+    wrong: the check returns None (`lt_utils.py:202-209`), the model is FAILED in the summary, and the
+    process exits 0.
 
 **Agent instruction**: *"Do NOT change any existing function signatures, data flow logic, or control
 flow. Your changes must be purely additive or modify only the specific behavior described."* Do not edit
@@ -70,17 +88,23 @@ existing tests; use station code `19999` if a code is needed.
 Add to `TestCheckValidForecastIssueDate` (`tests/test_lt_utils.py:81`, reuse `_make_mock_config`).
 **Freeze both clocks** in every new test: patch `lt_utils.get_today` and `pd.Timestamp.now`
 (`patch.object(pd.Timestamp, "now", return_value=...)`), because `lt_utils.py:179-186` asserts
-`today <= now` against the real clock.
+`today <= now` against the real clock. Tests that assert on log text call
+`caplog.set_level(logging.INFO, logger="long_term_forecasting")` (the module logger,
+`__init__.py:17`). The existing "not scheduled" line is INFO (`lt_utils.py:203-208`), and the root logger
+may be capped above INFO.
 
 1. tjhm-quarter-like (day 1, `[1,4,7,10]`): 2026-12-29 → None, log contains "different calendar month".
 2. tjhm-month_1-like (day 1, all months): 2026-03-29 → None, same log.
-3. kghm-quarter-like (day 25, `[3,6,9,12]`): 2026-12-22 → 2026-12-22 (accepted with today's date, unchanged).
+3. kghm-quarter-like (day 25, `[3,6,9,12]`): 2026-12-22 → 2026-12-22 (accepted with today's date), the
+   existing "before the scheduled issue date" warning, and a WARNING containing "no quarterly product".
 4. Boundaries, day 1, all months:
-   - 2026-12-27 (5 days early, previous month) → None with the new line;
+   - 2026-12-27 (5 days early, previous month) → None with the new line, and no "no quarterly product"
+     line;
    - 2026-12-26 (6 days early) → None via the existing "not scheduled" line, not the new one;
    - 2027-01-06 (5 days late) → 2027-01-01 (snap unchanged); 2027-01-07 (6 days late) → None.
 5. Boundaries, day 10, all months: 2024-03-05 → 2024-03-05 with the existing "before the scheduled issue
-   date" warning; 2024-03-04 → None.
+   date" warning and the "no quarterly product" WARNING; 2024-03-04 → None. An on-day run (2024-03-10)
+   logs no "no quarterly product" line.
 6. Unchanged without edits: the day-10 early-run contract (`tests/test_lt_utils.py:128`) and the recovery
    exact-date and no-future tests in `tests/test_lt_recovery.py`.
 

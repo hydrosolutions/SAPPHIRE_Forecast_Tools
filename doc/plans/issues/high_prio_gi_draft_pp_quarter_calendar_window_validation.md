@@ -1,6 +1,6 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a December-issued Q1 through
 
-**Status**: Draft (2026-09-26, rev 3 after the 9-reviewer round)
+**Status**: Draft (2026-09-26, rev 4 after the second review round)
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High.
 - Stored quarterly skill is wrong today: a rolling window is scored against a different quarter's
@@ -11,10 +11,12 @@
 
 **Labels**: `postprocessing_forecasts`, `skill-metrics`, `long-term`, `quarter`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
-graph lives there only. Owner decisions of 2026-09-26 are cited by letter (A–H).
+graph lives there only. Owner decisions of 2026-09-26 are cited by letter (A–H), round 2 by number
+("round-2 decision 1–6").
 **Supersedes the code approach of**: GitHub #521 / branch `sandro_sapphire_2_quaterly_agg` (f0a83352)
 **Related**:
-- PP-065 (derived models, quarterly ensembles as monthly, LR fallback), FD-029 (card), LTF-014, LTF-016
+- PP-065 (derived models, native-row selection, quarterly Naive/Skilled Mean, LR fallback), FD-029
+  (card), LTF-014, LTF-016
 - PP-056 (quarter skill at hv=0), PP-041 (no forecast-side invalidation), PP-063 (gap detector
   presence-only), PP-049 (flag-OFF `keep="last"` API-order dependence), PP-061 (aggregated writer
   `date=valid_from` key collisions), PP-020 (quantile averaging)
@@ -42,11 +44,9 @@ step 0 reads the real state per org. Both flag states are in scope.
   - Both values come from `operational_schedule_for_mode("quarter")`
     (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:112-142`), which `data_reader` reaches via
     `_operational_schedules_for_horizon_type("quarter")` (`src/data_reader.py:141`).
-- **Quarterly ensembles.**
-  - **Today:** EM = mean(LR_Base, LR_SM), not skill-gated (2026-06-23 M1).
-  - **Chunk A** preserves today's membership.
-  - **PP-065** changes quarterly ensembles to follow the monthly rules (decision B). **Chunks B and C**
-    preserve PP-065's rules. No chunk of this plan changes ensemble membership.
+- **Quarterly ensembles.** Today EM = mean(LR_Base, LR_SM), not skill-gated (2026-06-23 M1). Chunk A
+  preserves today's membership; PP-065 removes quarterly EM (owner, 2026-09-26). No chunk of this plan
+  changes ensemble membership.
 - **Raw quarter models.**
   - LR_Base and LR_SM are native quarter models. While decision G's temporary fallback is active (until
     LTF-014 P0 and P2 are deployed on both orgs), a (code, year, quarter) with no native LR row gets LR
@@ -57,8 +57,9 @@ step 0 reads the real state per org. Both flag states are in scope.
   `tests/test_skill_lead_aware_golden_baseline.py:93`), except for these intended changes:
   - Chunk A: a December-issued Q1 of the first requested year is read (Problem 7);
   - Chunk A: direct rows dated after `forecast_date` are ignored by the latest reader (Problem 6);
-  - Chunk A: the writer drops a calendar `valid_from` with a null `valid_to`;
-  - Chunk B: B2 selection and B4 observation coverage (B6 moved to PP-065).
+  - Chunk A: the writer drops a calendar `valid_from` with a null `valid_to`.
+  - Chunk B makes no code change. PP-065 changes flag-OFF quarter output (owner-approved), including the
+    `quarter_*` keys of that golden; its `month_*` and `season_*` keys stay byte-identical.
 - `select_operational_issuances` (`src/data_reader.py:225-398`) is not modified. It only has to receive
   calendar-only rows.
 
@@ -165,8 +166,9 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   date-only strings and timestamps (`astype(str)` at `:3170-3172, 3445-3447`).
 - **Write the normalized `valid_from` back** into the returned frame, so the existing parse at `:3748`
   cannot raise. Leave `valid_to` with the dtype it came in with.
-- Both `valid_from` and `valid_to` **columns** absent → return unchanged. For a row, either value null or
-  unparseable → invalid, dropped.
+- Both `valid_from` and `valid_to` **columns** absent → return unchanged. Only the `valid_to` column
+  absent → every row is invalid (empty result, logged). For a row, either value null or unparseable →
+  invalid, dropped.
 - Keep a row iff `valid_from` is day 1 of month 1/4/7/10 **and** `valid_to` is the last day of month
   `valid_from.month + 2` of the **same year**.
 - Log the dropped count **at INFO** (stale rolling rows stay in the DB, so this fires on every read), with
@@ -203,10 +205,11 @@ fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are 
 - **A-2. `valid_to` enforcement.** Direct rows `2024-04-01..2024-07-31`, `2024-04-01..2025-06-30` and
   `2024-04-01..` with null `valid_to` are excluded by both readers and by the writer.
   (Mutation check: deleting the `valid_to` predicate must make A-2 fail.)
-- **A-3. Malformed input through the readers**, including `read_quarterly_combined_forecasts`: a frame
-  with a missing `valid_to` column; unparseable dates; mixed `"2024-04-01"` / `"2024-04-01 00:00:00"`; an
-  all-invalid batch. Assert that the **valid rows are returned**: the combined path turns a crash into an
-  empty frame, so "no exception" proves nothing. The mixed-format case fails on trunk.
+- **A-3. Malformed input through the readers**, including `read_quarterly_combined_forecasts`:
+  unparseable dates; mixed `"2024-04-01"` / `"2024-04-01 00:00:00"`; an all-invalid batch. Assert that the
+  **valid rows are returned**: the combined path turns a crash into an empty frame, so "no exception"
+  proves nothing. The mixed-format case fails on trunk. Separately, a frame **without a `valid_to`
+  column** → an empty result plus the dropped-count log line.
 - **A-5. December Q1, flag ON.** `forecast_date = 2026-12-25`, direct LR_Base/LR_SM rows issued 2026-12-25
   for 2027-01-01..2027-03-31 at hv1 → `read_latest_quarterly_forecasts` returns them with `year == 2027`,
   `quarter_in_year == 1`. It fails on trunk.
@@ -214,7 +217,8 @@ fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are 
   (`data_reader.SapphirePostprocessingClient`) → `read_quarterly_combined_forecasts` →
   `detect_missing_quarterly_ensembles` (`src/gap_detector.py:370-496`; do not edit it), the maintenance
   path (`postprocessing_maintenance_long_term.py:295-297`).
-  - (i) A calendar quarter whose only EM row is rolling-windowed is reported as a gap after Chunk A.
+  - (i) A calendar quarter whose only EM row is rolling-windowed is reported as a gap after Chunk A
+    (the detector's default `{"EM"}`; PP-065 later switches the maintenance caller to Naive Mean).
   - (ii) A quarter whose only raw rows are rolling is not reported as a gap for a calendar quarter it
     does not cover.
 - **A-7. Writer.** A non-calendar window, one disagreeing with `(year, quarter_in_year)`, or a calendar
@@ -238,97 +242,44 @@ fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are 
 - `git diff --stat` touches only the listed files.
 - `ruff check` / `ruff format --check` are clean on the touched files.
 
-## Chunk B — native-first selection, stop rewrites, observation coverage
+## Chunk B — empty-skill check (no code change expected)
 
-**Sequencing.** PP-065 rebuilds the monthly-derived source (same issue only, the seven models, LR
-native-only with decision G's fallback, legacy direct rows of the seven models ignored). Chunk B covers
-what PP-065 does not, and runs **after** PP-065, because both edit the two quarter readers.
+**Sequencing.** A → PP-065 → B. Rev 3's B rules moved into PP-065, which already edits the same files:
+- **B2 (native-row selection)** → PP-065 P1b. B2 inside `_dedup_quarterly_joint` and the maintenance
+  `q_merged` dedup is dropped: ensembles are computed before those concats, and after PP-065 the writer no
+  longer writes LR rows, so those dedups have nothing left to select.
+- **B4 (3-of-3 observation months)** → PP-065 P1a.
+- **B6 (stop writing raw LR rows)** → PP-065 P1b.
+- **B3 (persisted (b)/(c) rows):** accepted. PP-065's native-row rule never selects them. Deleting them is
+  D8; tjhm is handled by decision F (Chunk C step 3).
 
-**What remains (verified on trunk):**
-- **Duplicate direct LR rows.** Under flag OFF, the only dedup of direct rows is the `keep="last"` over
-  the **whole concatenated frame** (`:3150-3157`, `:3427-3432`). It runs whenever both sources are
-  non-empty, so any derived row of an unrelated model triggers it:
-  - with no derived rows, direct duplicates survive;
-  - with any derived rows, duplicates collapse arbitrarily, in API order.
-  - The same `keep="last"`-in-API-order pattern sits in `_dedup_quarterly_joint`
-    (`postprocessing_operational_long_term.py:72-91`) and the maintenance `q_merged` dedup
-    (`postprocessing_maintenance_long_term.py:357-375`).
-  - Native rows (a), rewrites (b) and persisted derived LR rows (c, e.g. dated Dec 1) would all pair with
-    the same observation.
-  - Under flag ON, `select_operational_issuances` drops (b) and (c) for kghm, where the issue day or lead
-    does not match. For tjhm (day 1, lead 0), only (b) and hv0 (c) rows share the native key; tjhm (c)
-    rows at hv ≥ 1 are dropped by selection.
-- **Rewrites are regenerated on every run** (Problem 5 (b)), so deleting them once does not help while the
-  writer keeps writing raw rows back.
-- **Observations.** `aggregate_monthly_obs_to_quarterly` (`aggregation.py:97-146`) accepts 2 of 3 months
-  (`QUARTER_MIN_MONTHS`, `:38`, applied at `:125-126`), unweighted. Preprocessing's quarter norms are also
-  unweighted (`sync_long_horizon_hydrograph.py:638`). PP-065's derived forecasts require 3 of 3 months.
+Chunk B no longer edits `data_reader.py` or any other file.
 
-**Rules:**
-- **B2. Native-first selection (settled; follows from decisions A and G).** Per
-  `(code, year, quarter, model)` for raw LR rows, under both flags:
-  1. the native row (Contract rule);
-  2. otherwise, while decision G's fallback is active, PP-065's freshly derived LR row;
-  3. otherwise no LR row. Persisted non-native LR rows (b, c) are **never** selected.
-
-  Apply it in both quarter readers, in `_dedup_quarterly_joint` and in the maintenance `q_merged` dedup.
-  For quarter, the combined reader leaves `date` unparsed (only season parses it, `:3770-3771`); parse it
-  for the rule. This brings PP-049's quarter part into scope.
-- **B3. Persisted (b) and (c) rows (owner).** Either accept them (B2 never selects them), or remove them
-  in a reviewed DB step (D8). For tjhm, (b) and hv0 (c) rows are the same DB rows as the native ones
-  (PP-061); decision F (Chunk C step 3) handles those.
-- **B4. Observation coverage (recommended; must land before the first recalc).** Require 3 of 3 months
-  for quarterly observations, unweighted.
-  - Add a separate constant, e.g. `QUARTER_OBS_MIN_MONTHS = 3`, used only at `aggregation.py:125-126`.
-  - Leave `QUARTER_MIN_MONTHS` and `tests/test_aggregation.py:41-42` unchanged; PP-065 keeps them.
-  - Day-weighting is an owner option. If chosen, it applies to observations, PP-065's derived forecasts
-    and preprocessing's quarter norms together (regenerated).
-- **B5. Empty skill: quarter behaves like monthly.** Check what the monthly path does on an empty skill
-  frame (`postprocessing_operational_long_term.py:145-151`; `src/ensemble_calculator.py:632-634`) and
-  align quarter to it. On trunk both produce no ensembles, so the expected result is no code change and
-  `tests/test_quarterly_ensemble_creation.py:329` unchanged; report if the check shows otherwise.
-- **B6. Stop writing raw LR rows back — moved to PP-065 (required there, not optional).**
-  - The quarter writer no longer writes `LR_BASE`/`LR_SM` rows. It still writes the seven derived models
-    and the ensembles.
-  - Why it is required: PP-065's fallback-derived LR rows are native-shaped (`date = d`, hv = `L`). Once
-    persisted, they would pass the native-row rule indefinitely. Native LR rows are owned by the LT module.
-  - The rule is model-based, so no provenance marker is needed.
-  - It changes flag-OFF output: fewer rows are written, and population (b) stops growing.
-  - See PP-065 P1b.
-
-**Files (after the decisions)**:
-- `src/data_reader.py`: native-first selection in the two quarter readers
-- `postprocessing_operational_long_term.py`: `_dedup_quarterly_joint`
-- `postprocessing_maintenance_long_term.py`: the `q_merged` dedup
-- `src/aggregation.py`: the B4 observation constant
-- tests
-
-**Agent instruction**: the Chunk A quote, verbatim.
-
-**Tests that legitimately change** (each edit states its reason in the PR):
-- observation-coverage tests in `tests/test_aggregation.py` that expect 2 of 3 to pass (e.g. `:168`)
-
-PP-065 owns the derived-forecast and ensemble test changes.
-
-**New tests** (both flags; both org shapes, kghm day 25 / lead 1 and tjhm day 1 / lead 0):
-- Native row + rewrite + persisted derived Dec-1 row for the same LR Q1 → the native row, in both
-  readers, `_dedup_quarterly_joint` and the maintenance merge; with and without an unrelated derived-model
-  row; with shuffled row order.
-- No native row, fallback active → the derived LR row. No native row, only (b)/(c) rows, fallback
-  inactive → no LR row.
-- Observations with 2 of 3 months → no quarterly observation.
+**B5. Empty skill: quarter behaves like monthly** (overview D3).
+- Monthly: an empty monthly skill frame exits the run with no monthly ensembles
+  (`postprocessing_operational_long_term.py:145-151`).
+- Quarter: the operational run skips all quarterly ensembles on an empty skill frame (`:210`), and
+  `_create_aggregated_ensemble_forecasts` returns without ensembles (`src/ensemble_calculator.py:632-634`).
+- **This still holds under round-2 decision 1.** Naive Mean has no skill gate on membership, but the
+  run-level empty-skill skip applies to every ensemble, Naive Mean included, as for monthly.
+- Expected result: no code change, and `tests/test_quarterly_ensemble_creation.py:329` unchanged after
+  PP-065. Report if the check shows otherwise.
 
 ## Chunk C — rollout and verification (ops; mostly no code)
 
 **Order** (as in the overview graph):
-- Chunk A, PP-065 and **B4** deployed. B4 is mandatory before the first recalc: 2-of-3 observations
-  against 3-of-3 derived forecasts bias Q2.
-- The rest of B deployed, **or** the owner approves deferring it; then a repeat recalc after it deploys is
-  mandatory.
+- Chunk A and PP-065 deployed (PP-065 includes the 3-of-3 observation rule; 2-of-3 observations against
+  3-of-3 derived forecasts would bias the scores).
+- **One window between LT cron days** (kghm 10 and 25; tjhm 1): deploy PP-065, run the decision-F step
+  (tjhm), then the recalc per org. No LT run may fall inside the window.
 
-0. **Server state read per org** (read-only): `SAPPHIRE_SKILL_LEAD_AWARE` and
-   `ieasyhydroforecast_ml_long_term_supported_modes` in the env the postprocessing **and** dashboard
-   containers actually load. Record both in the PR; the recalc runs with that state.
+0. **Server state read per org** (read-only): `SAPPHIRE_SKILL_LEAD_AWARE`,
+   `ieasyhydroforecast_ml_long_term_supported_modes` and `ieasyhydroforecast_min_pairs_long_term_quarter`
+   in the env the postprocessing **and** dashboard containers actually load. Record them in the PR; the
+   recalc runs with that state. Also confirm the `quarter` config carries both
+   `operational_month_lead_time` and `operational_issue_day`: without the issue day,
+   `operational_schedule_for_mode("quarter")` raises and PP-065 skips the derivation with a WARNING
+   (`long_term_horizon_resolver.py:84-111` notes taj-style configs that omit it).
 1. **Pre-recalc backup per org:** `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
    rows, kept out of the repo.
 2. **Pre-deploy DB audit per org** (read-only SQL, aggregate counts only, no station codes).
@@ -338,41 +289,60 @@ PP-065 owns the derived-forecast and ensemble test changes.
    - Count QUARTER `skill_metrics` rows by `date` year and `horizon_in_year`.
    - Local baseline (2026-09-25, both orgs mixed): kyg LR flag 0 = 45,581 calendar / 15,922 rolling; all
      6,860 skill rows are calendar-keyed and dated 2026.
-3. **Decision F (tjhm only), before the recalc.** Locally only 16 of 536 tjhm LR_BASE hv0 Q2/Q3 rows match
-   the hindcast CSV within 1%, and the rows span Q1–Q4: they hold postprocessing aggregates.
-   - Re-import the native LR_Base/LR_SM QUARTER hindcast values as an upsert over the Q2/Q3 calendar keys.
-   - Remove the aggregate-only LR rows for Q1/Q4 (no native hindcast until LTF-014 P2) in a reviewed step
-     with the service owner. Decision G's fallback then derives LR for those quarters.
-   - Private DB-vs-CSV value check afterwards.
+3. **Decision F (tjhm only), inside the window, before the recalc** (round-2 decision 4). Locally only 16
+   of 536 tjhm LR_BASE hv0 Q2/Q3 rows match the hindcast CSV within 1%, and the rows span Q1–Q4: they hold
+   postprocessing aggregates.
+   - **Predicate, by provenance:** tjhm LR_Base/LR_SM QUARTER rows with `date = valid_from` that have **no
+     counterpart** in the LT module's CSV (hindcast plus operational appends), same (code, model, `date`,
+     `horizon_value`), in **any** quarter, 2026 included. tjhm native rows also have `date = valid_from`
+     (day 1, lead 0), so provenance, not the date, separates them.
+   - **Preserve manifest:** the genuine operational and recovered rows (counterpart present). Build a
+     **dry-run manifest** of rows to delete and rows to preserve, aggregate counts only in the PR.
+   - **Re-import** the native Q2/Q3 hindcast values: the migrator
+     (`bin/utils/migration_py/long_forecast.py`) full-import, **no `--cutoff`**, on a CSV filtered to the
+     calendar issues (04-01 and 07-01), for LR_Base and LR_SM (`--mode quarter --model <m>`), placed under a
+     scratch `--data-dir` as `long_term_predictions/quarter/<model>/<model>_hindcast.csv` (`:8`, `:297`).
+     Run with `--dry-run` first, then for real, then read the rows back.
+     - Do **not** use `bin/initialize_long_forecast_history.sh`: its per-key cutoff map (MIN(`date`) per
+       key) drops every row dated on or after the earliest stored row (`long_forecast.py:513-515`), so on
+       a populated DB it imports nothing for these keys.
+     - A counterpart key outside 04-01/07-01 whose DB value differs from its CSV value is listed in the
+       manifest and escalated, not silently kept.
+   - **Delete** the manifest's non-counterpart rows in a reviewed step with the service owner, after the
+     backup. Decision G's fallback then derives LR for those quarters (not persisted; round-2 decision 3).
+   - F also owns **clearing the pre-existing tjhm rows dated 2026-10-01** before any `lt_recovery` of that
+     date (LTF-014 points here).
+   - Private before/after DB-vs-CSV value check afterwards.
 4. **Recalc** with each deployment's actual flag state (`doc/prod/long_term_deploy_runbook.md`
    § Lead-aware skill).
 5. **Post-checks.**
    - Pair counts: before the recalc, derive the expected `n_pairs` per `(model, quarter, lead)` and flag
-     state from the audit: unique target years with a B2-selected calendar forecast row **and** a 3-of-3
-     observation. Explain every difference from the result.
-   - Tombstone count per `(model, quarter, hv)` per org.
+     state from the audit: unique target years with a native-rule-selected (or derived) calendar forecast
+     row **and** a 3-of-3 observation. Explain every difference from the result.
+   - Tombstone count per `(model, quarter, hv)` per org, including the old quarter EM skill rows.
    - Suppressed quarter skill rows per org at K = 10 (decision C; `src/skill_metrics.py:2834-2849`).
      Locally the tjhm median `n_pairs` was 5–6 before the fix.
    - The per-org quarter skill frame, read as the pipeline reads it (tombstones dropped,
-     `src/data_reader.py:106, 628`), is **non-empty**. Otherwise every quarterly ensemble is skipped
+     `src/data_reader.py:106, 2833`), is **non-empty**. Otherwise every quarterly ensemble is skipped
      (Problem 8).
-   - Freshly written QUARTER rows contain no rolling windows.
-   - A persisted-derived-row round trip (write → read) yields the B2-selected row.
+   - Freshly written QUARTER rows contain no rolling windows and no LR rows.
+   - A persisted-derived-row round trip (write → read) yields the native-rule-selected row.
    - Spot check the #521 station privately (its code is never written to the repo). A plausible value is
      a spot check, not proof.
    - **Skill values change sharply** (e.g. flag-OFF kghm median ~0.8–0.9 → ~0.2–0.5). The user-facing
      note is the overview's release-note step; it is not written here.
    - **Before LTF-014 P2**, kghm LR Q1 skill comes from decision G's derived LR rows, because no native Q1
      hindcast exists yet. It changes again once native hindcasts land and the fallback is removed.
+   - PP-065 P2 adds its own counts (stale ensemble rows, unfillable gaps).
 6. **What the recalc leaves behind:**
    - Rolling-windowed rows (raw and EM), inert after Chunk A: owned by PP-041 / the stale-rows decision.
-   - Under flag OFF, calendar-window EM rows mixed from rolling inputs are overwritten, because they have
-     the same key. Rows the recalc no longer emits survive (PP-041/PP-063).
+   - Old EM, Naive Mean and Skilled Mean rows at keys the recalc no longer emits (accepted, round-2
+     decision 2; D8 / PP-041). Under flag OFF, rows with the same key as a fresh row are overwritten.
 
 ## Out of scope
 
-- Re-enabling the seven models for quarter, and quarterly ensembles following the monthly rules (both
-  PP-065, decision B).
+- Re-enabling the seven models for quarter, native-row selection, and quarterly Naive/Skilled Mean
+  without EM (all PP-065, decision B and round-2 decision 1).
 - Dashboard (FD-029/FD-030). Schedule and target construction (LTF-014). Monthly label fixes (LTF-016).
 - Deleting DB rows beyond decision F (the stale-rows decision).
 - Skill/ensemble-level duplicate window guards. Their inputs come only from the guarded readers or from

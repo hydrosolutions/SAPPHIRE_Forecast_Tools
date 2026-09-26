@@ -1,12 +1,14 @@
 # LTF-014: Issue the quarter forecast once per calendar quarter (Q1–Q4), not monthly Mar–Sep
 
-**Status**: Draft (2026-09-26, rev 3 after the second review round and the owner decisions of 2026-09-26)
+**Status**: Draft (2026-09-26, rev 4 after the second review round)
 **Module**: `apps/long_term_forecasting` (tests only) + per-deployment data repos (config)
 **Priority**: **High.** Target dates (soft):
 - **tjhm Q4, issue 2026-10-01.** The current config skips it. It can be recovered with `lt_recovery`
   until 2026-11-30 once P0 is done (`apps/long_term_forecasting/lt_recovery.py:282-306`,
   `check_recovery_window`), so this is not a reason to skip the P0 gate. Recovery **refuses** if any
-  member row for that date already exists (`lt_recovery.py:682-689`); see P0 gate step 2.
+  member row for that date already exists (`lt_recovery.py:682-689`); see P0 gate step 2. Clearing the
+  pre-existing tjhm rows dated 2026-10-01 before any recovery is owned by the decision-F step in PP-064
+  Chunk C (round-2 decision 4), not by this plan.
 - **kghm Q1, issue 2026-12-25.**
 
 **Labels**: `long-term`, `quarter`, `config`, `deployment`
@@ -101,9 +103,13 @@ who. Code agents do not run P0.
      `diff <(python3 -m json.tool --sort-keys A) <(python3 -m json.tool --sort-keys B)`. A byte diff is
      meaningless because of the rewrite above; file mtimes are not evidence for the same reason.
    - Read the live crontab LT line (issue days per org).
-   - Check that `quarter` is in `ieasyhydroforecast_ml_long_term_supported_modes` in the env file the LT
-     container actually uses. The local copy `kyg_data_forecast_tools/config/.env_kghm_server` has no such
-     line, so the local copies do not answer this.
+   - Check that `quarter` is in `ieasyhydroforecast_ml_long_term_supported_modes` in the env files that
+     the LT container **and** the postprocessing container actually use. Both read it: LT at
+     `config_forecast.py:44-48`, postprocessing through
+     `apps/iEasyHydroForecast/long_term_horizon_resolver.py:11, 52-55` (e.g.
+     `recalculate_skill_metrics.py:108`, `postprocessing_maintenance_long_term.py:66`). The local copy
+     `kyg_data_forecast_tools/config/.env_kghm_server` has no such line, so the local copies do not
+     answer this.
    - **Look for rows that already carry the new operational key** (QUARTER, LR_BASE/LR_SM, `date` = the
      first new issue date, calendar window, hv = config lead). They exist locally: the local DB holds
      hv0 LR_BASE and LR_SM rows dated 2026-10-01 with window 2026-10-01..2026-12-31, flag 0, plus
@@ -111,8 +117,9 @@ who. Code agents do not run P0.
      rows cannot be told apart from a new run by age. If they exist on the server:
      - a cron run upserts over them (the natural key has no `flag`), so the read-back needs the snapshot
        in step 5;
-     - `lt_recovery` refuses the date (`lt_recovery.py:682-689`). Removing them is a reviewed step with the
-       service owner, as for decision F.
+     - `lt_recovery` refuses the date (`lt_recovery.py:682-689`). For the tjhm 2026-10-01 rows, removal
+       is owned by the decision-F step in PP-064 Chunk C; run it before any recovery of that date. Any
+       other such rows need the same kind of reviewed step with the service owner.
    - The local copies (Dropbox, read 2026-09-26) have `forecast_months [3..9]` for both orgs, issue day 1 /
      lead 0 (tjhm) and 25 / 1 (kghm).
 3. **Owner approval** of the exact change per org, noted in the PR or in this file.
@@ -194,25 +201,34 @@ Do not change the mode JSONs, the cron lines or the issue days.
 5. **Read-back around the first run** (aggregate counts only):
    - **The day before**, snapshot the target key per model: row count, flag counts, and a private value
      hash, e.g. `md5(string_agg(concat_ws('|', code, q, q05, q95, flag), ',' ORDER BY code))`. Keep the hash
-     private. The read-back must show a change (new rows, or a different hash); an unchanged hash means
-     the run did not write.
+     private.
+   - **An unchanged hash does not prove the run failed to write.** The service skips upserts whose values
+     are unchanged (`sapphire/services/postprocessing/app/crud.py:132-139`), so a run that reproduces
+     the stored values leaves rows and hash as they were. Prove the write instead:
+     - compare the DB rows at the target key with that run's own CSV output
+       (`<model>_forecast.csv`, overwritten per run, `lt_utils.py:492-500`), privately;
+     - check the run's write acknowledgements in the LT log: `Successfully wrote <n> long-term forecast
+       records to DB` (`lt_utils.py:436-439`) and `DB save successful for <model>` (`:597`), with no
+       `DB save failed for <model>` (`:599`).
    - tjhm after 2026-10-01: for **both** LR_Base and LR_SM, QUARTER rows with `date` 2026-10-01,
      `valid_from` 2026-10-01, `valid_to` 2026-12-31, `horizon_value` 0, a non-null forecast and **flag 0,
      or flag 1 if the date was recovered** (`RECOVERY_FLAG`, `lt_recovery.py:99, 728`). Report the station
      count per model and flag. Flag-2 rows (no prediction) need an explanation.
    - kghm after 2026-12-25: the same, with `date` 2026-12-25, window 2027-01-01..2027-03-31, `horizon_value` 1.
    - **Postprocessing follow-up:** after the first run (or a recovered tjhm Oct-1 run), confirm that the
-     quarter ensembles at hv = config lead were produced for that issue. The quarterly gap detector treats
-     any existing EM for a (year, quarter, code[, hv]) as complete
-     (`apps/postprocessing_forecasts/src/gap_detector.py:370`), so a pre-existing EM row hides a missing
-     regeneration.
+     quarter Naive Mean at hv = config lead was produced for that issue, and the Skilled Mean where it
+     forms (it can legitimately fail to form). There is no quarterly EM after PP-065 (round-2 decision 1).
+     The quarterly gap detector keys on EM by default today
+     (`apps/postprocessing_forecasts/src/gap_detector.py:370-389`) and treats any existing ensemble row
+     for a (year, quarter, code[, hv]) as complete, so a pre-existing row hides a missing regeneration.
+     PP-065 moves the quarter callers to Naive Mean.
 6. **Re-grep both copies** (server and Dropbox) after the Dropbox sync and again after the first run. A
    local run on a synced machine rewrites these files (`config_forecast.py:157-180`) and can write old
    content back; Dropbox conflicted copies already exist in the data repos.
 
 **Rollback**: restore the `.bak` files on both copies. If the tjhm Oct 1 run is missed, recover it with
-`lt_recovery` before 2026-11-30 (`lt_recovery.py:282-306`), after clearing any pre-existing rows (gate
-step 2).
+`lt_recovery` before 2026-11-30 (`lt_recovery.py:282-306`), after the pre-existing rows are cleared
+(gate step 2; for tjhm 2026-10-01 that is the decision-F step in PP-064 Chunk C).
 
 ### P1 — Lock the calendar schedule with additive tests (code agent)
 
@@ -320,8 +336,9 @@ contain only issue months 3–9.
 - Preserved rows (step 1) are unchanged by natural key and value (compared privately).
 - The post-P2 live `<model>_hindcast.csv` equals the old CSV plus the new-month rows, with no old row
   changed; under (a) or (b) the live CSV is untouched.
-- Retained-month hindcasts match a **before-and-after run on identical frozen inputs**, not the old CSV
-  (which mixes in operational rows).
+- **Only if D2 chooses a full rerun** that rewrites the retained months (not (a) or (b)): retained-month
+  hindcasts match a before-and-after run on identical frozen inputs, not the old CSV (which mixes in
+  operational rows). Under (a) or (b) the retained months are not rewritten, so this check does not apply.
 
 ## Out of scope
 
