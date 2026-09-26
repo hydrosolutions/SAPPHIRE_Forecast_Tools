@@ -3041,6 +3041,35 @@ def read_seasonal_observations(
 # -------------------------------------------------------------------
 
 
+def _issue_date_local_calendar_date(s: pd.Series) -> pd.Series:
+    """Return a raw `date` column's LOCAL calendar date as naive datetime64.
+
+    ``pd.to_datetime(s, format="mixed", errors="coerce")`` raises
+    ``AttributeError`` on a subsequent ``.dt`` access when `s` mixes
+    tz-aware and tz-naive strings (e.g. ``"2025-01-10"`` next to
+    ``"2025-03-25T00:00:00+06:00"``): "mixed" then returns an
+    object-dtype Series of Python objects rather than datetime64,
+    aborting the whole read where a plain string comparison never
+    would have. Slicing the string form to the first 10 characters
+    keeps only the calendar date and sidesteps timezone parsing
+    entirely, at the cost of being a calendar date rather than an
+    instant -- every write path in this codebase already writes issue
+    `date` as a bare date (``valid_from[:10]`` etc.), so no row's issue
+    date carries meaningful sub-day/timezone information to lose here.
+
+    ``NaN``/``None``/``NaT`` all render as non-``%Y-%m-%d`` strings
+    under ``.astype(str)`` (``"nan"``, ``"None"``, ``"NaT"``), so they
+    coerce to ``NaT`` here exactly as they did before.
+
+    Args:
+        s: Raw `date` column (strings, Timestamps, or null).
+
+    Returns:
+        Series of naive datetime64[ns] (or NaT).
+    """
+    return pd.to_datetime(s.astype(str).str[:10], format="%Y-%m-%d", errors="coerce")
+
+
 def read_quarterly_forecasts(
     codes: list[str],
     start_year: int,
@@ -3144,32 +3173,36 @@ def read_quarterly_forecasts(
             not lead_aware
             and not direct.empty
             and "year" in direct.columns
+            and "quarter_in_year" in direct.columns
             and "date" in direct.columns
         ):
-            # Drop only the rows the start_year - 1 read-window widening
-            # above admits that trunk's original [start_year, end_year]
-            # ISSUE-date read would not have returned: issue year <
-            # start_year AND target year < start_year (a normal,
-            # non-cross-year issue/target pair fully inside start_year -
-            # 1, e.g. issued and targeting 2024-Q2 when start_year =
-            # 2025). Everything with issue year >= start_year is kept
-            # UNCONDITIONALLY, regardless of target year, because trunk
-            # had no target-year trim at all and returned such backfill
-            # rows too (e.g. a Q4 start_year-1 row issued in start_year,
-            # #521-style) -- dropping those by target year alone was
-            # itself a regression (round-2 out-of-loop review of the
-            # Problem 7 fix). A null/unparseable issue date is kept:
-            # trunk's API-side year filter could not have excluded it by
-            # year either. A target year > end_year (e.g. a Dec-end_year
-            # issue's next-year Q1) also survives unconditionally -- see
-            # the next-year-precedence regression test.
+            # Invariant: the flag-OFF direct set = trunk's set (every row
+            # with issue year in [start_year, end_year], ANY target year)
+            # PLUS ONLY the December-issued Q1 of start_year (Problem 7).
+            # Nothing else is added, nothing else is removed. A row issued
+            # before start_year is dropped UNLESS it is that Q1-of-
+            # start_year row -- checking target year alone (round-2 fix)
+            # was still too permissive: it also kept an out-of-window row
+            # targeting some OTHER calendar quarter of start_year (e.g.
+            # issued 2024-12-25 targeting Q2 2025), which could then beat
+            # a same-target monthly-derived row, or even an in-window
+            # direct row, in the drop_duplicates(keep="last") combine
+            # below depending on API order (round-3 out-of-loop review).
+            # Everything with issue year >= start_year is kept
+            # UNCONDITIONALLY regardless of target year (trunk's own set,
+            # including backfills like a Q4 start_year-1 row issued in
+            # start_year, #521-style). A null/unparseable issue date is
+            # kept: trunk's API-side year filter could not have excluded
+            # it by year either. A target year > end_year (e.g. a
+            # Dec-end_year issue's next-year Q1) also survives
+            # unconditionally -- see the next-year-precedence regression
+            # test.
             target_years = pd.to_numeric(direct["year"], errors="coerce")
-            issue_years = pd.to_datetime(direct["date"], format="mixed", errors="coerce").dt.year
+            quarters = pd.to_numeric(direct["quarter_in_year"], errors="coerce")
+            issue_years = _issue_date_local_calendar_date(direct["date"]).dt.year
+            is_december_q1_of_start_year = (target_years == start_year) & (quarters == 1)
             drop_mask = (
-                issue_years.notna()
-                & (issue_years < start_year)
-                & target_years.notna()
-                & (target_years < start_year)
+                issue_years.notna() & (issue_years < start_year) & ~is_december_q1_of_start_year
             )
             direct = direct[~drop_mask].copy()
     else:
@@ -3446,7 +3479,7 @@ def read_latest_quarterly_forecasts(
         # back-dated run picking a later issue). Rows with a null or
         # unparseable date are kept, unaffected by the bound.
         if not direct.empty and "date" in direct.columns:
-            issue_date = pd.to_datetime(direct["date"], format="mixed", errors="coerce")
+            issue_date = _issue_date_local_calendar_date(direct["date"])
             keep_mask = issue_date.isna() | (issue_date.dt.normalize() <= pd.Timestamp(today))
             direct = direct[keep_mask].copy()
         if lead_aware and quarter_schedules and not direct.empty:

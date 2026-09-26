@@ -798,3 +798,168 @@ class TestUnparseableIssueDateKeptRegardlessOfTargetYear:
         q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
         assert len(q2_2024) == 1
         assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0
+
+
+# ===========================================================================
+# F1 (round-3 out-of-loop review of 0e9ef06f): the drop_mask was too
+# permissive. It dropped an out-of-window direct row only when its OWN
+# target year was also below start_year, so an out-of-window row
+# targeting some OTHER calendar quarter of start_year (not Q1) survived
+# and could beat a same-target monthly-derived row, or an in-window
+# direct row, depending on API order. Invariant: the flag-OFF direct set
+# = trunk's set (issue year in [start_year, end_year], any target year)
+# + ONLY the December-issued Q1 of start_year.
+# ===========================================================================
+
+
+class TestRegressionIssueYearMaskTooPermissive:
+    def _monthly_q2_2025(self):
+        rows = []
+        for month in (4, 5):
+            rows.append(
+                {
+                    "code": CODE,
+                    "date": "2025-03-25",
+                    "model_type": "LR_Base",
+                    "valid_from": f"2025-{month:02d}-01",
+                    "valid_to": f"2025-{month:02d}-28",
+                    "forecasted_discharge": 200.0,
+                    "q50": 200.0,
+                    "horizon_value": 1,
+                }
+            )
+        return rows
+
+    def test_stale_out_of_window_row_does_not_beat_monthly_derived(self, monkeypatch):
+        """A direct Q2 2025 row issued 2024-12-25 (out-of-window, and NOT
+
+        the Dec-Q1-of-start_year case) must be dropped -- trunk never read
+        it at all -- so the monthly-derived Q2 2025 value wins.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        direct_rows = [
+            _quarter_row("2025-04-01", "2025-06-30", "2024-12-25", model="LR_Base", q=100.0)
+        ]
+        fake = _quarter_and_month_api_fake(direct_rows, self._monthly_q2_2025())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        q2_2025 = result[(result["year"] == 2025) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2025) == 1
+        assert float(q2_2025["forecasted_discharge"].iloc[0]) == 200.0
+
+    def test_stale_row_does_not_clobber_in_window_direct_row_regardless_of_api_order(
+        self, monkeypatch
+    ):
+        """Same as above, but an in-window direct Q2 2025 row (value 300,
+
+        issued 2025-05-25) is ALSO present, placed FIRST in API order. The
+        stale out-of-window row (100, issued 2024-12-25) must still be
+        dropped, so drop_duplicates(keep="last") never sees it and the
+        in-window direct value wins over the monthly-derived one too --
+        exactly as on trunk, which never read the stale row regardless of
+        API order.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        direct_rows = [
+            _quarter_row("2025-04-01", "2025-06-30", "2025-05-25", model="LR_Base", q=300.0),
+            _quarter_row("2025-04-01", "2025-06-30", "2024-12-25", model="LR_Base", q=100.0),
+        ]
+        fake = _quarter_and_month_api_fake(direct_rows, self._monthly_q2_2025())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        q2_2025 = result[(result["year"] == 2025) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2025) == 1
+        assert float(q2_2025["forecasted_discharge"].iloc[0]) == 300.0
+
+
+# ===========================================================================
+# F2 (round-3 out-of-loop review of 0e9ef06f): a `date` column mixing
+# tz-aware and tz-naive strings makes `pd.to_datetime(..., format="mixed")`
+# return an object-dtype Series, so a subsequent `.dt` access raises
+# AttributeError -- aborting the whole quarterly read where trunk's plain
+# string comparison never would have. `_issue_date_local_calendar_date`
+# fixes this by parsing only the first 10 characters (the calendar date).
+# ===========================================================================
+
+
+class TestRegressionMixedTimezoneIssueDate:
+    def test_read_quarterly_forecasts_flag_off_no_exception(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [
+            _quarter_row("2025-01-01", "2025-03-31", "2025-01-10", model="LR_Base", q=100.0),
+            _quarter_row(
+                "2025-04-01",
+                "2025-06-30",
+                "2025-03-25T00:00:00+06:00",
+                model="LR_Base",
+                q=200.0,
+            ),
+        ]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        q1_2025 = result[(result["year"] == 2025) & (result["quarter_in_year"] == 1)]
+        q2_2025 = result[(result["year"] == 2025) & (result["quarter_in_year"] == 2)]
+        assert float(q1_2025["forecasted_discharge"].iloc[0]) == 100.0
+        assert float(q2_2025["forecasted_discharge"].iloc[0]) == 200.0
+
+    def test_read_latest_quarterly_forecasts_flag_off_no_exception(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [
+            _quarter_row("2025-01-01", "2025-03-31", "2025-01-10", model="LR_Base", q=100.0),
+            _quarter_row(
+                "2025-04-01",
+                "2025-06-30",
+                "2025-03-25T00:00:00+06:00",
+                model="LR_Base",
+                q=200.0,
+            ),
+        ]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2025, 6, 1)
+            )
+
+        assert set(result["year"].astype(int)) == {2025}
+        assert set(result["quarter_in_year"].astype(int)) == {2}
+        assert float(result["forecasted_discharge"].iloc[0]) == 200.0
+
+    def test_read_latest_quarterly_forecasts_flag_on_no_exception(self, monkeypatch):
+        """The mixed-tz `date` column must survive the Problem-6 bound
+
+        (this fix's target) without raising. The second row's issue date
+        is deliberately AFTER forecast_date, so the bound drops it before
+        `select_operational_issuances` runs -- that function has its own,
+        separate, out-of-scope `pd.to_datetime(date_col)` (no
+        format="mixed") which would raise on a column that still mixed
+        tz-aware and naive strings; this test isolates the bound's fix
+        from that unrelated pre-existing parse.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        rows = [
+            # Dec-issued Q1 2025, tz-aware issue date -- before
+            # forecast_date, survives the bound.
+            _quarter_row(
+                "2025-01-01",
+                "2025-03-31",
+                "2024-12-25T00:00:00+06:00",
+                model="LR_Base",
+                q=100.0,
+            ),
+            # Naive issue date, but AFTER forecast_date -- dropped by the
+            # bound, so it never reaches select_operational_issuances.
+            _quarter_row("2025-10-01", "2025-12-31", "2025-08-25", model="LR_Base", q=200.0),
+        ]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2025, 6, 1)
+            )
+
+        assert set(result["year"].astype(int)) == {2025}
+        assert set(result["quarter_in_year"].astype(int)) == {1}
+        assert float(result["forecasted_discharge"].iloc[0]) == 100.0
