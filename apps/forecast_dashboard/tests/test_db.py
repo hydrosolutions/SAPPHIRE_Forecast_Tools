@@ -1674,6 +1674,10 @@ class TestGetLongForecastsQuarter:
 
         assert result.empty
         assert "quarter_in_year" in result.columns
+        # C3: an empty pd.DataFrame(columns=[...]) defaults every column to
+        # object dtype — `quarter_issue_date` must still be datetime64 on
+        # this early-return path, matching the non-empty path's dtype.
+        assert pd.api.types.is_datetime64_any_dtype(result["quarter_issue_date"])
 
 
 class TestGetLongForecastsQuarterLeadAware:
@@ -3094,6 +3098,76 @@ class TestGetLongForecastsQuarterFetchWindow:
         assert len(result) == 1
         assert result["quarter_in_year"].iloc[0] == 1
 
+    def test_c1_missed_lt_run_does_not_narrow_below_the_spec_window(self, monkeypatch, tmp_path):
+        """C1 regression: the R2 schedule-derived lower bound is up to 9
+        months NARROWER than the spec's original window in Q2-Q4. If the
+        previous calendar quarter has no rows of its own (e.g. a missed
+        LT run), that narrower bound would make the card/bulletin go
+        empty where the original fixed window ({today.year-1}-12-01)
+        still reached the older available quarter. kghm lead 1: the
+        backend only has a Q2 2026 row (issued 2026-03-25); on
+        2026-11-10 (Q4) the schedule-derived bound alone would start at
+        2026-06-01, excluding it — the window must never be narrower than
+        `min(spec bound, schedule-derived bound)`."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        q2_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 172, "model_type": "GBT",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q2_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q2_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 11, 10))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 2
+
+    def test_c2_degraded_window_uses_resolved_horizon_value_as_lead(self, monkeypatch, tmp_path):
+        """C2: in degraded mode (a lead-only quarter.json, no
+        operational_issue_day), the fetch window must use the RESOLVED
+        horizon_value (here 4, from the same lead-only config) as the
+        lead for sizing purposes, not a fixed guess. Early January, the
+        previous quarter's row dated exactly 7 months (3 + lead) before
+        the current quarter starts must still be returned."""
+        config_dir = tmp_path / "lead_only"
+        config_dir.mkdir()
+        (config_dir / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 4})
+        )
+        monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "lead_only")
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
+
+        # Q4 2026 row, dated 2026-06-01 -- exactly 7 months before Q1
+        # 2027 (2027-01-01), i.e. 3 + lead(4) months back.
+        q4_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 173, "model_type": "GBT",
+            "date": "2026-06-01", "valid_from": "2026-10-01", "valid_to": "2026-12-31",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q4_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q4_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 4
+
 
 class TestGetLongForecastsQuarterCalendarOnly:
     def test_rolling_window_excluded(self, monkeypatch):
@@ -3164,9 +3238,8 @@ class TestGetLongForecastsQuarterNativeSelection:
         assert str(result["date"].iloc[0].date()) == "2026-03-25"
         assert result["forecasted_discharge"].iloc[0] == 200.0
         assert bool(result["is_native"].iloc[0]) is True
-        # R3: quarter_issue_date must be a real datetime column (not
-        # inferred back to float64 by _convert_na_to_nan) even outside
-        # degraded mode.
+        # dtype contract (non-degraded): quarter_issue_date must be a
+        # real datetime column, not object/float64, in the common case too.
         assert pd.api.types.is_datetime64_any_dtype(result["quarter_issue_date"])
 
         from dashboard.plot_manager import _format_quarterly_forecast_info
@@ -3310,9 +3383,10 @@ class TestGetLongForecastsQuarterNativeSelection:
         assert set(result["model_short"]) == {"GBT", "Naive Mean"}
 
     def test_no_quarter_em_returned_case_insensitive(self, monkeypatch, tmp_path):
-        """R4(b): the EM filter's `.str.upper()` must catch any casing of
-        both spellings ('EM' and 'ENSEMBLE_MEAN'), not just an exact
-        match."""
+        """R4(b) / C4: the EM filter's `.str.upper()` must catch any
+        casing of both spellings ('EM' and 'ENSEMBLE_MEAN'), not just an
+        exact match — including a bare lowercase/mixed-case 'EM' itself,
+        not only the longer 'ENSEMBLE_MEAN' spelling."""
         _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
         gbt = {
             **_QUARTER_FORECAST_RECORD_19999, "id": 153, "model_type": "GBT",
@@ -3326,9 +3400,19 @@ class TestGetLongForecastsQuarterNativeSelection:
             **_QUARTER_FORECAST_RECORD_19999, "id": 155, "model_type": "ENSEMBLE_MEAN",
             "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
         }
+        lower_em = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 156, "model_type": "em",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
+        mixed_em = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 157, "model_type": "Em",
+            "date": "2026-03-25", "valid_from": "2026-04-01", "valid_to": "2026-06-30",
+        }
 
         def mock_get(url, **kwargs):
-            return _make_mock_response([gbt, lower_ensemble_mean, upper_ensemble_mean])
+            return _make_mock_response(
+                [gbt, lower_ensemble_mean, upper_ensemble_mean, lower_em, mixed_em]
+            )
 
         monkeypatch.setattr(requests, "get", mock_get)
 

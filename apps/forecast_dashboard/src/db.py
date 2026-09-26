@@ -897,15 +897,30 @@ def get_long_forecasts_quarter(
     # quarter" (item 4), and Q4 stays eligible through all of Q1; a
     # lead>=2 config's current Q1 stays eligible into Q2. Lower bound =
     # the first day of the month (3 + lead) months before the start of
-    # today's calendar quarter. In degraded mode (no schedule) use lead=3
-    # for coverage, since the actual configured lead is unknown.
-    fetch_lead = schedule.lead_time if not degraded else 3
+    # today's calendar quarter. C2: prefer the larger of the schedule's
+    # own lead_time and the resolved API horizon_value (they usually
+    # agree, but an explicit `horizon_value` override, or a lead-only
+    # config in degraded mode, can make them differ) — `resolved_horizon_
+    # value` is always an int today (FD-031: it would already have raised
+    # above otherwise), but the `is not None` fallback below is kept
+    # defensive rather than assuming that stays true.
+    fetch_lead = (
+        max(schedule.lead_time, resolved_horizon_value or 0) if not degraded
+        else (resolved_horizon_value if resolved_horizon_value is not None else 3)
+    )
     current_quarter_start_month = ((today.month - 1) // 3) * 3 + 1
     fetch_total_months = (
         today.year * 12 + (current_quarter_start_month - 1) - (3 + fetch_lead)
     )
     fetch_start_year, fetch_start_month0 = divmod(fetch_total_months, 12)
-    start_date = date(fetch_start_year, fetch_start_month0 + 1, 1)
+    schedule_derived_start = date(fetch_start_year, fetch_start_month0 + 1, 1)
+    # C1: the schedule-derived bound above is narrower than the original
+    # spec window in Q2-Q4 (up to 9 months narrower) — if the PREVIOUS
+    # calendar quarter has no rows of its own (e.g. a missed LT run), the
+    # card and the bulletin's quarterly block would go empty where the
+    # original fixed window still reached the older available quarter.
+    # Never narrow the window: take whichever bound reaches further back.
+    start_date = min(date(today.year - 1, 12, 1), schedule_derived_start)
     end_date = date(today.year + 1, 3, 31)
     params = {
         "horizon_type": "quarter",
@@ -930,7 +945,12 @@ def get_long_forecasts_quarter(
         ]
         if lead_aware:
             columns.append("horizon_value")
-        return pd.DataFrame(columns=columns)
+        empty_result = pd.DataFrame(columns=columns)
+        # C3: an empty-columns-only DataFrame defaults every column to
+        # object dtype, breaking the docstring's promise of a datetime
+        # `quarter_issue_date` (NaT when degraded) on this path too.
+        empty_result["quarter_issue_date"] = pd.to_datetime(empty_result["quarter_issue_date"])
+        return empty_result
 
     df.rename(columns={
         "model_type": "model_short",
