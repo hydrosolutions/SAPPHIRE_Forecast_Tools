@@ -704,3 +704,66 @@ class TestRegressionDirectPrecedenceSurvivesLowerBoundWidening:
         got = dict(zip(q1_2026["model_short"], q1_2026["forecasted_discharge"], strict=False))
         assert got.get("LR_Base") == 100.0
         assert got.get("LR_SM") == 120.0
+
+
+# ===========================================================================
+# Round-2 regression (out-of-loop review of 6a891f7d, pre-existing since
+# 899ae20d): the lower-bound-only fix must not drop a BACKFILL direct row
+# -- issue year >= start_year, but TARGET year < start_year (e.g. a Q4
+# start_year-1 row issued in January of start_year). Trunk's original
+# [start_year, end_year] ISSUE-date read had no target-year trim at all,
+# so it returned such rows unconditionally; that must still hold here.
+# ===========================================================================
+
+
+class TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim:
+    def _direct_rows(self):
+        # Issued 2025-01-10 (issue year 2025 == start_year), targeting
+        # Q4 2024 (target year 2024 < start_year) -- a backfill.
+        return [
+            _quarter_row("2024-10-01", "2024-12-31", "2025-01-10", model="LR_Base", q=100.0),
+            _quarter_row("2024-10-01", "2024-12-31", "2025-01-10", model="LR_SM", q=120.0),
+        ]
+
+    def _monthly_rows(self):
+        # Two months (Oct, Nov 2024) per model, also issued 2025-01-10
+        # -> aggregate_monthly_fc_to_quarterly synthesizes a competing
+        # Q4 2024 row per model.
+        rows = []
+        for model, value in (("LR_Base", 200.0), ("LR_SM", 220.0)):
+            for month in (10, 11):
+                rows.append(
+                    {
+                        "code": CODE,
+                        "date": "2025-01-10",
+                        "model_type": model,
+                        "valid_from": f"2024-{month:02d}-01",
+                        "valid_to": f"2024-{month:02d}-28",
+                        "forecasted_discharge": value,
+                        "q50": value,
+                        "horizon_value": 1,
+                    }
+                )
+        return rows
+
+    def test_direct_prior_year_backfill_wins_over_monthly_derived(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        fake = _quarter_and_month_api_fake(self._direct_rows(), self._monthly_rows())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        q4_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 4)]
+        got = dict(zip(q4_2024["model_short"], q4_2024["forecasted_discharge"], strict=False))
+        assert got.get("LR_Base") == 100.0
+        assert got.get("LR_SM") == 120.0
+
+    def test_direct_prior_year_backfill_returned_without_monthly_source(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        fake = _quarter_and_month_api_fake(self._direct_rows(), [])
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        q4_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 4)]
+        got = dict(zip(q4_2024["model_short"], q4_2024["forecasted_discharge"], strict=False))
+        assert got.get("LR_Base") == 100.0
+        assert got.get("LR_SM") == 120.0

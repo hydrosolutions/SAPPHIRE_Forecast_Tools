@@ -3140,20 +3140,38 @@ def read_quarterly_forecasts(
                 target_period_col="quarter_in_year",
             )
             direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
-        elif not lead_aware and not direct.empty and "year" in direct.columns:
-            # Drop only the EXTRA rows the start_year - 1 read-window
-            # widening above admits (target year < start_year). Trunk's
-            # flag-OFF direct read never trimmed the upper bound, so a
-            # target year > end_year (e.g. a Dec-end_year issue's
-            # next-year Q1) must still survive here unchanged -- it is
-            # what lets a direct row win over Source 1 (monthly-derived)
-            # for that same target in the drop_duplicates(keep="last")
-            # combine below. A two-sided trim to end_year here would
-            # drop it and let the monthly-derived value win instead,
-            # reversing direct-source precedence (regression found by
-            # out-of-loop review of the initial Problem 7 fix).
-            years = pd.to_numeric(direct["year"], errors="coerce")
-            direct = direct[years.isna() | (years >= start_year)].copy()
+        elif (
+            not lead_aware
+            and not direct.empty
+            and "year" in direct.columns
+            and "date" in direct.columns
+        ):
+            # Drop only the rows the start_year - 1 read-window widening
+            # above admits that trunk's original [start_year, end_year]
+            # ISSUE-date read would not have returned: issue year <
+            # start_year AND target year < start_year (a normal,
+            # non-cross-year issue/target pair fully inside start_year -
+            # 1, e.g. issued and targeting 2024-Q2 when start_year =
+            # 2025). Everything with issue year >= start_year is kept
+            # UNCONDITIONALLY, regardless of target year, because trunk
+            # had no target-year trim at all and returned such backfill
+            # rows too (e.g. a Q4 start_year-1 row issued in start_year,
+            # #521-style) -- dropping those by target year alone was
+            # itself a regression (round-2 out-of-loop review of the
+            # Problem 7 fix). A null/unparseable issue date is kept:
+            # trunk's API-side year filter could not have excluded it by
+            # year either. A target year > end_year (e.g. a Dec-end_year
+            # issue's next-year Q1) also survives unconditionally -- see
+            # the next-year-precedence regression test.
+            target_years = pd.to_numeric(direct["year"], errors="coerce")
+            issue_years = pd.to_datetime(direct["date"], format="mixed", errors="coerce").dt.year
+            drop_mask = (
+                issue_years.notna()
+                & (issue_years < start_year)
+                & target_years.notna()
+                & (target_years < start_year)
+            )
+            direct = direct[~drop_mask].copy()
     else:
         direct = pd.DataFrame()
 
