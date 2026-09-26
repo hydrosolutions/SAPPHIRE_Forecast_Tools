@@ -3099,16 +3099,19 @@ class TestGetLongForecastsQuarterFetchWindow:
         assert result["quarter_in_year"].iloc[0] == 1
 
     def test_c1_missed_lt_run_does_not_narrow_below_the_spec_window(self, monkeypatch, tmp_path):
-        """C1 regression: the R2 schedule-derived lower bound is up to 9
-        months NARROWER than the spec's original window in Q2-Q4. If the
-        previous calendar quarter has no rows of its own (e.g. a missed
-        LT run), that narrower bound would make the card/bulletin go
-        empty where the original fixed window ({today.year-1}-12-01)
-        still reached the older available quarter. kghm lead 1: the
-        backend only has a Q2 2026 row (issued 2026-03-25); on
-        2026-11-10 (Q4) the schedule-derived bound alone would start at
-        2026-06-01, excluding it — the window must never be narrower than
-        `min(spec bound, schedule-derived bound)`."""
+        """C1/W1 regression: a missed LT run for the previous calendar
+        quarter must not make the card/bulletin go empty. A
+        schedule-derived lower bound sized to reach back only (3 + lead)
+        months (the shape before W1) is narrower than the spec's original
+        window ({today.year-1}-12-01) for most of the year. kghm lead 1:
+        the backend only has a Q2 2026 row (issued 2026-03-25); on
+        2026-11-10 (Q4) a (3 + lead)-months-back bound alone would start
+        at 2026-06-01, excluding it — the window must never be narrower
+        than `min(spec bound, schedule-derived bound)`; W1's own
+        schedule-derived bound reaches back (12 + lead) months, which
+        alone already covers this case (see the W1 tests below for the
+        lead>=4 / lead-0-in-January edges that (12 + lead) still misses
+        without the `min` with the spec bound)."""
         _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
         q2_row = {
             **_QUARTER_FORECAST_RECORD_19999, "id": 172, "model_type": "GBT",
@@ -3167,6 +3170,99 @@ class TestGetLongForecastsQuarterFetchWindow:
 
         assert len(result) == 1
         assert result["quarter_in_year"].iloc[0] == 4
+
+    def test_w1_lead4_flag_off_row_dated_next_quarter_start_is_fetched(self, monkeypatch, tmp_path):
+        """W1: for lead>=4, a flag-OFF row (dated at its own `valid_from`)
+        of an eligible target quarter can be dated well into the NEXT
+        quarter relative to `today` — the old fixed upper bound
+        ({today.year+1}-03-31) missed it. kghm lead 4, issue day 25,
+        today 2026-12-26: Q2 2027 (Apr-Jun) is already eligible (issue
+        date 2026-12-25), and its flag-OFF GBT row is dated 2027-04-01
+        (Q2's own valid_from) — one day past the old upper bound."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=4, issue_day=25)
+        q2_2027_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 180, "model_type": "GBT",
+            "date": "2027-04-01", "valid_from": "2027-04-01", "valid_to": "2027-06-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q2_2027_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q2_2027_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 12, 26))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 2
+        assert result["year"].iloc[0] == 2027
+
+    def test_w1_lead0_early_january_still_reaches_older_eligible_quarter(
+        self, monkeypatch, tmp_path
+    ):
+        """W1: a lead-0 config's issue day (25) can still push a
+        (3 + lead)-months-back schedule-derived lower bound past an
+        eligible OLDER quarter in early January. tjhm-shaped lead 0,
+        issue day 25, today 2027-01-05, Q4 2026 missing entirely: the
+        native Q3 2026 row (issued 2026-07-25) must still be reachable."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=0, issue_day=25)
+        q3_2026_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 181, "model_type": "GBT",
+            "date": "2026-07-25", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q3_2026_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q3_2026_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2027, 1, 5))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 3
+        assert bool(result["is_native"].iloc[0]) is True
+
+    def test_w2_explicit_horizon_value_widens_window_beyond_schedule_lead(
+        self, monkeypatch, tmp_path
+    ):
+        """W2: the non-degraded half of C2
+        (max(schedule.lead_time, resolved_horizon_value or 0)) was
+        untested for the case where the RESOLVED horizon_value exceeds
+        the schedule's own configured lead. Schedule lead 1; an explicit
+        `horizon_value=3` override must widen the window to lead 3's
+        reach, not stay narrowed to lead 1's."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=25)
+        q4_2025_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 182, "model_type": "GBT",
+            "date": "2025-11-01", "valid_from": "2025-10-01", "valid_to": "2025-12-31",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q4_2025_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q4_2025_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(
+            station="19999", today=date(2027, 1, 5), horizon_value=3
+        )
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 4
+        assert result["year"].iloc[0] == 2025
 
 
 class TestGetLongForecastsQuarterCalendarOnly:

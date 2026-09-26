@@ -891,37 +891,55 @@ def get_long_forecasts_quarter(
         schedule = None
         degraded = True
 
-    # FD-029 P1 item 1 / R2: the lower bound must cover the station's
-    # still-eligible PREVIOUS calendar quarter too, not just the one
-    # containing `today` — the spec's contract is "latest ELIGIBLE target
-    # quarter" (item 4), and Q4 stays eligible through all of Q1; a
-    # lead>=2 config's current Q1 stays eligible into Q2. Lower bound =
-    # the first day of the month (3 + lead) months before the start of
-    # today's calendar quarter. C2: prefer the larger of the schedule's
-    # own lead_time and the resolved API horizon_value (they usually
-    # agree, but an explicit `horizon_value` override, or a lead-only
-    # config in degraded mode, can make them differ) — `resolved_horizon_
-    # value` is always an int today (FD-031: it would already have raised
-    # above otherwise), but the `is not None` fallback below is kept
-    # defensive rather than assuming that stays true.
+    # FD-029 P1 item 1 / R2/C1/W1: the fetch window must cover ANY eligible
+    # target quarter's rows, whichever of the three date populations
+    # happens to be the only one present for it — the native issuance (a,
+    # dated at the schedule's own issue date), a flag-OFF rewrite (b,
+    # dated at the quarter's own `valid_from`), or a persisted derived row
+    # (c). Edge-by-edge patching of a tightly schedule-derived window kept
+    # missing cases (a lead>=4 config's flag-OFF row can be dated well
+    # into the NEXT quarter's `valid_from`; a lead-0 config's issue day can
+    # push the window's start past an eligible OLDER quarter in early
+    # January), so widen generously in both directions instead:
+    #   - lower bound: whichever reaches further BACK between the
+    #     original fixed spec bound and the first day of the month
+    #     (12 + lead) months before the start of today's calendar quarter
+    #     — at least four quarters back, so a partial older quarter
+    #     (Problem 3) can only appear at the window's edge after THREE
+    #     consecutive missing quarters (accepted).
+    #   - upper bound: whichever reaches further FORWARD between the
+    #     original fixed spec bound and the last day of the month
+    #     (lead + 1) months after today's month — the latest eligible
+    #     target quarter starts at most `lead` months after today's month
+    #     (plus less than a month more from the issue day), and a flag-OFF
+    #     row for it is dated at its own `valid_from` (that quarter's
+    #     START, up to a further 3 months later than its issue date).
+    # `fetch_lead`: prefer the larger of the schedule's own lead_time and
+    # the resolved API horizon_value when the schedule resolves (W2: an
+    # explicit `horizon_value` override can exceed the config's own lead)
+    # — `resolved_horizon_value` is always an int today (FD-031: it would
+    # already have raised above otherwise), but the `is not None`
+    # fallback below is kept defensive rather than assuming that stays
+    # true. In degraded mode, prefer the resolved horizon_value; fall
+    # back to 3 only when even that is unavailable.
     fetch_lead = (
         max(schedule.lead_time, resolved_horizon_value or 0) if not degraded
         else (resolved_horizon_value if resolved_horizon_value is not None else 3)
     )
     current_quarter_start_month = ((today.month - 1) // 3) * 3 + 1
-    fetch_total_months = (
-        today.year * 12 + (current_quarter_start_month - 1) - (3 + fetch_lead)
+    lower_total_months = (
+        today.year * 12 + (current_quarter_start_month - 1) - (12 + fetch_lead)
     )
-    fetch_start_year, fetch_start_month0 = divmod(fetch_total_months, 12)
-    schedule_derived_start = date(fetch_start_year, fetch_start_month0 + 1, 1)
-    # C1: the schedule-derived bound above is narrower than the original
-    # spec window in Q2-Q4 (up to 9 months narrower) — if the PREVIOUS
-    # calendar quarter has no rows of its own (e.g. a missed LT run), the
-    # card and the bulletin's quarterly block would go empty where the
-    # original fixed window still reached the older available quarter.
-    # Never narrow the window: take whichever bound reaches further back.
+    lower_year, lower_month0 = divmod(lower_total_months, 12)
+    schedule_derived_start = date(lower_year, lower_month0 + 1, 1)
     start_date = min(date(today.year - 1, 12, 1), schedule_derived_start)
-    end_date = date(today.year + 1, 3, 31)
+
+    upper_total_months = today.year * 12 + (today.month - 1) + (fetch_lead + 1)
+    upper_year, upper_month0 = divmod(upper_total_months, 12)
+    schedule_derived_end = (
+        pd.Timestamp(year=upper_year, month=upper_month0 + 1, day=1) + pd.offsets.MonthEnd(0)
+    ).date()
+    end_date = max(date(today.year + 1, 3, 31), schedule_derived_end)
     params = {
         "horizon_type": "quarter",
         "horizon_value": resolved_horizon_value,
