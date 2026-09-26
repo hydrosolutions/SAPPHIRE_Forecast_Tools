@@ -97,9 +97,11 @@ contract change** with its own test proving the chosen tie-break — not an unst
 reusing `local_calendar_date`. Recommendation: keep the existing latest-date-wins ordering.
 
 Leave the `valid_from_col` parse (`:336`) untouched unless a similar mixed-format report surfaces
-for it; every existing write path already writes `valid_from` as a bare date. Do not otherwise
-change `select_operational_issuances`'s selection logic, signature, or the derived-lead/issue-day
-arithmetic.
+for it; every existing write path already writes `valid_from` as a bare date. **For this Problem-1
+fix specifically**, do not otherwise change `select_operational_issuances`'s selection logic,
+signature, the derived-lead computation, or the issue-day match itself — only the date-parsing that
+feeds them. (Problem 2, below, is the one deliberate exception: it changes the issue-day match, and
+only that — see its own scope note.)
 
 **Out of scope, deferred (do not fold in here):** the season branch of `_normalize_combined_forecasts`
 (`:3902-3903`, `df["date"] = pd.to_datetime(df["date"], errors="coerce")`, no `format="mixed"`) and
@@ -113,15 +115,20 @@ tests.
 
 ## Proposed fix (Problem 2)
 
+**This is the one change in scope that touches the issue-day match itself** — Problem 1's fix above
+leaves that match alone; this is the deliberate exception, and only the match, not anything else
+Problem 1's "do not change" list covers.
+
 Clamp the issue day to the issue month's own length before matching, mirroring the producer
 (`lt_utils.py:170-172`) and PP-064/FD-029's own native-row predicates: for each row, compute
 `clamped_issue_day = min(s.issue_day, days_in_month(derived issue year, derived issue month))` per
 schedule `s`, and match against `(lead, day) in {(s.lead_time, min(s.issue_day, days_in_that_month))
 for s in schedules.values()}` — the clamp target depends on the *row's own* derived issue year/month
 (from `derived_lead`), not a fixed month, since the same configured `issue_day` clamps differently in a
-28-day February versus a 30-day June. Do not change the function's signature, its selection grain, or
-the tie-break `select_operational_issuances` uses elsewhere (Problem 1's fix). Keep the exact-match
-semantics for every issue day that never needs clamping (the overwhelming majority — any day ≤ 28).
+28-day February versus a 30-day June. Do not change the function's signature, its selection grain, the
+derived-lead computation, or the tie-break `select_operational_issuances` uses elsewhere (Problem 1's
+fix) — clamp only the day value the match compares against. Keep the exact-match semantics for every
+issue day that never needs clamping (the overwhelming majority — any day ≤ 28).
 
 ## Tests
 

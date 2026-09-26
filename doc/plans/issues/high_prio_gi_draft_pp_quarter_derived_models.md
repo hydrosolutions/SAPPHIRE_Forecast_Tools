@@ -197,11 +197,16 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      applies, `apps/long_term_forecasting/lt_utils.py:170-172 nearest_scheduled_issue_date`, and the same
      rule FD-029 already implements — and year-aware lead == `lead_time`) **to LR rows only**. Non-native
      LR rows (rewrites, persisted monthly-derived rows) are never selected. Add a test: issue day
-     configured as 31, a native row dated on the 30th of a 30-day issue month → selected as native.
+     configured as 31, a native row dated on the 30th of a 30-day issue month → selected as native, at
+     the helper level directly, and through both readers **under flag OFF** (which never calls
+     `select_operational_issuances`, below). Do **not** assert this end-to-end through the readers under
+     flag ON in P1b — `select_operational_issuances` still matches unclamped there and would drop the
+     row; that end-to-end proof is gated on PP-066 (its Tests list owns it).
    - **Stored leads (flag ON).** Before `select_operational_issuances`, drop and count direct rows whose
      stored `horizon_value` differs from the derived lead, then call it with `lead_output_cols=()` so the
      stored value is preserved. `select_operational_issuances` itself is not modified — it keeps matching
-     the **unclamped** issue day (PP-066, which owns that gap).
+     the **unclamped** issue day (PP-066, which owns that gap), so under flag ON a clamped-day-only-valid
+     row is dropped here even though the native-row helper above would have classified it correctly.
    - **Derived rows.** Read raw monthly rows via `_read_long_forecasts_api` for issue years
      `start_year − 1 … end_year`. In the latest reader, also require issue date ≤ `forecast_date`. Derive
      for the seven models; while the fallback is active, also derive each LR model for (code, year,
@@ -390,7 +395,10 @@ lead 0):
   key, PP-061; decision F handles them, so no tjhm variant of this case.)
 - **Native-row selection, clamped issue day.** `operational_issue_day` configured as 31, issue month a
   30-day month (e.g. June): a native row dated on the 30th (the producer's own clamp,
-  `lt_utils.py:170-172`) → selected as native by the shared helper, in both readers.
+  `lt_utils.py:170-172`) → selected as native by the shared helper directly, and, **flag OFF only**,
+  through both readers. **Not** asserted end-to-end through the readers under flag ON here —
+  `select_operational_issuances` still matches unclamped and would drop the row regardless of the
+  helper's own classification; PP-066's Tests list carries that end-to-end case once its fix lands.
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
