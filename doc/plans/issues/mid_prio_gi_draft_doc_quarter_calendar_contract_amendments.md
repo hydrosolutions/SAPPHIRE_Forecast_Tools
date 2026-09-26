@@ -1,96 +1,147 @@
 # DOC-009: Amend the contract docs that describe quarter as a rolling, non-calendar product
 
-**Status**: Draft (2026-09-25, rev 2 after out-of-loop review)
+**Status**: Draft (2026-09-26, rev 3 after the 9-reviewer round and the owner decisions A–H of 2026-09-26)
 **Module**: docs
 **Priority**: Medium.
-- **P1 (contract + cleanup warnings) merges before or together with PP-064 Chunk A**, otherwise PP-064's
-  reviewers will cite these docs against the fix.
-- P2 (readmes) is independent.
+- **P1a (safety warnings)** needs no service-owner acknowledgement. It merges **before PP-064 Chunk A
+  and before PP-065 deploys**; after PP-065 the warned-about gates false-fail and the warned-about
+  deletes remove product rows.
+- **P1b (contract amendments)** needs overview decision D4 (service owner) and the owner's sign-off. It
+  does not gate code; until it merges, PP-064/PP-065 reviewers use the overview decisions, not rows 1–5.
+- **P2 (readmes, data-flow doc)**: per-row dependencies, see the P2 table.
 
 **Labels**: `documentation`, `long-term`, `quarter`, `data-governance`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
 graph lives there only.
-**Related**: MIG-008, LTF-014, PP-064, FD-029
+**Related**: MIG-008, PP-056, LTF-014, LTF-016, PP-064, PP-065, FD-029, FD-030
 
 ## Problem
 
-Owner decision (2026-09-25): quarter = calendar Q1–Q4, issued once per quarter (kghm on the 25th of
-Dec/Mar/Jun/Sep, lead 1, hv1; tjhm on the 1st of Jan/Apr/Jul/Oct, lead 0, hv0), and Q1 is required.
-A read-only sweep on 2026-09-25 of `doc/`, `apps/`, `bin/`, `sapphire/` and `CLAUDE.md` classified 46
-passages. The ones below contradict the decision or would lead an operator into a harmful cleanup.
-`bin/`, `sapphire/` and `CLAUDE.md` contain no quarter-window statement.
+Owner decisions (2026-09-25, and A–H of 2026-09-26):
+- quarter = calendar Q1–Q4, issued once per quarter: kghm on the 25th of Dec/Mar/Jun/Sep, lead 1, hv1;
+  tjhm on the 1st of Jan/Apr/Jul/Oct, lead 0, hv0. Q1 is required.
+- The seven models GBT, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR, SM_GBT_NORM are re-enabled for
+  quarter as same-issue averages of their monthly forecasts (PP-065).
+- **Derived quarter (decision A)**: for (station, model, Q of year Y) use the monthly forecasts issued on
+  the quarter issue date at monthly leads `L`, `L+1`, `L+2`. Months are identified by (issue date,
+  `horizon_value`), not by `valid_from`. Mislabelled stored MONTH windows still count; LTF-016 fixes the
+  labels upstream.
+- **Quarter ensembles (decision B)** follow the monthly rules; referred to below as **Q-ENS**:
+  - Naive Mean = mean of all nine quarter models;
+  - Skilled Mean = long-term gate (NSE > 0, `_long_term_threshold_overrides()`,
+    `apps/postprocessing_forecasts/src/skill_metrics.py:168`) + quarter min-pairs, 1/MAE-weighted;
+  - Ensemble Mean = the default (short-term) threshold gate + min-pairs (as monthly,
+    `src/ensemble_calculator.py:289-292`), unweighted, needs ≥ 2 models, so it may not form;
+  - no fallback. Season keeps `EM = mean(LR_Base, LR_SM)`.
+- Rows without Q25/Q75 show forecast ∓ δ at display time (decision D). Until LTF-014 P0 and P2 are
+  deployed, LR_Base/LR_SM quarters missing a native row are derived from monthly (decision G).
+
+A read-only sweep of `doc/`, `apps/`, `bin/`, `sapphire/` and `CLAUDE.md` (2026-09-25, extended
+2026-09-26 with model-set, EM and delete patterns) found the passages below. They contradict the
+decisions, or they would make an operator run a harmful cleanup or a gate that false-fails.
+`bin/`, `sapphire/` and `CLAUDE.md` contain no such statement.
 
 **Still correct, not amended:**
 - `horizon_value = operational_month_lead_time` for long forecasts (kghm 1, tjhm 0).
 - Hydrograph quarter rows keyed by quarter number 1–4 (`doc/data_flow_long_term.md:248-251`).
-- Already-calendar statements such as `apps/postprocessing_forecasts/src/aggregation.py:8` and
+- Already-calendar statements: `apps/postprocessing_forecasts/src/aggregation.py:7`,
   `doc/plans/issues/high_prio_gi_draft_pp_lead_aware_skill.md:22-25`.
+- Season: LR-only, `EM = mean(LR_Base, LR_SM)`, unchanged.
 
 ## Edit rules
 
-- Append a dated **"Amendment 2026-09-25 (calendar-quarter decision)"** block, or add a short inline note
-  next to the passage it corrects.
-- **Never delete or reword decision text, historical records or counts.**
-- Link to `doc/plans/quarter_calendar_product_plan.md`.
-- No station codes, no discharge values.
+- **Decision records** (the convention doc, MIG-008, the decision request, the PP-056 plan, archived
+  plans, `module_issues.md` rows): **add an adjacent note that …**. Never delete or reword the decision
+  text, historical records or counts. Head each note **"Amendment 2026-09-26 (calendar-quarter
+  decision)"**.
+- **Runbooks and checklists** (P1a): add a warning box next to the cited passage. A one-line suffix on
+  a summary-table row is allowed.
+- **READMEs and `doc/data_flow_long_term.md`** (P2): rewrite the passage, so the doc does not
+  contradict itself.
+- Link to `doc/plans/quarter_calendar_product_plan.md`. No station codes, no discharge values.
 
-## P1 — contract and cleanup safety
+## P1a — safety warnings (no D4 needed)
 
 | # | File:line | Current text (abridged) | Edit |
 |---|---|---|---|
-| 1 | `doc/prod/longforecast_quarter_season_hv_convention.md:29-30, 40-41` | "3-month forecast issued monthly Mar-Sep (7 windows/yr) … Not 4 calendar quarters" | Amendment at the top of the file: the product is calendar Q1–Q4 with the schedule above; the Mar–Sep monthly issues were a config error (LTF-014). The model target is a fixed 90-day window relabelled as the quarter (LTF-014 § "Not fixed"). |
-| 2 | same, RESOLUTION `:76-84` | "no date-derivation and no 4-calendar-quarter mapping; 'quarter' is a single quarterly product" | **Service owner's text: do not edit.** In the amendment state that "hv = config lead" and "no date-derivation" **still hold**; that "no 4-calendar-quarter mapping" holds for `horizon_value`; and that the **windows** are calendar quarters. **Send it to the service owner before merging** (overview decision D4). |
-| 3 | MIG-008 `doc/plans/issues/mid_prio_gi_draft_migration_long_forecast_quarter_season_horizon_value.md:24-26, 38-40` | "the 'quarter is 7 rolling windows / should map to calendar quarters' reading was **wrong**" | Amendment: the calendar reading is correct for **windows**; the hv conclusion stands. Re-scope "what still needs adapting" (see list below) |
-| 4 | `doc/plans/module_issues.md` MIG-008 row | "no date-derivation, no calendar-quarter mapping. Quarter is a single product" | Append "; windows = calendar Q1–Q4 (amended 2026-09-25, DOC-009)" |
-| 5 | `doc/prod/longforecast_historical_data_decision_request.md:15-16, 34, 43-44, 52, 92-93` | Dataset B is "the exact mapping the convention rejected"; keep-set "QUARTER hv1, the Mar-Sep LR rows = the current Kyrgyz quarterly product" | Amendment: Dataset B's calendar **windows** are valid product windows; only its hv = quarter number is off-convention. In the keep-set only the 25 Mar/Jun/Sep issues are product; 25 Apr/May/Jul/Aug are not. The counts are from 2026-06-22 and must be re-measured. **Owner sign-off** (data governance) |
-| 6 | `doc/prod/long_term_deploy_runbook.md:385-400` | cleanup (i) deletes the seven "deprecated" models from QUARTER and SEASON; cleanup (ii) deletes "old calendar-hv1" rows; the quarter raw delete is "typically a 0-row no-op" | Warning box: **(i) must be restricted to SEASON.** The seven models are re-enabled for QUARTER (owner, 2026-09-25, PP-065), so a QUARTER delete would remove current product rows and their skill. **Do not run cleanup (ii) until it is re-scoped.** The signature "calendar `hv1`, `date == quarter start`" matches kghm flag-OFF rewrites **and regenerated ensembles** (writer: hv = config lead, `date = valid_from` under flag OFF, `apps/postprocessing_forecasts/src/api_writer.py:1172, 1199`). Any variant keyed on date equality alone (without `hv1`) also matches **tjhm native rows** (hv0, issued on the quarter start). Also correct the "0-row no-op" (the local DB holds ~37k deprecated-model QUARTER rows) |
-| 7 | `doc/prod/ppipe_ensemble_hv_deploy_runbook.md:279-292` | names the archived P-PIPE reconciliation as authoritative; "old calendar `horizon_value=1` rows" | The same warning box as #6, placed next to the "authoritative" sentence at `:279` |
-| 8 | `doc/plans/archive/ppipe_postprocessing_ensemble_hv_plan.md:140-150` (authoritative per #7) | quarter cleanup: "old calendar-`hv1` rows whose `date == quarter start`" | One-line warning right above item 1: "Superseded for quarter by DOC-009 (2026-09-25): the calendar-hv1 / date == quarter-start signature matches kghm regenerated rows, and a date-only variant matches tjhm native rows — do not run." Archive text otherwise untouched |
-| 8a | `doc/plans/archive/two_model_ensemble_plan.md` (§4 "Deprecated-model cleanup scope", `:154-193`) | "Drop for `horizon_type=QUARTER`: GBT, LR_SM_DT, …" | One-line warning above §4: "Superseded for QUARTER on 2026-09-25 (PP-065): these models are re-enabled for quarter as same-issue monthly averages; the drop applies to SEASON only." |
-| 9 | `doc/prod/long_term_recovery_runbook.md:960-975` | the issue-day-1/lead-0 collision described as conditional | State plainly: for tjhm quarter the recovered issue date always equals `valid_from`, so the collision is certain (PP-061) |
-| 10 | `doc/data_flow_long_term.md:240-242, 270-273` | "QUARTER rows use the same period keys as postprocessing `long_forecasts`"; join "must use period keys (code, horizon_type, horizon_value)" | Correct it: for long forecasts `horizon_value` is the **lead**, not the quarter number. **Year-specific actuals** (`previous`/`current`): join on `code` + calendar quarter from `valid_from` + target year. **Climatology** (`norm`): join on `code` + quarter; the reference snapshot for a December-issued Q1 is overview decision D6/FD-030 D3 — say so, do not decide it here |
+| 6 | `doc/prod/long_term_deploy_runbook.md:377-400` | Phase 5: cleanup (i) deletes the seven "deprecated" models from QUARTER and SEASON; cleanup (ii) deletes "old calendar-hv1" rows; the quarter raw delete is "typically a 0-row no-op" | Warning box above (i) at `:388`. **(i) must be restricted to SEASON.** The seven models are re-enabled for QUARTER (PP-065) and their derived rows are persisted, so a QUARTER delete removes product rows and their skill. **Do not run cleanup (ii) until it is re-scoped.** The signature "calendar `hv1`, `date == quarter start`" matches kghm flag-OFF rewrites **and regenerated ensembles**: the writer sets hv = config lead and `date = valid_from` under flag OFF (`apps/postprocessing_forecasts/src/api_writer.py:1175, 1199`). Any variant keyed on date equality alone (without `hv1`) also matches **tjhm native rows** (hv0, issued on the quarter start). The "0-row no-op" is wrong: the local DB held ~37k deprecated-model QUARTER rows on 2026-09-25 |
+| 7 | `doc/prod/ppipe_ensemble_hv_deploy_runbook.md:279-293` | names the archived P-PIPE reconciliation as authoritative; "old calendar `horizon_value=1` rows" | The same warning box as #6, next to the "authoritative" sentence at `:279` |
+| 8 | `doc/plans/archive/ppipe_postprocessing_ensemble_hv_plan.md:140-147` (authoritative per #7) | quarter cleanup: "old calendar-`hv1` rows whose `date == quarter start`" | One-line note above item 1: "Superseded for quarter by DOC-009 (2026-09-26): the calendar-hv1 / date == quarter-start signature matches kghm regenerated rows, and a date-only variant matches tjhm native rows — do not run." |
+| 8a | `doc/plans/archive/two_model_ensemble_plan.md` (whole file) | quarter/season EM = mean(LR_Base, LR_SM); seven models dropped for QUARTER | **Top-of-file banner** (not only §4): "Superseded for QUARTER on 2026-09-26 (PP-065, decision B): the seven models are re-enabled for quarter as same-issue monthly averages, and quarter ensembles follow the monthly rules. Model drops, deletes and EM = mean(LR) checks here apply to SEASON only." The banner lists the affected passages: `:29-33`, `:40-42`, §4 `:154-193`, §5 `:228-231`, §6 `:247-250`, P5 `:386-394`, Final Acceptance `:413-420` |
+| 9 | `doc/prod/long_term_recovery_runbook.md:960-978` | the issue-day-1/lead-0 collision is described as conditional | Add a note that for tjhm quarter (issue day 1, lead 0) the recovered issue date always equals `valid_from`, so the collision is certain (PP-061) |
+| 13 | `doc/prod/long_term_deploy_runbook.md:20` | change (b): "quarter/season `EM = mean(LR_Base, LR_SM)` … reader drops 7 deprecated quarter models" | Note under the table: for QUARTER, (b) is superseded by PP-065 (Q-ENS; the seven models are read again); (b) still holds for SEASON |
+| 14 | same, phase overview `:144-149` and Phase 4 item 2 `:350-356` | "`EM = mean(LR_BASE, LR_SM)` join check returns `em_pairs > 0 AND mismatch = 0`" | Warning box at `:350`: from the PP-065 deploy on, run the check for **SEASON only**. Quarter EM ≠ mean(LR) by design (Q-ENS), so a QUARTER mismatch does not mean a stale image. Quarter ensembles are verified per PP-065 § P2 |
+| 15 | same, Phase 6 `:406-412` | "The 7 deprecated models return **0 rows** … for `horizon_type IN ('QUARTER','SEASON')`" | Warning box: SEASON only. For QUARTER, the seven models **must** have rows after PP-065 |
+| 16 | `doc/prod/ppipe_ensemble_hv_deploy_runbook.md:239-272` | EM parity SQL over `IN ('QUARTER', 'SEASON')`; the `em_pairs > 0 AND mismatch = 0` gate | Warning box at `:239`: after PP-065, apply the SQL and the gate to SEASON only. A QUARTER mismatch is expected |
+| 17 | `doc/dev/review_checklist_local_template.md:1802-1841` (§9.6.5), summary row `:2095` | "For quarter and season, `EM` is defined as the plain mean of `LR_Base` and `LR_SM`"; `for H in quarter season` | Warning below the §9.6.5 heading: after PP-065, run the loop for `season` only; quarter follows Q-ENS. Suffix on `:2095`: "(N/A after PP-065, DOC-009)" |
+| 18 | `doc/prod/update_deployment_checklist.md:1511` | "Phase 4 queries `long_forecasts` (… `EM = mean(LR_BASE, LR_SM)` composition)" | Add a note: the EM composition check is SEASON-only after PP-065 (see row 14) |
+| 19 | `doc/prod/update_data_migration_runbook.md:611-735` (§5.5) | "Full population (all configured modes, all models)" | Warning box after the skip rules (`:632-633`): run `bin/initialize_long_forecast_history.sh` with `--skip-mode quarter` (flag verified: `bin/initialize_long_forecast_history.sh:74, 268-273`) until LTF-014 P2 / MIG-008 (b), because the quarter hindcast CSVs still hold rolling windows. Exception: the reviewed decision-F re-import in PP-064 Chunk C |
+| 20 | `doc/prod/longforecast_historical_data_decision_request.md:55, 71` | "`QUARTER hv0` … is the correct home for the Tajik quarterly backfill"; "Holding … the Tajik `QUARTER hv0` backfill" | Add a note: the backfill may write only calendar windows (Jan/Apr/Jul/Oct issues), and only after LTF-014 P2 / MIG-008 (b) |
+| 21 | same, `:46` and DECISION `:84-86` | "current 2-model config … will never regenerate these rows"; Dataset B: "delete the deprecated models" | Add a note that D8 stands for the **legacy population only**. PP-065 writes quarter rows for the seven models again, so a predicate on `model_type` alone now also matches freshly derived rows. Under flag OFF, kghm derived Q1 rows share the Dataset B hv1-January natural key |
+| 22 | `doc/plans/archive/longforecast_hv_convention_plan.md` (top of file) | P3 predicates, still cited as the ones to use by `doc/prod/long_term_deploy_runbook.md:400, 435` and the decision request `:95` | Top-of-file banner: "P3 predicates are superseded for QUARTER (DOC-009, 2026-09-26). The deprecated-model delete matches PP-065 derived rows, and the calendar-hv1 signature matches regenerated rows. Re-derive before any delete (D8)." |
+| 23 | `doc/plans/issues/high_prio_gi_draft_pp_quarter_skill_lead_mismatch.md:139-144, 150-154, 160-161` + its `module_issues.md` row (`:305`) | open question "one of the two populations is wrong"; acceptance "skill rows land at 1..4 and not at 0"; "Do not 'fix' this by dropping the `hv=0` rows" | Add a note: quarter hv = config lead (convention RESOLUTION). PP-065 supersedes PP-056 for the seven models. The kghm hv0 quarter skill rows of those models are **meant** to be replaced by hv1 rows and tombstoned by the recalc (PP-065 § P2). Suffix on the index row: "; superseded for the seven models by PP-065 (DOC-009)" |
 
-**MIG-008 re-scope list (edit #3):**
+## P1b — contract amendments (need D4 + owner sign-off)
+
+| # | File:line | Current text (abridged) | Edit |
+|---|---|---|---|
+| 1 | `doc/prod/longforecast_quarter_season_hv_convention.md:29-30, 40-41` | "3-month forecast issued monthly Mar-Sep (7 windows/yr) … Not 4 calendar quarters" | Add a note next to `:29-30` and `:40-41`. The product is calendar Q1–Q4 on the schedule above; the Mar–Sep monthly issues were a config error (LTF-014). The model target is a fixed 90-day window labelled as the quarter: ≈ the calendar quarter; the median bias of the 90-day target is ≤ 2% (kghm Q2 −1.7%). The seven models' quarters are derived from monthly forecasts per decision A |
+| 2 | same, RESOLUTION `:76-84` | "no date-derivation and no 4-calendar-quarter mapping; 'quarter' is a single quarterly product" | **Service owner's text: do not edit.** Add a note after `:84`: "hv = config lead" and "no date-derivation" **still hold**; "no 4-calendar-quarter mapping" holds for `horizon_value`; the **windows** are calendar quarters. **Send it to the service owner before merging** (D4) |
+| 3 | MIG-008 `doc/plans/issues/mid_prio_gi_draft_migration_long_forecast_quarter_season_horizon_value.md:24-26, 38-40` | "the 'quarter is 7 rolling windows / should map to calendar quarters' reading was **wrong**" | Add a note after `:38-40`: the calendar reading is correct for **windows**; the hv conclusion stands. The note carries the "still needs adapting" list below |
+| 4 | `doc/plans/module_issues.md` MIG-008 row (`:86`) | "no date-derivation, no calendar-quarter mapping. Quarter is a single product" | Suffix: "; windows = calendar Q1–Q4 (amended 2026-09-26, DOC-009)" |
+| 5 | `doc/prod/longforecast_historical_data_decision_request.md:15-16, 34, 43-44, 52, 92-93` | Dataset B is "the exact mapping the convention rejected"; keep-set "QUARTER hv1, the Mar-Sep LR rows = the current Kyrgyz quarterly product" | Add adjacent notes. Dataset B's calendar **windows** are valid product windows; only its hv = quarter number is off-convention. In the keep-set, only the 25 Mar/Jun/Sep issues are product; 25 Apr/May/Jul/Aug are not. The counts are from 2026-06-22 and must be re-measured. **Owner sign-off** (data governance) |
+
+**MIG-008 "still needs adapting" list (row 3):**
 - (a) Rolling-window rows are not product.
 - (b) A Tajik quarter backfill keeps only calendar windows (Jan/Apr/Jul/Oct issues) before writing hv0.
 - (c) Q1 hindcasts are missing (LTF-014 P2).
-- (d) Three date populations exist for quarter rows (PP-064 § Mechanism 5). For tjhm the flag-OFF
-  rewrites share the native key (PP-061).
+- (d) Three date populations exist for quarter rows (PP-064 § Mechanism and problems, item 5). Only the
+  flag-OFF rewrites and the hv0 legacy rows share the native key; tjhm legacy rows at hv ≥ 1 are
+  dropped by selection.
+- (e) Stored MONTH windows can be offset or mislabelled (tjhm hindcast rows; the kghm GBT-family
+  January year). LTF-016 fixes them.
 
-## P2 — readmes (independent)
+## P2 — readmes and data-flow doc (rewrites allowed)
 
-| # | File:line | Edit |
-|---|---|---|
-| 11 | `apps/long_term_forecasting/readme.md:41, 89-104, 193, 206-207` | Quarter targets calendar quarters. The issue months are set per model by `forecast_months` in `models_and_scalers/long_term_forecasting/quarter/*/*/general_config.json` (kghm `[3,6,9,12]`, tjhm `[1,4,7,10]`). `forecast_days` there is overwritten from the mode JSON. The target is a 90-day window shifted by `offset`, labelled as the quarter |
-| 12 | `apps/postprocessing_forecasts/README.md:14, 17-18` | Window = calendar quarter. Quarterly raw models: LR_Base and LR_SM from their native quarter mode, plus the seven other models as same-issue, unweighted averages of their monthly forecasts, with null quantiles (PP-065; state the trunk status at the time of writing). Season: LR_Base/LR_SM only. Stored `date` of quarter rows: the native issue date; `valid_from` for flag-OFF postprocessing rewrites; legacy rows of other shapes may exist (PP-064 § Mechanism 5) |
+| # | File:line | Depends on | Edit |
+|---|---|---|---|
+| 10 | `doc/data_flow_long_term.md:240-242, 270-273` | — | For long forecasts `horizon_value` is the **lead**, not the quarter number. **Year-specific actuals** (`previous`/`current`): join on `code` + calendar quarter from `valid_from` + target year. **Climatology** (`norm`): join on `code` + quarter; the reference snapshot for a December-issued Q1 is overview D6 / FD-030 D3. Say so; do not decide it here |
+| 11 | `apps/long_term_forecasting/readme.md:41, 89-104, 193, 206-207` | after LTF-014 P0; currently `[3..9]` | Quarter targets calendar quarters. The issue months are set per model by `forecast_months` in the data-repo `models_and_scalers/long_term_forecasting/quarter/*/*/general_config.json` (kghm `[3,6,9,12]`, tjhm `[1,4,7,10]`). `forecast_days` there is overwritten from the mode JSON (`apps/long_term_forecasting/config_forecast.py:157-179`). The target is a 90-day window shifted by `offset`, labelled as the quarter |
+| 12 | `apps/postprocessing_forecasts/README.md:14, 18-19, 305-320`; `doc/data_flow_long_term.md:259-262` | after PP-065 | Window = calendar quarter. Quarterly raw models: LR_Base and LR_SM from their native quarter mode (derived from monthly while decision G's fallback is active), plus the seven other models as same-issue, unweighted averages of their monthly forecasts at leads L..L+2 (decision A). Derived quarters need 3 of 3 months, not the 2-of-3 tolerance (`QUARTER_MIN_MONTHS`, `src/aggregation.py:38`). They have null quantiles; bounds are forecast ∓ δ at display time (decision D; `apps/forecast_dashboard/src/processing.py:1243`). Ensembles: Q-ENS (same rules as monthly). Season: LR_Base/LR_SM only. Stored `date` of quarter rows: the native issue date; `valid_from` for flag-OFF postprocessing rewrites (unless PP-064 B6 has landed); legacy rows of other shapes may exist (PP-064 § Mechanism and problems, item 5). State the trunk status at the time of writing |
 
-**Not edited** (dated observations or out of scope):
+**Not edited** (dated observations, historical records, or out of scope):
 - `doc/plans/postprocessing_unified_plan.md:469`
-- `doc/dev/review_checklist_server_2026-06-24_kyg_lt_deploy.md:442-443`
-- the other archive files (`longforecast_hv_convention_plan.md`,
-  `issues/archive/high_prio_gi_draft_ltf_monthly_horizon_value_semantics.md`)
+- `doc/dev/review_checklist_server_2026-06-24_kyg_lt_deploy.md:442-443` (gitignored, local only)
+- `doc/plans/issues/archive/high_prio_gi_draft_ltf_monthly_horizon_value_semantics.md`
+- `doc/prod/ppipe_ensemble_hv_deploy_runbook.md:15-45` (the 2026-06-23 PR #383 update record)
+- `doc/plans/working/*` (dated working notes)
 - `apps/forecast_skill_eval` (overview, deferred findings)
 
 ## Agent constraints
 
-**Files**: exactly those in the tables, plus `doc/plans/module_issues.md` (MIG-008 row only). No code,
-no tests, nothing under `sapphire/services/`.
+**Files**: exactly those in the three tables, plus `doc/plans/module_issues.md` (the MIG-008 and PP-056
+rows only). No code, no tests, nothing under `sapphire/services/`.
 
 **Instruction**: *"Do NOT change any existing function signatures, data flow logic, or control flow.
 Your changes must be purely additive or modify only the specific behavior described."* For docs, this
-means: append amendments, warnings and notes; do not delete or reword existing text, tables or counts.
+means the edit rules above: adjacent notes and warnings, except the P2 rewrites.
 
 ## Acceptance criteria
 
 - **Per-claim check.** For each row, the reviewer confirms that the specific passage cited is now
-  qualified by an adjacent note or by an amendment that names it. "An amendment exists somewhere in the
-  file" is not enough.
-- `git diff` shows only additions, apart from the MIG-008 index row's appended clause.
-- **Sweep, run per directory** (a `grep -r` from the repo root under-reports):
+  qualified by an adjacent note or banner that names it. "An amendment exists somewhere in the file" is
+  not enough.
+- **Additions only for decision records and runbooks**: `git diff --numstat` shows ≤ 1 deletion per
+  P1a/P1b file (≤ 2 for `module_issues.md`). P2 files are exempt.
+- **Inventory table** in the PR: one row per hit of the sweep below, each with a verdict: *qualified by
+  row N*, *not edited (list above)*, *season-only / short-term / unrelated*, or *allowlisted*.
+  Allowlisted: the plan-set files (the overview, PP-064, PP-065, LTF-014, LTF-015, LTF-016, FD-029,
+  FD-030, this file) and their `module_issues.md` rows.
   ```bash
-  for d in doc/prod doc/plans doc apps/long_term_forecasting apps/postprocessing_forecasts; do
-    grep -rn -i -E "7 windows|rolling (monthly|3-month|Mar-Sep)|not 4 calendar|calendar-quarter mapping|Mar-Sep|calendar-.?hv1" --include='*.md' "$d"
+  P="7 windows|rolling (monthly|3-month|Mar-Sep)|not 4 calendar|calendar-quarter mapping|Mar-Sep|calendar-.?hv1|deprecated (quarter|model)|7 deprecated|seven (deprecated|models)|mean\(LR|LR-only|\bEM = |two-model|NOT IN \(|period keys|aggregated from monthly|all 9 models"
+  for d in doc apps bin; do   # per directory: grep -r from the repo root under-reports
+    grep -rn -i -E "$P" --include='*.md' --include='*.sh' "$d"
   done
   ```
-  Every hit is either qualified per the rule above or on the "not edited" list.
-- The service owner has acknowledged #2, and the owner has signed off #5 (linked in the PR).
+- The service owner has acknowledged #2 and the owner has signed off #5 before P1b merges (both linked
+  in the PR).
