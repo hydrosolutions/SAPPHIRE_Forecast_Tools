@@ -1,8 +1,8 @@
 # LTF-015: Refuse an early long-term run that falls in a different calendar month than its scheduled issue date
 
-**Status**: Draft (2026-09-26, rev 5 after the third review round). Fix contract decided by the owner on
+**Status**: Draft (2026-09-26, rev 6 after the fourth review round). Fix contract decided by the owner on
 2026-09-26 (overview decision H / D7: refuse, no relabel; round-2 decision 6: warn on same-month early
-runs). Ready to implement after LTF-014 P1.
+runs). Ready to implement; LTF-014 P1 is deferred with P0, so there is no hard dependency on it.
 **Module**: `apps/long_term_forecasting`
 **Priority**: Medium. Live today for the tjhm month modes, independent of LTF-014; it reaches the tjhm
 quarter once LTF-014 P0 adds the Jan 1 and Oct 1 issues. It affects **direct/manual runs** made 1–5 days
@@ -15,11 +15,15 @@ within ±10 days):
 **Labels**: `long-term`, `bug`, `scheduling`
 **Found**: 2026-09-25, read-only simulation while mapping LTF-014; value impact confirmed in the 2026-09-26
 review round
-**Depends on**: LTF-014 P1 (both edit `apps/long_term_forecasting/tests/test_lt_utils.py`; P1 adds a
-`check_valid_forecast_issue_date` test block there). **Sequencing with DOC-009:** both edit
-`apps/long_term_forecasting/readme.md`. LTF-015 edits `:165-180`; DOC-009 P2 row 11 edits `:41`,
-`:89-103`, `:193`, `:206-207`. The ranges are disjoint, but DOC-009's rewrites shift line numbers: land
-LTF-015 after DOC-009 P2, or rebase and re-locate the section by its heading "When Forecasts Run".
+**Depends on**: nothing hard. LTF-014 P1 is deferred with P0 (owner, 2026-09-26); only shared-file
+sequencing remains:
+- **LTF-014 P1:** both edit `apps/long_term_forecasting/tests/test_lt_utils.py` (P1 adds a
+  `check_valid_forecast_issue_date` test block there). LTF-015 runs before or after P1; whichever lands
+  second rebases.
+- **DOC-009 P2b:** both edit `apps/long_term_forecasting/readme.md`. LTF-015 edits `:165-180`; DOC-009 P2b
+  row 11 (after LTF-014 P0, deferred) edits `:41`, `:89-103`, `:193`, `:206-207`. The ranges are
+  disjoint, but row 11's rewrites shift line numbers: whichever lands second rebases and re-locates the
+  section by its heading "When Forecasts Run".
 **Related**: LTF-014, LTF-007
 
 ## Problem

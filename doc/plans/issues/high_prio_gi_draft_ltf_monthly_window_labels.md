@@ -1,6 +1,6 @@
 # LTF-016: Monthly rows written before February 2026 carry offset windows or the wrong January year
 
-**Status**: Draft (2026-09-26, rev 5 after the third review round). This is the follow-up to decision A of
+**Status**: Draft (2026-09-26, rev 6 after the fourth review round). This is the follow-up to decision A of
 the calendar-quarter plan set.
 **Module**: `apps/long_term_forecasting` (verification only; **no producer change**).
 The data fixes are in `long_forecasts` and need the postprocessing service owner.
@@ -99,15 +99,35 @@ Dropbox CSVs; aggregate counts only.
 **P0 — measure, read-only, per server.** Aggregate counts only.
 - **Full calendar-window contract audit** (both defects). A MONTH row passes only if all hold, with
   `hv` = the stored `horizon_value`:
-  - target month and year = `date` month + `hv` (year-aware, as `post_process_lt_forecast.py:450-469`);
-  - `valid_from` = day 1 of that target month and year;
-  - `valid_to` = the last day of that target month;
-  - `date.day` = the mode's configured `operational_issue_day`.
+  - **window clauses:**
+    - target month and year = `date` month + `hv` (year-aware, as `post_process_lt_forecast.py:450-469`);
+    - `valid_from` = day 1 of that target month and year;
+    - `valid_to` = the last day of that target month;
+  - **schedule clause:** `date.day` = the mode's configured `operational_issue_day`.
 
   Count failures by org × flag × model × failed clause. "Zero rows with `valid_from` not on day 1" is not
   proof: it misses the day-1-start / wrong-end rows above.
+- **Split the failing rows into two disjoint populations.** The manifest (P2) uses the same split.
+  - **Remediation population (proven stale-label defects):**
+    - every row that fails a window clause;
+    - every hindcast-flag row (flag 1 or 3, `calibrate_and_hindcast.py:237-242`) that fails only the
+      schedule clause. The current hindcast keeps issue-day rows only (`calibrate_and_hindcast.py:250-254`),
+      and recovery (flags 1/2) writes only the exact scheduled date (`lt_recovery.py:329-347`), so such a
+      row predates `fdfb6ae1`;
+    - the ensemble rows at those keys.
+  - **Off-schedule rows (preserved by default):** operational-flag rows (flag 0 or 2,
+    `run_forecast.py:368-378`) that pass every window clause and fail only the schedule clause, plus the
+    ensemble rows at their keys. The current producer writes them: a run up to 5 days before the scheduled issue
+    date is accepted and dated **today** (`lt_utils.py:194-228`; window `:202-209`, warning `:219-227`),
+    and LTF-015 keeps accepting same-month early runs. Report them per org × model, split into:
+    - same calendar month as the scheduled issue date: permitted current-producer early runs; kept;
+    - previous calendar month (issue days 1–5): the LTF-015 defect, with corrupted values as well as
+      labels. Also kept by default; deleting them is a separate owner decision;
+    - any other: listed for the owner, kept by default.
 - **Defect 1:** MONTH rows by org × flag × model × (`valid_from` on day 1?) × (`date.day` = the mode's
-  issue day?). Count rows with `date.day` ≠ the issue day separately; they are never operational.
+  issue day?). Count rows with `date.day` ≠ the issue day separately: flag ON never selects them
+  (`data_reader.py:346-353`), but the flag-0/2 ones with a correct window are off-schedule rows (above),
+  not defects.
 - **Defect 1, flag-ON collision:** issue-day MONTH rows whose lead derived from `date` and `valid_from`
   differs from the stored `horizon_value`.
 - **Defect 2:** MONTH rows by org × model × issue month where the target month (issue month + hv) is
@@ -130,13 +150,24 @@ Dropbox CSVs; aggregate counts only.
 
 **P2 — data fix: re-import and delete, never relabel or snap in place.** The owner and the service owner
 run it; it is a one-way step.
-- **Before anything:** a per-org backup of the MONTH `long_forecasts` and `skill_metrics` rows
+- **Pause every writer for the whole import → delete → recalc window** (ops instruction, not code):
+  - the MONTH producers: LT cron runs, manual `run_forecast.py` runs and `lt_recovery`;
+  - postprocessing operational runs;
+  - long-term maintenance (`LongTermPostProcessingMaintenance`,
+    `apps/pipeline/pipeline_docker.py:1946-1972`; `run_maintenance_postprocessing_long_term` in
+    `apps/run_locally.sh`, e.g. `:1745-1748`);
+  - recalc runs other than the ones in the steps below, and any manual writer;
+  - if PP-065 is live, the quarterly consumers too: they derive quarters from these MONTH rows.
+
+  Wait for running jobs to finish before the backup. Resume only after the post-checks pass.
+- **Before anything else:** a per-org backup of the MONTH `long_forecasts` and `skill_metrics` rows
   (`pg_dump`/`COPY`), kept out of the repo.
 - **Manifest before any delete** (private, not in the repo): the full natural key of every row to delete
   (`horizon_type`, `horizon_value`, `code`, `date`, `model_type`, `valid_from`, `valid_to`;
   `sapphire/services/postprocessing/app/models.py:193-202`), each paired with its corrected counterpart
   (the key the regenerated or re-imported row carries, or "none" with a reason). Deletes run only on keys
-  in the manifest; a key without a counterpart needs owner sign-off.
+  in the manifest; a key without a counterpart needs owner sign-off. Only remediation-population rows (P0)
+  enter the manifest. Off-schedule rows go into the preserve set unless the owner signs off a subset.
 - **Import mechanism for both defects:**
   - run the migrator in full-import mode (no `--cutoff`/`--cutoff-map`, `long_forecast.py:736`) with
     `--mode`/`--model`;
@@ -164,16 +195,20 @@ run it; it is a one-way step.
      - Choose the write set the same way: a scratch output path, `SAPPHIRE_API_ENABLED=false`
        (`lt_utils.py:405`), then a filtered import.
      - This is a modeller + owner decision.
-  2. **Delete the raw rows:** MONTH rows that fail **any** clause of the P0 calendar-window contract
-     (not only `valid_from` off day 1: the day-1-start / wrong-end rows too), including every row whose
-     `date.day` is not the mode's issue day, plus the ensemble rows at those keys. Only manifest keys.
+  2. **Delete the raw rows:** the P0 remediation population. That is MONTH rows that fail **any** window
+     clause (not only `valid_from` off day 1: the day-1-start / wrong-end rows too), flag-1/3 rows whose
+     `date.day` is not the mode's issue day, and the ensemble rows at those keys. Only manifest keys. The
+     off-schedule rows are **not** deleted by default.
      - Snapping in place is **not** allowed: it would give non-issue-day rows a calendar window and make
        them look operational.
      - The deletion also removes pre-fix flag-0 rows; their regenerated replacements carry flag 1. The
        owner accepts this or keeps a preserve list.
   3. Run the monthly recalc (as above) to regenerate the ensembles and the skill.
 - **Post-checks:**
-  - the P0 full-contract audit reports 0 failures on every clause, and the defect-2 count is 0;
+  - the P0 audit reports an empty remediation population (0 failures on every window clause, 0 flag-1/3
+    schedule failures), and the defect-2 count is 0;
+  - the preserved off-schedule rows are reported separately: the same count per org × model as before
+    P2, and their raw rows unchanged by natural key and value (private compare against the backup);
   - a named day-1-start / wrong-end case is checked explicitly: tjhm month_2, Jan-1 issue, has
     `valid_to` on the last day of February, not 03-03;
   - every manifest key is gone and its counterpart present;
@@ -197,7 +232,8 @@ run it; it is a one-way step.
   4. Verify the merged file:
      - no manifest key remains, and every counterpart is present;
      - every preserved append is unchanged;
-     - the P0 contract audit on the file reports 0 failures;
+     - the P0 audit on the file reports an empty remediation population; preserved off-schedule rows
+       are reported separately;
      - a test fixture covers a defective operational-row collision alongside an unaffected append;
      - a **dry-run import** of the published CSV passes.
   5. Update the authoritative server copy **and** the Dropbox copy.

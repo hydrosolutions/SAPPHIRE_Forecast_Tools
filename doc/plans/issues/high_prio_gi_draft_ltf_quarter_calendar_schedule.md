@@ -1,15 +1,16 @@
 # LTF-014: Issue the quarter forecast once per calendar quarter (Q1–Q4), not monthly Mar–Sep
 
-**Status**: Draft (2026-09-26, rev 5 after the third review round)
+**Status**: Draft (2026-09-26, rev 6 after the fourth review round)
 **Module**: `apps/long_term_forecasting` (tests only) + per-deployment data repos (config)
-**Priority**: **High.** Target dates (soft):
-- **tjhm Q4, issue 2026-10-01.** The current config skips it. It can be recovered with `lt_recovery`
-  until 2026-11-30 once P0 is done (`apps/long_term_forecasting/lt_recovery.py:282-306`,
-  `check_recovery_window`), so this is not a reason to skip the P0 gate. Recovery **refuses** if any
-  member row for that date already exists (`lt_recovery.py:682-689`); see P0 gate step 2. The owner chose
-  (2026-09-26) to clear the pre-existing tjhm rows dated 2026-10-01 **standalone, immediately before the
-  recovery**, independent of the postprocessing deploy. See **P0b** below.
-- **kghm Q1, issue 2026-12-25.**
+**Priority**: **High.** Target dates (soft). **Both are deferred with P0 (owner, 2026-09-26)**; the
+calendar Q1 and tjhm Q4 products come from PP-065's derived path and decision-G fallback meanwhile:
+- **tjhm Q4, issue 2026-10-01** (deferred; P0b is moot). The current config skips it. It can be
+  recovered with `lt_recovery` until 2026-11-30 once P0 is done
+  (`apps/long_term_forecasting/lt_recovery.py:282-306`, `check_recovery_window`), so this is not a reason
+  to skip the P0 gate. Recovery **refuses** if any member row for that date already exists
+  (`lt_recovery.py:682-689`); see P0 gate step 2. While P0 is deferred, the pre-existing tjhm rows dated
+  2026-10-01 are cleared by decision F (PP-064), not by P0b.
+- **kghm Q1, issue 2026-12-25** (deferred).
 
 **Labels**: `long-term`, `quarter`, `config`, `deployment`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
@@ -89,7 +90,8 @@ who. Code agents do not run P0.
 >   - PP-064 makes the Mar–Sep rolling issues inert (excluded).
 >   - PP-065 supplies Q1 (both orgs) and tjhm Q4 from monthly forecasts: the seven models, plus LR via the
 >     decision-G fallback, which becomes the standing source for those quarters.
-> - Deferred with P0: **P0b** (moot, because no native Oct-1 quarter run is due), **P2**, and PP-065 **P3**.
+> - Deferred with P0: **P0b** (moot, because no native Oct-1 quarter run is due), **P1** (its lock tests
+>   guard configs that will not be deployed), **P2**, and PP-065 **P3**.
 > - The owner **confirmed that LR_Base/LR_SM are valid for winter issues** (gate item 1, second part).
 > - **D2 is resolved**: the P2 procedure (scratch config copy, scratch output, CSV only, filtered import,
 >   durable publication) is approved for when P0 resumes.
@@ -246,7 +248,8 @@ Do not change the mode JSONs, the cron lines or the issue days.
 
 ### P0b — Recover tjhm Q4 2026 if the Oct 1 run is missed (ops; owner decision 2026-09-26, option a)
 
-**Status:** moot while P0 is deferred (2026-09-26); kept for when P0 resumes.
+**Status:** moot; expires 2026-11-30 (the recovery window, `lt_recovery.py:282-306`,
+`check_recovery_window`); only meaningful if P0 resumes before then.
 
 **When:** only if tjhm P0 is in place and no genuine Oct-1 quarter run exists. Genuine means the LT
 module's own `<model>_forecast.csv` has no 2026-10-01 quarter row. Any time before 2026-11-30
@@ -275,6 +278,10 @@ module's own `<model>_forecast.csv` has no 2026-10-01 quarter row. Any time befo
 **Rollback:** re-import the exported rows.
 
 ### P1 — Lock the calendar schedule with additive tests (code agent)
+
+**Status: deferred with P0 (owner, 2026-09-26).** Its lock tests guard configs that will not be
+deployed while P0 is deferred. LTF-015 therefore depends only on the shared-file sequencing
+(`tests/test_lt_utils.py`): it runs before or after P1, and whichever lands second rebases.
 
 These are **lock tests**. They pass on trunk by design and prove the code handles the new month lists.
 They do **not** prove the deployed config (only P0 steps 3–6 do).

@@ -1,6 +1,6 @@
 # FD-030: The month bulletin's quarterly section uses the monthly norm, and publishes an arbitrary model
 
-**Status**: Draft (2026-09-26, rev 5 after the third review round). **Blocked on owner decisions
+**Status**: Draft (2026-09-26, rev 6 after the fourth review round). **Blocked on owner decisions
 D6a–D6c below**; the agent brief in P1 applies once they are recorded in this file.
 **Module**: `apps/forecast_dashboard`
 **Priority**: Medium. The quarterly section of reservoir bulletins publishes wrong numbers today: % of norm,
@@ -123,10 +123,13 @@ flow. Your changes must be purely additive or modify only the specific behavior 
    - starts from FD-029's output of `get_long_forecasts_quarter`: calendar quarters only, LR_Base/LR_SM
      native only (non-native LR never returned), every other model the native row if present, else the
      latest `date` with the `id` tie-break (FD-029 item 5; this inherits its fresh-over-legacy rule), one
-     row per model and target quarter, eligible quarters only. The helper does **not** re-apply the
-     native rule, so a flag-OFF Skilled Mean or derived row dated `valid_from` stays selectable;
+     row per model and target quarter, eligible quarters only, quarter `EM` rows already dropped. The
+     helper does **not** re-apply the native rule, so a flag-OFF Skilled Mean or derived row dated
+     `valid_from` stays selectable. Where LR nativeness matters it reads FD-029's `is_native` column
+     (False for every row when FD-029 runs degraded); where an issue date is needed (e.g. the optional
+     issue-date tag) it reads `quarter_issue_date`, never the row's `date`;
    - selects the D6b-eligible quarter, then the D6a product with its fallback order. `EM` is never a
-     candidate.
+     candidate (FD-029 already excludes it; the helper keeps the guard).
    - A fallback quarter has no LR row (FD-029 "Behaviour after", item 6; round-2 decision 3), so a named
      LR product is absent there and D6a's fallback order applies.
 2. **δ bounds (overview decision D).** When the chosen row has null `Q25`/`Q75`, set the bounds to
