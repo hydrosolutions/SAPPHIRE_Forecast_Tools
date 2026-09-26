@@ -200,8 +200,27 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   - No `date` column → skip the bound.
 
 **First-year Q1 (Problem 7), flag OFF only**
-- Read issue years from `start_year − 1`, then `_trim_to_target_year_range(direct, "year", start_year,
-  end_year)`, mirroring flag ON (`:3110-3111, 3137`). Keep the `horizon_value` filter.
+- Read issue years from `start_year − 1` (`:3110-3111`). Keep the `horizon_value` filter unchanged. Do
+  **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3137`) here — an earlier version
+  of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
+- Drop a direct row only when its issue year **and** target year are both `< start_year` — a normal,
+  non-cross-year issue/target pair fully inside `start_year − 1` that the widening admits but trunk's
+  original `[start_year, end_year]` issue-date read would not have returned.
+- Every other row the widened read admits is kept unconditionally, regardless of target year:
+  - a **backfill** row (issue year `>= start_year`, target year `< start_year`, e.g. a Q4
+    `start_year − 1` row issued in January of `start_year`, #521-style) — trunk had no target-year trim
+    at all and returned these;
+  - a row whose issue `date` is null or unparseable — trunk's API-side year filter could not have
+    excluded it by year either;
+  - a row whose target year is `> end_year` (e.g. a Dec-`end_year`-issued Q1 of `end_year + 1`) — this
+    one must survive so the direct row keeps precedence over a same-target monthly-derived (Source 1)
+    row in the later `drop_duplicates(keep="last")` combine.
+- Locked by `TestA10FirstYearQ1FlagOff` (first-year Q1 read; lower-bound trim),
+  `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening` (next-year Q1 direct row wins over
+  monthly-derived), `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (prior-year backfill row
+  survives, with and without a competing monthly-derived row) and
+  `TestUnparseableIssueDateKeptRegardlessOfTargetYear` (null/unparseable issue date kept) in
+  `tests/test_quarter_calendar_window.py`.
 
 **Tests (Arrange → Act → Assert, station `19999`)**
 
@@ -258,8 +277,12 @@ stable.)
   (Oct–Dec) and 2026-12-25 (Jan–Mar 2027) → `read_latest_quarterly_forecasts` returns Q4 2026. Flag OFF
   fails on trunk; flag ON must fail if the date bound is removed after the year bound is widened.
 - **A-10. First-year Q1, flag OFF.** A direct row issued 2024-12-25 for 2025-01-01..03-31 at hv1:
-  `read_quarterly_forecasts(codes, 2025, 2025)` returns it as Q1 2025, and a row issued 2025-12-25 for
-  Q1 2026 is trimmed. Fails on trunk.
+  `read_quarterly_forecasts(codes, 2025, 2025)` returns it as Q1 2025
+  (`test_december_issued_q1_of_first_year_is_read`). Fails on trunk. A row issued and targeting inside
+  2024 (issue year and target year both `< start_year`) is dropped
+  (`test_widened_window_still_trims_target_years_below_start_year`). A row issued 2025-12-25 for Q1 2026
+  is **kept, not trimmed** — see the next-year-precedence regression classes above, which own that
+  scenario: it must keep precedence over a same-target monthly-derived row.
 
 **Acceptance**:
 - Record the full module suite counts before editing (a reviewer's simulated Chunk A gave 1832 passed /

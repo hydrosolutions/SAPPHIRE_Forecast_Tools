@@ -149,6 +149,17 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `valid_from` coexist with fresh rows dated at the issue date, and "latest `date`" alone would pick the
      legacy row. Rule: the native row if one exists; otherwise the latest `date`, ties broken by the
      highest API `id`.
+   - **Known limitation (accepted): rollback from flag ON to OFF.** Rows written while
+     `SAPPHIRE_SKILL_LEAD_AWARE` was ON are native-shaped (`date` = the schedule issue date, the Contract
+     rule). After a rollback to OFF, fresh rows are re-dated to `valid_from` (`api_writer.py:1199-1204`)
+     and are non-native for any mode whose lead is not 0 (e.g. kghm, lead 1). The dedup sorts `is_native`
+     ahead of `date` (`src/db.py:1016-1023`: `sort_values(["is_native", "date"], ascending=[False,
+     False])`, `drop_duplicates(..., keep="first")`), so an older flag-ON native row keeps outranking a
+     newer flag-OFF rewrite for the same `(code, model_short, year, quarter_in_year)` until the old
+     native row is deleted or a fresh write lands at its exact key. Unlike the "Flag OFF" bullet below,
+     the upsert does not clear this twin: `date` is part of the natural key, so a flag-OFF rewrite (dated
+     `valid_from`) and the old flag-ON native row (dated the issue date) occupy different keys and both
+     persist. Accepted as a documented rollback caveat, not a defect this plan fixes.
    - **Move the `id` drop.** Today `id` is dropped **before** the dedup (`drop_cols` at `src/db.py:852`),
      so the tie-break has nothing to read. Drop `id` after the dedup instead; the `horizon_type` and flag-OFF
      `horizon_value` drops stay where they are. When the response has no `id` column, keep today's order
