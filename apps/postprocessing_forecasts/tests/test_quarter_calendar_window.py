@@ -767,3 +767,34 @@ class TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim:
         got = dict(zip(q4_2024["model_short"], q4_2024["forecasted_discharge"], strict=False))
         assert got.get("LR_Base") == 100.0
         assert got.get("LR_SM") == 120.0
+
+
+# ===========================================================================
+# Mutation-check gap (round-3 review of a1da0fb5's drop_mask): a row whose
+# issue `date` is null/unparseable must be kept regardless of target year,
+# because trunk's API-side year filter could not have excluded it by year
+# either. This is NOT covered by the two regression classes above (both
+# use well-formed issue dates), so a mutation that treats a null issue
+# year as droppable passed the suite unnoticed.
+# ===========================================================================
+
+
+class TestUnparseableIssueDateKeptRegardlessOfTargetYear:
+    def test_unparseable_date_backfill_row_is_kept(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        # Calendar Q2 2024 (target year < start_year=2025), issue date
+        # unparseable -- the fake returns it unconditionally, as if the
+        # real API had served it regardless of our requested year range.
+        row = _quarter_row("2024-04-01", "2024-06-30", "not-a-date", model="LR_Base", q=100.0)
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame([row])
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2024) == 1
+        assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0
