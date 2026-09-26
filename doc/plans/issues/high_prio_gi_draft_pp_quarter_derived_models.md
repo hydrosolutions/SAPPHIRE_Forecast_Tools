@@ -275,9 +275,12 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      would pass the native-row rule forever. Native LR rows are owned by the LT module.
    - **Consequences:**
      - flag-OFF output changes (fewer rows written), and flag-OFF rewrites of LR rows (population b) stop;
-     - **fallback LR is invisible (accepted, round-2 decision 3):** the dashboard card and the bulletin
-       read the DB, so they show no LR row for fallback quarters until LTF-014 P0/P2. LR still enters the
-       ensembles and skill.
+     - **fallback LR is invisible (accepted, round-2 decision 3) — on kghm.** The dashboard card and the
+       bulletin read the DB, so they show no LR row for fallback quarters until LTF-014 P0/P2. **On tjhm**,
+       monthly-derived LR may remain visible as native until **both** this item (P1b) **and** decision F
+       have landed (decision F runs after `deploy.pp` in the overview's dependency graph, i.e. inside the
+       same writer-paused window, not automatically the moment P1b merges) — see the round-4 tjhm interim
+       decision. LR still enters the ensembles and skill regardless of visibility.
      - **EM interim, until this item ships.** PP-064 A (already deployable/deployed independently of this
        plan) still writes fresh quarterly EM rows today: `ensemble_calculator.py` sets
        `model_short = "EM"` directly in the quarter aggregation path
@@ -617,7 +620,9 @@ contaminated quarter skill.
   irreversible, which is why the export is taken first.
 
 **Operationally:** on the next quarter issue day, derived rows appear on the dashboard with δ bounds
-(FD-029). Fallback quarters show no LR row (round-2 decision 3; hydromet notice).
+(FD-029). Fallback quarters show no LR row on kghm (round-2 decision 3; hydromet notice); on tjhm a
+monthly-derived LR row may still appear as native until decision F, run inside this same window, has
+also completed (round-4 tjhm interim).
 
 ### P3 — remove the LR fallback
 

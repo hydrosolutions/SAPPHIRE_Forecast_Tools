@@ -55,7 +55,8 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
 2. **Old persisted ensemble rows are accepted for now.** This covers the fixed-LR EM and the old Naive and
    Skilled Mean rows. They stay in `long_forecasts` (D8 / PP-041).
 3. **Fallback LR rows are not persisted and are accepted as invisible.** The dashboard card and the bulletin
-   show no LR row for fallback quarters until LTF-014 P0/P2.
+   show no LR row for fallback quarters until LTF-014 P0/P2 (tjhm exception until PP-065 P1b + decision F:
+   see the round-4 tjhm interim decision).
 4. **Decision F is by provenance.** Remove tjhm LR QUARTER rows with `date = valid_from` that have no
    counterpart in the LT module CSV, in any quarter, 2026 included.
    - Option (a), the standalone clear-and-recover step LTF-014 P0b, is **moot** while P0 is deferred.
