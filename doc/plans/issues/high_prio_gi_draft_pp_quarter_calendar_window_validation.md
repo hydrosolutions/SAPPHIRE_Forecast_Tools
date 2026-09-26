@@ -319,8 +319,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
        manifest and escalated, not silently kept.
    - **Delete** the manifest's non-counterpart rows in a reviewed step with the service owner, after the
      backup. Decision G's fallback then derives LR for those quarters (not persisted; round-2 decision 3).
-   - F also owns **clearing the pre-existing tjhm rows dated 2026-10-01** before any `lt_recovery` of that
-     date (LTF-014 points here).
+   - The pre-existing tjhm rows dated 2026-10-01 are **not** F's job any more. The owner chose a standalone
+     clear-and-recover step (LTF-014 **P0b**, 2026-09-26). If P0b has already run, its recovered flag-1 LR
+     rows are genuine: put them in F's preserve manifest.
    - Private before/after DB-vs-CSV value check afterwards.
 4. **Recalc** with each deployment's actual flag state (`doc/prod/long_term_deploy_runbook.md`
    § Lead-aware skill).

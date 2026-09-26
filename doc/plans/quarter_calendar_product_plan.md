@@ -48,7 +48,9 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
    show no LR row for fallback quarters until LTF-014 P0/P2.
 4. **Decision F is by provenance.** Remove tjhm LR QUARTER rows with `date = valid_from` that have no
    counterpart in the LT module CSV, in any quarter, 2026 included.
-   - F also clears the tjhm rows dated 2026-10-01 before any recovery.
+   - **Superseded for 2026-10-01:** the owner chose option (a). A standalone clear-and-recover step
+     (LTF-014 P0b) runs before 2026-11-30, independent of the postprocessing deploy. F preserves its
+     recovered rows.
    - Take a preserve manifest, a dry run and a backup first.
 5. **PP-065 is on the 2026-12-25 critical path.** Its fallback guarantees a kghm Q1 even without LTF-014 P0.
 6. **Early kghm runs** on the 20th–24th are accepted but produce no quarter product. They log a WARNING.
@@ -169,6 +171,7 @@ Stages:
     "DOC-009.P1b":     { "stage": "merge",  "depends_on": ["D4"] },
     "DOC-009.P2":      { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm", "PP-065.P1d"] },
     "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "target": "2026-10-01, recoverable until 2026-11-30" },
+    "LTF-014.P0b":     { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm"], "deadline": "2026-11-30", "note": "only if the Oct-1 run was missed: pause crons, export, delete the tjhm 2026-10-01 QUARTER rows (service owner), lt_recovery, resume, verify" },
     "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "target": "2026-12-25" },
     "LTF-014.P1":      { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "LTF-014.P2":      { "stage": "ops",    "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm", "D2"] },

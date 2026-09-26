@@ -143,4 +143,5 @@ Each new test sets `forecast_mode` and `get_operational_month_lead_time.return_v
   unexpected skips.
 - `git diff --stat` shows only the three files above.
 
-> **Owner note (2026-09-26):** the owner accepted that same-month early runs produce no quarter product (round-2 decision 6). An early run of the **quarter mode itself** (kghm 20th–24th) likewise yields no product under PP-065's native-row rule. Extend the WARNING to that case (one line, same condition), or confirm with the owner in the PR that the existing early-run warning suffices.
+
+> **Quarter mode (2026-09-26).** An early kghm quarter-mode run on the 20th–24th also yields no quarter product under PP-065's native-row rule. It is already covered by the **existing** early-run warning (`lt_utils.py:219-223`). So the new line stays scoped to `month_1`–`month_3`, as above, and the quarter-mode exclusion test stays.
