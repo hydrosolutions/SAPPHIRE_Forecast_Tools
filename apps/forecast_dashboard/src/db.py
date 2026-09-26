@@ -10,6 +10,7 @@ from dashboard.logger import setup_logger
 from long_term_horizon_resolver import (
     LongTermHorizonResolverError,
     operational_lead_for_mode,
+    operational_schedule_for_mode,
     quarter_horizon_value,
     seasonal_config_name,
     seasonal_horizon_value,
@@ -814,15 +815,49 @@ def get_long_forecasts(station=None, horizon_value=1) -> pd.DataFrame:
 
 
 @_timed
-def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame:
-    """Fetch long-term quarterly forecasts and reshape to match monthly format."""
+def get_long_forecasts_quarter(
+    station=None, horizon_value=None, today: date | None = None
+) -> pd.DataFrame:
+    """Fetch long-term quarterly forecasts and reshape to match monthly format.
+
+    FD-029 P1: the fetch window is resolved at call time (never at import
+    time), only calendar quarters (Q1-Q4) are ever returned, a target
+    quarter is only returned once its configured issue date has arrived,
+    and — among the rows for a given target quarter — the model's genuine
+    operational ("native") issuance is preferred over a later rewrite or a
+    persisted derived row.
+
+    Args:
+        station: Optional station code or label; resolved via
+            `_resolve_station` and used to filter the request.
+        horizon_value: Optional explicit lead override for the API
+            request; resolved from the deployment's quarter config
+            (`_resolve_quarter_horizon_value`) when omitted.
+        today: The reference date for the fetch window (item 1) and the
+            eligibility cutoff (item 4). Defaults to `date.today()` at
+            call time — never evaluated at import time, unlike the
+            module-level `CURRENT_YEAR`/`PREVIOUS_YEAR` constants used by
+            other functions in this file.
+
+    Returns:
+        DataFrame with one row per (code, model_short[, horizon_value])
+        and eligible target calendar quarter. Two additional columns:
+        `is_native` (True iff the row is that model's genuine operational
+        issuance for the target quarter — always False when the
+        operational schedule cannot be resolved, i.e. "degraded" mode) and
+        `quarter_issue_date` (the schedule-computed issue date of the
+        target quarter; NaT when degraded).
+    """
     code = _resolve_station(station) if station else None
     resolved_horizon_value = _resolve_quarter_horizon_value(horizon_value)
+    today = today or date.today()
+    start_date = date(today.year - 1, 12, 1)
+    end_date = date(today.year + 1, 3, 31)
     params = {
         "horizon_type": "quarter",
         "horizon_value": resolved_horizon_value,
-        "start_date": f"{PREVIOUS_YEAR}-12-20",
-        "end_date": f"{CURRENT_YEAR}-12-31",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
     }
     if code:
         params["code"] = code
@@ -837,6 +872,7 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
             "forecasted_discharge", "flag",
             "Q5", "Q25", "Q75", "Q95", "E[Q]",
             "valid_from", "month_in_year", "quarter_in_year",
+            "is_native", "quarter_issue_date",
         ]
         if lead_aware:
             columns.append("horizon_value")
@@ -849,27 +885,115 @@ def get_long_forecasts_quarter(station=None, horizon_value=None) -> pd.DataFrame
         "q05": "Q5", "q10": "Q10", "q25": "Q25",
         "q50": "Q50", "q75": "Q75", "q90": "Q90", "q95": "Q95",
     }, inplace=True)
-    drop_cols = ["id", "horizon_type"]
+    # FD-029 P1 item 5: `id` is part of the tie-break for the dedup below,
+    # so it is kept through to there and dropped afterward instead of here.
+    drop_cols = ["horizon_type"]
     if not lead_aware:
         drop_cols.append("horizon_value")
     df.drop(columns=drop_cols, inplace=True, errors="ignore")
     df["valid_from"] = pd.to_datetime(df["valid_from"])
+    df["valid_to"] = pd.to_datetime(df["valid_to"])
     df["month_in_year"] = df["valid_from"].dt.month
-    df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
     df["Date"] = df["date"]
-    df["year"] = df["date"].dt.year
-    # Keep only the latest-by-date row per (code, model_short) — under the
-    # flag, also key on horizon_value (lead) so distinct-lead quarter rows
-    # for the same code/model are not collapsed into one another.
-    if not df.empty and "date" in df.columns and "code" in df.columns and "model_short" in df.columns:
-        dedup_subset = ["code", "model_short"]
+
+    # FD-029 P1 item 2: calendar quarters only. A rolling/backfilled window
+    # (or a null valid_to) is not a target quarter and must never compete
+    # in the dedup below.
+    is_calendar_quarter = (
+        (df["valid_from"].dt.day == 1)
+        & df["valid_from"].dt.month.isin([1, 4, 7, 10])
+        & df["valid_to"].notna()
+        & (df["valid_to"] == (df["valid_from"] + pd.DateOffset(months=3) - pd.Timedelta(days=1)))
+    )
+    n_dropped = int((~is_calendar_quarter).sum())
+    logger.info(
+        "get_long_forecasts_quarter: dropped %d non-calendar-quarter row(s) for station %s",
+        n_dropped, code,
+    )
+    df = df[is_calendar_quarter].copy()
+
+    # FD-029 P1 item 5: quarter EM is retired (round-2 decision 1); old rows
+    # stay in the DB but are never shown (round-2 decision 2).
+    df = df[~df["model_short"].astype(str).str.upper().isin(["EM", "ENSEMBLE_MEAN"])].copy()
+
+    # FD-029 P1 item 5: `year` comes from valid_from, not the issue date
+    # (Problem 5) — a Dec 25 kghm Q1 gets the target year, not the issue year.
+    df["year"] = df["valid_from"].dt.year
+    df["quarter_in_year"] = ((df["valid_from"].dt.month - 1) // 3 + 1)
+
+    # FD-029 P1 item 3: the operational schedule identifies the native row
+    # (item 5) and the eligibility cutoff (item 4). When it cannot be
+    # resolved (a lead-only config, or none at all — e.g. this file's own
+    # test fixture), run degraded: no native preference, no LR strictness,
+    # and fall back to `date <= today` for eligibility. Mirrors `_safe_lead`.
+    try:
+        schedule = operational_schedule_for_mode("quarter")
+        degraded = False
+    except (LongTermHorizonResolverError, FileNotFoundError) as exc:
+        logger.warning(
+            "get_long_forecasts_quarter: operational schedule unavailable (%s); "
+            "running degraded (no native preference, no LR strictness).", exc,
+        )
+        schedule = None
+        degraded = True
+
+    if degraded or df.empty:
+        df["quarter_issue_date"] = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+    else:
+        # (y, m) = the target quarter's first month (valid_from's month),
+        # shifted back by the schedule's lead_time months, year-aware.
+        total_months = (
+            df["valid_from"].dt.year * 12 + (df["valid_from"].dt.month - 1) - schedule.lead_time
+        )
+        issue_year = total_months // 12
+        issue_month = total_months % 12 + 1
+        df["quarter_issue_date"] = pd.to_datetime(pd.DataFrame({
+            "year": issue_year.astype("int64"),
+            "month": issue_month.astype("int64"),
+            "day": schedule.issue_day,
+        }))
+
+    if degraded:
+        df["is_native"] = False
+        eligible = df["date"].dt.normalize() <= pd.Timestamp(today)
+    else:
+        # A row is native iff its issue `date` equals the target quarter's
+        # schedule-computed issue date (the PP-064 Contract rule).
+        df["is_native"] = df["date"].dt.normalize() == df["quarter_issue_date"].dt.normalize()
+        eligible = df["quarter_issue_date"] <= pd.Timestamp(today)
+    df["is_native"] = df["is_native"].astype(bool)
+    df = df[eligible].copy()
+
+    # FD-029 P1 item 5: LR_Base/LR_SM are native-only (stricter) — a
+    # non-native LR row ((b) the flag-OFF rewrite, or (c) a persisted
+    # derived row) is never shown, even when it is the only row for that
+    # quarter. Skipped when degraded (item 3): `is_native` is False for
+    # every row there, so this would otherwise hide every LR row.
+    if not degraded:
+        is_lr = df["model_short"].isin(["LR_Base", "LR_SM"])
+        df = df[~(is_lr & ~df["is_native"])].copy()
+
+    # Keep only one row per target quarter — under the flag, also key on
+    # horizon_value (lead) so distinct-lead quarter rows for the same
+    # code/model are not collapsed into one another. Prefer the native
+    # issuance; otherwise the latest `date`, ties broken by the highest API
+    # `id` (kept through to here for exactly this purpose). `kind="stable"`
+    # preserves today's order when there is no `id` column to break a tie.
+    if not df.empty and "code" in df.columns and "model_short" in df.columns:
+        dedup_subset = ["code", "model_short", "year", "quarter_in_year"]
         if lead_aware and "horizon_value" in df.columns:
             dedup_subset = dedup_subset + ["horizon_value"]
+        sort_cols = ["is_native", "date"]
+        ascending = [False, False]
+        if "id" in df.columns:
+            sort_cols.append("id")
+            ascending.append(False)
         df = (
-            df.sort_values("date", ascending=False)
+            df.sort_values(sort_cols, ascending=ascending, kind="stable")
               .drop_duplicates(subset=dedup_subset, keep="first")
               .reset_index(drop=True)
         )
+    df.drop(columns=["id"], inplace=True, errors="ignore")
     return _convert_na_to_nan(df.sort_values("Date"))
 
 

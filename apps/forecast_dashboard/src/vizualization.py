@@ -3116,7 +3116,8 @@ def plot_pentad_forecast_hydrograph_data(_, horizon, hydrograph_pentad_all, fore
 
 
 def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picker,
-                                  model_selection, range_type, range_slider):
+                                  model_selection, range_type, range_slider,
+                                  filter_by_date: bool = True):
     # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
@@ -3157,8 +3158,12 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
     # print columns model_short, date, and forecasted_discharge
     # print(f"create_forecast_summary_table: forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10): {forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10)}")
 
-    # Select the row with the maximum date
-    if not forecast_table.empty and not forecast_table['date'].empty:
+    # Select the row with the maximum date. FD-029 P1: skipped when
+    # filter_by_date=False — the caller has already selected exactly the
+    # rows it wants shown (e.g. every model's row for one target quarter,
+    # which can legitimately carry different issue dates) and this
+    # max-date reduction would otherwise drop some of them.
+    if filter_by_date and not forecast_table.empty and not forecast_table['date'].empty:
         max_date = forecast_table['date'].max()
         if not pd.isna(max_date):
             forecast_table = forecast_table.loc[forecast_table['date'] == max(forecast_table['date'])]
@@ -3237,12 +3242,14 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
 
 
 def create_forecast_summary_tabulator(_, wm, forecasts_all, station, date_picker,
-                                      model_selection, range_type, range_slider, forecast_tabulator):
+                                      model_selection, range_type, range_slider, forecast_tabulator,
+                                      filter_by_date: bool = True):
     '''Put table data into a Tabulator widget'''
 
     horizon = wm.horizon_selector.value
     final_forecast_table = create_forecast_summary_table(_, horizon, forecasts_all, station, date_picker,
-                                                         model_selection, range_type, range_slider).reset_index(
+                                                         model_selection, range_type, range_slider,
+                                                         filter_by_date=filter_by_date).reset_index(
         drop=True)
 
     # Return empty Tabulator if the table is empty
@@ -3253,9 +3260,16 @@ def create_forecast_summary_tabulator(_, wm, forecasts_all, station, date_picker
     # Get the row with the maximum accuracy. If the table has 2 rows, the
     # index is either 0 or 1. If the table has 1 row, the index is 0.
     # If two rows have the same accuracy, the first row is selected.
-    max_accuracy_index = final_forecast_table[_('Accuracy')].idxmax()
-    # if max_accuracy_index is nan, set it to 0
-    if pd.isna(max_accuracy_index):
+    # FD-029 P1 item 8: an all-NaN accuracy column (e.g. every quarter row
+    # unmatched to a skill row) must not reach idxmax() — it warns on the
+    # locked pandas 2.3.3 and raises on pandas 3. Behavior for any
+    # non-all-NaN column is unchanged.
+    if final_forecast_table[_('Accuracy')].notna().any():
+        max_accuracy_index = final_forecast_table[_('Accuracy')].idxmax()
+        # if max_accuracy_index is nan, set it to 0
+        if pd.isna(max_accuracy_index):
+            max_accuracy_index = 0
+    else:
         max_accuracy_index = 0
     # print("max_accuracy_index\n", max_accuracy_index)
 
