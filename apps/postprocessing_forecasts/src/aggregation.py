@@ -35,6 +35,9 @@ QUARTER_MONTHS: dict[int, list[int]] = {
 MONTH_TO_QUARTER: dict[int, int] = {m: q for q, ms in QUARTER_MONTHS.items() for m in ms}
 
 
+_LOCAL_CALENDAR_DATE_LOWER_BOUND = pd.Timestamp("1677-09-22")
+
+
 def _parse_local_calendar_date(v) -> pd.Timestamp:
     """Return one raw value's LOCAL calendar date as a naive midnight Timestamp.
 
@@ -47,10 +50,7 @@ def _parse_local_calendar_date(v) -> pd.Timestamp:
     later vectorized ``pd.to_datetime`` call: ``pd.Timestamp`` accepts
     dates outside the datetime64[ns] range (e.g. ``"9999-12-31"``,
     ``"0001-04-01"``, year 2500) by holding them at second resolution,
-    but casting such a Timestamp to ns raises
-    ``OutOfBoundsDatetime`` -- a ``ValueError`` subclass, so it is caught
-    the same way an unparseable value is, and gives ``NaT`` instead of
-    aborting the caller.
+    but casting such a Timestamp to ns raises ``OutOfBoundsDatetime``.
 
     A value just above the OTHER end of the range (``pd.Timestamp.min``,
     1677-09-21 00:12:43...) is rejected explicitly, BEFORE
@@ -59,6 +59,12 @@ def _parse_local_calendar_date(v) -> pd.Timestamp:
     representable minimum, and pandas does not raise for this -- it
     silently wraps around to a bogus date near the UPPER limit instead
     (observed: 2262-04-11).
+
+    The whole parse is wrapped in a broad ``except Exception`` -- not a
+    fixed tuple of expected exception types -- because this function
+    must NEVER raise for ANY input: ``pd.Timestamp(v)`` can invoke
+    arbitrary methods on an arbitrary object `v` (e.g. its ``__str__``),
+    which can raise anything.
 
     Args:
         v: A single raw value (string, Timestamp, date, or null).
@@ -73,43 +79,22 @@ def _parse_local_calendar_date(v) -> pd.Timestamp:
             return pd.NaT
         if ts.tzinfo is not None:
             ts = ts.tz_localize(None)
-        if ts < pd.Timestamp("1677-09-22"):
+        if ts < _LOCAL_CALENDAR_DATE_LOWER_BOUND:
             return pd.NaT
         return ts.normalize().as_unit("ns")
-    except (ValueError, TypeError, OverflowError):
+    except Exception:
         return pd.NaT
 
 
-def _factorize_key(v) -> str:
-    """Return a de-duplication key that captures a value's TYPE and
+def _local_calendar_date_per_value(s: pd.Series) -> pd.Series:
+    """Path (c): parse every value individually, with no de-duplication.
 
-    exact string representation, not its raw ``==``/hash equality.
-    ``pd.factorize`` on the RAW values would otherwise group values
-    that ``_parse_local_calendar_date`` treats differently as one key:
-
-    - a same-instant tz-aware value at two different UTC offsets is
-      ``==`` (e.g. ``Timestamp("2024-04-01 00:00+06:00") ==
-      Timestamp("2024-03-31 18:00Z")``), yet their LOCAL calendar dates
-      are 2024-04-01 and 2024-03-31 respectively;
-    - ``0``/``False`` and ``1``/``True``/``1.0`` are all ``==`` to each
-      other in Python, yet ``pd.Timestamp(0)`` is the Unix epoch while
-      ``pd.Timestamp(False)`` is unparseable.
-
-    Which value is de-duplication's "first occurrence" then depends on
-    row order, silently changing the result for every OTHER row sharing
-    that raw value. A null-like value collapses to one shared key
-    regardless of its exact type (``None``, ``NaN``, ``pd.NA``,
-    ``NaT`` are all equally "no date").
-
-    Args:
-        v: A single raw value.
-
-    Returns:
-        A hashable string key, safe to pass to ``pd.factorize``.
+    The fallback every OTHER path in ``local_calendar_date`` reduces to
+    when it cannot safely vectorize or dedup: unconditionally correct,
+    just not fast.
     """
-    if v is None or v is pd.NaT or v is pd.NA or (isinstance(v, float) and v != v):
-        return "\0NULL"
-    return f"{type(v).__module__}.{type(v).__qualname__}|{v!s}"
+    parsed = pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object, index=s.index)
+    return pd.to_datetime(parsed)
 
 
 def local_calendar_date(s: pd.Series) -> pd.Series:
@@ -128,17 +113,40 @@ def local_calendar_date(s: pd.Series) -> pd.Series:
     ``"2024-04-01garbage"`` and rejected ``"2024/04/01"``), so it is not
     used here.
 
-    Each DISTINCT raw value is parsed only once and broadcast back to
-    every row -- at scale, most values repeat (the same handful of
-    issue/target dates across many rows), and ``pd.Timestamp`` parsing
-    per row dominates runtime otherwise. Distinctness is determined by
-    ``_factorize_key`` (type + exact string form), NOT by ``==``/hash
-    equality on the raw values -- see that function for why. The FIRST
-    original value seen for each key is the one actually parsed.
+    This function must return EXACTLY what applying
+    ``_parse_local_calendar_date`` to every value individually would
+    return, for every input, in any row order. An earlier version
+    de-duplicated by a generic "type + string representation" key; each
+    of three review rounds found a NEW way to break that key (a
+    same-instant tz-aware value at two different UTC offsets; 0/False
+    and 1/True/1.0, all ``==`` in Python but parsed differently;
+    ``str()``/``repr()`` collisions between unrelated types; a
+    ``__str__`` that raises). Rather than patch a fourth collision
+    class, de-duplication here is restricted to the ONE case where it is
+    correct BY CONSTRUCTION, not by enumeration:
 
-    If keying itself raises ``TypeError`` (a value whose ``str()``/type
-    name lookup fails), this falls back to parsing every row
-    individually, exactly as before de-duplication existed.
+    - (a) A ``datetime64`` column (naive or tz-aware, any unit) is
+      handled fully vectorized: tz-aware is stripped to LOCAL wall time
+      via ``.dt.tz_localize(None)`` (never ``tz_convert``, which would
+      shift the instant). If the result is exactly ``datetime64[ns]``,
+      ``.dt.normalize()`` plus the same lower-bound cutoff as
+      ``_parse_local_calendar_date`` reproduces it exactly, with no
+      Python-level loop. Any other unit (a non-ns cast could itself
+      overflow for an extreme value) falls back to (c).
+    - (b) Otherwise, only values that are EXACTLY ``str`` (``type(v) is
+      str``, never a subclass or another type that merely looks like a
+      date) are de-duplicated, keyed on the string itself. Two equal
+      Python strings are, by definition, the same input to
+      ``_parse_local_calendar_date`` -- a pure function of its argument
+      -- so caching by the string value cannot collide with anything,
+      for any other value of any other type. This also means a
+      ``Categorical``/``StringDtype`` column is simply iterated (its
+      actual per-row values, of whatever type they are), not special-cased.
+    - (c) Every other value (``Timestamp``, ``datetime``, ``date``,
+      ``np.datetime64``, a number, a bool, ``None``/``NaN``/``NA``/
+      ``NaT``, or any other object -- including one that is unhashable,
+      e.g. a list) is parsed individually, every time, with no key at
+      all.
 
     Args:
         s: Raw date-like column (strings, Timestamps, dates, or null).
@@ -152,26 +160,43 @@ def local_calendar_date(s: pd.Series) -> pd.Series:
     if len(s) == 0:
         return pd.Series(pd.array([], dtype="datetime64[ns]"), index=s.index)
 
-    try:
-        codes, unique_keys = pd.factorize(np.array([_factorize_key(v) for v in s], dtype=object))
-        first_value_by_code: dict[int, object] = {}
-        for code, v in zip(codes, s, strict=True):
-            if code not in first_value_by_code:
-                first_value_by_code[code] = v
-        parsed_uniques = pd.to_datetime(
-            pd.Series(
-                [
-                    _parse_local_calendar_date(first_value_by_code[c])
-                    for c in range(len(unique_keys))
-                ],
-                dtype=object,
-            )
-        ).to_numpy(dtype="datetime64[ns]")
-        values = parsed_uniques[codes]
-        return pd.Series(values, index=s.index)
-    except TypeError:
-        parsed = pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object, index=s.index)
-        return pd.to_datetime(parsed)
+    dtype = s.dtype
+    is_tz_aware = isinstance(dtype, pd.DatetimeTZDtype)
+    is_naive_datetime = not is_tz_aware and getattr(dtype, "kind", None) == "M"
+
+    if is_tz_aware or is_naive_datetime:
+        # Path (a): datetime64 dtype, any unit, naive or tz-aware.
+        working = s.dt.tz_localize(None) if is_tz_aware else s
+        if working.dtype == "datetime64[ns]":
+            # The lower-bound check must run on the ORIGINAL values,
+            # BEFORE normalize(): normalize() on a value already close
+            # to pd.Timestamp.min can itself silently wrap to a bogus
+            # date near the upper limit (the same failure mode
+            # _parse_local_calendar_date guards against), so checking
+            # the NORMALIZED result here would be too late for exactly
+            # that value.
+            too_low = working < _LOCAL_CALENDAR_DATE_LOWER_BOUND
+            normalized = working.dt.normalize()
+            return normalized.where(~too_low, pd.NaT)
+        # A non-ns unit: casting to ns to normalize it could itself
+        # overflow for an extreme value, so parse per value instead.
+        return _local_calendar_date_per_value(working)
+
+    # Path (b)/(c): de-duplicate ONLY exact `str` values, keyed on the
+    # string itself. `for v in s` yields the actual per-row values for
+    # object, Categorical, and StringDtype columns alike.
+    cache: dict[str, pd.Timestamp] = {}
+    values = []
+    for v in s:
+        if type(v) is str:
+            parsed = cache.get(v)
+            if parsed is None:
+                parsed = _parse_local_calendar_date(v)
+                cache[v] = parsed
+            values.append(parsed)
+        else:
+            values.append(_parse_local_calendar_date(v))
+    return pd.to_datetime(pd.Series(values, dtype=object, index=s.index))
 
 
 def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:

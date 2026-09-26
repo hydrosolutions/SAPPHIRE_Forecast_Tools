@@ -36,7 +36,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHyd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src import aggregation, api_writer, data_reader
-from src.aggregation import filter_calendar_quarter_windows, local_calendar_date
+from src.aggregation import (
+    _parse_local_calendar_date,
+    filter_calendar_quarter_windows,
+    local_calendar_date,
+)
 from src.gap_detector import detect_missing_quarterly_ensembles
 
 CODE = "19999"
@@ -745,6 +749,27 @@ class TestA7WriterGuard:
                 "forecasted_discharge": [100.0],
                 "valid_from": ["2262-01-01"],
                 "valid_to": ["2262-03-31"],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+
+    def test_year_1677_q3_rejected_even_with_both_null(self):
+        """T3: the writer must also match the reader's LOWER-bound
+
+        cutoff (local_calendar_date rejects anything before
+        1677-09-22). Year 1677 Q3 synthesizes valid_from "1677-07-01",
+        below the cutoff, so it must be skipped even with both null
+        (the case that otherwise always keeps the synthesized window).
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [1677],
+                "quarter_in_year": [3],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
             }
         )
         result = self._write(data)
@@ -1586,42 +1611,164 @@ class TestP1LocalCalendarDateParsing:
 
         pd.testing.assert_series_equal(deduped, non_deduped, check_names=False)
 
-    def test_same_instant_different_offset_and_boolean_int_collisions(self):
-        """S1: pd.factorize on the RAW values (rather than a type+repr
+    # =======================================================================
+    # T1/T2 (confirm review of f0ca2d94): three review rounds each found a
+    # NEW way to break a generic "type + string representation" dedup key
+    # (a same-instant tz-aware pair at different offsets; 0/False and
+    # 1/True; a date subclass whose __str__ is constant; np.datetime64
+    # unit-multiplier aliasing; a __str__ that raises and aborts the whole
+    # batch). local_calendar_date now de-duplicates ONLY exact `str`
+    # values, keyed on the string itself -- correct BY CONSTRUCTION, since
+    # two equal strings are the same input to a pure function, not by
+    # enumerating collision classes. Everything else (including an
+    # unhashable value) is parsed individually, every time, with no key.
+    # =======================================================================
 
-        key) groups values by ==/hash equality, not by what
-        _parse_local_calendar_date returns for them, so the result
-        depended on row order. Two collision classes, each included in
-        BOTH orders so this cannot pass by accident: a same-instant
-        tz-aware pair at different UTC offsets (== but different LOCAL
-        calendar dates), and 0/False plus 1/True (== in Python, but
-        pd.Timestamp(0) is the epoch while pd.Timestamp(False)/
-        pd.Timestamp(True) are unparseable). Also includes an
-        unhashable value (a list), which must fall back to the
-        per-row parse rather than raising. Fails on 4fbe0bb6.
+    @staticmethod
+    def _assert_matches_naive_parse(s):
+        naive = pd.to_datetime(pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object))
+        result = local_calendar_date(s)
+        pd.testing.assert_series_equal(result, naive, check_names=False)
+
+    def test_collision_pairs_both_orders_no_list(self):
+        """Every known collision class the raw-value/generic-key designs
+
+        broke on, each pair included in BOTH orders, WITHOUT an
+        unhashable value mixed in (kept separate below) so no fallback
+        path can mask a genuine collision. Fails on f0ca2d94 for the
+        pairs it still mis-handles.
         """
-        from src.aggregation import _parse_local_calendar_date
-
         t1 = pd.Timestamp("2024-04-01 00:00", tz="+06:00")
         t2 = pd.Timestamp("2024-03-31 18:00", tz="UTC")
         assert t1 == t2  # same instant, different offset -- the setup
 
-        values = [t1, t2, t2, t1, 0, False, False, 0, 1, True, True, 1, [1, 2, 3]]
-        s = pd.Series(values, dtype=object)
+        d1 = np.datetime64("2024-04-02", "D")
+        d2 = d1.astype("datetime64[2D]")  # unit-multiplier aliasing
 
-        non_deduped = pd.to_datetime(
-            pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object)
+        pairs = [
+            (t1, t2),
+            (0, False),
+            (1, True),
+            ("20240401", 20240401),
+            (d1, d2),
+        ]
+        for a, b in pairs:
+            for ordered in ([a, b, b, a], [b, a, a, b]):
+                self._assert_matches_naive_parse(pd.Series(ordered, dtype=object))
+
+    def test_unhashable_list_value_kept_separate_from_collision_pairs(self):
+        s = pd.Series(["2024-04-01", [1, 2, 3], "2024-04-01"], dtype=object)
+        self._assert_matches_naive_parse(s)
+
+    def test_date_subclass_with_constant_str_not_confused(self):
+        """A date subclass is never `type(v) is str`, so its (here
+
+        deliberately useless) __str__ can never collide two distinct
+        dates into the same cache entry.
+        """
+
+        class ConstantStrDate(dt.date):
+            def __str__(self):
+                return "CONSTANT"
+
+        a, b = ConstantStrDate(2024, 4, 1), ConstantStrDate(2024, 5, 1)
+        s = pd.Series([a, b, b, a], dtype=object)
+        self._assert_matches_naive_parse(s)
+
+    def test_object_with_raising_str_returns_nat_not_crash(self):
+        """_parse_local_calendar_date's except must be broad enough to
+
+        catch whatever an arbitrary object's __str__ raises (not just
+        ValueError/TypeError/OverflowError). Mutation: narrowing it back
+        to that tuple makes this fail, since pd.Timestamp lets the
+        RuntimeError from __str__ propagate unwrapped.
+        """
+
+        class RaisingStr:
+            def __str__(self):
+                raise RuntimeError("boom")
+
+        s = pd.Series(["2024-04-01", RaisingStr(), "2024-04-01"], dtype=object)
+        self._assert_matches_naive_parse(s)
+        result = local_calendar_date(s)
+        assert pd.isna(result.iloc[1])
+
+    def test_random_shuffled_property_object_category_string_dtypes(self):
+        """Differential property test, fixed seed: local_calendar_date
+
+        must equal the naive per-row parse for a randomized, repetitive
+        mix, across object/category/string dtype.
+        """
+        rng = np.random.default_rng(20260926)
+        pool = [
+            "2024-04-01",
+            "2024-05-01",
+            "2024-04-01T00:00:00+06:00",
+            "20240401",
+            "garbage",
+            None,
+        ]
+        values = [pool[i] for i in rng.integers(0, len(pool), size=300)]
+        for as_dtype in (None, "category", "string"):
+            s = pd.Series(values, dtype=object)
+            if as_dtype:
+                s = s.astype(as_dtype)
+            self._assert_matches_naive_parse(s)
+
+    def test_random_shuffled_property_datetime64_variants(self):
+        """Differential property test, fixed seed, across datetime64
+
+        dtype variants: naive ns, naive seconds (non-ns unit -> path
+        (c)), and tz-aware -- including values near both the lower and
+        upper datetime64[ns] bounds. Verifies path (a) against path (c)
+        (a per-value re-implementation) on random data, as specified.
+        """
+        rng = np.random.default_rng(20260926)
+        pool = pd.DatetimeIndex(
+            [
+                pd.Timestamp("2024-04-01T13:45:00"),
+                pd.Timestamp("2024-05-01T00:00:00"),
+                pd.Timestamp("1677-09-21T05:00:00"),  # below the cutoff
+                pd.Timestamp("1677-09-22T00:00:01"),  # just above it
+                pd.Timestamp("2262-04-01T00:00:00"),  # near the upper limit
+            ]
         )
-        deduped = local_calendar_date(s)
+        idx = rng.integers(0, len(pool), size=300)
 
-        pd.testing.assert_series_equal(deduped, non_deduped, check_names=False)
+        s_ns = pd.Series(pool.take(idx).values)
+        self._assert_matches_naive_parse(s_ns)
 
-    def test_parses_each_distinct_key_only_once(self, monkeypatch):
-        """S1: de-duplication actually parses each distinct key once,
+        s_seconds = pd.Series(pool.astype("datetime64[s]").take(idx).values)
+        self._assert_matches_naive_parse(s_seconds)
 
-        not once per row. Mutation: reverting to the plain per-row
-        `s.map(_parse_local_calendar_date)` makes the call count equal
-        the row count instead of the distinct-key count.
+        s_tz = pd.Series(pool.tz_localize("Asia/Bishkek").take(idx))
+        self._assert_matches_naive_parse(s_tz)
+
+    def test_vectorized_datetime64_path_rejects_lower_bound_before_normalize(self):
+        """Targeted, minimal version of the property test above: a
+
+        datetime64[ns] Series containing a value below the cutoff must
+        come back NaT, not the bogus wrapped-around date .normalize()
+        alone would produce. Mutation (ii): removing the vectorized
+        path's `too_low` mask (checked BEFORE .normalize(), not after)
+        makes this fail.
+        """
+        s = pd.Series([pd.Timestamp("2024-04-01"), pd.Timestamp("1677-09-21T05:00:00")])
+        assert s.dtype == "datetime64[ns]"
+        result = local_calendar_date(s)
+        assert result.iloc[0] == pd.Timestamp("2024-04-01")
+        assert pd.isna(result.iloc[1])
+
+    def test_parse_once_for_str_series_and_no_calls_for_datetime64(self, monkeypatch):
+        """Parse-once contract: on a repetitive PURE-str series, each
+
+        distinct string is parsed exactly once. On a datetime64 series,
+        the per-value parser is never called at all -- that path is
+        fully vectorized. Mutation (i): dedup keyed on str(v) for every
+        value (not gated on type(v) is str) makes the collision-pairs
+        test fail instead of this one; this test's own mutation is
+        reverting to a plain per-row map, which would make the call
+        count equal the row count.
         """
         calls = []
         original = aggregation._parse_local_calendar_date
@@ -1632,11 +1779,15 @@ class TestP1LocalCalendarDateParsing:
 
         monkeypatch.setattr(aggregation, "_parse_local_calendar_date", spy)
 
-        distinct = ["2024-04-01", "2024-05-01", None]
+        distinct = ["2024-04-01", "2024-05-01", "2024-06-01"]
         s = pd.Series(distinct * 100)
         aggregation.local_calendar_date(s)
-
         assert len(calls) == len(distinct)
+
+        calls.clear()
+        dt_s = pd.to_datetime(pd.Series(["2024-04-01"] * 300))
+        aggregation.local_calendar_date(dt_s)
+        assert len(calls) == 0
 
     def test_lower_bound_wrap_rejected(self):
         """S3: a value just above pd.Timestamp.min normalizes DOWN to a

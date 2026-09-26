@@ -1205,19 +1205,24 @@ def _write_aggregated_forecasts_to_api(
             # reader's own calendar-window check already accepts).
             # Season is unaffected.
             if horizon_type == "quarter":
-                # S2: match the reader's conservative cutoff --
-                # filter_calendar_quarter_windows (aggregation.py) also
+                # S2/T3: match the reader's conservative cutoffs at BOTH
+                # ends -- filter_calendar_quarter_windows (aggregation.py)
                 # treats ANY row with valid_from.year > 2261 as not a
-                # calendar quarter, regardless of month, to stay clear
-                # of the datetime64[ns] upper bound (~2262-04-11).
-                # Without this, the two disagreed: the reader rejected
-                # a Q1 2262 row (a safely-representable window on its
-                # own) that the writer would have accepted.
+                # calendar quarter regardless of month (upper,
+                # datetime64[ns] tops out at ~2262-04-11), and
+                # local_calendar_date itself rejects anything before
+                # 1677-09-22 (lower, just past pd.Timestamp.min). Without
+                # matching both here, the reader could reject a
+                # synthesized window (e.g. year 1677 Q3, "1677-07-01") the
+                # writer would have written -- out-of-range data is
+                # nonsense; the only point is agreement between the two.
                 out_of_range_target_year = year > 2261
+                out_of_range_low = valid_from < "1677-09-22"
+                out_of_range = out_of_range_target_year or out_of_range_low
                 row_has_valid_from = pd.notna(row.get("valid_from"))
                 row_has_valid_to = pd.notna(row.get("valid_to"))
                 both_present = row_has_valid_from and row_has_valid_to
-                if out_of_range_target_year:
+                if out_of_range:
                     mismatch = True
                 elif both_present:
                     parsed_valid_from = local_calendar_date(pd.Series([row["valid_from"]])).iloc[0]
@@ -1230,9 +1235,7 @@ def _write_aggregated_forecasts_to_api(
                     )
                 else:
                     mismatch = True
-                skip_row = out_of_range_target_year or (
-                    (row_has_valid_from or row_has_valid_to) and mismatch
-                )
+                skip_row = out_of_range or ((row_has_valid_from or row_has_valid_to) and mismatch)
                 if skip_row:
                     dropped_calendar_rows += 1
                     continue
