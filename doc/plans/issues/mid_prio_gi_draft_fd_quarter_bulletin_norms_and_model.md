@@ -1,6 +1,6 @@
 # FD-030: The month bulletin's quarterly section uses the monthly norm, and publishes an arbitrary model
 
-**Status**: Draft (2026-09-26, rev 4 after the second review round). **Blocked on owner decisions
+**Status**: Draft (2026-09-26, rev 5 after the third review round). **Blocked on owner decisions
 D6a–D6c below**; the agent brief in P1 applies once they are recorded in this file.
 **Module**: `apps/forecast_dashboard`
 **Priority**: Medium. The quarterly section of reservoir bulletins publishes wrong numbers today: % of norm,
@@ -69,10 +69,15 @@ reach the bulletin only with this plan.
 - **D6a. Product.** Which product the section publishes: **Skilled Mean**, **Naive Mean**, or a named model.
   There is no quarterly Ensemble Mean after PP-065 (owner round 2); old quarter `EM` rows in the DB are
   never selected. Quarterly ensembles follow PP-065: Naive Mean = mean of all raw quarter models, no skill
-  gate, so it forms whenever raw models exist; Skilled Mean = long-term gate (NSE > 0) plus K = 10,
-  1/MAE-weighted, so it can legitimately be absent (e.g. tjhm with little scored history). D6a must also fix
-  the fallback order when the chosen product has no row (e.g. Skilled Mean → Naive Mean → none), or
-  "blank if missing".
+  gate on membership, but it needs at least two members (`is_multi_model_composition`,
+  `apps/postprocessing_forecasts/src/ensemble_calculator.py:915`) and a non-empty quarter skill frame
+  (the run-level skip, PP-064 B5; `postprocessing_operational_long_term.py:209`); Skilled Mean =
+  long-term gate (NSE > 0) plus K = 10, 1/MAE-weighted, so it can legitimately be absent (e.g. tjhm with
+  little scored history). Either ensemble can therefore be missing, so D6a must fix the fallback order
+  when the chosen product has no row (e.g. Skilled Mean → Naive Mean → none), or "blank if missing". Any
+  such order can end in **none**: that reservoir then has no chosen row and its quarterly bounds stay
+  None, so the `has_quarterly` gate (`src/bulletins.py:1223-1227`) hides the section when no reservoir
+  has a row.
 - **D6b. Presentation.**
   - Eligible quarter for a bulletin with target month M/year Y: the quarter containing M, or the latest
     quarter issued on or before the bulletin date? What is the issuance cutoff for a reopened bulletin?
@@ -116,10 +121,10 @@ flow. Your changes must be purely additive or modify only the specific behavior 
 1. **One helper** used by `_populate_forecast_attributes`, `_on_add` and `_on_add_m0`. It takes the site
    and the bulletin's target (month, year) and:
    - starts from FD-029's output of `get_long_forecasts_quarter`: calendar quarters only, LR_Base/LR_SM
-     native only (non-native LR never returned), every other model latest `date` with a deterministic
-     tie-break, one row per model and target quarter, eligible quarters only. The helper does **not**
-     re-apply the native rule, so a flag-OFF Skilled Mean or derived row dated `valid_from` stays
-     selectable;
+     native only (non-native LR never returned), every other model the native row if present, else the
+     latest `date` with the `id` tie-break (FD-029 item 5; this inherits its fresh-over-legacy rule), one
+     row per model and target quarter, eligible quarters only. The helper does **not** re-apply the
+     native rule, so a flag-OFF Skilled Mean or derived row dated `valid_from` stays selectable;
    - selects the D6b-eligible quarter, then the D6a product with its fallback order. `EM` is never a
      candidate.
    - A fallback quarter has no LR row (FD-029 "Behaviour after", item 6; round-2 decision 3), so a named
@@ -129,8 +134,9 @@ flow. Your changes must be purely additive or modify only the specific behavior 
    (the blocks call `get_long_forecasts_quarter` directly), so the helper reads
    `get_forecast_stats("quarter", code)` (`src/db.py:677`) and matches on `(code, quarter_in_year,
    model_short)` using raw model names (neither frame goes through `i18n_models` on this path).
-   - **Lead filter, copied from `_get_data_monthly`** (`src/db.py:1063-1087`, branch on
-     `skill_lead_aware_enabled()`):
+   - **Lead filter: mirror the flag branch of `_get_data_monthly`** (`src/db.py:1064-1091`, branch on
+     `skill_lead_aware_enabled()`), not its values: under flag OFF, monthly filters on
+     `horizon_value == 1` (`src/db.py:1088-1091`); quarter must use hv 0.
      - flag ON: keep skill rows with `horizon_value == quarter_horizon_value()`;
      - flag OFF: keep the sentinel rows `horizon_value == 0`. Flag-OFF quarter skill is grouped without hv
        (`apps/postprocessing_forecasts/src/skill_metrics.py:2642-2647`) and written at hv 0
@@ -162,7 +168,8 @@ flow. Your changes must be purely additive or modify only the specific behavior 
    and `Skilled Mean` and GBT rows dated 2027-01-01 (`valid_from`) → with D6a = Skilled Mean the helper
    picks the Skilled Mean row; with D6a = GBT it picks the GBT row. Neither is dropped as non-native.
 4. **Product fallback.** No `Skilled Mean` row, `Naive Mean` present, plus an old `EM` row for the same
-   quarter → the D6a fallback order applies and `EM` is never chosen.
+   quarter → the D6a fallback order applies and `EM` is never chosen. Neither ensemble present (only an
+   old `EM` row) → no chosen row, quarterly bounds None, section hidden for a single reservoir.
 5. **All three entry points** (`_populate_forecast_attributes`, `_on_add`, `_on_add_m0`) go through the
    helper (spy on it; each yields the same site fields for the same input).
 6. **Norm source.** Quarter norm 50, monthly norm 80, forecast 60 → `PERC_NORM` 120.0.
@@ -173,9 +180,12 @@ flow. Your changes must be purely additive or modify only the specific behavior 
 9. **Reopen** an old bulletin after a newer quarterly issue → the old quarter is kept (per D6b).
 10. **No rolling/calendar mix.** A legacy rolling-window row is never paired with a calendar-quarter norm
     (volume seconds from the chosen row, `bulletin_manager.py:401-405`).
+11. **Fresh over legacy (inherited from FD-029 item 5).** Flag ON, kghm schedule, Q1 2027: a fresh
+    `Skilled Mean` row dated 2026-12-25 and a legacy `Skilled Mean` row dated 2027-01-01 with a different
+    value, D6a = Skilled Mean → the bulletin publishes the fresh value.
 
 **Acceptance**
-- Tests 1–10 fail on trunk and pass after.
+- Tests 1–11 fail on trunk and pass after.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` passes with no existing test
   edited; allowed skips as in FD-029.
 - `git diff --stat` is limited to the listed files.

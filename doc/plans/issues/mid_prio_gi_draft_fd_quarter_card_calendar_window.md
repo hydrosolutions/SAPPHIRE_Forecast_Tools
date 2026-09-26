@@ -1,6 +1,6 @@
 # FD-029: Quarterly card shows the latest calendar quarter, fetched with a year-safe window
 
-**Status**: Draft (2026-09-26, rev 4 after the second review round)
+**Status**: Draft (2026-09-26, rev 5 after the third review round)
 **Module**: `apps/forecast_dashboard`
 **Priority**: Medium. **Deploy before 2026-12-25**, when the first kghm Q1 is issued: on Dec 25–31 its
 quarter rows dated 2027-01-01 fall outside the fetch window (Problem 1).
@@ -114,7 +114,8 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:112-142`) once per call for `lead_time` and
    `issue_day`. If it raises `LongTermHorizonResolverError` (which covers its subclass
    `UnsupportedLongTermModeError`, `:25-29`) or `FileNotFoundError`, log one WARNING and run **degraded**:
-   no native rule (LR is treated like the other models in item 5) and eligibility falls back to
+   no native preference and no LR strictness (every model, LR included, takes the latest `date` in
+   item 5) and eligibility falls back to
    `date <= today`. This mirrors `_safe_lead` (`db.py:1047-1056`). **Required:** the autouse fixture in
    `tests/test_db.py:19-42` writes `quarter.json` with the lead only, so raising here, or hiding LR rows
    when degraded, would break existing quarter tests.
@@ -126,13 +127,22 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    dated 2027-01-01. Drop ineligible rows before the dedup.
 5. **Dedup per target quarter.** One row per `(code, model_short, year, quarter_in_year)`, plus
    `horizon_value` under the flag. Several target quarters per model are returned.
-   - **LR_Base / LR_SM: native only.** A row is **native** iff `date.day == issue_day` **and** the
-     year-aware lead `(valid_from.year − date.year)·12 + (valid_from.month − date.month)` == `lead_time`
-     (the PP-064 Contract rule; the formula of `apps/postprocessing_forecasts/src/data_reader.py:346-348`;
-     identical to PP-065 P1b). Non-native LR rows ((b), (c)) are **never** returned; with no native row the
-     quarter has no LR row.
-   - **All other models** (the seven derived models, `Naive Mean`, `Skilled Mean`, old `EM`): the latest
-     `date`; ties broken by the highest API `id` (keep `id` until after the dedup, then drop it as today).
+   - A row is **native** iff `date.day == issue_day` **and** the year-aware lead
+     `(valid_from.year − date.year)·12 + (valid_from.month − date.month)` == `lead_time`, i.e. `date` ==
+     `issue_date(Q)` of item 4 (the PP-064 Contract rule; the formula of
+     `apps/postprocessing_forecasts/src/data_reader.py:346-348`; identical to PP-065 P1b).
+   - **All models: prefer the native row.** `date` is part of the `long_forecasts` natural key
+     (`sapphire/services/postprocessing/app/models.py:193-201`), so under flag ON legacy rows dated
+     `valid_from` coexist with fresh rows dated at the issue date, and "latest `date`" alone would pick the
+     legacy row. Rule: the native row if one exists; otherwise the latest `date`, ties broken by the
+     highest API `id` (keep `id` until after the dedup, then drop it as today).
+   - **LR_Base / LR_SM: native only (stricter).** Non-native LR rows ((b), (c)) are **never** returned;
+     with no native row the quarter has no LR row.
+   - **Flag OFF.** Fresh non-LR rows (the seven derived models, `Naive Mean`, `Skilled Mean`) are dated
+     `valid_from` (`api_writer.py:1199-1204`) and fall through to "latest `date`". For kghm the legacy hv1
+     rows with the same key are overwritten by the upsert, so no stale twin remains; for tjhm `valid_from`
+     is the issue date, so fresh rows are native.
+   - Old `EM` rows follow the non-LR rule.
 6. **Card selection** (`update_quarterly_summary_tabulator`).
    - Select all models' rows for the station's **latest eligible target quarter** (max `valid_from`).
    - Pass `max(date)` **of the selected rows** as `date_picker`, so the renderer's
@@ -215,9 +225,15 @@ new `EM` row.
 14. **Eligibility, kghm Dec 25.** kghm schedule, flag OFF, `today=2026-12-25`: a `Skilled Mean` Q1 2027
     row dated 2027-01-01 plus the native LR Q1 rows dated 2026-12-25 → Q1 2027 is returned and selected
     by the card, with the Skilled Mean row visible.
+15. **Fresh vs legacy rows, all models.** kghm schedule, `today=2027-01-05`, Q1 2027 rows for GBT,
+    `Naive Mean` and `Skilled Mean`, fresh and legacy with **different values**:
+    - flag ON: fresh rows dated 2026-12-25 (native) plus legacy rows dated 2027-01-01 (`valid_from`,
+      later) → the fresh values are returned and shown;
+    - flag OFF: fresh rows dated 2027-01-01 (`valid_from`) plus legacy rows dated 2026-12-01 (not native)
+      → the fresh values are returned and shown.
 
 **Acceptance**
-- Tests 1–14 fail on trunk and pass after.
+- Tests 1–15 fail on trunk and pass after (test 15 via its flag-ON case).
 - The full module suite passes with **no existing test edited**:
   `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` gives zero failures. The only
   allowed skips: `tests/test_docker.py:22` (no Docker daemon) and the Playwright tests, gated by

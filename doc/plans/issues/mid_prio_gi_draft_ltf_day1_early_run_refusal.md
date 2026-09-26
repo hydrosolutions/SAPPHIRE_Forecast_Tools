@@ -1,6 +1,6 @@
 # LTF-015: Refuse an early long-term run that falls in a different calendar month than its scheduled issue date
 
-**Status**: Draft (2026-09-26, rev 4 after the second review round). Fix contract decided by the owner on
+**Status**: Draft (2026-09-26, rev 5 after the third review round). Fix contract decided by the owner on
 2026-09-26 (overview decision H / D7: refuse, no relabel; round-2 decision 6: warn on same-month early
 runs). Ready to implement after LTF-014 P1.
 **Module**: `apps/long_term_forecasting`
@@ -16,7 +16,10 @@ within ±10 days):
 **Found**: 2026-09-25, read-only simulation while mapping LTF-014; value impact confirmed in the 2026-09-26
 review round
 **Depends on**: LTF-014 P1 (both edit `apps/long_term_forecasting/tests/test_lt_utils.py`; P1 adds a
-`check_valid_forecast_issue_date` test block there)
+`check_valid_forecast_issue_date` test block there). **Sequencing with DOC-009:** both edit
+`apps/long_term_forecasting/readme.md`. LTF-015 edits `:165-180`; DOC-009 P2 row 11 edits `:41`,
+`:89-103`, `:193`, `:206-207`. The ranges are disjoint, but DOC-009's rewrites shift line numbers: land
+LTF-015 after DOC-009 P2, or rebase and re-locate the section by its heading "When Forecasts Run".
 **Related**: LTF-014, LTF-007
 
 ## Problem
@@ -45,7 +48,7 @@ review round
 In `check_valid_forecast_issue_date`, after the existing ±5-day window check and before the late snap:
 if the run is early (`day_offset < 0`) and `today` is in a different calendar month (year, month) than
 `scheduled_issue_date`, log one clear line and return **None**. If the run is early and in the **same**
-calendar month, log the new WARNING below and continue as today.
+calendar month, log the new WARNING below when its scope applies, and continue as today.
 
 - The line names the model, the run date and the scheduled issue date, says the run is refused because it
   falls in a different calendar month, and tells the operator to run on the scheduled date. Tests match on
@@ -64,10 +67,25 @@ calendar month, log the new WARNING below and continue as today.
   The operator finds the refusal in the new log line and the FAILED summary, nowhere else.
 - No relabelling, no forward snap, no new parameters. Same-month early runs (e.g. kghm 20th–24th, or
   day-10 modes on the 5th–9th) keep today's date and the existing warning (`lt_utils.py:219-227`).
-- **Same-month early runs also get one new WARNING line** (round-2 decision 6), logged in addition to the
-  existing warning. It says that rows dated before the scheduled issue date produce **no quarterly
-  product** downstream, because PP-065 derives quarters only from monthly rows dated on the configured
-  issue day. Tests match on the phrase "no quarterly product". The run itself is still accepted.
+- **Same-month early runs of quarter-feeding modes get one new WARNING line** (round-2 decision 6),
+  logged in addition to the existing warning. It says that rows dated before the scheduled issue date
+  produce **no quarterly product** downstream, because PP-065 derives quarters only from monthly rows
+  dated on the configured issue day. Tests match on the phrase "no quarterly product". The run itself is
+  still accepted.
+  - **Scope: only modes that feed quarter derivation, at a quarter issue date.** Check, in this order:
+    1. `forecast_configs.forecast_mode` (set by `load_forecast_config`, `config_forecast.py:62`) is
+       `month_1`, `month_2` or `month_3`;
+    2. with N the mode number and ℓ = `forecast_configs.get_operational_month_lead_time()`
+       (`config_forecast.py:230-231`), the month (scheduled issue month + ℓ − (N − 1)), wrapped to 1–12, is
+       a calendar-quarter start month (1, 4, 7 or 10). That month is month_1's target, i.e. the first
+       month of the derived quarter.
+  - This relies on month_1–month_3 having consecutive leads that start at the quarter lead, and on the
+    same issue day as the quarter mode. Both hold in the Dropbox master mode configs (read
+    2026-09-26): kghm month_1–3 leads 1–3 at day 25, quarter lead 1 at day 25; tjhm month_1–3 leads 0–2
+    at day 1, quarter lead 0 at day 1.
+  - It never fires for `month_0`, `quarter` or the season modes, nor for month_1–3 issues whose derived
+    first month is not a quarter start (e.g. kghm Oct 25). In practice only kghm hits it: a tjhm (day 1)
+    early run always lands in the previous month and is refused.
 - The rule is general, not keyed on issue day 1; the window makes it inert for issue days above 5.
 
 **Files (only these may be modified)**:
@@ -93,19 +111,29 @@ Add to `TestCheckValidForecastIssueDate` (`tests/test_lt_utils.py:81`, reuse `_m
 `__init__.py:17`). The existing "not scheduled" line is INFO (`lt_utils.py:203-208`), and the root logger
 may be capped above INFO.
 
-1. tjhm-quarter-like (day 1, `[1,4,7,10]`): 2026-12-29 → None, log contains "different calendar month".
-2. tjhm-month_1-like (day 1, all months): 2026-03-29 → None, same log.
-3. kghm-quarter-like (day 25, `[3,6,9,12]`): 2026-12-22 → 2026-12-22 (accepted with today's date), the
-   existing "before the scheduled issue date" warning, and a WARNING containing "no quarterly product".
-4. Boundaries, day 1, all months:
+Each new test sets `forecast_mode` and `get_operational_month_lead_time.return_value` on the mock that
+`_make_mock_config` returns, without editing the helper. Existing tests leave `forecast_mode` a
+`MagicMock`, which is not one of `month_1`–`month_3`, so they log no new line.
+
+1. tjhm-quarter-like (`quarter`, lead 0, day 1, `[1,4,7,10]`): 2026-12-29 → None, log contains
+   "different calendar month".
+2. tjhm-month_1-like (`month_1`, lead 0, day 1, all months): 2026-03-29 → None, same log.
+3. kghm quarter-feeding modes (day 25, all months), 2026-12-22 → 2026-12-22 (accepted with today's date),
+   the existing "before the scheduled issue date" warning, and a WARNING containing "no quarterly
+   product": `month_1` lead 1 and `month_3` lead 3 (parametrised).
+4. Scope negatives, each accepted with the existing warning and **no** "no quarterly product" line:
+   - `month_1` lead 1, day 25, 2026-10-22 (Oct 25 issue → November, not a quarter start);
+   - `quarter` lead 1, day 25, `[3,6,9,12]`, 2026-12-22;
+   - a season mode (mock `seasonal_march`, lead 1, day 25, `[12]`), 2026-12-22;
+   - `month_0`: see test 6.
+5. Boundaries, `month_1` lead 0, day 1, all months:
    - 2026-12-27 (5 days early, previous month) → None with the new line, and no "no quarterly product"
      line;
    - 2026-12-26 (6 days early) → None via the existing "not scheduled" line, not the new one;
    - 2027-01-06 (5 days late) → 2027-01-01 (snap unchanged); 2027-01-07 (6 days late) → None.
-5. Boundaries, day 10, all months: 2024-03-05 → 2024-03-05 with the existing "before the scheduled issue
-   date" warning and the "no quarterly product" WARNING; 2024-03-04 → None. An on-day run (2024-03-10)
-   logs no "no quarterly product" line.
-6. Unchanged without edits: the day-10 early-run contract (`tests/test_lt_utils.py:128`) and the recovery
+6. Boundaries, `month_0` lead 0, day 10, all months: 2024-03-05 → 2024-03-05 with the existing "before
+   the scheduled issue date" warning and no "no quarterly product" line; 2024-03-04 → None.
+7. Unchanged without edits: the day-10 early-run contract (`tests/test_lt_utils.py:128`) and the recovery
    exact-date and no-future tests in `tests/test_lt_recovery.py`.
 
 ## Acceptance
@@ -114,3 +142,5 @@ may be capped above INFO.
 - `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh long_term_forecasting` gives zero failures and zero
   unexpected skips.
 - `git diff --stat` shows only the three files above.
+
+> **Owner note (2026-09-26):** the owner accepted that same-month early runs produce no quarter product (round-2 decision 6). An early run of the **quarter mode itself** (kghm 20th–24th) likewise yields no product under PP-065's native-row rule. Extend the WARNING to that case (one line, same condition), or confirm with the owner in the PR that the existing early-run warning suffices.
