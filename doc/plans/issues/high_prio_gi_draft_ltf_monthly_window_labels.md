@@ -186,11 +186,21 @@ run it; it is a one-way step.
   1. Preserve the operational and recovered appends: operational runs append to the live CSV
      (`append_forecast_to_hindcast`, `lt_utils.py:509-543`, dedup on (`date`, `code`) keeping the last),
      so take the live CSV as of publication time, not the copy saved before P2.
-  2. Merge the approved regenerated or corrected hindcast rows into `<model>_hindcast.csv`, replacing the
-     manifest rows; on a (`date`, `code`) collision keep the operational/recovered row.
-  3. Verify the merged file against the manifest: no manifest key remains, every counterpart is present,
-     every preserved append is unchanged, and the P0 contract audit on the file reports 0 failures.
-  4. Update the authoritative server copy **and** the Dropbox copy.
+  2. **Before any DB change, fix two disjoint sets:**
+     - **replace/delete**: the manifest keys, including any defective operational (flag-0) rows approved
+       for replacement;
+     - **preserve**: operational and recovered appends that are *not* in the manifest.
+  3. Merge the approved regenerated or corrected rows into `<model>_hindcast.csv`. **Approved manifest
+     replacements take precedence** on a (`date`, `code`) collision. Preserved rows are kept unchanged.
+     The importer copies windows verbatim (`bin/utils/migration_py/long_forecast.py:334`), so a kept
+     defective row would come back on the next import.
+  4. Verify the merged file:
+     - no manifest key remains, and every counterpart is present;
+     - every preserved append is unchanged;
+     - the P0 contract audit on the file reports 0 failures;
+     - a test fixture covers a defective operational-row collision alongside an unaffected append;
+     - a **dry-run import** of the published CSV passes.
+  5. Update the authoritative server copy **and** the Dropbox copy.
 
   Alternative: keep a reviewed replacement artifact and keep ordinary imports
   (`bin/initialize_long_forecast_history.sh`, a DB reset) blocked until it is published.

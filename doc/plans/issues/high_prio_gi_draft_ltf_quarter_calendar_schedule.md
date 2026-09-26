@@ -6,9 +6,9 @@
 - **tjhm Q4, issue 2026-10-01.** The current config skips it. It can be recovered with `lt_recovery`
   until 2026-11-30 once P0 is done (`apps/long_term_forecasting/lt_recovery.py:282-306`,
   `check_recovery_window`), so this is not a reason to skip the P0 gate. Recovery **refuses** if any
-  member row for that date already exists (`lt_recovery.py:682-689`); see P0 gate step 2. Clearing the
-  pre-existing tjhm rows dated 2026-10-01 before any recovery is owned by the decision-F step in PP-064
-  Chunk C (round-2 decision 4), not by this plan.
+  member row for that date already exists (`lt_recovery.py:682-689`); see P0 gate step 2. The owner chose
+  (2026-09-26) to clear the pre-existing tjhm rows dated 2026-10-01 **standalone, immediately before the
+  recovery**, independent of the postprocessing deploy. See **P0b** below.
 - **kghm Q1, issue 2026-12-25.**
 
 **Labels**: `long-term`, `quarter`, `config`, `deployment`
@@ -117,9 +117,8 @@ who. Code agents do not run P0.
      rows cannot be told apart from a new run by age. If they exist on the server:
      - a cron run upserts over them (the natural key has no `flag`), so the read-back needs the snapshot
        in step 5;
-     - `lt_recovery` refuses the date (`lt_recovery.py:682-689`). For the tjhm 2026-10-01 rows, removal
-       is owned by the decision-F step in PP-064 Chunk C; run it before any recovery of that date. Any
-       other such rows need the same kind of reviewed step with the service owner.
+     - `lt_recovery` refuses the date (`lt_recovery.py:682-689`). For the tjhm 2026-10-01 rows, use
+       **P0b**. Any other such rows need the same kind of reviewed step with the service owner.
    - The local copies (Dropbox, read 2026-09-26) have `forecast_months [3..9]` for both orgs, issue day 1 /
      lead 0 (tjhm) and 25 / 1 (kghm).
 3. **Owner approval** of the exact change per org, noted in the PR or in this file.
@@ -232,8 +231,35 @@ Do not change the mode JSONs, the cron lines or the issue days.
    content back; Dropbox conflicted copies already exist in the data repos.
 
 **Rollback**: restore the `.bak` files on both copies. If the tjhm Oct 1 run is missed, recover it with
-`lt_recovery` before 2026-11-30 (`lt_recovery.py:282-306`), after the pre-existing rows are cleared
-(gate step 2; for tjhm 2026-10-01 that is the decision-F step in PP-064 Chunk C).
+**P0b** before 2026-11-30.
+
+### P0b — Recover tjhm Q4 2026 if the Oct 1 run is missed (ops; owner decision 2026-09-26, option a)
+
+**When:** only if tjhm P0 is in place and no genuine Oct-1 quarter run exists. Genuine means the LT
+module's own `<model>_forecast.csv` has no 2026-10-01 quarter row. Any time before 2026-11-30
+(`lt_recovery.py:282-306`).
+
+**Who:** the executor named in the PR, together with the service owner, who performs the delete.
+
+**Steps** (one sitting, with no LT or postprocessing run in between):
+1. **Pause** the LT and postprocessing cron lines for the duration, including any daily long-term
+   maintenance. Otherwise trunk postprocessing re-derives LR Q4 rows dated 2026-10-01 and re-blocks the
+   recovery (`api_writer.py:1199-1204`).
+2. **Export (backup)** every tjhm QUARTER `long_forecasts` row with `date = 2026-10-01`, all models,
+   including ensembles. Record the counts per model and flag (aggregates only).
+3. **Delete** exactly those rows (service owner). Dry-run the count first; it must equal step 2.
+4. **Recover:** `lt_recovery` for 2026-10-01, quarter mode, on tjhm (see
+   `doc/prod/long_term_recovery_runbook.md` for the invocation). Expected: LR_Base/LR_SM rows with `date`
+   2026-10-01, window 2026-10-01..2026-12-31, hv 0, **flag 1** (`lt_recovery.py:99, 728`), non-null
+   predictions.
+5. **Resume** the cron lines. Let the next postprocessing run (or a manual long-term maintenance run)
+   rebuild the Q4 ensembles under the rules then deployed.
+6. **Verify** after that run:
+   - the LR rows still carry the recovered values, i.e. they were not overwritten by derived aggregates
+     (compare against the recovery run's own CSV output);
+   - the Q4 ensembles exist.
+
+**Rollback:** re-import the exported rows.
 
 ### P1 — Lock the calendar schedule with additive tests (code agent)
 
