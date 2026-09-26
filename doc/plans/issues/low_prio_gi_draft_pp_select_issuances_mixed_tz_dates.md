@@ -4,9 +4,10 @@
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: Low — pre-existing on trunk; **latent** today (API rows carry date-only strings).
 **Related**: PP-064 (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md`) fixed the same
-failure mode at its own two call sites via `_issue_date_local_calendar_date`, but explicitly left
-`select_operational_issuances` unmodified (Contract: "It only has to receive calendar-only rows.").
-This issue is the follow-up that touches the function PP-064 deliberately did not.
+failure mode at its own two call sites via `local_calendar_date` (`apps/postprocessing_forecasts/src/aggregation.py`),
+but explicitly left `select_operational_issuances` unmodified (Contract: "It only has to receive
+calendar-only rows."). This issue is the follow-up that touches the function PP-064 deliberately did
+not.
 
 ## Problem
 
@@ -30,7 +31,7 @@ crash PP-064 found and fixed at its own two call sites.
 - Reproduced (pandas 2.3.3, the locked version): `pd.to_datetime(pd.Series(["2024-12-25",
   "2025-03-25T00:00:00+06:00"]))` raises `ValueError: unconverted data remains when parsing with
   format "%Y-%m-%d": "T00:00:00+06:00", at position 1.`
-- Same line and function on the PP-064 branch (`fix_pp_quarter_calendar_window`, HEAD `275826de`,
+- Same line and function on the PP-064 branch (`fix_pp_quarter_calendar_window`, HEAD `ac2a5a51`,
   worktree `sapphire-pp064a`): unchanged, per PP-064's own Contract not to modify this function.
 - `format="mixed"` alone does not fix it either — reproduced: it silences the `ValueError` but the
   resulting object-dtype Series then raises `AttributeError` on `.dt.year`/`.dt.day` (the same
@@ -40,10 +41,15 @@ crash PP-064 found and fixed at its own two call sites.
 
 ## Proposed fix
 
-Once PP-064 Chunk A has merged, its `_issue_date_local_calendar_date` helper
-(`apps/postprocessing_forecasts/src/data_reader.py`, added by that branch) is safe to reuse for the
-day/month/year arithmetic here (`derived_lead` at `:346-348`, `issue_day` at `:349`) — those only ever read
-`.dt.year`/`.dt.month`/`.dt.day`, which are unaffected by dropping time-of-day.
+Once PP-064 Chunk A has merged, its `local_calendar_date` helper
+(`apps/postprocessing_forecasts/src/aggregation.py:100-199`, added by that branch — not in
+`data_reader.py`) is safe to reuse for the day/month/year arithmetic here (`derived_lead` at
+`:346-348`, `issue_day` at `:349`) — those only ever read `.dt.year`/`.dt.month`/`.dt.day`, which are
+unaffected by dropping time-of-day. `local_calendar_date` is a per-value `pd.Timestamp` parse
+(tz-aware → local wall-clock date; out-of-range — before 1677-09-22, or not representable at ns
+resolution — → `NaT`; never raises), vectorised for a `datetime64` column and de-duplicated only for
+exact-`str` values elsewhere; both `date_col` and `valid_from_col` here are typically object/string
+columns, so the per-value or string-dedup path applies, not the vectorised one.
 
 **Do not simply reassign `candidates[date_col]` to the truncated value and sort by it, as PP-064's
 own two call sites do.** This function's docstring and code make `date_col`'s relative ordering a
@@ -62,7 +68,7 @@ do not collapse same-day-different-time rows onto one sort value. If preserving 
 sub-day ordering across mixed tz-aware/naive rows turns out to be impractical (e.g. no principled
 way to compare an offset-aware and an offset-naive instant), that must be an **explicit, documented
 contract change** with its own test proving the chosen tie-break — not an unstated side effect of
-reusing PP-064's truncating helper. Recommendation: keep the existing latest-date-wins ordering.
+reusing `local_calendar_date`. Recommendation: keep the existing latest-date-wins ordering.
 
 Leave the `valid_from_col` parse (`:336`) untouched unless a similar mixed-format report surfaces
 for it; every existing write path already writes `valid_from` as a bare date. Do not otherwise
@@ -70,8 +76,8 @@ change `select_operational_issuances`'s selection logic, signature, or the deriv
 arithmetic.
 
 **Out of scope, deferred (do not fold in here):** the season branch of `_normalize_combined_forecasts`
-(`:3770-3771`, `df["date"] = pd.to_datetime(df["date"], errors="coerce")`, no `format="mixed"`) and
-`read_seasonal_forecasts` (calls `_normalize_combined_forecasts` at `:3263` before reaching
+(`:3902-3903`, `df["date"] = pd.to_datetime(df["date"], errors="coerce")`, no `format="mixed"`) and
+`read_seasonal_forecasts` (calls `_normalize_combined_forecasts` at `:3331` before reaching
 `select_operational_issuances`) have a **different** failure mode on the same kind of mixed batch:
 reproduced — plain `pd.to_datetime(..., errors="coerce")` on a mixed tz-aware/naive batch does not
 raise at all; it silently coerces the tz-aware row to `NaT` (data loss, not a crash), before

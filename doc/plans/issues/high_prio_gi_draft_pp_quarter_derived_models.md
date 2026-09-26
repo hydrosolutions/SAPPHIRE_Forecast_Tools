@@ -573,3 +573,11 @@ quarters of scored years, expect none.
 - Deleting legacy rows, including old ensemble rows (D8 / PP-041).
 - Any writer change beyond the LR and EM skip.
 - Making season gap-fill reachable when the monthly block has nothing to do.
+- **`read_latest_quarterly_forecasts`'s monthly-derived Source 1 has no issue-date bound** (`data_reader.py:3336-3362`,
+  trunk): unlike Source 2 (direct), which PP-064 Chunk A bounds to `date <= forecast_date` (Problem 6),
+  the raw monthly read feeding `aggregate_monthly_fc_to_quarterly` here is not similarly bound, so a
+  back-dated run could in principle aggregate a monthly row issued after `forecast_date`. This plan's own
+  "Derived rows" step (item 2, above) adds that bound for its own new derivation, including the LR
+  fallback case, but does not fix the pre-existing, unbounded LR_Base/LR_SM monthly-aggregation path
+  itself; `aggregate_monthly_fc_to_quarterly` stays unchanged (P1a). Pre-existing on trunk, not
+  introduced or fixed by PP-064 or this plan; noted here so it is not lost, not filed separately.

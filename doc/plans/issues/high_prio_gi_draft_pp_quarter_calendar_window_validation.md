@@ -113,7 +113,7 @@ step 0 reads the real state per org. Both flag states are in scope.
 
      Locally, 3,007 LR_BASE hv1 calendar rows are rewrites next to 3,635 native ones.
    - **(c) Persisted monthly-derived rows.** Flag ON: `date = valid_from − monthly hv`
-     (`aggregation.py:294-300`), with the writer keeping the monthly hv. Example: 1,505 LR_BASE hv1 Q1
+     (`aggregation.py:293-299`), with the writer keeping the monthly hv. Example: 1,505 LR_BASE hv1 Q1
      rows are dated **Dec 1**. Flag OFF: `date = valid_from`.
 
    Populations (b) and (c) have calendar windows, so **no window filter distinguishes them from (a)**.
@@ -150,29 +150,32 @@ step 0 reads the real state per org. Both flag states are in scope.
 - Under flag OFF, the configured-lead Q1 of `start_year` issued in `start_year − 1` is read (Dec 25 for
   kghm).
 
-**Files (only these may be modified)**:
-- `apps/postprocessing_forecasts/src/aggregation.py`: new pure helper
-  `filter_calendar_quarter_windows(df) -> tuple[pd.DataFrame, int]` next to `QUARTER_MONTHS`
+**Files (only these may be modified; final shape, `ac2a5a51`)**:
+- `apps/postprocessing_forecasts/src/aggregation.py`:
+  - new date-parsing core: `_LOCAL_CALENDAR_DATE_LOWER_BOUND = pd.Timestamp("1677-09-22")` (`:38`),
+    `_parse_local_calendar_date` (element-wise, `:41-86`), `_local_calendar_date_per_value` (the
+    per-value fallback, `:89-97`) and the public `local_calendar_date(s) -> pd.Series` (`:100-199`) —
+    this is the ONE date-parsing helper for the whole PP-064 fix; the reader no longer has its own
+    (see "Helper semantics" below for its exact semantics)
+  - new pure helper `filter_calendar_quarter_windows(df) -> tuple[pd.DataFrame, int]` (`:202-278`),
+    immediately below `local_calendar_date`
 - `apps/postprocessing_forecasts/src/data_reader.py`:
-  - `_normalize_combined_forecasts`: apply the helper **for `horizon == "quarter"` only, before the
-    existing `valid_from` parse** (`:3748`); season behaviour unchanged
-  - new module-level helper `_issue_date_local_calendar_date(s) -> pd.Series`, next to the delegate
-    section header: parses only the first 10 characters of a raw `date` column (the local calendar
-    date), so a column mixing tz-aware and tz-naive issue-date strings cannot make a bare
-    `pd.to_datetime(..., format="mixed")` fall back to object dtype and raise on `.dt` access
-  - `read_quarterly_forecasts`: the flag-OFF direct read (`:3120-3127`) only, using the helper above for
-    the issue-year mask
-  - `read_latest_quarterly_forecasts`: the target-year upper bound (`:3331-3334, 3413`) and a direct-row
-    date bound, also using the helper above
+  - `_normalize_combined_forecasts` (`:3823-3921`): apply `filter_calendar_quarter_windows` **for
+    `horizon == "quarter"` only, before the existing `valid_from` parse** (now `:3880`); season
+    behaviour unchanged. No local helper of its own — the module has none any more.
+  - `read_quarterly_forecasts` (`:3044-3243`): the flag-OFF direct read (`:3120-3127`) only, using
+    `local_calendar_date` (imported from `src.aggregation` at `:3072`) for the issue-year mask
+  - `read_latest_quarterly_forecasts` (`:3373-3556`): the target-year upper bound and a direct-row date
+    bound, also using `local_calendar_date` (imported at `:3397`, used at `:3480`)
 - `apps/postprocessing_forecasts/src/api_writer.py`: quarter branch of `_write_aggregated_forecasts_to_api`
-  (`:1160-1204`)
+  (`:1070-1325`, guard logic at `:1194-1249`)
 - Tests: new `apps/postprocessing_forecasts/tests/test_quarter_calendar_window.py`; new tests may be
   appended to existing quarter test files, but existing tests are not edited
 
 **Agent instruction**: *"Do NOT change any existing function signatures, data flow logic, or control
 flow. Your changes must be purely additive or modify only the specific behavior described."* Do not
 change:
-- the writer's `horizon_value` and `record_date` logic (`api_writer.py:1172-1175, 1199-1204`)
+- the writer's `horizon_value` and `record_date` logic (`api_writer.py:1169-1176, 1264-1269`)
 - ensemble membership
 - `select_operational_issuances`
 - `model_names.py`
@@ -181,51 +184,114 @@ change:
 
 Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
 
-**Helper semantics**
-- Parse with `pd.to_datetime(..., format="mixed", errors="coerce").dt.normalize()`. Reader output mixes
-  date-only strings and timestamps (`astype(str)` at `:3170-3172, 3445-3447`).
-- **Write the normalized `valid_from` back** into the returned frame, so the existing parse at `:3748`
-  cannot raise. Leave `valid_to` with the dtype it came in with.
-- Both `valid_from` and `valid_to` **columns** absent → return unchanged. Only the `valid_to` column
-  absent → every row is invalid (empty result, logged). For a row, either value null or unparseable →
-  invalid, dropped.
-- Keep a row iff `valid_from` is day 1 of month 1/4/7/10 **and** `valid_to` is the last day of month
-  `valid_from.month + 2` of the **same year**.
-- Log the dropped count **at INFO** (stale rolling rows stay in the DB, so this fires on every read), with
-  the horizon and no station codes.
+**Helper semantics — `local_calendar_date` (`aggregation.py:100-199`)**
 
-**Writer guard (quarter branch only)**
+The single date-parsing helper behind `filter_calendar_quarter_windows`, both quarter readers' issue-date
+masks, and the writer guard. Not `_issue_date_local_calendar_date` in `data_reader.py` — that name/location
+was an earlier round; it was deleted, and every call site now imports `local_calendar_date` from
+`src.aggregation`.
+
+- Equivalent, per value, to parsing with `pd.Timestamp(v)` (`_parse_local_calendar_date`,
+  `aggregation.py:41-86`) — not a bare `pd.to_datetime(s, format="mixed", errors="coerce")`, which raises
+  `AttributeError` on a subsequent `.dt` access when `s` mixes tz-aware and tz-naive strings across rows.
+- A tz-aware value is dropped to its LOCAL wall-clock date (`tz_localize(None)`, never `tz_convert`,
+  which would shift the underlying instant to UTC first).
+- Out-of-range → `NaT`, never raises: a value before `1677-09-22` (just past `pd.Timestamp.min`) or not
+  representable at ns resolution (e.g. `pd.Timestamp` accepts `"9999-12-31"` at second resolution, but
+  casting it to ns overflows) both return `NaT`; the lower-bound check runs on the value BEFORE
+  `.normalize()`, because normalizing a value already close to the minimum can itself silently wrap to a
+  bogus date near the upper limit instead of raising (observed: `2262-04-11`). The whole per-value parse
+  is wrapped in a broad `except Exception`, since `pd.Timestamp(v)` can invoke arbitrary methods on an
+  arbitrary `v` (e.g. `__str__`) that can raise anything.
+- **Vectorised fast path.** A `datetime64` column (naive or tz-aware, any unit) is handled fully
+  vectorised when it casts to `datetime64[ns]`; a non-ns unit falls back to per-value parsing (casting to
+  ns to normalize it could itself overflow for an extreme value).
+- **De-duplication is restricted to exact `str` values, keyed on the string itself** — a pure function of
+  its argument, so this cannot collide with any other type or value. Every other value (`Timestamp`,
+  `datetime`, `date`, `np.datetime64`, a number, a bool, `None`/`NaN`/`NA`/`NaT`, or anything unhashable)
+  is parsed individually every time, with no cache key at all. An earlier version de-duplicated by a
+  generic type+repr key; three review rounds each found a new way to break it (a same-instant tz-aware
+  value at two different UTC offsets; `0`/`False` and `1`/`True`/`1.0`, all `==` but parsed differently;
+  `str()`/`repr()` collisions between unrelated types; a `__str__` that raises) — so this is restricted to
+  the one case correct BY CONSTRUCTION, not by enumerating collision classes.
+- Empty input, and input that is entirely null regardless of its own dtype, both return naive
+  `datetime64[ns]`.
+
+**`filter_calendar_quarter_windows` (`aggregation.py:202-278`)**
+- **Write the normalized `valid_from` back** into the returned frame (via `local_calendar_date(...).dt.normalize()`),
+  so the existing parse further downstream (`data_reader.py:3880`) cannot raise on the mixed formats this
+  helper already resolved. Leave `valid_to` with the dtype it came in with.
+- Both `valid_from` and `valid_to` **columns** absent → return unchanged. Only one of the two columns
+  present → every row is invalid (empty result). Both present → a row with either value null or
+  unparseable is invalid and dropped.
+- Keep a row iff `valid_from` is day 1 of month 1/4/7/10 **and** `valid_to` equals `valid_from + 3
+  months − 1 day` — but the expected `valid_to` is **only computed for rows whose `valid_from` year is
+  `<= 2261`** (`aggregation.py:256-271`): `datetime64[ns]` tops out at `2262-04-11`, so the `+3 months`
+  arithmetic can itself overflow for an otherwise-valid `valid_from` within ~3 months of that limit; any
+  row above the cutoff cannot be verified this way and is simply not a calendar quarter.
+
+**`_normalize_combined_forecasts` (`data_reader.py:3823-3921`), quarter branch**
+- Log the dropped count **at INFO** whenever it is nonzero (`:3843-3848`) — stale rolling rows stay in
+  the DB, so this fires on every read — with the horizon and no station codes.
+- **Early empty return** (`:3849-3877`) when the filter leaves zero rows with `valid_from` absent from
+  the result, OR when neither `valid_from` nor `valid_to` was present in the input at all. The latter
+  case additionally logs its own **WARNING** (`:3862-3871`) naming the dropped row count and horizon,
+  because `filter_calendar_quarter_windows` itself logged nothing for a "neither column present" input
+  (it returns such a frame unchanged, 0 dropped) — without this, those rows would be silently discarded.
+  The returned empty frame's columns are taken from the **input frame's own columns** (plus `year`/
+  `quarter_in_year` if absent), not a fixed list — this avoids a `KeyError` on the subsequent `valid_from`
+  parse (`:3880`) for callers with no try/except of their own (e.g. `read_quarterly_forecasts`, unlike
+  `_read_long_combined_forecasts_api`'s try/except at `:3812-3819`).
+
+**Writer guard (quarter branch only, `api_writer.py:1194-1249`)**
 - A row whose `valid_from` **and** `valid_to` are both null keeps the synthesized calendar window
   (today's behaviour).
-- Otherwise a record is written only if the window is calendar **and** matches `(year, quarter_in_year)`.
+- Otherwise a record is written only if the row's own window, parsed with `local_calendar_date`, matches
+  the synthesized calendar window for `(year, quarter_in_year)` exactly — an unparseable but *present*
+  value counts as a mismatch (dropped), not as "absent" (`:1231-1247`: `both_present` gates the
+  `local_calendar_date` comparison; anything else, including one-sided presence, is `mismatch = True`).
+  Parsed via `local_calendar_date`, not a `str(...)[:10]` prefix compare — the latter accepted a garbage
+  time-of-day like `"2024-06-30T99:00:00"` and rejected a same-date value in a different format like
+  `"2024/06/30"` or `"20240630"` that the reader's own calendar-window check already accepts.
 - A calendar `valid_from` with a null `valid_to` is **dropped**. This is an intended change from trunk,
-  which writes the row's `valid_from` with a synthesized `valid_to` (`:1193-1197`).
-- One aggregated count per call (not per row), no station codes.
+  which writes the row's `valid_from` with a synthesized `valid_to`.
+- A record that passes still **writes the synthesized ISO-format dates**, not the row's own (possibly
+  differently-formatted) string — the row's own values were only used to verify agreement.
+- **Target-year range guard, numeric, both ends** (`:1219-1230`): a row is skipped outright — before any
+  parse comparison — if `year > 2261` (matching `filter_calendar_quarter_windows`' own upper cutoff,
+  `aggregation.py:256-271`) or if `(year, quarter start month) < (1677, October)` (matching
+  `local_calendar_date`'s own `1677-09-22` lower bound: Q1–Q3 of 1677 start before that date; only Q4's
+  Oct 1 start clears it). This comparison is **numeric**, not a string comparison — `"999-01-01" <
+  "1677-09-22"` is `False` lexicographically (every year with fewer digits than 1677 would otherwise
+  misclassify as in-range).
+- One aggregated count per call (not per row) at INFO, no station codes (`:1296-1301`).
 
 **Year and date bounds in `read_latest_quarterly_forecasts` (Problem 6)**
 - The flag-ON target-year trim admits `end_year + 1`, so a 25 Dec issue yields next year's Q1. The
-  issue-date API read (`:3389-3403`) is unchanged.
+  issue-date API read (`:3432-3469`) is unchanged.
 - Under **both** flags, drop direct rows whose `date` is after `forecast_date`. PP-065 applies the same
   bound to the monthly source.
-  - **Placement:** immediately after `direct = _normalize_combined_forecasts(raw_q, "quarter")` (`:3405`)
-    and **before** `select_operational_issuances` (`:3407`).
-  - Parse quarter `date` with `_issue_date_local_calendar_date` (below) for the mask only, not a bare
-    `pd.to_datetime(..., format="mixed", errors="coerce")`; do not write it back (quarter `date` arrives
-    unparsed, `:3770-3771` parses it for season only). A bare mixed-format parse raises `AttributeError`
-    on the subsequent `.dt` access when `date` mixes tz-aware and tz-naive strings — see
-    `TestRegressionMixedTimezoneIssueDate` below.
+  - **Placement:** immediately after `direct = _normalize_combined_forecasts(raw_q, "quarter")` (`:3474`)
+    and **before** `select_operational_issuances` (`:3493`).
+  - Parse quarter `date` with `local_calendar_date` (`src.aggregation`, imported at `:3395-3398`) for the
+    mask only, not a bare `pd.to_datetime(..., format="mixed", errors="coerce")`; do not write it back
+    (quarter `date` arrives unparsed, `:3902-3903` parses it for season only). A bare mixed-format parse
+    raises `AttributeError` on the subsequent `.dt` access when `date` mixes tz-aware and tz-naive
+    strings — see `TestRegressionMixedTimezoneIssueDate` below.
   - Rows with a null or unparseable `date` are **kept** and not subject to the bound (today's behaviour).
   - No `date` column → skip the bound.
+  - **Drop count logged at INFO** when nonzero (`:3484-3490`), naming whether it may be a back-dated run
+    or a flag-OFF row dated at the quarter start.
 
 **First-year Q1 (Problem 7), flag OFF only**
-- Read issue years from `start_year − 1` (`:3110-3111`). Keep the `horizon_value` filter unchanged. Do
-  **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3137`) here — an earlier version
+- Read issue years from `start_year − 1` (`:3132-3138`). Keep the `horizon_value` filter unchanged. Do
+  **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3148`) here — an earlier version
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
 - **Invariant:** the flag-OFF direct set = trunk's set (every row with issue year in
   `[start_year, end_year]`, any target year) **plus only** the configured-lead Q1 of `start_year` issued
   in `start_year − 1` (Dec 25 for kghm). Nothing else is added, nothing else is removed.
 - **Why no issue-month check is needed:** the flag-OFF direct read keeps the single-lead API filter
-  unchanged (`horizon_value=quarter_horizon_value()`, comment at `:3123-3124`), so every direct row
+  unchanged (`horizon_value=quarter_horizon_value()`, comment at `:3088-3095`), so every direct row
   already has `horizon_value` == the org's one configured lead. A row with issue year `< start_year`
   that targets Q1 of `start_year` is therefore *by construction* that org's configured-lead issue (kghm
   lead 1 → issued Dec 25 of `start_year − 1`; tjhm lead 0 issues Jan 1 of `start_year` itself, already
@@ -246,16 +312,22 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   the later `drop_duplicates(keep="last")` combine).
 - A row whose issue `date` is null or unparseable is kept — trunk's API-side year filter could not have
   excluded it by year either.
-- Parse the issue year with `_issue_date_local_calendar_date` (new module-level helper in
-  `data_reader.py`, directly above `read_quarterly_forecasts` — `QUARTER_MONTHS` and
-  `filter_calendar_quarter_windows` are in `aggregation.py`, a different helper), not a bare
-  `pd.to_datetime(..., format="mixed")`.
-  It keeps only the first 10 characters (the local calendar date) before parsing, so a `date` column
-  mixing tz-aware and tz-naive strings (e.g. `"2025-01-10"` next to `"2025-03-25T00:00:00+06:00"`)
-  cannot make `"mixed"` fall back to an object-dtype Series and raise `AttributeError` on the subsequent
-  `.dt` access — trunk's plain string comparison never had this failure mode. Use the same helper for
-  the Problem-6 issue-date bound in `read_latest_quarterly_forecasts`. No other pre-existing date parse
-  (e.g. `select_operational_issuances`' own) is touched.
+- Parse the issue year with `local_calendar_date` (`src.aggregation`, imported at `:3072`; see "Helper
+  semantics" above for its exact behaviour — a per-value `pd.Timestamp` parse, tz-aware → local
+  wall-clock date, out-of-range → `NaT`, never raises — **not** a `str(...)[:10]` prefix slice, an
+  earlier round's approach that this replaced because it changed which values parse in both directions
+  relative to a `format="mixed"` parse), not a bare `pd.to_datetime(..., format="mixed")`. A `date`
+  column mixing tz-aware and tz-naive strings (e.g. `"2025-01-10"` next to
+  `"2025-03-25T00:00:00+06:00"`) would make the latter fall back to an object-dtype Series and raise
+  `AttributeError` on the subsequent `.dt` access — trunk's plain string comparison never had this
+  failure mode. The same helper is used for the Problem-6 issue-date bound in
+  `read_latest_quarterly_forecasts`. No other pre-existing date parse (e.g.
+  `select_operational_issuances`' own) is touched.
+- **Drop count logged at INFO** when nonzero (`:3186-3191`).
+- **Missing-column guard.** When `quarter_in_year` or `date` is absent from `direct` (so the mask above
+  cannot even run — a year-only check was already shown insufficient, see
+  `TestRegressionIssueYearMaskTooPermissive`), skip the mask and log a **WARNING** naming the missing
+  column(s) (`:3199-3205`), rather than silently doing nothing.
 - Locked by `TestA10FirstYearQ1FlagOff` (first-year Q1 read; lower-bound trim),
   `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening` (next-year Q1 direct row wins over
   monthly-derived), `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (prior-year backfill row
@@ -271,11 +343,41 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   Problem-6 bound) still raises there: that function is deliberately unmodified (Contract, above) and is
   PP-066's scope, not this one's.
 
+**Additional test classes added across later review rounds** (all in
+`tests/test_quarter_calendar_window.py`, beyond the ones named above and the A-1..A-10 list below):
+- `TestS2ReaderWriterYear2262Agreement` — the reader and the writer must agree at the shared
+  `datetime64[ns]` upper cutoff (year 2262 Q1 rejected by both).
+- `TestRegressionMixedTimezoneValidTo` — a mixed tz-aware/naive **`valid_to`** (not `date`) column, both
+  through `read_quarterly_combined_forecasts` and directly through `read_quarterly_forecasts`; verified
+  to fail if `local_calendar_date` is swapped back to the deleted `format="mixed"`-based parse.
+- `TestRegressionAllNullValidFromColumnDropped` — when every row's `valid_from` is null, the real API
+  client's own `dropna(axis=1, how="all")` drops the column entirely before `_normalize_combined_forecasts`
+  ever sees it; must return empty, not raise `KeyError`, through `read_quarterly_forecasts` (no
+  try/except of its own, unlike the combined path).
+- `TestR5Observability` — the three drop-count log lines this plan adds (the flag-OFF issue-year mask's
+  INFO count, its missing-column WARNING, and the Problem-6 date bound's INFO count in the latest
+  reader) fire exactly once per call, name the count, and never a station code.
+- `TestP1LocalCalendarDateParsing` — direct unit coverage of `local_calendar_date` itself: accepted vs.
+  rejected values, tz-aware local-wall-clock semantics, the lower-bound cutoff (including the
+  normalize-before-cutoff wrap-around guard), the exact-`str` dedup cache (including adversarial
+  collision pairs, an unhashable value, a `str` subclass, and an object whose `__str__` raises),
+  vectorised-vs-per-value dispatch, and empty/all-null input for every column shape.
+- `TestRegressionOutOfRangeDatesDoNotCrash` — every one of the four call sites (`read_quarterly_forecasts`
+  and `read_latest_quarterly_forecasts`, both flag states where applicable, plus
+  `read_quarterly_combined_forecasts`) survives an out-of-range date without raising.
+- `TestA7WriterGuard` grew substantially beyond its original A-7 scope (below): differently-formatted
+  same-date values (e.g. `"2024/04/01"` vs. `"2024-04-01"`) are accepted and re-serialized as ISO, not
+  rejected as a mismatch; a `valid_to` one month or one year off is dropped even when `valid_from`
+  matches; year 2262 Q1 and year 1677 Q3 are rejected even with both stored values null (the numeric
+  out-of-range guard fires before any parse comparison); an unpadded small year (e.g. `"999"`) is
+  rejected, proving the comparison is numeric, not lexicographic; year 1677 **Q4** (the one quarter at
+  the exact lower boundary that clears it) is written.
+
 **Tests (Arrange → Act → Assert, station `19999`)**
 
 Fakes of `_read_long_forecasts_api` (`:1406`) must filter by the requested issue-date years,
 `horizon_value` **and `horizon_type`**, as the real call does. The monthly source of both quarter readers
-calls the same function with the default `horizon_type="month"` (e.g. `:3354`), and existing fakes ignore
+calls the same function with the default `horizon_type="month"` (e.g. `:3423`), and existing fakes ignore
 all arguments (`tests/test_lead_aware_latest_readers.py:135`). A fake that ignores its arguments cannot
 make A-5, A-9 or A-10 fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are kept
 stable.)

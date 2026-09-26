@@ -23,8 +23,10 @@ schedule-computed `issue_date(Q)` (Behaviour after, items 4 and 9).
 - The live consumers of `get_long_forecasts_quarter` (`src/db.py:816-871`) are:
   - the **"Quarterly forecast" card on the month horizon**, for reservoir stations only
     (`'вдхр'` in `punkt_name_ru`; `dashboard/plot_manager.py:362-428`, `dashboard/widget_manager.py:230-233`).
-    Its load path is `_get_data_monthly` (`src/db.py:1119`), which then left-merges the quarter skill rows
-    (`:1120-1133`); that merge is what puts `delta` on the card rows;
+    Its load path is `_get_data_monthly` (trunk `src/db.py:1020`; branch `fix_fd_quarter_card_calendar`
+    `:1255`, shifted by the fetch-window code inserted earlier in the file), which then left-merges the
+    quarter skill rows (trunk `:1108-1131`; branch `:1344-1368`); that merge is what puts `delta` on the
+    card rows;
   - the month bulletin's quarterly section, three blocks that each call the function directly
     (`dashboard/bulletin_manager.py:394-399` in `_populate_forecast_attributes`, `:760-765` in `_on_add`,
     `:890-895` in `_on_add_m0`; FD-030).
@@ -88,7 +90,7 @@ written, and P1 no longer returns them (Behaviour after, item 5).
 - `apps/forecast_dashboard/src/vizualization.py`: `create_forecast_summary_table` (additive keyword
   `filter_by_date: bool = True`) and `create_forecast_summary_tabulator` (the same keyword, threaded
   through to `create_forecast_summary_table`); and the all-NaN guard at the `idxmax` in
-  `create_forecast_summary_tabulator` (`:3256`)
+  `create_forecast_summary_tabulator` (`:3267`)
 - `apps/forecast_dashboard/dashboard/plot_manager.py`: `_format_quarterly_forecast_info` (additive
   keyword parameters for the selected window and issue date) and `update_quarterly_summary_tabulator`
 - Tests: `apps/forecast_dashboard/tests/test_db.py` (append only) and a new
@@ -182,7 +184,7 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - **`is_native` column.** Add a boolean `is_native` (the predicate above) to every returned row; False
      for every row when degraded (item 3). The native preference and the LR strictness below, the card and
      FD-030 use this column wherever LR nativeness matters; nothing re-derives the rule. The renderer's
-     `reindex(columns=expected_cols)` (`src/vizualization.py:3206`) drops `is_native` and
+     `reindex(columns=expected_cols)` (`src/vizualization.py:3211`) drops `is_native` and
      `quarter_issue_date`, so the tabulator is unaffected.
    - **All models: prefer the native row.** `date` is part of the `long_forecasts` natural key
      (`sapphire/services/postprocessing/app/models.py:193-201`), so under flag ON legacy rows dated
@@ -224,7 +226,7 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - Select all models' rows for the station's **latest eligible target quarter** (max `valid_from`).
    - Pass `max(date)` **of the selected rows** as `date_picker`, so the renderer's
      `date <= date_picker + 1 day` filter (`vizualization.py:3147-3153`) keeps them all, and call the
-     renderer with `filter_by_date=False`, which skips only the max-date reduction (`:3161-3166`).
+     renderer with `filter_by_date=False`, which skips only the max-date reduction (`:3166-3170`).
    - The renderer also filters on `model_selection.options`, which come from the **monthly**
      `forecasts_all` (`dashboard/data_manager.py:269-281, 287-290`). A quarter model with no monthly rows
      is hidden. This dependency stays; the seven derived models, `Naive Mean` and `Skilled Mean` are monthly
@@ -377,7 +379,7 @@ tjhm **before 2026-12-25**. To check: the card exists only on the month horizon,
   `{CURRENT_YEAR}-12-31`). Quarter skill rows are dated in the recalc year, so a dashboard restarted in
   January, before that month's recalc, has no quarter skill and therefore no δ (empty bounds) until the
   recalc writes the new year's rows.
-- The quarter skill merge in `_get_data_monthly` (`src/db.py:1112-1133`) is not lead-filtered. Under
+- The quarter skill merge in `_get_data_monthly` (`src/db.py:1344-1368`) is not lead-filtered. Under
   flag OFF, quarter skill is written at the sentinel hv 0 only
   (`apps/postprocessing_forecasts/src/api_writer.py:661-669`), so the merge is 1:1; a fan-out needs skill
   rows at more than one `horizon_value` (pre-existing).
