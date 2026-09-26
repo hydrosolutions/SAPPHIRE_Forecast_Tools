@@ -1,13 +1,16 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a December-issued Q1 through
 
-**Status**: Draft (2026-09-26, rev 5 after the third review round)
+**Status**: Draft (2026-09-26, rev 6 after the fourth review round)
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High.
 - Stored quarterly skill is wrong today: a rolling window is scored against a different quarter's
   observations. With `SAPPHIRE_SKILL_LEAD_AWARE=true` the wrong window is picked deterministically
   (#521: NSE ≈ −75 → +0.1 after correction).
-- Chunk A must be deployed **before 2026-12-25**. With the flag ON, the operational reader drops the
-  first kghm Q1, issued Dec 25 for the next year (Problem 6).
+- Chunk A must be deployed **before 2026-12-25**, as the prerequisite of PP-065. LTF-014 P0 is deferred
+  (configs stay `forecast_months [3..9]`), so no native kghm LR row is issued on Dec 25. The first kghm
+  Q1 comes from PP-065's derived path (the seven models plus decision G's LR fallback), which needs the
+  same next-year target (PP-065 item 2); under flag OFF its derived and ensemble rows are persisted
+  dated 2027-01-01. Problem 6 and A-5 remain as the mechanism for direct Dec-25 rows.
 
 **Labels**: `postprocessing_forecasts`, `skill-metrics`, `long-term`, `quarter`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
@@ -49,8 +52,8 @@ step 0 reads the real state per org. Both flag states are in scope.
   changes ensemble membership.
 - **Raw quarter models.**
   - LR_Base and LR_SM are native quarter models. While decision G's temporary fallback is active (until
-    LTF-014 P0 and P2 are deployed on both orgs), a (code, year, quarter) with no native LR row gets LR
-    derived from its monthly forecasts by PP-065 (rule A).
+    LTF-014 P0 and P2 are deployed on both orgs; no end date while P0 is deferred), a (code, year,
+    quarter) with no native LR row gets LR derived from its monthly forecasts by PP-065 (rule A).
   - The seven re-enabled models are PP-065's. Until PP-065 lands, the trunk filter
     (`src/model_names.py:14-16`) keeps quarter LR-only; this plan does not change it.
 - **Flag OFF stays byte-identical for calendar-aligned input** (PP-056 `:164`; flag-OFF golden
@@ -110,8 +113,10 @@ step 0 reads the real state per org. Both flag states are in scope.
    the row's own `valid_from`/`valid_to` (`:1193-1197`).
 6. **December-issued Q1 is dropped by the operational reader (flag ON).** `read_latest_quarterly_forecasts`
    sets `end_year = today.year` (`:3331-3334`) and, with the flag on, trims direct rows to target years
-   `[start_year, end_year]` (`:3413`). On 2026-12-25 the new Q1 2027 row (`year = 2027`) is removed, so no
-   operational Q1 ensemble is built (`postprocessing_operational_long_term.py:211`).
+   `[start_year, end_year]` (`:3413`). On 2026-12-25 a direct Q1 2027 row (`year = 2027`) is removed, so no
+   operational Q1 ensemble is built from it (`postprocessing_operational_long_term.py:211`). While LTF-014
+   P0 is deferred no native Dec-25 LR row exists; PP-065's derived source needs the same next-year target
+   (its item 2).
    - Widening that bound alone lets a **back-dated** run pick a later issue: the reader keeps only the
      maximum (year, quarter) (`:3448-3453`). The flag-OFF read already admits any row dated in
      `today.year`, so this is live under flag OFF today.
@@ -185,8 +190,14 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
 **Year and date bounds in `read_latest_quarterly_forecasts` (Problem 6)**
 - The flag-ON target-year trim admits `end_year + 1`, so a 25 Dec issue yields next year's Q1. The
   issue-date API read (`:3389-3403`) is unchanged.
-- Under **both** flags, drop direct rows whose `date` is after `forecast_date` before the sources are
-  combined. PP-065 applies the same bound to the monthly source.
+- Under **both** flags, drop direct rows whose `date` is after `forecast_date`. PP-065 applies the same
+  bound to the monthly source.
+  - **Placement:** immediately after `direct = _normalize_combined_forecasts(raw_q, "quarter")` (`:3405`)
+    and **before** `select_operational_issuances` (`:3407`).
+  - Parse quarter `date` with `pd.to_datetime(..., format="mixed", errors="coerce")` for the mask only; do
+    not write it back (quarter `date` arrives unparsed, `:3770-3771` parses it for season only).
+  - Rows with a null or unparseable `date` are **kept** and not subject to the bound (today's behaviour).
+  - No `date` column → skip the bound.
 
 **First-year Q1 (Problem 7), flag OFF only**
 - Read issue years from `start_year − 1`, then `_trim_to_target_year_range(direct, "year", start_year,
@@ -194,20 +205,27 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
 
 **Tests (Arrange → Act → Assert, station `19999`)**
 
-Fakes of `_read_long_forecasts_api` (`:1406`) must filter by the requested issue-date years and
-`horizon_value`, as the real call does; a fake that ignores its arguments cannot make A-5, A-9 or A-10
-fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are kept stable.)
+Fakes of `_read_long_forecasts_api` (`:1406`) must filter by the requested issue-date years,
+`horizon_value` **and `horizon_type`**, as the real call does. The monthly source of both quarter readers
+calls the same function with the default `horizon_type="month"` (e.g. `:3354`), and existing fakes ignore
+all arguments (`tests/test_lead_aware_latest_readers.py:135`). A fake that ignores its arguments cannot
+make A-5, A-9 or A-10 fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are kept
+stable.)
 
 **The A tests must survive PP-065 P1b**, which adds the native-row filter to both readers:
-- Every A test writes a kghm-shaped `quarter.json` with **both** `operational_month_lead_time` (1) and
-  `operational_issue_day` (25). The autouse fixture in `tests/test_quarterly_data_reader.py:30-49` writes
-  the lead only, which puts P1b into its degraded mode.
+- The new test file has its own config fixture, following `tests/test_quarterly_data_reader.py:30-49`:
+  set `ieasyforecast_configuration_path`, `ieasyhydroforecast_ml_long_term_configuration` and
+  `ieasyhydroforecast_ml_long_term_supported_modes` (including `quarter`), and write a kghm-shaped
+  `quarter.json` with **both** `operational_month_lead_time` (1) and `operational_issue_day` (25). The
+  autouse fixture there writes the lead only, which puts P1b into its degraded mode.
 - PP-065 P1b lists `tests/test_quarter_calendar_window.py` among the tests it may change.
 - **A-1. Reader** (flag ON/OFF × `read_quarterly_forecasts` / `read_latest_quarterly_forecasts`).
   - Input: kghm-like direct rows issued 2024-03-25 (Apr–Jun, 100), 04-25 (May–Jul, 200) and 05-25
     (Jun–Aug, 300).
   - Expect one Q2 row: value 100, `valid_to` 2024-06-30. For flag OFF, do not assert `date`/`horizon_value`
     (`data_reader.py:83-94`).
+  - The `read_latest_quarterly_forecasts` variant uses `forecast_date` 2024-06-01 (all three issues lie
+    before it).
 - **A-2. `valid_to` enforcement.** Direct rows `2024-04-01..2024-07-31`, `2024-04-01..2025-06-30` and
   `2024-04-01..` with null `valid_to` are excluded by both readers and by the writer.
   (Mutation check: deleting the `valid_to` predicate must make A-2 fail.)
@@ -223,14 +241,18 @@ fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are 
   (`data_reader.SapphirePostprocessingClient`) → `read_quarterly_combined_forecasts` →
   `detect_missing_quarterly_ensembles` (`src/gap_detector.py:370-496`; do not edit it), the maintenance
   path (`postprocessing_maintenance_long_term.py:295-297`).
-  - (i) A calendar quarter whose only EM row is rolling-windowed is reported as a gap after Chunk A
-    (the detector's default `{"EM"}`; PP-065 later switches the maintenance caller to Naive Mean).
+  - Pass the maintenance caller's set, `ensemble_models={"EM", "Skilled Mean", "Naive Mean"}`
+    (`postprocessing_maintenance_long_term.py:297-301`); the detector reports gaps per model
+    (`src/gap_detector.py:470-482`). This is PP-064 A, before PP-065 changes the set.
+  - (i) A calendar quarter whose only EM row is rolling-windowed is reported as a gap after Chunk A:
+    assert the row with `model_short == "EM"`.
   - (ii) A quarter whose only raw rows are rolling is not reported as a gap for a calendar quarter it
     does not cover.
 - **A-7. Writer.** A non-calendar window, one disagreeing with `(year, quarter_in_year)`, or a calendar
   `valid_from` with null `valid_to` → no API record, one aggregated log line. Both windows null →
   synthesized window, as today. A calendar row → a record identical to today's (hv and date per flag).
-  The positive case uses a **non-LR** model (e.g. `Naive Mean`): PP-065 P1b makes the writer skip LR rows.
+  The positive case uses a **non-LR, non-EM** model (e.g. `Naive Mean`): PP-065 P1b makes the writer skip
+  LR and EM rows.
 - **A-8. Season rows** through `_normalize_combined_forecasts` are unchanged.
 - **A-9. Back-dated run, both flags.** `forecast_date = 2026-09-25`, kghm-like rows issued 2026-09-25
   (Oct–Dec) and 2026-12-25 (Jan–Mar 2027) → `read_latest_quarterly_forecasts` returns Q4 2026. Flag OFF
@@ -277,8 +299,12 @@ Chunk B no longer edits `data_reader.py` or any other file.
 **Order** (as in the overview graph):
 - Chunk A and PP-065 deployed (PP-065 includes the 3-of-3 observation rule; 2-of-3 observations against
   3-of-3 derived forecasts would bias the scores).
-- **One window between LT cron days** (kghm 10 and 25; tjhm 1): deploy PP-065, run the decision-F step
-  (tjhm), then the recalc per org. No LT run may fall inside the window.
+- **One writer-paused window** (ops instruction, no code): deploy PP-065, run the decision-F step (tjhm),
+  then the recalc per org.
+  - Pause **every** writer, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
+    maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`),
+    any recalc other than the one below, and manual runs.
+  - Wait for running jobs to finish. Then export, mutate, recalc and verify; only then resume.
 
 0. **Server state read per org** (read-only): `SAPPHIRE_SKILL_LEAD_AWARE`,
    `ieasyhydroforecast_ml_long_term_supported_modes` and `ieasyhydroforecast_min_pairs_long_term_quarter`
@@ -319,9 +345,13 @@ Chunk B no longer edits `data_reader.py` or any other file.
        manifest and escalated, not silently kept.
    - **Delete** the manifest's non-counterpart rows in a reviewed step with the service owner, after the
      backup. Decision G's fallback then derives LR for those quarters (not persisted; round-2 decision 3).
-   - The pre-existing tjhm rows dated 2026-10-01 are **not** F's job any more. The owner chose a standalone
-     clear-and-recover step (LTF-014 **P0b**, 2026-09-26). If P0b has already run, its recovered flag-1 LR
-     rows are genuine: put them in F's preserve manifest.
+   - **The predicate covers any year.** LTF-014 P0b is moot while P0 is deferred, so F again owns the
+     pre-existing tjhm rows dated 2026-10-01 and any 2027-01-01 rows trunk writes before `deploy.pp`.
+     - Evidence: the local DB has tjhm QUARTER rows dated 2026-10-01 at hv0, flag 0 (LR_BASE 4, LR_SM 4,
+       plus EM / Naive Mean / Skilled Mean). They pass the native rule and would suppress the fallback.
+     - Test (PP-065 P1d): once the aggregate-only Oct-1 LR population is cleared, fallback LR feeds the
+       ensembles and no LR row is written or displayed.
+     - If P0b ever runs, its recovered flag-1 LR rows are genuine: put them in F's preserve manifest.
    - Private before/after DB-vs-CSV value check afterwards.
 4. **Recalc** with each deployment's actual flag state (`doc/prod/long_term_deploy_runbook.md`
    § Lead-aware skill).
@@ -336,14 +366,15 @@ Chunk B no longer edits `data_reader.py` or any other file.
      `src/data_reader.py:106, 2833`), is **non-empty**. Otherwise every quarterly ensemble is skipped
      (Problem 8). If K = 10 leaves an org with no quarter skill at all, B5 means no Naive Mean either:
      **escalate to the owner before the hydromet notice** goes out.
-   - Freshly written QUARTER rows contain no rolling windows and no LR rows.
+   - Freshly written QUARTER rows contain no rolling windows, no LR rows and no EM rows.
    - A persisted-derived-row round trip (write → read) yields the native-rule-selected row.
    - Spot check the #521 station privately (its code is never written to the repo). A plausible value is
      a spot check, not proof.
    - **Skill values change sharply** (e.g. flag-OFF kghm median ~0.8–0.9 → ~0.2–0.5). The user-facing
      note is the overview's release-note step; it is not written here.
-   - **Before LTF-014 P2**, kghm LR Q1 skill comes from decision G's derived LR rows, because no native Q1
-     hindcast exists yet. It changes again once native hindcasts land and the fallback is removed.
+   - **While LTF-014 P0 is deferred (no end date)**, LR for kghm Q1 **and** tjhm Q1/Q4 (after decision F)
+     comes from decision G's fallback-derived rows, because neither native issues nor native hindcasts
+     exist for those quarters. It changes again once P0/P2 land and the fallback is removed.
    - PP-065 P2 adds its own counts (stale ensemble rows, unfillable gaps).
 6. **What the recalc leaves behind:**
    - Rolling-windowed rows (raw and EM), inert after Chunk A: owned by PP-041 / the stale-rows decision.

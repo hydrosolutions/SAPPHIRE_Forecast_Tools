@@ -1,6 +1,6 @@
 # Quarter forecast = calendar Q1–Q4: overview plan
 
-**Status**: Not started. Plans rev 4, 2026-09-26, after four review rounds: nine independent reviewers, then five on rev 3, including codex and a combined decision-fidelity review.
+**Status**: Not started. Plans rev 6, 2026-09-26, after five review rounds plus confirm passes. The latest round (after the P0 deferral) covered codex, consistency and implementation readiness.
 **This file owns the decisions and the dependency graph.** Child plans refer to it.
 **Trigger**: GitHub #521 (quarterly target-window matching). The bug is real. This plan set replaces the code
 approach of branch `sandro_sapphire_2_quaterly_agg`.
@@ -45,7 +45,7 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
   without the modeller. This does not block the code plans:
   - PP-064 excludes the rolling issues;
   - PP-065's derived models and the decision-G LR fallback supply Q1 and tjhm Q4.
-  - Deferred with P0: P0b (moot), LTF-014 P2, PP-065 P3, and DOC-009 row 11.
+  - Deferred with P0: P0b (moot; expires 2026-11-30), LTF-014 P1 and P2, PP-065 P3, and DOC-009 P2b (row 11).
 - **Winter issues are valid for LR_Base/LR_SM** (owner).
 - **D1:** accept the offset target.
 - **D2:** the P2 procedure is approved.
@@ -58,9 +58,9 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
    show no LR row for fallback quarters until LTF-014 P0/P2.
 4. **Decision F is by provenance.** Remove tjhm LR QUARTER rows with `date = valid_from` that have no
    counterpart in the LT module CSV, in any quarter, 2026 included.
-   - **Superseded for 2026-10-01:** the owner chose option (a). A standalone clear-and-recover step
-     (LTF-014 P0b) runs before 2026-11-30, independent of the postprocessing deploy. F preserves its
-     recovered rows.
+   - Option (a), the standalone clear-and-recover step LTF-014 P0b, is **moot** while P0 is deferred.
+     F's provenance predicate therefore **again covers the tjhm rows dated 2026-10-01**, and any
+     trunk-written 2027-01-01 rows, in any year. If P0b ever runs, F preserves its recovered rows.
    - Take a preserve manifest, a dry run and a backup first.
 5. **PP-065 is on the 2026-12-25 critical path.** Its fallback guarantees a kghm Q1 even without LTF-014 P0.
 6. **Early kghm runs** on the 20th–24th are accepted but produce no quarter product. They log a WARNING.
@@ -83,7 +83,7 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
 
 | ID | File (`issues/`) | Priority / target |
 |---|---|---|
-| LTF-014 | `high_prio_gi_draft_ltf_quarter_calendar_schedule.md` | High. P0 is gated. Soft targets: tjhm Q4 2026-10-01 (recoverable until 2026-11-30), kghm Q1 2026-12-25 |
+| LTF-014 | `high_prio_gi_draft_ltf_quarter_calendar_schedule.md` | **Deferred** (P0, P0b, P1, P2). Configs stay `[3..9]`. P0b expires 2026-11-30 |
 | PP-064 | `high_prio_gi_draft_pp_quarter_calendar_window_validation.md` | High. **A deployed by 2026-12-25** |
 | PP-065 | `high_prio_gi_draft_pp_quarter_derived_models.md` | High. **Deployed by 2026-12-25.** Four agent phases (P1a–P1d), then rollout. P3 removes the LR fallback |
 | LTF-016 | `high_prio_gi_draft_ltf_monthly_window_labels.md` | High. A data fix (re-import and delete) plus verification; no producer change. Independent of the quarter chain |
@@ -130,15 +130,17 @@ Resolved since rev 2:
    6. PP-065 P3, deployed.
    7. The second recalc.
 4. **Notice to the Kyrgyz and Tajik hydromets, before the recalc.**
-   - Quarterly forecasts are issued four times a year: kghm has no more monthly Mar–Sep issues; tjhm gets
-     new Jan and Oct issues.
+   - The long-term quarter mode still runs **monthly Mar–Sep**. Only the calendar issues are published:
+     kghm Mar/Jun/Sep 25 → Q2/Q3/Q4, and tjhm Apr/Jul 1 → Q2/Q3. The rolling issues are ignored.
+   - **Q1 (both orgs) and tjhm Q4 now appear.** They are built from monthly forecasts (the seven models plus
+     Naive/Skilled Mean), with no LR row shown. The caption still shows the scheduled issue date.
    - Seven more models appear in the quarterly outputs.
    - The quarterly ensembles are now Naive Mean and Skilled Mean, as for monthly. There is no quarterly
      Ensemble Mean.
    - Bounds for models without quantiles are ±δ on the dashboard. Until FD-030 lands, the bulletin range
      can be blank.
-   - Until the schedule change lands, kghm Q1 and tjhm Q1/Q4 show no LR model row. LR is still included in
-     the ensembles.
+   - For those quarters LR is included in the ensembles but not shown as a row. This holds for as long as
+     the schedule change stays deferred, which has no date yet.
    - Stored quarterly skill values change, some of them sharply. This is a corrected verification method,
      not a model change; include before/after distributions per org.
    - The `validate_pipeline` quarter checks report FAIL on admitted-but-inactive days (INFRA-022).
@@ -179,13 +181,14 @@ Stages:
   "phases": {
     "DOC-009.P1a":     { "stage": "merge",  "depends_on": [] },
     "DOC-009.P1b":     { "stage": "merge",  "depends_on": ["D4"] },
-    "DOC-009.P2":      { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm", "PP-065.P1d"] },
+    "DOC-009.P2a":     { "stage": "merge",  "depends_on": ["PP-065.P1d"], "note": "rows 10 and 12; released with the PP-065 deploy" },
+    "DOC-009.P2b":     { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm"], "note": "row 11 (LT readme schedule); deferred with P0" },
     "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
-    "LTF-014.P0b":     { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm"], "deadline": "2026-11-30", "note": "only if the Oct-1 run was missed: pause crons, export, delete the tjhm 2026-10-01 QUARTER rows (service owner), lt_recovery, resume, verify" },
+    "LTF-014.P0b":     { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm"], "status": "MOOT while P0 is deferred; expires 2026-11-30 (recovery window)" },
     "LTF-014.P0.kghm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
-    "LTF-014.P1":      { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
+    "LTF-014.P1":      { "stage": "merge",  "depends_on": ["LTF-014.P0 resumes"], "status": "DEFERRED with P0 (lock tests for configs not deployed)" },
     "LTF-014.P2":      { "stage": "ops",    "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm", "D2"] },
-    "LTF-015":         { "stage": "merge",  "depends_on": ["LTF-014.P1"], "parallel_agents": 1 },
+    "LTF-015":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1, "note": "shares test files with LTF-014 P1; whichever lands second rebases" },
     "LTF-016.P0":      { "stage": "ops",    "depends_on": [] },
     "LTF-016.P1":      { "stage": "ops",    "depends_on": ["LTF-016.P0"], "note": "verification: deployed LT image >= 99c5a552, server CSV labels" },
     "LTF-016.P2":      { "stage": "ops",    "depends_on": ["LTF-016.P1"], "note": "re-import and delete with the service owner, then the monthly recalc" },
@@ -212,8 +215,8 @@ Stages:
 
 **Shared files, strictly sequential:**
 - `src/data_reader.py` quarter readers: PP-064 A → PP-065 P1b → PP-065 P3. PP-064 B no longer edits them.
-- `apps/long_term_forecasting/tests/test_lt_utils.py` and `test_post_process_lt_forecast.py`: LTF-014 P1 →
-  LTF-015.
+- `apps/long_term_forecasting/tests/test_lt_utils.py`: LTF-015, and LTF-014 P1 if it resumes. Whichever
+  lands second rebases.
 - `doc/plans/module_issues.md`: DOC-009 and the index updates.
 
 Everything else touches disjoint files and can run in parallel, including LTF-016 and FD-029.

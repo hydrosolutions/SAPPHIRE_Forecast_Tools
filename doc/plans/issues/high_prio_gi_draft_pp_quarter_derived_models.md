@@ -1,6 +1,6 @@
 # PP-065: Seven models for quarter as same-issue monthly averages; quarterly Naive/Skilled Mean as for monthly
 
-**Status**: Draft (2026-09-26, rev 5 after the third review round)
+**Status**: Draft (2026-09-26, rev 6 after the fourth review round)
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High. On the 2026-12-25 critical path (round-2 decision 5): the LR fallback guarantees a kghm
 Q1 even without LTF-014 P0.
@@ -30,9 +30,11 @@ Paths are relative to `apps/postprocessing_forecasts/`. Citations are to trunk `
 2. **LR native-only, with a temporary fallback.** LR_Base and LR_SM are native quarter models.
    - **Until LTF-014 P0 and P2 are deployed on both orgs**, a (code, year, quarter, model) with **no native
      LR row** still gets that LR model derived from its monthly forecasts by the same rule.
+   - P0 is deferred (configs stay `forecast_months [3..9]`), so the fallback has no end date. It covers
+     kghm Q1 and tjhm Q1/Q4 (the latter after decision F clears the aggregate-only LR rows).
    - Fallback-derived LR rows are **not persisted**; they feed the ensembles and skill only (round-2
      decision 3).
-   - The fallback is removed in P3.
+   - The fallback is removed in P3, which stays blocked while P0 is deferred.
 3. **Quarterly ensembles = Naive Mean + Skilled Mean only; no quarterly Ensemble Mean** (round-2 decision
    1). This replaces the fixed-LR "M1" EM, for quarter only, and matches monthly (PP-059).
    - **Naive Mean** = the unweighted average of all raw quarter models, with no skill gate.
@@ -154,14 +156,27 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
    `derive_quarterly_from_monthly_same_issue(monthly_raw, lead, issue_day, models)`.
    - **Input:** raw monthly rows with the stored `date` and `horizon_value`, taken **before** any
      operational selection or lead rewriting. `horizon_value`, `q` and `q50` columns may be absent.
+   - **Input/output contract.** The rows come from `_read_long_forecasts_api` (`src/data_reader.py:1406`):
+     `model_type` in API spellings (`LR_Base`, `SM_GBT_Norm`), an unnormalised `code`, a string `date`.
+     - The **caller** renames `model_type` → `model_short` and normalises `code` as the readers do
+       (`src/data_reader.py:1493-1498`). It does not call `_normalize_monthly_forecasts`, which fills a
+       null hv with 0 (`:1503`) and parses `valid_from` without `format="mixed"` (`:1488`).
+     - The **helper** parses `date` (and `valid_from`) with `pd.to_datetime(..., format="mixed")`, and
+       matches model names canonically, upper-case (`canonical_model_short_series`,
+       `src/model_names.py`).
+     - The output `model_short` keeps the **stored spelling**, so downstream name handling is unchanged.
+   - **Scope:** it derives only (code, model, `d`) whose `d.month + L` (year-aware) is a quarter start
+     month (1/4/7/10); other issue dates produce nothing.
    - **Excluded (and counted):**
      - rows with a null or non-integer stored `horizon_value`, or no `horizon_value` column;
      - rows whose `date.day` ≠ `issue_day`.
    - **Target month** = issue month + `horizon_value`, year-aware.
    - **Triplet:** for each (code, model, issue date `d`) whose month is Q's first month − `L`, the rows with
      `horizon_value` = `L`, `L+1`, `L+2` must all exist.
-   - **Duplicates** at the same (code, model, `d`, hv): prefer the row whose `valid_from` (year, month)
-     equals the target (year, month); otherwise skip the triplet and count it.
+   - **Duplicates** at the same (code, model, `d`, hv): **exactly one** row whose `valid_from` (year, month)
+     equals the target (year, month) wins; zero or ≥ 2 matching rows → skip the triplet and count it.
+     Evidence: the local DB has 519 tjhm and 38 kghm MONTH groups where two rows match (one calendar and
+     one offset window); today these are all ensembles.
    - **Point value** per month = `q` if the column exists and the value is finite, else `q50`. All three
      must be finite.
    - **Output row:**
@@ -210,8 +225,14 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        `:3376-3385`); a missing issue day already raises from `_operational_schedules_for_horizon_type`
        (`:179`) before any native filter could run.
 3. **Writer: stop writing raw LR rows (rev-3 PP-064 "B6").**
-   - The quarter branch of `_write_aggregated_forecasts_to_api` skips `LR_BASE`/`LR_SM` rows. It keeps
-     writing the seven derived models and the ensembles.
+   - The quarter branch of `_write_aggregated_forecasts_to_api` skips `LR_BASE`/`LR_SM` rows **and
+     `EM`/`ENSEMBLE_MEAN` rows** (compare canonically). It keeps writing the seven derived models, Naive Mean
+     and Skilled Mean.
+   - **Why the EM skip:** stored rows are re-written through the operational `existing_q` concat
+     (`postprocessing_operational_long_term.py:220-227`) and the maintenance merge-back (`:357-376`). Under
+     flag OFF the writer re-dates them to `valid_from` (`src/api_writer.py:1199-1204`), and `date` is part of
+     the unique key (`sapphire/services/postprocessing/app/models.py:193-201`), so a stored issue-dated EM
+     would create a **new** EM key. Existing DB rows are untouched (round-2 decision 2).
    - **Why required:** fallback-derived LR rows are native-shaped (`date = d`, hv = `L`). Once persisted, they
      would pass the native-row rule forever. Native LR rows are owned by the LT module.
    - **Consequences:**
@@ -276,10 +297,17 @@ control flow. Your changes must be purely additive or modify only the specific b
   gap-key filter (item 4), the reader output schema and the degraded native rule (item 2).
 - Do not change season behaviour, `select_operational_issuances`, `src/gap_detector.py` or PP-064's window
   validation.
-- Add **new quarter-only constants** in `src/model_names.py` (e.g. `QUARTER_NATIVE_RAW_MODELS`,
-  `QUARTERLY_DERIVED_MODELS`, `QUARTER_SUPPORTED_MODELS`). Do not modify `AGGREGATED_EM_RAW_MODELS` or
-  `AGGREGATED_SUPPORTED_MODELS`; code shared with season branches on `period_col` or the horizon.
-- In `api_writer.py`, change only the LR skip (item 3).
+- Add **new quarter-only constants** in `src/model_names.py`, in canonical form (the output of
+  `canonical_model_short`, `src/model_names.py:19-24`):
+  - `QUARTER_NATIVE_RAW_MODELS = frozenset({"LR_BASE", "LR_SM"})`;
+  - `QUARTERLY_DERIVED_MODELS = frozenset({"GBT", "LR_SM_DT", "LR_SM_ROF", "MC_ALD", "SM_GBT",
+    "SM_GBT_LR", "SM_GBT_NORM"})`;
+  - `QUARTER_SUPPORTED_MODELS = QUARTER_NATIVE_RAW_MODELS | QUARTERLY_DERIVED_MODELS |
+    AGGREGATED_ENSEMBLE_MODELS`. `ENSEMBLE_MEAN` stays in it **for reading old rows only**: it is never an
+    ensemble member (members come from the two raw sets), never produced, and never written (item 3).
+- Do not modify `AGGREGATED_EM_RAW_MODELS` or `AGGREGATED_SUPPORTED_MODELS` (`src/model_names.py:14-16`);
+  code shared with season branches on `period_col` or the horizon.
+- In `api_writer.py`, change only the LR and EM skip (item 3).
 - `sandro_sapphire_2_quaterly_agg` may be consulted but not cherry-picked. Never `git stash`.
 - Every edited existing test is listed in the PR with its reason (before/after).
 
@@ -289,7 +317,8 @@ control flow. Your changes must be purely additive or modify only the specific b
 - `src/model_names.py`: the new quarter-only constants.
 - `src/aggregation.py`: the new helper and `QUARTER_OBS_MIN_MONTHS` (item 8). Leave
   `aggregate_monthly_fc_to_quarterly` and `QUARTER_MIN_MONTHS` unchanged.
-- New `tests/test_quarter_derived_models.py`; `tests/test_aggregation.py` (observation-coverage tests only).
+- New `tests/test_quarter_derived_models.py`; `tests/test_aggregation.py` (observation-coverage tests only;
+  the edits are listed below).
 
 **Tests on the helper** (station `19999`):
 1. kghm, `d` = 2026-12-25, hv 1/2/3 → Q1 2027, `date` = `d`, hv 1, window 2027-01-01..03-31, null quantiles.
@@ -309,14 +338,30 @@ control flow. Your changes must be purely additive or modify only the specific b
    used; neither `q` nor `q50` → nothing derived.
 7. A duplicate pair where only one row's `valid_from` (year, month) matches the target → that row wins; a
    pair matching the month but not the year does not count as a match.
+8. **Two matching rows** (item 1, uniqueness): a raw/corrected pair at the same (code, model, `d`, hv) with
+   the same target month, different endpoints (e.g. 01-01..01-31 and 01-02..02-01) and different values,
+   in shuffled order, next to an unambiguous control → the pair's triplet is skipped and counted; the
+   control derives.
+9. Model-name contract: input `model_type` `SM_GBT_Norm` (after the caller's rename) derives, and the
+   output `model_short` is `SM_GBT_Norm`; an issue date whose `d.month + L` is not a quarter start derives
+   nothing.
 
-**Observation tests:** 2 of 3 months → no quarterly observation; 3 of 3 → one. Existing tests that expect
-2 of 3 to pass change (e.g. `tests/test_aggregation.py:168`); `tests/test_aggregation.py:41-42` is unchanged.
+**Observation tests:** 2 of 3 months → no quarterly observation; 3 of 3 → one. The existing test edits are
+**exactly** `tests/test_aggregation.py:168` (`test_two_months_passes`), `:199` (`test_multiple_stations`)
+and `:219` (`test_multiple_quarters`), each of which relies on 2 of 3 months (measured).
+`tests/test_aggregation.py:41-42` (`QUARTER_MIN_MONTHS == 2`) is unchanged.
 
 **Mutations to record in the PR:**
 - drop the issue-day check → the wrong-day negative fails;
 - drop the issue-month check → the wrong-month negative fails;
 - accept 2 of 3 leads → the missing-lead negative fails.
+
+**Acceptance (P1a):**
+- `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts`: the full module suite is
+  green apart from the three listed `tests/test_aggregation.py` edits; zero unexpected skips; only the
+  pre-existing xfail.
+- `ruff check` / `ruff format --check` clean on the touched files.
+- `git diff --stat` within the P1a file list.
 
 ### P1b — readers, native-row selection, maintenance, writer
 
@@ -327,7 +372,7 @@ Depends on P1a. It can run in parallel with P1c; the two touch disjoint source f
   helper, `_quarterly_fc_output_cols`.
 - `postprocessing_maintenance_long_term.py`: the gap-detector call, the gap universe, the gap-key filter
   and the allowed restructuring (item 4).
-- `src/api_writer.py`: the LR skip (item 3) only.
+- `src/api_writer.py`: the LR and EM skip (item 3) only.
 - Tests.
 
 **Tests** (mock only the API boundary; both flags; both org shapes, kghm day 25 / lead 1 and tjhm day 1 /
@@ -366,8 +411,12 @@ lead 0):
 - **Gap detection:** raw rows with a Naive Mean and no Skilled Mean → no gap; raw rows (≥ 2 models)
   without a Naive Mean → a gap; a key with a single raw model → no gap.
 - **Writer:**
-  - a raw LR row reaches the quarter writer → no record, plus the skip count;
-  - a derived GBT row or an ensemble row → a record;
+  - a raw LR row or an `EM` / `ENSEMBLE_MEAN` row reaches the quarter writer → no record, plus the skip
+    count;
+  - a derived GBT row, a Naive Mean or a Skilled Mean row → a record;
+  - **entry point, flag OFF:** a stored issue-dated quarter EM row returned by
+    `read_quarterly_combined_forecasts` through the real `postprocessing_operational_long_term()` (the
+    `existing_q` concat) and through the maintenance merge-back → no EM record written, so no new EM key;
   - a fallback-derived LR row is never persisted, so the next read cannot treat it as native: test **flag
     ON** (the row's own `date` = `d` would be native) and **tjhm-shaped under flag OFF**
     (`record_date = valid_from` = the issue date, also native-shaped).
@@ -386,6 +435,12 @@ lead 0):
   `q_combined` and `q_fc` hold one raw model, so the new two-model prefilter excludes the key and nothing
   is saved. Give the fixture two eligible raw models. Any other maintenance test that asserts the run ends
   before the quarterly block (e.g. the early-exit tests at `:217`, `:245`) is listed.
+
+**Acceptance (P1b):**
+- The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
+  unexpected skips; only the pre-existing xfail.
+- `ruff check` / `ruff format --check` clean on the touched files.
+- `git diff --stat` within the P1b file list.
 
 ### P1c — ensembles, ensemble skill, K
 
@@ -444,12 +499,22 @@ golden file under `tests/golden/`.
   Regenerate **only those keys** with `tests/generate_skill_lead_aware_golden.py` and show in the PR that
   the `month_*` and `season_*` keys are byte-identical.
 
+**Acceptance (P1c):**
+- The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
+  unexpected skips; only the pre-existing xfail.
+- `ruff check` / `ruff format --check` clean on the touched files.
+- `git diff --stat` within the P1c file list.
+
 ### P1d — end-to-end
 
 Depends on P1b and P1c. Tests only.
 - One December-Q1 chain (raw monthly rows → reader → ensembles → skill), both flags.
 - **Flag OFF chain:** reader → ensembles → operational merge with persisted non-native LR rows present →
   Naive/Skilled Mean are built from native plus derived rows only, and the writer emits no LR row.
+- **tjhm Q4 after decision F** (tjhm shape, day 1 / lead 0). With aggregate-only LR rows dated 2026-10-01
+  at hv0 present, they pass the native rule and suppress the fallback (documents why F must clear them).
+  With that population cleared (the post-F state), fallback-derived LR feeds the Q4 2026 Naive Mean and
+  Skilled Mean, and no LR row is written, so none is displayed.
 - Full suite: `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` gives zero
   failures and zero unexpected skips; only the pre-existing xfail remains.
 - `ruff check` and `ruff format --check` are clean on the touched files.
@@ -457,9 +522,13 @@ Depends on P1b and P1c. Tests only.
 
 ### P2 — rollout (with PP-064 Chunk C)
 
-**One window between LT cron days** (kghm 10 and 25; tjhm 1): deploy PP-065, run PP-064 Chunk C step 3
+**One writer-paused window** (ops instruction, no code): deploy PP-065, run PP-064 Chunk C step 3
 (decision F, tjhm), then the recalc per org. Between deploy and recalc the gates would run on the old,
 contaminated quarter skill.
+- Pause **every** writer, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
+  maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`), any
+  other recalc, and manual runs.
+- Wait for running jobs to finish. Then export, mutate, recalc and verify; only then resume.
 
 **Before the recalc**, per org:
 - a private export of the QUARTER `long_forecasts` and `skill_metrics` rows;
@@ -485,7 +554,7 @@ contaminated quarter skill.
 
 ### P3 — remove the LR fallback
 
-Only after LTF-014 P0 and P2 are deployed on both orgs.
+Only after LTF-014 P0 and P2 are deployed on both orgs. **Blocked** while P0 is deferred.
 
 **Files:**
 - `src/data_reader.py` (drop the LR fallback branch), tests.
@@ -502,5 +571,5 @@ quarters of scored years, expect none.
 - Fixing the labels upstream (LTF-016).
 - Displaying δ bounds (FD-029/FD-030).
 - Deleting legacy rows, including old ensemble rows (D8 / PP-041).
-- Any writer change beyond the LR skip.
+- Any writer change beyond the LR and EM skip.
 - Making season gap-fill reachable when the monthly block has nothing to do.
