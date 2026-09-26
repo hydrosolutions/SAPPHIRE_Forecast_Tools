@@ -1,4 +1,4 @@
-# PP-064: Score and ensemble only exact calendar-quarter windows, and carry a December-issued Q1 through
+# PP-064: Score and ensemble only exact calendar-quarter windows, and carry a prior-year-issued Q1 through
 
 **Status**: Draft (2026-09-26, rev 6 after the fourth review round)
 **Module**: `apps/postprocessing_forecasts`
@@ -40,13 +40,20 @@ step 0 reads the real state per org. Both flag states are in scope.
   `doc/prod/longforecast_quarter_season_hv_convention.md` RESOLUTION). Never overwrite a stored hv with a
   date-derived lead.
 - **Native quarter row (one rule, shared with PP-065 and FD-029).** A QUARTER row is native iff
-  - `date.day` == the configured quarter `issue_day`, **and**
+  - `date.day` == the configured quarter `issue_day`, **clamped to the length of the issue month** —
+    exactly as the producer schedules it (`apps/long_term_forecasting/lt_utils.py:170-172`,
+    `nearest_scheduled_issue_date`: `min(issue_day, calendar.monthrange(year, month)[1])`; e.g.
+    `issue_day` 31 in June → June 30 is native), **and**
   - the year-aware lead `(valid_from.year − date.year)·12 + (valid_from.month − date.month)` == the
     configured `lead_time`, as `select_operational_issuances` computes it (`src/data_reader.py:346-349`),
     not "month minus month".
   - Both values come from `operational_schedule_for_mode("quarter")`
     (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:112-142`), which `data_reader` reaches via
     `_operational_schedules_for_horizon_type("quarter")` (`src/data_reader.py:141`).
+  - **Caveat:** `select_operational_issuances`'s own match (`:346-349`) compares `date.day` to the
+    configured `issue_day` **unclamped** — it does not itself apply the clamp above. This plan does not
+    touch that function (Contract, below); flagged here so a clamped-day genuine issuance is not assumed
+    already handled.
 - **Quarterly ensembles.** Today EM = mean(LR_Base, LR_SM), not skill-gated (2026-06-23 M1). Chunk A
   preserves today's membership; PP-065 removes quarterly EM (owner, 2026-09-26). No chunk of this plan
   changes ensemble membership.
@@ -58,7 +65,8 @@ step 0 reads the real state per org. Both flag states are in scope.
     (`src/model_names.py:14-16`) keeps quarter LR-only; this plan does not change it.
 - **Flag OFF stays byte-identical for calendar-aligned input** (PP-056 `:164`; flag-OFF golden
   `tests/test_skill_lead_aware_golden_baseline.py:93`), except for these intended changes:
-  - Chunk A: a December-issued Q1 of the first requested year is read (Problem 7);
+  - Chunk A: the configured-lead Q1 of `start_year` issued in `start_year − 1` is read (Dec 25 for
+    kghm; see the "First-year Q1 (Problem 7)" section below for why no issue-month check is needed);
   - Chunk A: direct rows dated after `forecast_date` are ignored by the latest reader (Problem 6);
   - Chunk A: the writer drops a calendar `valid_from` with a null `valid_to`.
   - Chunk B makes no code change. PP-065 changes flag-OFF quarter output (owner-approved), including the
@@ -111,7 +119,7 @@ step 0 reads the real state per org. Both flag states are in scope.
    Populations (b) and (c) have calendar windows, so **no window filter distinguishes them from (a)**.
    The writer also re-emits rolling windows, because it overrides the synthesized calendar window with
    the row's own `valid_from`/`valid_to` (`:1193-1197`).
-6. **December-issued Q1 is dropped by the operational reader (flag ON).** `read_latest_quarterly_forecasts`
+6. **The prior-year-issued Q1 is dropped by the operational reader (flag ON).** `read_latest_quarterly_forecasts`
    sets `end_year = today.year` (`:3331-3334`) and, with the flag on, trims direct rows to target years
    `[start_year, end_year]` (`:3413`). On 2026-12-25 a direct Q1 2027 row (`year = 2027`) is removed, so no
    operational Q1 ensemble is built from it (`postprocessing_operational_long_term.py:211`). While LTF-014
@@ -120,7 +128,8 @@ step 0 reads the real state per org. Both flag states are in scope.
    - Widening that bound alone lets a **back-dated** run pick a later issue: the reader keeps only the
      maximum (year, quarter) (`:3448-3453`). The flag-OFF read already admits any row dated in
      `today.year`, so this is live under flag OFF today.
-7. **Flag-OFF reads miss a December-issued Q1 of the first requested year.** `read_quarterly_forecasts`
+7. **Flag-OFF reads miss the configured-lead Q1 of the first requested year issued in the previous
+   year** (Dec 25 for kghm; justification below). `read_quarterly_forecasts`
    flag OFF reads issue years from `start_year` (`:3120-3127`); flag ON widens the read
    (`:3110-3111`) and trims by target year (`:3137`).
    - Recalc: Q1 of the first recalc year is lost.
@@ -133,12 +142,13 @@ step 0 reads the real state per org. Both flag states are in scope.
    `tests/test_quarterly_ensemble_creation.py:329` asserts it. Monthly behaves alike: an empty monthly
    skill frame exits the run with no monthly ensembles (`postprocessing_operational_long_term.py:145-151`).
 
-## Chunk A — calendar-window validation, December Q1, first-year Q1 (both flag states)
+## Chunk A — calendar-window validation, prior-year-issued Q1, first-year Q1 (both flag states)
 
 **Goal**:
 - A non-calendar quarter row is excluded (never relabelled) at the direct-read choke point and at the writer.
-- A December-issued Q1 survives the operational reader; a back-dated run cannot pick a later issue.
-- Under flag OFF, a December-issued Q1 of the first requested year is read.
+- The prior-year-issued Q1 survives the operational reader; a back-dated run cannot pick a later issue.
+- Under flag OFF, the configured-lead Q1 of `start_year` issued in `start_year − 1` is read (Dec 25 for
+  kghm).
 
 **Files (only these may be modified)**:
 - `apps/postprocessing_forecasts/src/aggregation.py`: new pure helper
@@ -212,8 +222,16 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3137`) here — an earlier version
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
 - **Invariant:** the flag-OFF direct set = trunk's set (every row with issue year in
-  `[start_year, end_year]`, any target year) **plus only** the December-issued Q1 of `start_year`.
-  Nothing else is added, nothing else is removed.
+  `[start_year, end_year]`, any target year) **plus only** the configured-lead Q1 of `start_year` issued
+  in `start_year − 1` (Dec 25 for kghm). Nothing else is added, nothing else is removed.
+- **Why no issue-month check is needed:** the flag-OFF direct read keeps the single-lead API filter
+  unchanged (`horizon_value=quarter_horizon_value()`, comment at `:3123-3124`), so every direct row
+  already has `horizon_value` == the org's one configured lead. A row with issue year `< start_year`
+  that targets Q1 of `start_year` is therefore *by construction* that org's configured-lead issue (kghm
+  lead 1 → issued Dec 25 of `start_year − 1`; tjhm lead 0 issues Jan 1 of `start_year` itself, already
+  inside `[start_year, end_year]`, so no widening exception is even exercised for it). The mask below
+  checks target year and `quarter_in_year` only — no issue-month/day check — because the API-side
+  `horizon_value` filter already did that narrowing.
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
   checked via **both** target year `== start_year` **and** `quarter_in_year == 1`, not target year
   alone. Checking target year alone (an earlier, round-2 version of this fix) was still too permissive:
@@ -228,8 +246,10 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   the later `drop_duplicates(keep="last")` combine).
 - A row whose issue `date` is null or unparseable is kept — trunk's API-side year filter could not have
   excluded it by year either.
-- Parse the issue year with `_issue_date_local_calendar_date` (new helper next to
-  `QUARTER_MONTHS`/`filter_calendar_quarter_windows`), not a bare `pd.to_datetime(..., format="mixed")`.
+- Parse the issue year with `_issue_date_local_calendar_date` (new module-level helper in
+  `data_reader.py`, directly above `read_quarterly_forecasts` — `QUARTER_MONTHS` and
+  `filter_calendar_quarter_windows` are in `aggregation.py`, a different helper), not a bare
+  `pd.to_datetime(..., format="mixed")`.
   It keeps only the first 10 characters (the local calendar date) before parsing, so a `date` column
   mixing tz-aware and tz-naive strings (e.g. `"2025-01-10"` next to `"2025-03-25T00:00:00+06:00"`)
   cannot make `"mixed"` fall back to an object-dtype Series and raise `AttributeError` on the subsequent
@@ -243,8 +263,13 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   `TestUnparseableIssueDateKeptRegardlessOfTargetYear` (null/unparseable issue date kept),
   `TestRegressionIssueYearMaskTooPermissive` (an out-of-window row targeting a *different* quarter of
   `start_year` is dropped, both alone and alongside an in-window direct row, regardless of API order)
-  and `TestRegressionMixedTimezoneIssueDate` (a mixed tz-aware/naive `date` column raises no exception
-  through either quarterly reader, flag ON or OFF) in `tests/test_quarter_calendar_window.py`.
+  and `TestRegressionMixedTimezoneIssueDate` — precisely: (i) `read_quarterly_forecasts` flag OFF, (ii)
+  `read_latest_quarterly_forecasts` flag OFF, and (iii) `read_latest_quarterly_forecasts` flag ON where
+  the second, problematic row is dropped by the Problem-6 date bound *before* it reaches
+  `select_operational_issuances` — in `tests/test_quarter_calendar_window.py`. A mixed-format batch that
+  reaches `select_operational_issuances` itself (either quarterly reader's flag-ON branch, once past the
+  Problem-6 bound) still raises there: that function is deliberately unmodified (Contract, above) and is
+  PP-066's scope, not this one's.
 
 **Tests (Arrange → Act → Assert, station `19999`)**
 
@@ -311,8 +336,11 @@ stable.)
   not Q1) is dropped even though its target year alone would pass — locked by
   `TestRegressionIssueYearMaskTooPermissive` (both alone and alongside an in-window direct row,
   regardless of API order); checking target year without also checking `quarter_in_year == 1` was
-  itself a regression. A `date` column mixing tz-aware and tz-naive issue-date strings must not raise —
-  locked by `TestRegressionMixedTimezoneIssueDate`, through both quarterly readers and both flag states.
+  itself a regression. A `date` column mixing tz-aware and tz-naive issue-date strings must not raise
+  through `read_quarterly_forecasts` flag OFF, or through `read_latest_quarterly_forecasts` in either
+  flag state (flag ON only once the Problem-6 bound has dropped the problematic row before it would
+  reach `select_operational_issuances`) — locked by `TestRegressionMixedTimezoneIssueDate`. A mixed batch
+  that reaches `select_operational_issuances` still raises there today; that is PP-066's scope.
 
 **Acceptance**:
 - Record the full module suite counts before editing (a reviewer's simulated Chunk A gave 1832 passed /

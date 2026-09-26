@@ -135,9 +135,12 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `ENSEMBLE_MEAN` (the API spelling is `EM`, `sapphire/services/postprocessing/app/models.py:38`). This
      mirrors FD-030's "EM is never a candidate" and covers the card and the bulletin input. Old rows stay in
      the DB (round-2 decision 2) but are not shown.
-   - A row is **native** iff `date.day == issue_day` **and** the year-aware lead
-     `(valid_from.year − date.year)·12 + (valid_from.month − date.month)` == `lead_time`, i.e. `date` ==
-     `issue_date(Q)` of item 4 (the PP-064 Contract rule; the formula of
+   - A row is **native** iff `date.day == issue_day` **, clamped to the issue month's length** (item 4
+     already computes `quarter_issue_date` with this clamp — `clamped_issue_day =
+     np.minimum(int(schedule.issue_day), days_in_issue_month)`; mirrors the producer,
+     `apps/long_term_forecasting/lt_utils.py:170-172 nearest_scheduled_issue_date`) **and** the year-aware
+     lead `(valid_from.year − date.year)·12 + (valid_from.month − date.month)` == `lead_time`, i.e. `date`
+     == `issue_date(Q)` of item 4 (the PP-064 Contract rule; the formula of
      `apps/postprocessing_forecasts/src/data_reader.py:346-348`; identical to PP-065 P1b).
    - **`is_native` column.** Add a boolean `is_native` (the predicate above) to every returned row; False
      for every row when degraded (item 3). The native preference and the LR strictness below, the card and
@@ -149,17 +152,27 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `valid_from` coexist with fresh rows dated at the issue date, and "latest `date`" alone would pick the
      legacy row. Rule: the native row if one exists; otherwise the latest `date`, ties broken by the
      highest API `id`.
-   - **Known limitation (accepted): rollback from flag ON to OFF.** Rows written while
-     `SAPPHIRE_SKILL_LEAD_AWARE` was ON are native-shaped (`date` = the schedule issue date, the Contract
-     rule). After a rollback to OFF, fresh rows are re-dated to `valid_from` (`api_writer.py:1199-1204`)
-     and are non-native for any mode whose lead is not 0 (e.g. kghm, lead 1). The dedup sorts `is_native`
-     ahead of `date` (`src/db.py:1016-1023`: `sort_values(["is_native", "date"], ascending=[False,
-     False])`, `drop_duplicates(..., keep="first")`), so an older flag-ON native row keeps outranking a
-     newer flag-OFF rewrite for the same `(code, model_short, year, quarter_in_year)` until the old
-     native row is deleted or a fresh write lands at its exact key. Unlike the "Flag OFF" bullet below,
-     the upsert does not clear this twin: `date` is part of the natural key, so a flag-OFF rewrite (dated
-     `valid_from`) and the old flag-ON native row (dated the issue date) occupy different keys and both
-     persist. Accepted as a documented rollback caveat, not a defect this plan fixes.
+   - **Known limitation (accepted): rollback from flag ON to OFF — applies only where the older row is
+     genuinely native.** The caveat below is about (a) true native LR rows only. It does **not** apply to
+     (c) persisted monthly-derived rows: under flag ON those are dated `valid_from − horizon_value months`
+     ("How quarter rows are dated in the DB" above, e.g. 1 Mar for a kghm hv1 Q2), so `date.day` is
+     generally `1`, not the configured `issue_day` (25 for kghm) — `is_native` is already False for them
+     via the predicate above, and they never win the dedup over a fresh flag-OFF row on that account. It
+     also does not (yet) apply to PP-065's future derived-model/ensemble writes, which are dated
+     `valid_from` under flag OFF and the row's own issue date under flag ON ("How quarter rows are dated
+     in the DB" above) — those are a forward-looking case, not evaluated here; once PP-065 ships, its own
+     flag-ON writes could themselves become native-shaped and would then be subject to the same mechanism.
+     For a true (a) row: rows written while `SAPPHIRE_SKILL_LEAD_AWARE` was ON are native-shaped (`date` =
+     the schedule issue date, the Contract rule). After a rollback to OFF, fresh rows are re-dated to
+     `valid_from` (`api_writer.py:1199-1204`) and are non-native for any mode whose lead is not 0 (e.g.
+     kghm, lead 1). The dedup sorts `is_native` ahead of `date` (`src/db.py:1016-1023`:
+     `sort_values(["is_native", "date"], ascending=[False, False])`, `drop_duplicates(..., keep="first")`),
+     so an older flag-ON native row keeps outranking a newer flag-OFF rewrite for the same
+     `(code, model_short, year, quarter_in_year)` until the old native row is deleted or a fresh write
+     lands at its exact key. Unlike the "Flag OFF" bullet below, the upsert does not clear this twin:
+     `date` is part of the natural key, so a flag-OFF rewrite (dated `valid_from`) and the old flag-ON
+     native row (dated the issue date) occupy different keys and both persist. Accepted as a documented
+     rollback caveat, not a defect this plan fixes.
    - **Move the `id` drop.** Today `id` is dropped **before** the dedup (`drop_cols` at `src/db.py:852`),
      so the tie-break has nothing to read. Drop `id` after the dedup instead; the `horizon_type` and flag-OFF
      `horizon_value` drops stay where they are. When the response has no `id` column, keep today's order
