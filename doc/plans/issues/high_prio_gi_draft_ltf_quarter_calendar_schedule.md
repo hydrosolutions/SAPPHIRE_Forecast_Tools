@@ -1,6 +1,6 @@
 # LTF-014: Issue the quarter forecast once per calendar quarter (Q1–Q4), not monthly Mar–Sep
 
-**Status**: Draft (2026-09-26, rev 4 after the second review round)
+**Status**: Draft (2026-09-26, rev 5 after the third review round)
 **Module**: `apps/long_term_forecasting` (tests only) + per-deployment data repos (config)
 **Priority**: **High.** Target dates (soft):
 - **tjhm Q4, issue 2026-10-01.** The current config skips it. It can be recovered with `lt_recovery`
@@ -215,10 +215,15 @@ Do not change the mode JSONs, the cron lines or the issue days.
      or flag 1 if the date was recovered** (`RECOVERY_FLAG`, `lt_recovery.py:99, 728`). Report the station
      count per model and flag. Flag-2 rows (no prediction) need an explanation.
    - kghm after 2026-12-25: the same, with `date` 2026-12-25, window 2027-01-01..2027-03-31, `horizon_value` 1.
-   - **Postprocessing follow-up:** after the first run (or a recovered tjhm Oct-1 run), confirm that the
-     quarter Naive Mean at hv = config lead was produced for that issue, and the Skilled Mean where it
-     forms (it can legitimately fail to form). There is no quarterly EM after PP-065 (round-2 decision 1).
-     The quarterly gap detector keys on EM by default today
+   - **Postprocessing follow-up** after the first run (or a recovered tjhm Oct-1 run), at hv = config
+     lead for that issue. What to check depends on whether PP-065 is deployed on that server:
+     - **Before PP-065 (trunk):** the fixed-LR quarter EM, the mean of LR_Base and LR_SM
+       (`AGGREGATED_EM_RAW_MODELS`, `apps/postprocessing_forecasts/src/model_names.py:14`; not
+       skill-gated, `src/ensemble_calculator.py:668-671`).
+     - **After PP-065:** the quarter Naive Mean, and the Skilled Mean where it forms (it can
+       legitimately fail to form). There is no quarterly EM after PP-065 (round-2 decision 1).
+
+     The quarterly gap detector keys on EM by default on trunk
      (`apps/postprocessing_forecasts/src/gap_detector.py:370-389`) and treats any existing ensemble row
      for a (year, quarter, code[, hv]) as complete, so a pre-existing row hides a missing regeneration.
      PP-065 moves the quarter callers to Naive Mean.
@@ -324,6 +329,19 @@ contain only issue months 3–9.
 2. Keep a copy of the live `<model>_hindcast.csv`.
 3. Run with the chosen write set.
 4. Read back from the DB (not the CSV).
+5. **Durable source publication** (after the acceptance checks below pass). The importer reads
+   `<data_root>/long_term_predictions/quarter/<model>/<model>_hindcast.csv`
+   (`bin/utils/migration_py/long_forecast.py:277-302`), so a new-month history that exists only in the DB
+   is lost on the next `initialize_long_forecast_history.sh` on an empty target or DB reset.
+   1. Preserve the operational and recovered appends: take the live CSV as of publication time (operational
+      runs keep appending, `append_forecast_to_hindcast`, `lt_utils.py:509-543`), not the step-2 copy.
+   2. Merge the approved new-month hindcast rows into `<model>_hindcast.csv`; on a (`date`, `code`)
+      collision (e.g. a current-year row of a new issue month) keep the operational/recovered row.
+   3. Verify the merged file against the expected grid and the step-1 preserve export.
+   4. Update the authoritative server copy **and** the Dropbox copy.
+
+   Alternative: keep a reviewed replacement artifact and keep ordinary imports blocked until it is
+   published.
 
 **Acceptance**:
 - **Expected grid**, defined before the run: (station, year) pairs for kghm issue 25 Dec (→ Jan–Mar of the
@@ -334,8 +352,11 @@ contain only issue months 3–9.
   whole `Q_<model>` column is absent (`calibrate_and_hindcast.py:237`; `:241` covers NaN rows, which the
   library does not emit). List the absent keys per model with the reason (aggregate).
 - Preserved rows (step 1) are unchanged by natural key and value (compared privately).
-- The post-P2 live `<model>_hindcast.csv` equals the old CSV plus the new-month rows, with no old row
-  changed; under (a) or (b) the live CSV is untouched.
+- **Live CSV.** Under (a) or (b) the run itself leaves the live `<model>_hindcast.csv` untouched; it
+  changes only in step 5. After step 5 it equals the live CSV as of publication (the old rows plus any
+  operational/recovered appends since step 2) plus the approved new-month rows, with no other row
+  changed. Any option that writes the live output path at run time must reach the same end state from
+  the step-2 copy plus the preserved appends.
 - **Only if D2 chooses a full rerun** that rewrites the retained months (not (a) or (b)): retained-month
   hindcasts match a before-and-after run on identical frozen inputs, not the old CSV (which mixes in
   operational rows). Under (a) or (b) the retained months are not rewritten, so this check does not apply.

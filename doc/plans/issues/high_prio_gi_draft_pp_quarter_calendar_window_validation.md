@@ -1,6 +1,6 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a December-issued Q1 through
 
-**Status**: Draft (2026-09-26, rev 4 after the second review round)
+**Status**: Draft (2026-09-26, rev 5 after the third review round)
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High.
 - Stored quarterly skill is wrong today: a rolling window is scored against a different quarter's
@@ -123,7 +123,7 @@ step 0 reads the real state per org. Both flag states are in scope.
      (`postprocessing_maintenance_long_term.py:305-310`), so under flag OFF a kghm Q1 gap is never
      fillable.
 8. **Empty skill → no quarterly ensembles, locked by a test.** The operational run skips all quarterly
-   ensembles on an empty skill frame (`postprocessing_operational_long_term.py:210`), and
+   ensembles on an empty skill frame (`postprocessing_operational_long_term.py:209`), and
    `_create_aggregated_ensemble_forecasts` returns without ensembles (`src/ensemble_calculator.py:632-634`);
    `tests/test_quarterly_ensemble_creation.py:329` asserts it. Monthly behaves alike: an empty monthly
    skill frame exits the run with no monthly ensembles (`postprocessing_operational_long_term.py:145-151`).
@@ -197,6 +197,12 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
 Fakes of `_read_long_forecasts_api` (`:1406`) must filter by the requested issue-date years and
 `horizon_value`, as the real call does; a fake that ignores its arguments cannot make A-5, A-9 or A-10
 fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are kept stable.)
+
+**The A tests must survive PP-065 P1b**, which adds the native-row filter to both readers:
+- Every A test writes a kghm-shaped `quarter.json` with **both** `operational_month_lead_time` (1) and
+  `operational_issue_day` (25). The autouse fixture in `tests/test_quarterly_data_reader.py:30-49` writes
+  the lead only, which puts P1b into its degraded mode.
+- PP-065 P1b lists `tests/test_quarter_calendar_window.py` among the tests it may change.
 - **A-1. Reader** (flag ON/OFF × `read_quarterly_forecasts` / `read_latest_quarterly_forecasts`).
   - Input: kghm-like direct rows issued 2024-03-25 (Apr–Jun, 100), 04-25 (May–Jul, 200) and 05-25
     (Jun–Aug, 300).
@@ -224,6 +230,7 @@ fail on trunk. (A-4 was dropped in rev 3 as redundant with A-1 flag ON; IDs are 
 - **A-7. Writer.** A non-calendar window, one disagreeing with `(year, quarter_in_year)`, or a calendar
   `valid_from` with null `valid_to` → no API record, one aggregated log line. Both windows null →
   synthesized window, as today. A calendar row → a record identical to today's (hv and date per flag).
+  The positive case uses a **non-LR** model (e.g. `Naive Mean`): PP-065 P1b makes the writer skip LR rows.
 - **A-8. Season rows** through `_normalize_combined_forecasts` are unchanged.
 - **A-9. Back-dated run, both flags.** `forecast_date = 2026-09-25`, kghm-like rows issued 2026-09-25
   (Oct–Dec) and 2026-12-25 (Jan–Mar 2027) → `read_latest_quarterly_forecasts` returns Q4 2026. Flag OFF
@@ -278,8 +285,10 @@ Chunk B no longer edits `data_reader.py` or any other file.
    in the env the postprocessing **and** dashboard containers actually load. Record them in the PR; the
    recalc runs with that state. Also confirm the `quarter` config carries both
    `operational_month_lead_time` and `operational_issue_day`: without the issue day,
-   `operational_schedule_for_mode("quarter")` raises and PP-065 skips the derivation with a WARNING
-   (`long_term_horizon_resolver.py:84-111` notes taj-style configs that omit it).
+   `operational_schedule_for_mode("quarter")` raises (`long_term_horizon_resolver.py:138-142`). Under flag
+   OFF, PP-065 then skips the derivation and the native-row filter with one WARNING; under flag ON the
+   quarter readers raise, as on trunk (`long_term_horizon_resolver.py:84-111` notes taj-style configs that
+   omit it).
 1. **Pre-recalc backup per org:** `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
    rows, kept out of the repo.
 2. **Pre-deploy DB audit per org** (read-only SQL, aggregate counts only, no station codes).
@@ -324,7 +333,8 @@ Chunk B no longer edits `data_reader.py` or any other file.
      Locally the tjhm median `n_pairs` was 5–6 before the fix.
    - The per-org quarter skill frame, read as the pipeline reads it (tombstones dropped,
      `src/data_reader.py:106, 2833`), is **non-empty**. Otherwise every quarterly ensemble is skipped
-     (Problem 8).
+     (Problem 8). If K = 10 leaves an org with no quarter skill at all, B5 means no Naive Mean either:
+     **escalate to the owner before the hydromet notice** goes out.
    - Freshly written QUARTER rows contain no rolling windows and no LR rows.
    - A persisted-derived-row round trip (write → read) yields the native-rule-selected row.
    - Spot check the #521 station privately (its code is never written to the repo). A plausible value is

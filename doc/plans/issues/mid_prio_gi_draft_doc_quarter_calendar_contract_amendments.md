@@ -3,8 +3,8 @@
 **Status**: Draft (2026-09-26, rev 4 after the second review round)
 **Module**: docs
 **Priority**: Medium.
-- **P1a (safety warnings)** needs no service-owner acknowledgement. It merges **before PP-064 Chunk A
-  and before PP-065 deploys**; after PP-065 the warned-about gates false-fail and the warned-about
+- **P1a (safety warnings)** needs no service-owner acknowledgement. It merges **before PP-065 deploys**
+  (the overview's `deploy.pp` edge); after PP-065 the warned-about gates false-fail and the warned-about
   deletes remove product rows.
 - **P1b (contract amendments)** needs overview decision D4 (service owner) and the owner's sign-off. It
   does not gate code; until it merges, PP-064/PP-065 reviewers use the overview decisions, not rows 1–5.

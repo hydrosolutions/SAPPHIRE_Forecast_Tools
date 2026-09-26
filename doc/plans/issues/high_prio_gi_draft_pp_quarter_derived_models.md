@@ -1,6 +1,6 @@
 # PP-065: Seven models for quarter as same-issue monthly averages; quarterly Naive/Skilled Mean as for monthly
 
-**Status**: Draft (2026-09-26, rev 4 after the second review round)
+**Status**: Draft (2026-09-26, rev 5 after the third review round)
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High. On the 2026-12-25 critical path (round-2 decision 5): the LR fallback guarantees a kghm
 Q1 even without LTF-014 P0.
@@ -198,6 +198,17 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      WARNING (e.g. uzb). Leave the existing direct-path behaviour unchanged: the flag-ON guard still returns
      empty, and the flag-OFF `quarter_horizon_value()` call still raises. A missing config file
      (`FileNotFoundError`, `long_term_horizon_resolver.py:184`) is a misconfiguration and propagates.
+   - **Degraded native rule, flag OFF.** The native-row rule needs `operational_issue_day`;
+     `operational_schedule_for_mode` raises `LongTermHorizonResolverError` when it is missing
+     (`long_term_horizon_resolver.py:138-142`), and the autouse fixture in
+     `tests/test_quarterly_data_reader.py:30-49` writes `quarter.json` with the lead only.
+     - Flag OFF, on `LongTermHorizonResolverError` or `UnsupportedLongTermModeError`: log **one** WARNING
+       (covering the skipped derivation too) and keep today's direct-LR selection, with **no** native
+       filter. This mirrors FD-029's degraded mode. (With `quarter` unsupported, the direct read's
+       `quarter_horizon_value()` still raises first, as today.)
+     - Flag ON: unchanged. An unsupported `quarter` makes the guard return empty (`src/data_reader.py:3100-3109`,
+       `:3376-3385`); a missing issue day already raises from `_operational_schedules_for_horizon_type`
+       (`:179`) before any native filter could run.
 3. **Writer: stop writing raw LR rows (rev-3 PP-064 "B6").**
    - The quarter branch of `_write_aggregated_forecasts_to_api` skips `LR_BASE`/`LR_SM` rows. It keeps
      writing the seven derived models and the ensembles.
@@ -216,10 +227,17 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      `ensemble_models={"Naive Mean"}` at `postprocessing_maintenance_long_term.py:297-301`. Before the call,
      drop keys with fewer than two distinct raw models: a single-model group never forms a Naive Mean
      (`src/ensemble_calculator.py:915`), so it would be a perpetual gap.
+   - **Gap-key filter (flag ON).** A gap detected via Naive Mean is carried with
+     `model_short = "Naive Mean"` (`src/gap_detector.py:481`). The flag-ON filter of newly generated rows
+     against the gap keys matches on `model_short` too (`postprocessing_maintenance_long_term.py:331-355`),
+     so it would discard every newly computed Skilled Mean. Change it: a Naive Mean gap admits **both**
+     newly formed ensembles (Naive Mean and Skilled Mean) for that (code, year, quarter[, hv]). Existing
+     non-gap rows are still preserved. Flag OFF has no such filter (unchanged).
    - **Gap universe.** Capture `forecast_date = dt.date.today()` **once** at the maintenance entry point
-     (Forecast Date Rule). Add to the universe the keys of `data_reader.read_quarterly_forecasts(codes,
-     Y − 1, Y + 1)` with `Y = forecast_date.year` (the `+ 1` covers a December-issued Q1). Use that existing
-     reader function, not a new `data_reader` entry point.
+     (Forecast Date Rule). Concatenate the raw rows of `data_reader.read_quarterly_forecasts(codes,
+     Y − 1, Y + 1)`, with `Y = forecast_date.year`, into the gap universe (the `+ 1` covers a
+     December-issued Q1). Rows, not just keys: the two-raw-model prefilter counts models per key. Use that
+     existing reader function, not a new `data_reader` entry point.
    - **Allowed restructuring:** the `q_combined.empty` guard (`:296`) becomes "the universe is empty", and
      the quarterly block is reached when the monthly block has nothing to do (the monthly early exits no
      longer end the run before it). Keep the `q_skill` guard (`:304`). Season gap-fill reachability stays
@@ -235,7 +253,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
    - Evaluate per group, (code, year, quarter), plus `horizon_value` **only under flag ON**. Gate the hv key
      on the flag, never on column presence: flag-OFF frames now carry hv (item 2) while flag-OFF skill sits
      at hv 0. Do not use the leadless fallback join (`src/ensemble_calculator.py:722-738`).
-   - Keep the empty-skill early return (`:632-634`) and the operational skip (`postprocessing_operational_long_term.py:210`):
+   - Keep the empty-skill early return (`:632-634`) and the operational skip (`postprocessing_operational_long_term.py:209`):
      no ensembles at all on empty skill, as monthly (PP-064 B5).
    - Skill source: the operational path uses the stored skill. The recalc path uses its own step-2
      `skill_stats` before the K filter, as Skilled Mean already does.
@@ -254,8 +272,8 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
 **Agent instruction (every phase):** *"Do NOT change any existing function signatures, data flow logic, or
 control flow. Your changes must be purely additive or modify only the specific behavior described."*
 - The only permitted signature changes are new optional keywords whose defaults equal current behaviour.
-- The permitted control-flow changes are the ones this plan names: the maintenance restructuring (item 4)
-  and the reader output schema (item 2).
+- The permitted control-flow changes are the ones this plan names: the maintenance restructuring and
+  gap-key filter (item 4), the reader output schema and the degraded native rule (item 2).
 - Do not change season behaviour, `select_operational_issuances`, `src/gap_detector.py` or PP-064's window
   validation.
 - Add **new quarter-only constants** in `src/model_names.py` (e.g. `QUARTER_NATIVE_RAW_MODELS`,
@@ -307,8 +325,8 @@ Depends on P1a. It can run in parallel with P1c; the two touch disjoint source f
 **Files:**
 - `src/data_reader.py`: the two quarter readers (item 2), the combined-reader filter, the shared native-row
   helper, `_quarterly_fc_output_cols`.
-- `postprocessing_maintenance_long_term.py`: the gap-detector call, the gap universe and the allowed
-  restructuring (item 4).
+- `postprocessing_maintenance_long_term.py`: the gap-detector call, the gap universe, the gap-key filter
+  and the allowed restructuring (item 4).
 - `src/api_writer.py`: the LR skip (item 3) only.
 - Tests.
 
@@ -322,8 +340,9 @@ lead 0):
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
   to a valid control → the bad row is dropped and counted; the control keeps its stored hv.
-- December Q1 at `forecast_date` 2026-12-25, through the real `read_latest_quarterly_forecasts`. It fails on
-  trunk. Mutation: removing the target-year extension makes the flag-ON case fail.
+- December Q1 at `forecast_date` 2026-12-25, through the real `read_latest_quarterly_forecasts`, from
+  monthly triplets only (derived path). It fails on the pre-P1b base, which already contains PP-064 A.
+  Mutation: removing the target-year extension makes the flag-ON case fail.
 - `forecast_date` 2026-09-25 with Dec-25 rows present → Q4, not Q1.
 - A fresh derived GBT row **survives** next to a persisted GBT QUARTER row with the same key.
 - **Dataset B** — legacy QUARTER rows of the seven models at hv 1–4 with `date = valid_from` — is dropped
@@ -332,11 +351,18 @@ lead 0):
 - **Missing quarter config (uzb-like), both flags:** the derivation logs a WARNING and is skipped; flag ON
   returns empty as today, with `tests/test_lead_aware_empty_schedules.py:207, 239` unchanged; flag OFF
   behaves exactly as trunk (the direct path's `quarter_horizon_value()` raise is unchanged).
+- **Degraded native rule.** `quarter.json` with the lead only (as the autouse fixture writes it): flag OFF
+  → one WARNING, the direct LR rows are returned as on trunk (a non-native rewrite row included), no
+  derived rows; flag ON → raises as on trunk.
 - **Maintenance, through the real entry point** `postprocessing_maintenance_long_term()` with the real
   `data_reader`, `gap_detector` and `ensemble_calculator` (mock only the API client, the environment setup
   and the station-code read; capture `file_writer`): complete monthly triplets, monthly ensembles already
   present (no monthly gaps), no persisted QUARTER rows → the quarter gap is detected and a Naive Mean is
-  written. Fails on trunk (the run exits at `:126`).
+  written. Fails on the pre-P1b base (derived path; the run exits at `:126`).
+- **Maintenance gap-key filter, through the real entry point, both flags:**
+  - eligible raw models, sufficient skill, neither ensemble persisted → **both** Naive Mean and Skilled
+    Mean are saved;
+  - only Skilled Mean absent (it does not form) → no recurring gap.
 - **Gap detection:** raw rows with a Naive Mean and no Skilled Mean → no gap; raw rows (≥ 2 models)
   without a Naive Mean → a gap; a key with a single raw model → no gap.
 - **Writer:**
@@ -350,14 +376,16 @@ lead 0):
 - `tests/test_quarterly_data_reader.py:134, 245, 407, 443, 654, 718, 985, 1015`, where they assert the old
   mixed-issue or 2-of-3 monthly aggregation, or the flag-OFF output columns.
 - Keep the direct-row exclusion assertions for the seven models (e.g. `:293-337`, `:765-810`).
-- `tests/test_quarterly_workflow_integration.py` calls the old aggregator directly and stays unchanged.
+- PP-064's `tests/test_quarter_calendar_window.py` (e.g. A-6 once the maintenance caller keys on Naive
+  Mean).
 - In `tests/test_quarterly_api_writer.py`, only `:285` writes a raw LR row through the quarter forecast
   writer; `:64` and `:89` are skill-writer tests and are unaffected. Grep the other files that call the
   quarter forecast writer (`test_aggregated_nan_guard.py`, `test_lead_aware_writer_reader_round_trip.py`,
   `test_recalc_workflow.py`, `test_wiring_integration.py`) and list any raw-LR write they assert.
-- `tests/test_maintenance_long_term.py:501-625` (quarterly dedup, lead-aware) is expected to be unaffected:
-  it mocks `read_quarterly_forecasts`, which the new gap universe reuses. Any other maintenance test that
-  asserts the run ends before the quarterly block (e.g. the early-exit tests at `:217`, `:245`) is listed.
+- `tests/test_maintenance_long_term.py:541-574`, `:616` (quarterly dedup, lead-aware) **changes**: its
+  `q_combined` and `q_fc` hold one raw model, so the new two-model prefilter excludes the key and nothing
+  is saved. Give the fixture two eligible raw models. Any other maintenance test that asserts the run ends
+  before the quarterly block (e.g. the early-exit tests at `:217`, `:245`) is listed.
 
 ### P1c — ensembles, ensemble skill, K
 
@@ -389,10 +417,23 @@ golden file under `tests/golden/`.
 **Existing tests expected to change** (owner decision; list each in the PR):
 - The fixed-LR quarter EM tests now assert that there is **no quarter EM**:
   `tests/test_lt_min_pairs_gate.py:592-635` (both quarter tests), `tests/test_quarterly_ensemble_creation.py:203-227`,
-  `tests/test_quarterly_skill_metrics.py:265`. Grep the other quarter test files for `"EM"` and list every
-  quarter EM assertion changed.
-- `tests/test_quarterly_skill_metrics.py:529` and `tests/test_quarterly_ensemble_creation.py:458` are
-  **season** tests and stay unchanged.
+  `tests/test_quarterly_skill_metrics.py:265`.
+- `tests/test_quarterly_workflow_integration.py` **changes**:
+  - `:110-124`: five years and a non-empty quarter skill frame; K = 10 suppresses it. Extend to ≥ 10 years.
+  - `:141-157`: ensembles from that skill; same fix.
+  - `:301`: `"EM" in result_models` for quarter. Remove the quarter EM expectation. (`:345` is a **season**
+    test, `create_seasonal_ensemble_forecasts`, and stays.)
+- `tests/test_quarterly_skill_metrics.py:191-204`: five-year assertions (`n_pairs == 5`) → ≥ 10 years.
+  `:319`: quarter EM (DB-form LR names).
+- `tests/test_quarterly_ensemble_creation.py:194`, `:229`: EM composition and DB-form names.
+- `tests/test_lead_aware_aggregated_skill_ensemble.py`: `:168-230`, and the quarter EM loops at `:511`,
+  `:567`, `:721`. Its quarter fixtures use five years (`_YEARS_5`, `:44`), so check them against K = 10
+  too. The loops at `:583`, `:735` assert empty results and pass as is; the season loops (`:402`, `:538`,
+  `:599`, `:614`, `:749`, `:762`) stay; the shared `_ensemble_leads` (`:704`) needs no change.
+- For the rest, run `grep -ln '"EM"' tests/*.py`, classify each hit as quarter or season, change only
+  quarter, and list every quarter EM assertion changed.
+- Keep all season assertions. `tests/test_quarterly_skill_metrics.py:529` and
+  `tests/test_quarterly_ensemble_creation.py:458` are **season** tests and stay unchanged.
 - K from 5 to 10: `tests/test_lt_min_pairs_gate.py:44` and `tests/test_n_pairs_floor.py:49` share
   `K_QS = 5` between quarter and season; split them into quarter 10 / season 5 without changing the season
   assertions. `tests/test_lt_min_pairs_gate.py:161` asserts the quarter default of 5. Fixtures with 5–9
@@ -446,7 +487,11 @@ contaminated quarter skill.
 
 Only after LTF-014 P0 and P2 are deployed on both orgs.
 
-**Files:** `src/data_reader.py` (drop the LR fallback branch), tests.
+**Files:**
+- `src/data_reader.py` (drop the LR fallback branch), tests.
+- `README.md`: the passage that documents the active LR fallback, added by DOC-009 row 12 (at trunk the
+  row targets `:14, 18-19, 305-320`). Grep `fallback` there and in the repo-root `doc/data_flow_long_term.md`,
+  the other row-12 file.
 
 **Acceptance:** before removing it, count per org the quarters that would lose LR rows. For the calendar
 quarters of scored years, expect none.
