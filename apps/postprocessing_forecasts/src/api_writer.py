@@ -1205,10 +1205,21 @@ def _write_aggregated_forecasts_to_api(
             # reader's own calendar-window check already accepts).
             # Season is unaffected.
             if horizon_type == "quarter":
+                # S2: match the reader's conservative cutoff --
+                # filter_calendar_quarter_windows (aggregation.py) also
+                # treats ANY row with valid_from.year > 2261 as not a
+                # calendar quarter, regardless of month, to stay clear
+                # of the datetime64[ns] upper bound (~2262-04-11).
+                # Without this, the two disagreed: the reader rejected
+                # a Q1 2262 row (a safely-representable window on its
+                # own) that the writer would have accepted.
+                out_of_range_target_year = year > 2261
                 row_has_valid_from = pd.notna(row.get("valid_from"))
                 row_has_valid_to = pd.notna(row.get("valid_to"))
                 both_present = row_has_valid_from and row_has_valid_to
-                if both_present:
+                if out_of_range_target_year:
+                    mismatch = True
+                elif both_present:
                     parsed_valid_from = local_calendar_date(pd.Series([row["valid_from"]])).iloc[0]
                     parsed_valid_to = local_calendar_date(pd.Series([row["valid_to"]])).iloc[0]
                     mismatch = (
@@ -1219,7 +1230,9 @@ def _write_aggregated_forecasts_to_api(
                     )
                 else:
                     mismatch = True
-                skip_row = (row_has_valid_from or row_has_valid_to) and mismatch
+                skip_row = out_of_range_target_year or (
+                    (row_has_valid_from or row_has_valid_to) and mismatch
+                )
                 if skip_row:
                     dropped_calendar_rows += 1
                     continue

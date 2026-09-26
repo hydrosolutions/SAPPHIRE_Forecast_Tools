@@ -52,6 +52,14 @@ def _parse_local_calendar_date(v) -> pd.Timestamp:
     the same way an unparseable value is, and gives ``NaT`` instead of
     aborting the caller.
 
+    A value just above the OTHER end of the range (``pd.Timestamp.min``,
+    1677-09-21 00:12:43...) is rejected explicitly, BEFORE
+    ``.normalize()``: normalizing such a value truncates its
+    time-of-day DOWN to that day's midnight, which is earlier than the
+    representable minimum, and pandas does not raise for this -- it
+    silently wraps around to a bogus date near the UPPER limit instead
+    (observed: 2262-04-11).
+
     Args:
         v: A single raw value (string, Timestamp, date, or null).
 
@@ -65,9 +73,43 @@ def _parse_local_calendar_date(v) -> pd.Timestamp:
             return pd.NaT
         if ts.tzinfo is not None:
             ts = ts.tz_localize(None)
+        if ts < pd.Timestamp("1677-09-22"):
+            return pd.NaT
         return ts.normalize().as_unit("ns")
     except (ValueError, TypeError, OverflowError):
         return pd.NaT
+
+
+def _factorize_key(v) -> str:
+    """Return a de-duplication key that captures a value's TYPE and
+
+    exact string representation, not its raw ``==``/hash equality.
+    ``pd.factorize`` on the RAW values would otherwise group values
+    that ``_parse_local_calendar_date`` treats differently as one key:
+
+    - a same-instant tz-aware value at two different UTC offsets is
+      ``==`` (e.g. ``Timestamp("2024-04-01 00:00+06:00") ==
+      Timestamp("2024-03-31 18:00Z")``), yet their LOCAL calendar dates
+      are 2024-04-01 and 2024-03-31 respectively;
+    - ``0``/``False`` and ``1``/``True``/``1.0`` are all ``==`` to each
+      other in Python, yet ``pd.Timestamp(0)`` is the Unix epoch while
+      ``pd.Timestamp(False)`` is unparseable.
+
+    Which value is de-duplication's "first occurrence" then depends on
+    row order, silently changing the result for every OTHER row sharing
+    that raw value. A null-like value collapses to one shared key
+    regardless of its exact type (``None``, ``NaN``, ``pd.NA``,
+    ``NaT`` are all equally "no date").
+
+    Args:
+        v: A single raw value.
+
+    Returns:
+        A hashable string key, safe to pass to ``pd.factorize``.
+    """
+    if v is None or v is pd.NaT or v is pd.NA or (isinstance(v, float) and v != v):
+        return "\0NULL"
+    return f"{type(v).__module__}.{type(v).__qualname__}|{v!s}"
 
 
 def local_calendar_date(s: pd.Series) -> pd.Series:
@@ -86,12 +128,17 @@ def local_calendar_date(s: pd.Series) -> pd.Series:
     ``"2024-04-01garbage"`` and rejected ``"2024/04/01"``), so it is not
     used here.
 
-    Each DISTINCT raw value is parsed only once (``pd.factorize``, which
-    is NaN-safe: ``None``/``NaN``/``NaT`` all collapse to one sentinel
-    and are excluded from the unique values), then broadcast back to
+    Each DISTINCT raw value is parsed only once and broadcast back to
     every row -- at scale, most values repeat (the same handful of
     issue/target dates across many rows), and ``pd.Timestamp`` parsing
-    per row dominates runtime otherwise.
+    per row dominates runtime otherwise. Distinctness is determined by
+    ``_factorize_key`` (type + exact string form), NOT by ``==``/hash
+    equality on the raw values -- see that function for why. The FIRST
+    original value seen for each key is the one actually parsed.
+
+    If keying itself raises ``TypeError`` (a value whose ``str()``/type
+    name lookup fails), this falls back to parsing every row
+    individually, exactly as before de-duplication existed.
 
     Args:
         s: Raw date-like column (strings, Timestamps, dates, or null).
@@ -105,16 +152,26 @@ def local_calendar_date(s: pd.Series) -> pd.Series:
     if len(s) == 0:
         return pd.Series(pd.array([], dtype="datetime64[ns]"), index=s.index)
 
-    codes, uniques = pd.factorize(s, use_na_sentinel=True)
-    parsed_uniques = pd.to_datetime(
-        pd.Series([_parse_local_calendar_date(v) for v in uniques], dtype=object)
-    ).to_numpy(dtype="datetime64[ns]")
-    # `codes == -1` marks a null-like entry in `s`; such entries have no
-    # corresponding row in `uniques`/`parsed_uniques`, so look them up
-    # via one extra NaT appended past the end of the lookup array.
-    lookup = np.append(parsed_uniques, np.datetime64("NaT", "ns"))
-    values = lookup[np.where(codes == -1, len(parsed_uniques), codes)]
-    return pd.Series(values, index=s.index)
+    try:
+        codes, unique_keys = pd.factorize(np.array([_factorize_key(v) for v in s], dtype=object))
+        first_value_by_code: dict[int, object] = {}
+        for code, v in zip(codes, s, strict=True):
+            if code not in first_value_by_code:
+                first_value_by_code[code] = v
+        parsed_uniques = pd.to_datetime(
+            pd.Series(
+                [
+                    _parse_local_calendar_date(first_value_by_code[c])
+                    for c in range(len(unique_keys))
+                ],
+                dtype=object,
+            )
+        ).to_numpy(dtype="datetime64[ns]")
+        values = parsed_uniques[codes]
+        return pd.Series(values, index=s.index)
+    except TypeError:
+        parsed = pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object, index=s.index)
+        return pd.to_datetime(parsed)
 
 
 def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:

@@ -35,7 +35,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src import api_writer, data_reader
+from src import aggregation, api_writer, data_reader
 from src.aggregation import filter_calendar_quarter_windows, local_calendar_date
 from src.gap_detector import detect_missing_quarterly_ensembles
 
@@ -592,6 +592,38 @@ class TestA7WriterGuard:
         self.mock_client.write_long_forecasts.assert_not_called()
 
     @pytest.mark.parametrize(
+        "valid_from",
+        [
+            "2024-05-01",
+            "2024-01-01",
+        ],
+    )
+    def test_mismatching_valid_from_dropped_even_when_valid_to_matches(self, valid_from):
+        """S4: the valid_from predicate is not locked by an existing
+
+        test -- deleting `or parsed_valid_from != pd.Timestamp(valid_from)`
+        from the writer's mismatch check keeps the suite green, because
+        every other case that reaches this row also has a mismatching
+        valid_to. Here valid_to matches the synthesized Q2 2024 end
+        (2024-06-30) while valid_from does not, so only the valid_from
+        clause can catch it.
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2024],
+                "quarter_in_year": [2],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+                "valid_from": [valid_from],
+                "valid_to": ["2024-06-30"],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+
+    @pytest.mark.parametrize(
         "valid_to",
         [
             "2024-06-30T99:00:00",
@@ -674,6 +706,64 @@ class TestA7WriterGuard:
         drop_lines = [r for r in caplog.records if "non-calendar quarter window" in r.message]
         assert len(drop_lines) == 1
         assert "Dropped 2" in drop_lines[0].message
+
+    def test_year_2262_q1_rejected_even_with_both_null(self):
+        """S2: the writer must match the reader's conservative
+
+        year > 2261 cutoff (filter_calendar_quarter_windows) even for
+        the "both null, keep synthesized" case -- Q1 2262 alone
+        (Jan-Mar) is a safely-representable window, but the reader
+        rejects ANY row with valid_from.year > 2261 regardless of
+        quarter, so the writer must too, for consistency. Out-of-range
+        data is nonsense; the only point is agreement between the two.
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2262],
+                "quarter_in_year": [1],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+
+    def test_year_2262_q1_rejected_with_matching_own_values(self):
+        """Same as above, but the row's own valid_from/valid_to are
+
+        present and self-consistent (2262-01-01..2262-03-31) -- still
+        rejected, since the target year alone already disqualifies it.
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2262],
+                "quarter_in_year": [1],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+                "valid_from": ["2262-01-01"],
+                "valid_to": ["2262-03-31"],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+
+
+class TestS2ReaderWriterYear2262Agreement:
+    def test_reader_rejects_year_2262_q1(self):
+        df = pd.DataFrame(
+            {
+                "code": [CODE],
+                "valid_from": ["2262-01-01"],
+                "valid_to": ["2262-03-31"],
+            }
+        )
+        kept, dropped = filter_calendar_quarter_windows(df)
+        assert dropped == 1
+        assert kept.empty
 
 
 # ===========================================================================
@@ -1496,6 +1586,74 @@ class TestP1LocalCalendarDateParsing:
 
         pd.testing.assert_series_equal(deduped, non_deduped, check_names=False)
 
+    def test_same_instant_different_offset_and_boolean_int_collisions(self):
+        """S1: pd.factorize on the RAW values (rather than a type+repr
+
+        key) groups values by ==/hash equality, not by what
+        _parse_local_calendar_date returns for them, so the result
+        depended on row order. Two collision classes, each included in
+        BOTH orders so this cannot pass by accident: a same-instant
+        tz-aware pair at different UTC offsets (== but different LOCAL
+        calendar dates), and 0/False plus 1/True (== in Python, but
+        pd.Timestamp(0) is the epoch while pd.Timestamp(False)/
+        pd.Timestamp(True) are unparseable). Also includes an
+        unhashable value (a list), which must fall back to the
+        per-row parse rather than raising. Fails on 4fbe0bb6.
+        """
+        from src.aggregation import _parse_local_calendar_date
+
+        t1 = pd.Timestamp("2024-04-01 00:00", tz="+06:00")
+        t2 = pd.Timestamp("2024-03-31 18:00", tz="UTC")
+        assert t1 == t2  # same instant, different offset -- the setup
+
+        values = [t1, t2, t2, t1, 0, False, False, 0, 1, True, True, 1, [1, 2, 3]]
+        s = pd.Series(values, dtype=object)
+
+        non_deduped = pd.to_datetime(
+            pd.Series([_parse_local_calendar_date(v) for v in s], dtype=object)
+        )
+        deduped = local_calendar_date(s)
+
+        pd.testing.assert_series_equal(deduped, non_deduped, check_names=False)
+
+    def test_parses_each_distinct_key_only_once(self, monkeypatch):
+        """S1: de-duplication actually parses each distinct key once,
+
+        not once per row. Mutation: reverting to the plain per-row
+        `s.map(_parse_local_calendar_date)` makes the call count equal
+        the row count instead of the distinct-key count.
+        """
+        calls = []
+        original = aggregation._parse_local_calendar_date
+
+        def spy(v):
+            calls.append(v)
+            return original(v)
+
+        monkeypatch.setattr(aggregation, "_parse_local_calendar_date", spy)
+
+        distinct = ["2024-04-01", "2024-05-01", None]
+        s = pd.Series(distinct * 100)
+        aggregation.local_calendar_date(s)
+
+        assert len(calls) == len(distinct)
+
+    def test_lower_bound_wrap_rejected(self):
+        """S3: a value just above pd.Timestamp.min normalizes DOWN to a
+
+        time-of-day earlier than the representable minimum; pandas does
+        not raise for this, it silently wraps around to a bogus date
+        near the UPPER limit (observed: 2262-04-11) instead of NaT.
+        Tested as a string, a Timestamp, and a np.datetime64.
+        """
+        from src.aggregation import _parse_local_calendar_date
+
+        assert pd.isna(_parse_local_calendar_date(pd.Timestamp.min))
+        assert pd.isna(_parse_local_calendar_date(np.datetime64("1677-09-21T12:00:00", "ns")))
+        assert pd.isna(_parse_local_calendar_date("1677-09-21T12:00:00"))
+        # Just past the cutoff: parses normally.
+        assert _parse_local_calendar_date("1677-09-22T00:00:01") == pd.Timestamp("1677-09-22")
+
     def test_empty_series_returns_empty_datetime64(self):
         result = local_calendar_date(pd.Series([], dtype=object))
         assert result.empty
@@ -1512,15 +1670,21 @@ class TestP1LocalCalendarDateParsing:
         assert result.dtype == "datetime64[ns]"
 
     def test_all_null_tz_aware_series_returns_naive_datetime64(self):
-        """Q4: a non-empty, entirely-null tz-aware input must also come
+        """Contract lock (not a regression test -- this already passed
 
-        back naive datetime64[ns] with NaT rows, not left tz-aware.
+        on 8c9cfc2a too): a non-empty, entirely-null tz-aware input must
+        come back naive datetime64[ns] with NaT rows, not left tz-aware.
         """
         result = local_calendar_date(pd.Series([pd.NaT, pd.NaT], dtype="datetime64[ns, UTC]"))
         assert result.dtype == "datetime64[ns]"
         assert result.isna().all()
 
     def test_all_null_object_series_returns_naive_datetime64(self):
+        """Contract lock (not a regression test -- this already passed
+
+        on 8c9cfc2a too): an all-null object-dtype input must come back
+        naive datetime64[ns].
+        """
         result = local_calendar_date(pd.Series([None, float("nan"), pd.NaT]))
         assert result.dtype == "datetime64[ns]"
         assert result.isna().all()
