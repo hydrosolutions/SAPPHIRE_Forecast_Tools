@@ -935,6 +935,10 @@ def get_long_forecasts_quarter(
         max(schedule.lead_time, resolved_horizon_value or 0) if not degraded
         else (resolved_horizon_value if resolved_horizon_value is not None else 3)
     )
+    # A negative lead (a misconfigured operational_month_lead_time, or a
+    # negative explicit horizon_value in degraded mode) is a
+    # misconfiguration; the window must never be narrower than for lead 0.
+    fetch_lead = max(fetch_lead, 0)
     current_quarter_start_month = ((today.month - 1) // 3) * 3 + 1
     lower_total_months = (
         today.year * 12 + (current_quarter_start_month - 1) - (12 + fetch_lead)

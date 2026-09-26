@@ -3278,6 +3278,38 @@ class TestGetLongForecastsQuarterFetchWindow:
         assert result["quarter_in_year"].iloc[0] == 1
         assert result["year"].iloc[0] == 2026
 
+    def test_negative_configured_lead_does_not_narrow_below_lead_zero(self, monkeypatch, tmp_path):
+        """Confirm-pass on cd30158e: dropping the lower bound's `min` is
+        safe only for lead >= 0. Neither the resolver's `int()` cast nor
+        an explicit `horizon_value` rejects a negative
+        operational_month_lead_time, so a misconfigured lead=-5 would
+        otherwise ADD 5 months to the (12 + lead) months-back reach
+        instead of subtracting, narrowing the window past even the old
+        fixed spec bound. `fetch_lead` must clamp to 0 (never negative)
+        before sizing the window. Lead -5, issue day 25, today
+        2026-10-01: a Q3 2025 row dated 2025-12-25 must still be fetched."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=-5, issue_day=25)
+        q3_2025_row = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 183, "model_type": "GBT",
+            "date": "2025-12-25", "valid_from": "2025-07-01", "valid_to": "2025-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            start, end = params.get("start_date"), params.get("end_date")
+            row_date = q3_2025_row["date"]
+            if (start is not None and row_date < start) or (end is not None and row_date > end):
+                return _make_mock_response([])
+            return _make_mock_response([q3_2025_row])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 10, 1))
+
+        assert len(result) == 1
+        assert result["quarter_in_year"].iloc[0] == 3
+        assert result["year"].iloc[0] == 2025
+
 
 class TestGetLongForecastsQuarterCalendarOnly:
     def test_rolling_window_excluded(self, monkeypatch):
