@@ -149,11 +149,16 @@ step 0 reads the real state per org. Both flag states are in scope.
 
 **Goal**:
 - A non-calendar quarter row is excluded (never relabelled) at the direct-read choke point and at the writer.
-- The prior-year-issued Q1 survives the operational reader; a back-dated run cannot pick a later issue.
+- The prior-year-issued Q1 survives the operational reader's **direct source**; a back-dated run cannot
+  pick a later direct issue. The operational reader's **monthly-derived source** has no such bound under
+  either flag (`read_latest_quarterly_forecasts` calls `read_monthly_forecasts(codes, start_year,
+  end_year)` flag ON, `:3415`, or raw `_read_long_forecasts_api(codes, start_year, end_year)` flag OFF,
+  `:3423` — neither takes `today`/`forecast_date`) — that gap is out of this chunk's scope; PP-065
+  rewrites this source and owns bounding it (PP-065 item 2).
 - Under flag OFF, a prior-year row targeting Q1 of `start_year` at the configured `horizon_value` is
   read, whatever its issue month or day (Dec 25 for kghm with on-schedule data).
 
-**Files (only these may be modified; final shape, `ac2a5a51`)**:
+**Files (only these may be modified; final shape, branch `fix_pp_quarter_calendar_window`)**:
 - `apps/postprocessing_forecasts/src/aggregation.py`:
   - new date-parsing core: `_LOCAL_CALENDAR_DATE_LOWER_BOUND = pd.Timestamp("1677-09-22")` (`:38`),
     `_parse_local_calendar_date` (element-wise, `:41-86`), `_local_calendar_date_per_value` (the
@@ -267,7 +272,12 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   Oct 1 start clears it). This comparison is **numeric**, not a string comparison — `"999-01-01" <
   "1677-09-22"` is `False` lexicographically (every year with fewer digits than 1677 would otherwise
   misclassify as in-range).
-- One aggregated count per call (not per row) at INFO, no station codes (`:1296-1301`).
+- One aggregated count per call (not per row) at **WARNING**, no station codes (`:1297-1309`). Not
+  INFO, unlike the reader-side calendar-window drop counts (which stay at INFO, correctly, since a
+  rolling-window drop there is expected on every run by design): a row reaching the writer with a
+  non-calendar window means an upstream invariant broke — the readers already filter those out — so it
+  is treated as WARNING-worthy. This also matters for visibility: `setup_library` caps the root logger
+  at WARNING on import (INFRA-029), so an INFO-level line here would never reach production logs at all.
 
 **Year and date bounds in `read_latest_quarterly_forecasts` (Problem 6)**
 - The flag-ON target-year trim admits `end_year + 1`, so a 25 Dec issue yields next year's Q1. The
@@ -307,6 +317,18 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   issue dates reaching this mask are the **producer's** concern (LTF-015), not this reader's — the
   reader's own contract is exactly what it admits above, not what a well-behaved producer happens to
   send it.
+- **Known limitation (accepted): the widened first-year Q1 can duplicate against its own rewrite.**
+  The native Dec-25 Q1 row this widening admits for the *first* requested year, and that same
+  quarter's flag-OFF rewrite (population (b), dated at `valid_from` = Jan 1 — see "Mechanism", item 5),
+  are two distinct DB rows sharing the same `(code, year, quarter_in_year, model_short)` key. When the
+  monthly-derived source (`aggregated`) is empty for that key, `combined = direct` runs with **no**
+  dedup at all (the `drop_duplicates(keep="last")` only runs when concatenating with a non-empty
+  `aggregated`), so **both rows survive** into the reader's output and are both paired against the same
+  observation downstream. This is not a new class of bug: on trunk, without the widening, the exact same
+  pair (native row from year `Y − 1`, rewrite from year `Y`) already coexists for every year *after* the
+  first one in any multi-year read range — the widening only extends it to the first year too. This is
+  the pre-existing **PP-049** (flag-OFF `keep="last"` API-order dependence) / **PP-061** (aggregated
+  writer `date = valid_from` key collisions) duplicate class; accepted here, not fixed by this chunk.
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
   checked via **both** target year `== start_year` **and** `quarter_in_year == 1`, not target year
   alone. Checking target year alone (an earlier, round-2 version of this fix) was still too permissive:
@@ -433,9 +455,13 @@ stable.)
   The positive case uses a **non-LR, non-EM** model (e.g. `Naive Mean`): PP-065 P1b makes the writer skip
   LR and EM rows.
 - **A-8. Season rows** through `_normalize_combined_forecasts` are unchanged.
-- **A-9. Back-dated run, both flags.** `forecast_date = 2026-09-25`, kghm-like rows issued 2026-09-25
-  (Oct–Dec) and 2026-12-25 (Jan–Mar 2027) → `read_latest_quarterly_forecasts` returns Q4 2026. Flag OFF
-  fails on trunk; flag ON must fail if the date bound is removed after the year bound is widened.
+- **A-9. Back-dated run, both flags, direct source only.** `forecast_date = 2026-09-25`, kghm-like
+  **direct** rows issued 2026-09-25 (Oct–Dec) and 2026-12-25 (Jan–Mar 2027) → `read_latest_quarterly_forecasts`
+  returns Q4 2026. Flag OFF fails on trunk; flag ON must fail if the date bound is removed after the year
+  bound is widened. `_quarter_api_fake` returns nothing for the monthly source
+  (`horizon_type != "quarter"`) by construction, so this test proves the bound only for the direct
+  source — it says nothing about the monthly-derived source, which has no such bound under either flag
+  (see the Chunk A Goal above); that gap is PP-065's to close, not tested here.
 - **A-10. First-year Q1, flag OFF.** A direct row issued 2024-12-25 for 2025-01-01..03-31 at hv1:
   `read_quarterly_forecasts(codes, 2025, 2025)` returns it as Q1 2025
   (`test_december_issued_q1_of_first_year_is_read`). Fails on trunk. A row issued and targeting inside

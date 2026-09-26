@@ -211,6 +211,20 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      `start_year − 1 … end_year`. In the latest reader, also require issue date ≤ `forecast_date`. Derive
      for the seven models; while the fallback is active, also derive each LR model for (code, year,
      quarter) keys with no selected native row of that model.
+   - **Existing Source 1 (LR aggregation) forecast_date bound, latest reader, both flags — IN scope.**
+     `read_latest_quarterly_forecasts`' pre-existing monthly-derived path for LR_Base/LR_SM (unrelated to
+     the "Derived rows" step above, which is this plan's new seven-model/fallback mechanism) has no bound
+     against `forecast_date` today: flag ON calls `read_monthly_forecasts(codes, start_year, end_year)`
+     (`data_reader.py:3415`), flag OFF calls raw `_read_long_forecasts_api(codes, start_year, end_year)`
+     (`:3423`) — neither takes `today`/`forecast_date`, so a back-dated run could aggregate a monthly row
+     issued after it into a quarter that should not be visible yet. This plan rewrites this reader (this
+     item, above), so it owns bounding it: filter the raw/selected monthly rows to issue `date <=
+     forecast_date` (null/unparseable kept, mirroring PP-064's Problem-6 pattern) **before** they reach
+     `aggregate_monthly_fc_to_quarterly` (unchanged, P1a) — under **both** flags, since neither path
+     bounds it today. `aggregate_monthly_fc_to_quarterly` itself and `read_quarterly_forecasts` (no
+     `forecast_date` concept) are unaffected.
+     - **Test:** `forecast_date = 2026-06-25`; monthly LR rows issued 2026-09-25 and 2026-10-25 (both
+       after `forecast_date`) must not produce a Q4 aggregate — under both flags.
    - Trim to the requested **target** years. In the latest reader, target year `today.year + 1` is allowed,
      so a 25 Dec issue yields next year's Q1.
    - **Drop direct rows of the seven models before the sources are combined.** After this, the readers'
@@ -399,6 +413,9 @@ lead 0):
   through both readers. **Not** asserted end-to-end through the readers under flag ON here —
   `select_operational_issuances` still matches unclamped and would drop the row regardless of the
   helper's own classification; PP-066's Tests list carries that end-to-end case once its fix lands.
+- **Existing Source 1 forecast_date bound, latest reader, both flags.** `forecast_date = 2026-06-25`;
+  monthly LR rows issued 2026-09-25 and 2026-10-25 (both after `forecast_date`) → no Q4 aggregate is
+  produced, under both flags. Fails on the pre-P1b base (neither flag bounds this path today).
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
@@ -457,6 +474,9 @@ lead 0):
 **Acceptance (P1b):**
 - The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
   unexpected skips; only the pre-existing xfail.
+- `read_latest_quarterly_forecasts`' existing Source 1 (LR aggregation) is bounded by `forecast_date`
+  under **both** flags — the back-dated test above passes, and `aggregate_monthly_fc_to_quarterly` /
+  `read_quarterly_forecasts` are otherwise untouched (`git diff` shows no change to either).
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1b file list.
 
@@ -591,11 +611,3 @@ quarters of scored years, expect none.
 - Deleting legacy rows, including old ensemble rows (D8 / PP-041).
 - Any writer change beyond the LR and EM skip.
 - Making season gap-fill reachable when the monthly block has nothing to do.
-- **`read_latest_quarterly_forecasts`'s monthly-derived Source 1 has no issue-date bound** (`data_reader.py:3336-3362`,
-  trunk): unlike Source 2 (direct), which PP-064 Chunk A bounds to `date <= forecast_date` (Problem 6),
-  the raw monthly read feeding `aggregate_monthly_fc_to_quarterly` here is not similarly bound, so a
-  back-dated run could in principle aggregate a monthly row issued after `forecast_date`. This plan's own
-  "Derived rows" step (item 2, above) adds that bound for its own new derivation, including the LR
-  fallback case, but does not fix the pre-existing, unbounded LR_Base/LR_SM monthly-aggregation path
-  itself; `aggregate_monthly_fc_to_quarterly` stays unchanged (P1a). Pre-existing on trunk, not
-  introduced or fixed by PP-064 or this plan; noted here so it is not lost, not filed separately.

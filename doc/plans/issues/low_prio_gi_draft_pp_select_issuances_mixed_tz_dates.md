@@ -57,8 +57,8 @@ the same latency class as Problem 1, not a live incident.
 - Reproduced (pandas 2.3.3, the locked version): `pd.to_datetime(pd.Series(["2024-12-25",
   "2025-03-25T00:00:00+06:00"]))` raises `ValueError: unconverted data remains when parsing with
   format "%Y-%m-%d": "T00:00:00+06:00", at position 1.`
-- Same line and function on the PP-064 branch (`fix_pp_quarter_calendar_window`, HEAD `ac2a5a51`,
-  worktree `sapphire-pp064a`): unchanged, per PP-064's own Contract not to modify this function.
+- Same line and function on the PP-064 branch (`fix_pp_quarter_calendar_window`, worktree
+  `sapphire-pp064a`): unchanged, per PP-064's own Contract not to modify this function.
 - `format="mixed"` alone does not fix it either — reproduced: it silences the `ValueError` but the
   resulting object-dtype Series then raises `AttributeError` on `.dt.year`/`.dt.day` (the same
   failure mode PP-064 hit at its own two call sites) **and separately** raises `TypeError: can't

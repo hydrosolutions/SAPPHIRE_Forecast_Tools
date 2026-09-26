@@ -30,12 +30,11 @@ branch, for the missing-file case.
   `code = _resolve_station(station) if station else None` (the function's first statement);
   `:820` — `resolved_horizon_value = _resolve_quarter_horizon_value(horizon_value)` (the
   **second** statement, not the first).
-- FD-029 branch (`fix_fd_quarter_card_calendar`, worktree `sapphire-fd029`,
-  HEAD `f7ac5a29`, final): the same two statements are now at `:851`/`:852` (station resolve, then
-  the `horizon_value` resolve) — still both well ahead of the degraded-mode handler at
-  `:861-875` (comment at `:861-865` already names this issue; `try`/
-  `except (LongTermHorizonResolverError, FileNotFoundError)` at `:866-875`), which guards only
-  `operational_schedule_for_mode("quarter")` (`:867`).
+- FD-029 branch (`fix_fd_quarter_card_calendar`, worktree `sapphire-fd029`): the same two
+  statements are now at `:857`/`:858` (station resolve, then the `horizon_value` resolve) — still
+  both well ahead of the degraded-mode handler at `:861-881` (comment at `:861-871` already names
+  this issue; `try`/`except (LongTermHorizonResolverError, FileNotFoundError)` at `:872-881`),
+  which guards only `operational_schedule_for_mode("quarter")` (`:873`).
 - `_resolve_quarter_horizon_value` (trunk `db.py:81-84`; FD-029 branch `db.py:82-85`, one line
   shifted, unchanged by FD-029) calls `quarter_horizon_value()` whenever no explicit
   `horizon_value` is passed — true for the card and for all three bulletin call sites.
@@ -55,7 +54,7 @@ branch, for the missing-file case.
 ## Proposed fix
 
 Wrap the early `_resolve_quarter_horizon_value(horizon_value)` call (trunk `:820`, FD-029
-branch `:852`) in `try`/`except (LongTermHorizonResolverError, FileNotFoundError)` — the same
+branch `:858`) in `try`/`except (LongTermHorizonResolverError, FileNotFoundError)` — the same
 exception set FD-029's later handler already catches, so both handlers agree on what
 "degraded" means. On catch: fall back so the function still reaches its own degraded path
 (e.g. proceed without a `horizon_value` request filter in `params`, rather than guessing a
@@ -66,7 +65,7 @@ way) — not only a missing file. There is no promise that behaviour is unchange
 
 **One-WARNING coordination (do not duplicate FD-029's later handler).** If the early resolve
 fails, the function must not go on to call `operational_schedule_for_mode("quarter")` a second
-time at the later handler (FD-029 branch `:867`) — that call would hit the *same* underlying
+time at the later handler (FD-029 branch `:873`) — that call would hit the *same* underlying
 config problem and log a *second* WARNING for one root cause. Carry the early failure into the
 degraded decision directly: when the early resolve already failed, skip the later
 `operational_schedule_for_mode` call entirely, set `schedule = None` / `degraded = True` from
@@ -80,10 +79,10 @@ decision.
 ## Tests
 
 Fixtures below use **non-empty** API response data. An empty response does **not** short-circuit
-before either config handler — both the early resolve (`:852`) and the later schedule handler
-(`:861-875`) run *before* the API call (`:965`); an empty response only short-circuits the row-level
+before either config handler — both the early resolve (`:858`) and the later schedule handler
+(`:861-881`) run *before* the API call (`:971`); an empty response only short-circuits the row-level
 logic that follows it (calendar filtering, dedup, the native/eligibility predicates), via the early
-return at `:966-983`. So an empty-response fixture would still exercise this fix's degrade decision
+return at `:972-989`. So an empty-response fixture would still exercise this fix's degrade decision
 and its single WARNING, but never reaches the degraded row-selection assertions below (eligibility,
 `is_native`, LR retention, dedup shape) — those need rows to assert anything about, hence the
 non-empty fixtures. Assert, for each non-empty case: no exception; exactly one WARNING logged; date

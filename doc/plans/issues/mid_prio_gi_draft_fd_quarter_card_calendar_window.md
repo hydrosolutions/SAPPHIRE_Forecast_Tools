@@ -24,9 +24,9 @@ schedule-computed `issue_date(Q)` (Behaviour after, items 4 and 9).
   - the **"Quarterly forecast" card on the month horizon**, for reservoir stations only
     (`'вдхр'` in `punkt_name_ru`; `dashboard/plot_manager.py:362-428`, `dashboard/widget_manager.py:230-233`).
     Its load path is `_get_data_monthly` (trunk `src/db.py:1020`; branch `fix_fd_quarter_card_calendar`
-    `:1255`, shifted by the fetch-window code inserted earlier in the file), which then left-merges the
-    quarter skill rows (trunk `:1108-1131`; branch `:1344-1368`); that merge is what puts `delta` on the
-    card rows;
+    `:1277`, shifted by the fetch-window and LR-drop-logging code inserted earlier in the file), which
+    then left-merges the quarter skill rows (trunk `:1108-1131`; branch `:1365-1389`); that merge is
+    what puts `delta` on the card rows;
   - the month bulletin's quarterly section, three blocks that each call the function directly
     (`dashboard/bulletin_manager.py:394-399` in `_populate_forecast_attributes`, `:760-765` in `_on_add`,
     `:890-895` in `_on_add_m0`; FD-030).
@@ -107,28 +107,28 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
 **Behaviour after**
 1. **Fetch window at call time, schedule-derived and widened both directions (coverage only).**
    `get_long_forecasts_quarter` gains an additive keyword `today: date | None = None`, resolved as
-   `today or date.today()` inside the call (`db.py:853`; `db.py:3` imports
+   `today or date.today()` inside the call (`db.py:859`; `db.py:3` imports
    `from datetime import date, datetime`; there is no `dt` alias). The window's bounds are computed
-   **after** item 3's schedule/degraded resolution (`db.py:866-892`), since they depend on it, not
+   **after** item 3's schedule/degraded resolution (`db.py:872-898`), since they depend on it, not
    before — a fixed, edge-by-edge-patched window kept missing cases, so it is now sized generously in
-   both directions instead (`db.py:894-965`):
+   both directions instead (`db.py:900-971`):
    - `fetch_lead = max(schedule.lead_time, resolved_horizon_value or 0)` when the schedule resolved;
-     `resolved_horizon_value if resolved_horizon_value is not None else 3` when degraded (`db.py:934-940`);
-     then clamped `fetch_lead = max(fetch_lead, 0)` (`db.py:941`) — a misconfigured negative
+     `resolved_horizon_value if resolved_horizon_value is not None else 3` when degraded (`db.py:940-943`);
+     then clamped `fetch_lead = max(fetch_lead, 0)` (`db.py:947`) — a misconfigured negative
      `operational_month_lead_time`, or a negative explicit `horizon_value` in degraded mode, must never
      narrow the window below lead 0's own reach.
    - `start_date` = the 1st of the month `(12 + fetch_lead)` months before the **start of today's own
-     calendar quarter** (`db.py:942-947`) — always at or before the original fixed bound
+     calendar quarter** (`db.py:948-953`) — always at or before the original fixed bound
      `{today.year-1}-12-01` (worst case: lead 0, today in Q4, lands on `{today.year-1}-10-01`), so that
      fixed bound is dropped entirely rather than kept as a no-op `min`.
    - `end_date` = `max({today.year+1}-03-31, the last day of the month (fetch_lead + 1) months after
-     today's month)` (`db.py:949-954`) — the original fixed upper bound is **kept** as one side of this
+     today's month)` (`db.py:955-960`) — the original fixed upper bound is **kept** as one side of this
      `max` (it still wins for `fetch_lead <= 2` through most of the year); the schedule-derived side
      additionally covers a lead>=4 config's flag-OFF row, dated at the *next* quarter's own `valid_from`.
    - **Rationale (verified, not asserted).** An oracle sweep over every day of 2025–2028, leads 0–4,
      issue days 1/25/31 and 0–5 consecutive missing quarters found **zero** mismatches through 3
      consecutive missing quarters; a partial older quarter is possible only with **four or more**
-     consecutive missing quarters (accepted; `db.py:894-933`).
+     consecutive missing quarters (accepted; `db.py:900-939`).
    The module constants `CURRENT_YEAR`/`PREVIOUS_YEAR` and all other functions are untouched. What may be
    **shown** is decided by item 4, not by the window.
 2. **Calendar quarters only.** Parse `valid_to`. A row is a calendar quarter iff `valid_from` is day 1 of
@@ -138,19 +138,19 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
 3. **Schedule, resolved once per call — before item 1's window is even sized.** Read
    `operational_schedule_for_mode("quarter")`
    (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:112-142`) once per call, immediately after
-   resolving `today` and *before* item 1's fetch window is built (`db.py:866-892`; item 1's `fetch_lead`
+   resolving `today` and *before* item 1's fetch window is built (`db.py:872-898`; item 1's `fetch_lead`
    reads `schedule`/`degraded` from here), for `lead_time` and `issue_day`. Run **degraded** — no native
    preference and no LR strictness (every model, LR included, takes the latest `date` in item 5),
    `is_native` is False for every row, `quarter_issue_date` is `NaT`, and eligibility falls back to
    `date <= today` — under **either** of two conditions, each logging its own WARNING:
    - the call raises `LongTermHorizonResolverError` (covers its subclass
-     `UnsupportedLongTermModeError`, `:25-29`) or `FileNotFoundError` (`db.py:866-875`); or
-   - the schedule resolves but its `issue_day < 1` (`db.py:885-892`) — `_require_int_field`
+     `UnsupportedLongTermModeError`, `:25-29`) or `FileNotFoundError` (`db.py:872-881`); or
+   - the schedule resolves but its `issue_day < 1` (`db.py:891-898`) — `_require_int_field`
      (`long_term_horizon_resolver.py`) only checks the field is an int, not a valid day-of-month, so an
      invalid config (e.g. `0` or negative) would otherwise reach the date construction further down and
      raise `ValueError`, aborting the monthly dashboard load / the reservoir bulletin instead of
      degrading.
-   This mirrors `_safe_lead` (`db.py:1282-1290`). **Required:** the autouse fixture in
+   This mirrors `_safe_lead` (`db.py:1304-1312`). **Required:** the autouse fixture in
    `tests/test_db.py:19-42` writes `quarter.json` with the lead only, so raising here, or hiding LR rows
    when degraded, would break existing quarter tests.
 4. **Eligibility cutoff.** A target quarter is returned only once its **configured issue date** has
@@ -164,10 +164,10 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - **Always `datetime64[ns]`, never a plain object/float column.** Two paths would otherwise return a
      dtype that breaks the docstring's promise and the caption's `.dt` access: the empty-API-response
      early return, where an empty, columns-only `DataFrame` defaults every column (including
-     `quarter_issue_date`) to `object` dtype — re-cast explicitly with `pd.to_datetime` (`db.py:982`); and
+     `quarter_issue_date`) to `object` dtype — re-cast explicitly with `pd.to_datetime` (`db.py:988`); and
      the final `_convert_na_to_nan`/sort step, whose `infer_objects()` cannot distinguish an all-`NaT`
      (degraded-mode) datetime column from an all-`NaN` float column and returns `float64` — re-cast again
-     as a no-op when already `datetime64[ns]` (`db.py:1101-1107`).
+     as a no-op when already `datetime64[ns]` (`db.py:1123-1129`).
 5. **Dedup per target quarter.** One row per `(code, model_short, year, quarter_in_year)`, plus
    `horizon_value` under the flag. Several target quarters per model are returned.
    - **No quarter EM.** Before the dedup, drop rows whose upper-cased `model_short` is `EM` or
@@ -204,7 +204,7 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      For a true (a) row: rows written while `SAPPHIRE_SKILL_LEAD_AWARE` was ON are native-shaped (`date` =
      the schedule issue date, the Contract rule). After a rollback to OFF, fresh rows are re-dated to
      `valid_from` (`api_writer.py:1199-1204`) and are non-native for any mode whose lead is not 0 (e.g.
-     kghm, lead 1). The dedup sorts `is_native` ahead of `date` (`src/db.py:1086-1098`:
+     kghm, lead 1). The dedup sorts `is_native` ahead of `date` (`src/db.py:1108-1121`:
      `sort_values(["is_native", "date"], ascending=[False, False])`, `drop_duplicates(..., keep="first")`),
      so an older flag-ON native row keeps outranking a newer flag-OFF rewrite for the same
      `(code, model_short, year, quarter_in_year)` until the old native row is deleted or a fresh write
@@ -212,18 +212,41 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `date` is part of the natural key, so a flag-OFF rewrite (dated `valid_from`) and the old flag-ON
      native row (dated the issue date) occupy different keys and both persist. Accepted as a documented
      rollback caveat, not a defect this plan fixes.
-   - **Move the `id` drop.** Today `id` is dropped **before** the dedup (`drop_cols` at `src/db.py:994`),
+   - **Move the `id` drop.** Today `id` is dropped **before** the dedup (`drop_cols` at `src/db.py:1000`),
      so the tie-break has nothing to read. Drop `id` after the dedup instead; the `horizon_type` and flag-OFF
      `horizon_value` drops stay where they are. When the response has no `id` column, keep today's order
      (existing mocks do not all carry `id`).
    - **LR_Base / LR_SM: native only (stricter).** Non-native LR rows ((b), (c)) are **never** returned;
-     with no native row the quarter has no LR row.
+     with no native row the quarter has no LR row. Log the dropped count **at INFO, with the station
+     `code`** (`db.py:1082-1100`) — not a WARNING: under flag OFF (kghm) a persisted LR rewrite dated at
+     `valid_from` is non-native in **steady state**, so this fires on every reservoir-station load and
+     every bulletin site, not as an anomaly; the code is included to match the neighbouring INFO/"no
+     data" lines in this same function (dashboard logs are local and already log codes).
    - **Flag OFF.** Fresh non-LR rows (the seven derived models, `Naive Mean`, `Skilled Mean`) are dated
      `valid_from` (`api_writer.py:1199-1204`) and fall through to "latest `date`". For kghm the legacy hv1
      rows with the same key are overwritten by the upsert, so no stale twin remains; for tjhm `valid_from`
      is the issue date, so fresh rows are native.
-6. **Card selection** (`update_quarterly_summary_tabulator`).
-   - Select all models' rows for the station's **latest eligible target quarter** (max `valid_from`).
+6. **Card selection** (`update_quarterly_summary_tabulator`, `plot_manager.py:393-550`; the selection
+   logic at `:437-481`).
+   - Select the station's **latest eligible target quarter** (max `valid_from`) **over DISPLAYABLE rows
+     only** (`:462-471`) — rows the renderer would actually keep — not over every row
+     `get_long_forecasts_quarter` returned. Mirrors all **three** of the renderer's own filters
+     (`create_forecast_summary_table`, `src/vizualization.py`), named explicitly: `model_short` in
+     `model_checkbox.options` (via `model_selection.options.values()`); a non-null
+     `forecasted_discharge` (the renderer's own null-discharge drop); and a non-null `date` (the
+     renderer's `date <= date_picker + 1 day` comparison is always `False` against a `NaT` `date`, so it
+     drops those rows too — a row that is in-options with non-null discharge but a `NaT` `date` would
+     otherwise pass the first two filters and render a visible card with an empty table). Selecting over
+     every row, including ones the renderer would drop anyway, could pick a quarter whose displayable
+     rows are all filtered out downstream — an empty table with a caption for that quarter, where trunk
+     fell back to an older displayable quarter.
+   - Once the latest displayable quarter is identified (by its `valid_from`), select **all** of that
+     quarter's rows from the original (not the displayable-filtered) set (`:476-477`) — a row the
+     displayable filter excluded still belongs to the selected quarter; only the *quarter choice* is
+     computed over displayable rows, not the final row set handed to the renderer.
+   - **Hide the card entirely** (`card.visible = False`) when **no** row is displayable at all
+     (`:472-474`) — not an empty table with a caption, which is what selecting over every row could
+     produce.
    - Pass `max(date)` **of the selected rows** as `date_picker`, so the renderer's
      `date <= date_picker + 1 day` filter (`vizualization.py:3147-3153`) keeps them all, and call the
      renderer with `filter_by_date=False`, which skips only the max-date reduction (`:3166-3170`).
@@ -234,6 +257,11 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - **Fallback quarters have no LR row (accepted, round-2 decision 3).** PP-065's temporary LR fallback
      is not persisted, so until LTF-014 P0/P2 a quarter without a native LR row shows the seven models and
      the ensembles but no LR_Base/LR_SM. This goes into the hydromet notice.
+   - **An explicit `horizon_value` affects only the request filter and the fetch window, never
+     eligibility or nativeness** (`db.py:833-841`, docstring): it widens/narrows the API `horizon_value`
+     filter and sizes `fetch_lead` (item 1), but the eligibility cutoff (item 4) and the native predicate
+     (this item) always follow the configured schedule's own `lead_time`, never this override. No
+     production caller passes `horizon_value` explicitly today.
 7. **δ bounds for null quantiles (overview decision D).** In the card's copy of the selected rows, before
    the renderer: where `Q25` is null, set `Q25 = forecasted_discharge − delta`; where `Q75` is null, set
    `Q75 = forecasted_discharge + delta` (the arithmetic of `processing.calculate_forecast_range`,
@@ -357,9 +385,29 @@ new `EM` row.
     (2027-01-01) but whose `quarter_issue_date` is schedule-computed (2026-12-25) must show "25th of
     December 2026" in the caption, never "1st of January 2027" — a mutation reading the row's own `date`
     instead of `quarter_issue_date` would pass every other caption test undetected.
+22. **Displayable-rows card selection and hide-on-none (added after review rounds).**
+    `TestCardSelectionThroughPlotManager::test_v1_selection_falls_back_when_newest_quarter_is_not_displayable`
+    (the newest quarter's rows are all filtered by the renderer's own filters — the card falls back to an
+    older, displayable quarter instead of showing an empty table) and `::test_y2_nat_dated_row_hides_the_card`
+    (a single in-options, non-null-discharge row with `date = NaT` must still hide the card — it would
+    otherwise pass the first two displayable filters and render an empty table), both in
+    `tests/test_quarter_calendar_card.py`.
+23. **Non-native LR drop logged at INFO with the station code, not WARNING.**
+    `TestGetLongForecastsQuarterNativeSelection::test_v2_non_native_lr_drop_logs_one_aggregated_info_line`
+    (`tests/test_db.py`) — asserts `levelname == "INFO"` and that the station code appears in the
+    message; a WARNING would fail it. Renamed from an earlier `..._warning` version once the level
+    changed.
+24. **Mutation-gap tests added alongside the above** (`tests/test_db.py` unless noted): `is_native`
+    compares the full `date`, not just the day-of-month
+    (`test_is_native_checks_full_date_not_just_day`); the fetch window's lower bound anchors on the
+    start of today's calendar quarter, not on today's own month
+    (`test_window_anchors_on_quarter_start_not_todays_month`); the degraded-mode lead comes from the
+    resolved `horizon_value`, not a hardcoded constant (`test_degraded_window_uses_resolved_lead_not_a_constant`);
+    and the δ-fill only fills null `Q25`/`Q75`, never overwrites native quantiles
+    (`test_delta_fill_preserves_native_bounds`, `tests/test_quarter_calendar_card.py`).
 
 **Acceptance**
-- Tests 1–21 fail on trunk and pass after (test 15 via its flag-ON case).
+- Tests 1–24 fail on trunk and pass after (test 15 via its flag-ON case).
 - The full module suite passes with **no existing test edited**:
   `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` gives zero failures. The only
   allowed skips: `tests/test_docker.py:22` (no Docker daemon) and the Playwright tests, gated by
@@ -379,7 +427,7 @@ tjhm **before 2026-12-25**. To check: the card exists only on the month horizon,
   `{CURRENT_YEAR}-12-31`). Quarter skill rows are dated in the recalc year, so a dashboard restarted in
   January, before that month's recalc, has no quarter skill and therefore no δ (empty bounds) until the
   recalc writes the new year's rows.
-- The quarter skill merge in `_get_data_monthly` (`src/db.py:1344-1368`) is not lead-filtered. Under
+- The quarter skill merge in `_get_data_monthly` (`src/db.py:1365-1389`) is not lead-filtered. Under
   flag OFF, quarter skill is written at the sentinel hv 0 only
   (`apps/postprocessing_forecasts/src/api_writer.py:661-669`), so the merge is 1:1; a fan-out needs skill
   rows at more than one `horizon_value` (pre-existing).
