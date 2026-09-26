@@ -891,29 +891,38 @@ def get_long_forecasts_quarter(
         schedule = None
         degraded = True
 
-    # FD-029 P1 item 1 / R2/C1/W1: the fetch window must cover ANY eligible
-    # target quarter's rows, whichever of the three date populations
-    # happens to be the only one present for it — the native issuance (a,
-    # dated at the schedule's own issue date), a flag-OFF rewrite (b,
-    # dated at the quarter's own `valid_from`), or a persisted derived row
-    # (c). Edge-by-edge patching of a tightly schedule-derived window kept
-    # missing cases (a lead>=4 config's flag-OFF row can be dated well
-    # into the NEXT quarter's `valid_from`; a lead-0 config's issue day can
-    # push the window's start past an eligible OLDER quarter in early
-    # January), so widen generously in both directions instead:
-    #   - lower bound: whichever reaches further BACK between the
-    #     original fixed spec bound and the first day of the month
-    #     (12 + lead) months before the start of today's calendar quarter
-    #     — at least four quarters back, so a partial older quarter
-    #     (Problem 3) can only appear at the window's edge after THREE
-    #     consecutive missing quarters (accepted).
+    # FD-029 P1 item 1 / R2/C1/W1/X1: the fetch window must cover ANY
+    # eligible target quarter's rows, whichever of the three date
+    # populations happens to be the only one present for it — the native
+    # issuance (a, dated at the schedule's own issue date), a flag-OFF
+    # rewrite (b, dated at the quarter's own `valid_from`), or a persisted
+    # derived row (c). Edge-by-edge patching of a tightly schedule-derived
+    # window kept missing cases (a lead>=4 config's flag-OFF row can be
+    # dated well into the NEXT quarter's `valid_from`; a lead-0 config's
+    # issue day can push the window's start past an eligible OLDER
+    # quarter in early January), so widen generously in both directions
+    # instead:
+    #   - lower bound: the first day of the month (12 + lead) months
+    #     before the start of today's calendar quarter — at least four
+    #     quarters back (X1: this is ALWAYS at or before the original
+    #     fixed spec bound, {today.year-1}-12-01 — even at its latest,
+    #     lead=0 and today in Q4, it lands on {today.year-1}-10-01 — so
+    #     the spec bound never wins and is dropped rather than kept as a
+    #     no-op `min`; a Claude-reviewer oracle sweep, every day 2025-2028
+    #     x leads 0-4 x issue days 1/25/31 x 0-5 missing quarters, found 0
+    #     mismatches up to 3 missing quarters — a partial older quarter
+    #     (Problem 3) appears at the window's edge only after FOUR or more
+    #     consecutive missing quarters (accepted)).
     #   - upper bound: whichever reaches further FORWARD between the
     #     original fixed spec bound and the last day of the month
     #     (lead + 1) months after today's month — the latest eligible
     #     target quarter starts at most `lead` months after today's month
     #     (plus less than a month more from the issue day), and a flag-OFF
     #     row for it is dated at its own `valid_from` (that quarter's
-    #     START, up to a further 3 months later than its issue date).
+    #     START, up to a further 3 months later than its issue date). This
+    #     `max` IS load-bearing (unlike the lower bound's dropped `min`):
+    #     for lead<=2 in most of the year the fixed spec bound alone still
+    #     wins.
     # `fetch_lead`: prefer the larger of the schedule's own lead_time and
     # the resolved API horizon_value when the schedule resolves (W2: an
     # explicit `horizon_value` override can exceed the config's own lead)
@@ -931,8 +940,7 @@ def get_long_forecasts_quarter(
         today.year * 12 + (current_quarter_start_month - 1) - (12 + fetch_lead)
     )
     lower_year, lower_month0 = divmod(lower_total_months, 12)
-    schedule_derived_start = date(lower_year, lower_month0 + 1, 1)
-    start_date = min(date(today.year - 1, 12, 1), schedule_derived_start)
+    start_date = date(lower_year, lower_month0 + 1, 1)
 
     upper_total_months = today.year * 12 + (today.month - 1) + (fetch_lead + 1)
     upper_year, upper_month0 = divmod(upper_total_months, 12)
