@@ -937,6 +937,23 @@ def get_long_forecasts_quarter(
         schedule = None
         degraded = True
 
+    # `_require_int_field` (long_term_horizon_resolver.py) only checks that
+    # `operational_issue_day` is an int, not that it is a valid day-of-month
+    # — a misconfigured 0 or negative value would otherwise reach the date
+    # construction below and raise ValueError, aborting the monthly
+    # dashboard load / the reservoir bulletin. Degrade the same way as an
+    # unresolvable schedule rather than inventing a day (no clamp up to 1):
+    # an invalid config should degrade visibly. The upper clamp above
+    # (issue_day > days-in-month) is unaffected.
+    if not degraded and schedule.issue_day < 1:
+        logger.warning(
+            "get_long_forecasts_quarter: configured operational_issue_day=%d is not a "
+            "valid day-of-month; running degraded (no native preference, no LR "
+            "strictness).", schedule.issue_day,
+        )
+        schedule = None
+        degraded = True
+
     if degraded or df.empty:
         df["quarter_issue_date"] = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
     else:

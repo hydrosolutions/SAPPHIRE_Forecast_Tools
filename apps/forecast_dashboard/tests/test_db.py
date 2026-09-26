@@ -3323,6 +3323,33 @@ class TestGetLongForecastsQuarterIssueDayClamping:
         assert result["quarter_issue_date"].iloc[0] == pd.Timestamp("2026-06-30")
         assert bool(result["is_native"].iloc[0]) is True
 
+    @pytest.mark.parametrize("bad_issue_day", [0, -1])
+    def test_non_positive_issue_day_degrades_instead_of_crashing(
+        self, monkeypatch, tmp_path, bad_issue_day
+    ):
+        """`_require_int_field` (long_term_horizon_resolver.py) only checks
+        that operational_issue_day is an int, not that it is a valid
+        day-of-month. A misconfigured 0 or negative value must not reach
+        the date construction (ValueError, aborting the monthly dashboard
+        load / reservoir bulletin) — it must degrade the same way an
+        unresolvable schedule does, not invent a day."""
+        _configure_quarter_schedule(monkeypatch, tmp_path, lead=1, issue_day=bad_issue_day)
+        gbt_q3 = {
+            **_QUARTER_FORECAST_RECORD_19999, "id": 161, "model_type": "GBT",
+            "date": "2026-06-25", "valid_from": "2026-07-01", "valid_to": "2026-09-30",
+        }
+
+        def mock_get(url, **kwargs):
+            return _make_mock_response([gbt_q3])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+
+        result = db.get_long_forecasts_quarter(station="19999", today=date(2026, 9, 1))
+
+        assert len(result) == 1
+        assert not result["is_native"].any()
+        assert result["quarter_issue_date"].isna().all()
+
 
 class TestGetLongForecastsQuarterDegraded:
     def test_degraded_schedule_no_native_preference(self, monkeypatch):

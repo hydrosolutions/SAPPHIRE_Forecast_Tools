@@ -149,26 +149,35 @@ class TestCardSelectionThroughPlotManager:
     def test_two_eligible_quarters_card_shows_only_the_latest(self):
         """Two DIFFERENT target quarters (Q2 Apr-Jun and Q3 Jul-Sep), both
         already eligible, same model (GBT) so the card can't cheat by
-        distinguishing on model name alone. Item 6: the card must select
-        only the station's LATEST eligible target quarter (max
-        valid_from) -- a mutation that instead passed every row through
-        unfiltered (`selected = filtered.copy()`) would show both
-        quarters' rows and build the caption from whichever row sorts
-        first, not necessarily Q3."""
-        q2 = _quarter_row(
-            model_short="GBT", date=pd.Timestamp("2026-03-25"),
+        distinguishing on model name alone. The Q2 row is a non-native
+        BACKFILL dated LATER (2026-07-02) than Q3's native row
+        (2026-06-25) — max(date) and max(valid_from) DISAGREE on which row
+        to pick, so this also catches a card that selects by date instead
+        of by target quarter. The site's own quarterly_valid_from/to are
+        left pointing at the STALE Q2 window, so the caption must not
+        fall back to them.
+
+        Item 6: the card must select only the station's LATEST eligible
+        target quarter (max valid_from), not the latest issue date, and
+        the caption (item 9) must come from those selected rows, never
+        from site attributes."""
+        q2_backfill = _quarter_row(
+            model_short="GBT", date=pd.Timestamp("2026-07-02"),
             valid_from=pd.Timestamp("2026-04-01"), valid_to=pd.Timestamp("2026-06-30"),
             quarter_in_year=2, year=2026, quarter_issue_date=pd.Timestamp("2026-03-25"),
-            is_native=True, forecasted_discharge=111.0, accuracy=60.0,
+            is_native=False, forecasted_discharge=111.0, accuracy=60.0,
         )
-        q3 = _quarter_row(
+        q3_native = _quarter_row(
             model_short="GBT", date=pd.Timestamp("2026-06-25"),
             valid_from=pd.Timestamp("2026-07-01"), valid_to=pd.Timestamp("2026-09-30"),
             quarter_in_year=3, year=2026, quarter_issue_date=pd.Timestamp("2026-06-25"),
             is_native=True, forecasted_discharge=222.0, accuracy=90.0,
         )
-        quarterly_df = pd.DataFrame([q2, q3])
-        pm, _site = _make_stub_pm(quarterly_df)
+        quarterly_df = pd.DataFrame([q2_backfill, q3_native])
+        pm, site = _make_stub_pm(quarterly_df)
+        # Stale site attributes: still the Q2 window, must not leak in.
+        site.quarterly_valid_from = pd.Timestamp("2026-04-01")
+        site.quarterly_valid_to = pd.Timestamp("2026-06-30")
 
         pm.update_quarterly_summary_tabulator()
 
@@ -179,12 +188,14 @@ class TestCardSelectionThroughPlotManager:
             f"{table.to_dict('records')!r}"
         )
         assert table["Forecasted discharge"].iloc[0] == 222.0, (
-            "The Q2 row (forecasted_discharge=111.0) must not be on the card"
+            "The Q2 backfill row (forecasted_discharge=111.0, dated LATER than "
+            "Q3's native row) must not be on the card"
         )
 
         caption = pm._wm.forecast_info_q.object
         assert "Jul 2026" in caption and "Sep 2026" in caption, caption
         assert "25th of June 2026" in caption, caption
+        assert "Apr 2026" not in caption, caption
 
 
 # ---------------------------------------------------------------------------
