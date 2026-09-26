@@ -3149,9 +3149,15 @@ def read_quarterly_forecasts(
     else:
         # Problem 7: read issue years from start_year - 1 (rather than
         # start_year) so a December-issued Q1 of the first requested
-        # year is read; the horizon_value filter is unchanged. Trimmed
-        # back down to [start_year, end_year] by target year below,
-        # mirroring the flag-ON branch.
+        # year is read; the horizon_value filter is unchanged. The extra
+        # rows this widening admits are filtered below, not by a
+        # two-sided target-year trim: the actual invariant is trunk's
+        # set (every row issued in [start_year, end_year], any target
+        # year) PLUS ONLY the December-issued Q1 of start_year -- see
+        # TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim,
+        # TestRegressionDirectPrecedenceSurvivesLowerBoundWidening and
+        # TestRegressionIssueYearMaskTooPermissive in
+        # tests/test_quarter_calendar_window.py.
         raw_q = _read_long_forecasts_api(
             codes,
             start_year - 1,
@@ -3204,7 +3210,28 @@ def read_quarterly_forecasts(
             drop_mask = (
                 issue_years.notna() & (issue_years < start_year) & ~is_december_q1_of_start_year
             )
+            dropped_issue_year_rows = int(drop_mask.sum())
             direct = direct[~drop_mask].copy()
+            if dropped_issue_year_rows:
+                logger.info(
+                    "Dropped %d quarterly direct forecast row(s) issued "
+                    "before the requested year range",
+                    dropped_issue_year_rows,
+                )
+        elif not lead_aware and not direct.empty:
+            # The mask above needs quarter_in_year and date to tell a
+            # genuine December-issued Q1 of start_year apart from any
+            # other out-of-window row; without them it cannot run at
+            # all (year alone was already shown insufficient -- see
+            # TestRegressionIssueYearMaskTooPermissive). Surface that
+            # rather than silently skipping it.
+            missing_cols = sorted({"quarter_in_year", "date"} - set(direct.columns))
+            if missing_cols:
+                logger.warning(
+                    "Flag-OFF quarterly issue-year filter skipped: direct "
+                    "rows missing column(s) %s",
+                    missing_cols,
+                )
     else:
         direct = pd.DataFrame()
 
@@ -3481,7 +3508,13 @@ def read_latest_quarterly_forecasts(
         if not direct.empty and "date" in direct.columns:
             issue_date = _issue_date_local_calendar_date(direct["date"])
             keep_mask = issue_date.isna() | (issue_date.dt.normalize() <= pd.Timestamp(today))
+            dropped_future_issue_rows = int((~keep_mask).sum())
             direct = direct[keep_mask].copy()
+            if dropped_future_issue_rows:
+                logger.info(
+                    "Dropped %d quarterly direct forecast row(s) issued after forecast_date",
+                    dropped_future_issue_rows,
+                )
         if lead_aware and quarter_schedules and not direct.empty:
             direct = select_operational_issuances(
                 direct,
@@ -3838,6 +3871,31 @@ def _normalize_combined_forecasts(
                 "Dropped %d non-calendar %s forecast window row(s)",
                 dropped_calendar_rows,
                 horizon_type,
+            )
+        if df.empty or "valid_from" not in df.columns:
+            # The helper can leave zero rows with the valid_from column
+            # absent entirely: e.g. valid_from was null for every row of
+            # a batch, and _read_long_forecasts_api's upstream
+            # dropna(axis=1, how="all") already dropped the all-null
+            # column before this function ever saw it (only valid_to
+            # present). The parse below would then raise KeyError on a
+            # column that no longer exists, aborting callers that call
+            # this function directly with no try/except (e.g.
+            # read_quarterly_forecasts, unlike
+            # _read_long_combined_forecasts_api's try/except). Return
+            # the (empty) frame early with the columns downstream
+            # expects instead.
+            return pd.DataFrame(
+                columns=[
+                    "code",
+                    "date",
+                    "model_short",
+                    "valid_from",
+                    "valid_to",
+                    "year",
+                    "quarter_in_year",
+                    "forecasted_discharge",
+                ]
             )
 
     # Parse valid_from for year extraction

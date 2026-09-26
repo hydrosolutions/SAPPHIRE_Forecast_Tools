@@ -485,6 +485,11 @@ class TestA7WriterGuard:
         assert records[0]["valid_to"] == "2025-06-30"
 
     def test_matching_calendar_row_written_unchanged(self):
+        """A record identical to today's -- hv and date per flag state.
+
+        Flag OFF (this fixture's default): hv falls back to
+        quarter_horizon_value() (1), date falls back to valid_from.
+        """
         data = pd.DataFrame(
             {
                 "code": [CODE],
@@ -501,6 +506,80 @@ class TestA7WriterGuard:
         records = self.mock_client.write_long_forecasts.call_args[0][0]
         assert records[0]["valid_from"] == "2025-04-01"
         assert records[0]["valid_to"] == "2025-06-30"
+        assert records[0]["horizon_value"] == 1
+        assert records[0]["date"] == "2025-04-01"
+
+    def test_matching_calendar_row_written_unchanged_flag_on(self, monkeypatch):
+        """Same positive case under the flag: the row's OWN horizon_value
+
+        and date are used verbatim (not the config fallback), per
+        ``api_writer.py:1172-1175, 1199-1204`` (untouched by this fix).
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2025],
+                "quarter_in_year": [2],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+                "valid_from": ["2025-04-01"],
+                "valid_to": ["2025-06-30"],
+                "horizon_value": [3],
+                "date": ["2024-10-25"],
+            }
+        )
+        result = self._write(data)
+        assert result is True
+        records = self.mock_client.write_long_forecasts.call_args[0][0]
+        assert records[0]["valid_from"] == "2025-04-01"
+        assert records[0]["valid_to"] == "2025-06-30"
+        assert records[0]["horizon_value"] == 3
+        assert records[0]["date"] == "2024-10-25"
+
+    def test_valid_to_extra_month_dropped_even_when_valid_from_matches(self):
+        """R3: valid_from alone matching the synthesized window is not
+
+        enough -- valid_to must match too. A rolling window whose start
+        happens to be the correct calendar start (2025-04-01) but whose
+        end is an extra month (2025-07-31, not 2025-06-30) must still be
+        dropped. (Mutation: deleting the writer guard's valid_to
+        comparison must make this test fail.)
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2025],
+                "quarter_in_year": [2],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+                "valid_from": ["2025-04-01"],
+                "valid_to": ["2025-07-31"],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+
+    def test_valid_to_wrong_year_dropped_even_when_valid_from_matches(self):
+        """Same as above, but valid_to's YEAR is wrong (2026 instead of
+
+        2025) while valid_from still matches the synthesized start.
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [2025],
+                "quarter_in_year": [2],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+                "valid_from": ["2025-04-01"],
+                "valid_to": ["2026-06-30"],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
 
     def test_one_aggregated_log_line_for_multiple_dropped_rows(self, caplog):
         data = pd.DataFrame(
@@ -963,3 +1042,195 @@ class TestRegressionMixedTimezoneIssueDate:
         assert set(result["year"].astype(int)) == {2025}
         assert set(result["quarter_in_year"].astype(int)) == {1}
         assert float(result["forecasted_discharge"].iloc[0]) == 100.0
+
+
+# ===========================================================================
+# R1 (final independent review of 275826de): filter_calendar_quarter_windows
+# parses valid_from/valid_to with format="mixed". A valid_to column mixing
+# tz-aware and tz-naive strings across rows makes that parse return an
+# object-dtype Series, so .dt.normalize() raises AttributeError; the
+# combined reader's try/except then swallows it and returns ZERO rows
+# where trunk returned both. _local_calendar_date fixes this the same way
+# data_reader's _issue_date_local_calendar_date does.
+# ===========================================================================
+
+
+class TestRegressionMixedTimezoneValidTo:
+    def test_read_quarterly_combined_forecasts_no_exception_both_rows_returned(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [
+            {
+                **_quarter_row("2024-04-01", "2024-06-30", "2024-03-25", model="LR_Base", q=100.0),
+            },
+            {
+                **_quarter_row(
+                    "2024-07-01",
+                    "2024-09-30T00:00:00+06:00",
+                    "2024-06-25",
+                    model="LR_SM",
+                    q=200.0,
+                ),
+            },
+        ]
+        client = _mock_combined_client(rows)
+        with (
+            patch.object(data_reader, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
+            patch.object(data_reader, "SapphirePostprocessingClient", return_value=client),
+        ):
+            result = data_reader.read_quarterly_combined_forecasts(codes=[CODE])
+
+        assert len(result) == 2
+        assert set(result["quarter_in_year"]) == {2, 3}
+
+
+# ===========================================================================
+# R2 (final independent review of 275826de): _read_long_forecasts_api drops
+# all-null columns (dropna(axis=1, how="all")). If every row's valid_from
+# is null (valid_to present), that drops the valid_from column entirely,
+# and _normalize_combined_forecasts then dereferences the missing column
+# -> KeyError, aborting read_quarterly_forecasts (which calls it with no
+# try/except, unlike _read_long_combined_forecasts_api).
+# ===========================================================================
+
+
+class TestRegressionAllNullValidFromColumnDropped:
+    def test_read_quarterly_forecasts_no_exception_empty_result(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+
+        def client_side_effect(**kwargs):
+            if kwargs.get("horizon_type") != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(
+                [
+                    {
+                        "horizon_type": "quarter",
+                        "horizon_value": 1,
+                        "code": CODE,
+                        "date": "2025-03-25",
+                        "model_type": "LR_Base",
+                        # valid_from is null for every row of this batch,
+                        # so the real API client's dropna(axis=1,
+                        # how="all") drops the column entirely below.
+                        "valid_from": None,
+                        "valid_to": "2025-06-30",
+                        "q50": 100.0,
+                    }
+                ]
+            )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_long_term_forecasts.side_effect = client_side_effect
+
+        with (
+            patch.object(data_reader, "SAPPHIRE_API_AVAILABLE", True),
+            patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
+            patch.object(data_reader, "SapphirePostprocessingClient", return_value=mock_client),
+        ):
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        assert result.empty
+
+    def test_normalize_combined_forecasts_no_valid_from_column_returns_empty(self):
+        """Unit-level fallback per the review note: a frame with no
+
+        valid_from column at all (only valid_to) must not raise.
+        """
+        df = pd.DataFrame({"code": [CODE], "valid_to": ["2025-06-30"]})
+        result = data_reader._normalize_combined_forecasts(df, "quarter")
+        assert result.empty
+
+
+# ===========================================================================
+# R5 (final independent review of 275826de): observability. Aggregated
+# INFO counts (no station codes) for rows dropped by the flag-OFF
+# issue-year mask and by the Problem-6 issue-date bound; a WARNING when
+# the flag-OFF mask cannot run because 'quarter_in_year' or 'date' is
+# absent. Deferred (per the reviewer, recorded here not fixed): the
+# monthly-derived Source 1 in read_latest_quarterly_forecasts has no
+# issue-date bound (PP-065).
+# ===========================================================================
+
+
+class TestR5Observability:
+    def test_read_quarterly_forecasts_logs_dropped_issue_year_count(self, monkeypatch, caplog):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        direct_rows = [
+            _quarter_row("2025-04-01", "2025-06-30", "2024-12-25", model="LR_Base", q=100.0)
+        ]
+        monthly_rows = []
+        for month in (4, 5):
+            monthly_rows.append(
+                {
+                    "code": CODE,
+                    "date": "2025-03-25",
+                    "model_type": "LR_Base",
+                    "valid_from": f"2025-{month:02d}-01",
+                    "valid_to": f"2025-{month:02d}-28",
+                    "forecasted_discharge": 200.0,
+                    "q50": 200.0,
+                    "horizon_value": 1,
+                }
+            )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with (
+            caplog.at_level(logging.INFO, logger="src.data_reader"),
+            patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake),
+        ):
+            data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        drop_lines = [
+            r for r in caplog.records if "issued before the requested year range" in r.message
+        ]
+        assert len(drop_lines) == 1
+        assert "Dropped 1" in drop_lines[0].message
+        assert CODE not in drop_lines[0].message
+
+    def test_read_quarterly_forecasts_warns_when_mask_columns_missing(self, monkeypatch, caplog):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        row = {
+            "horizon_type": "quarter",
+            "horizon_value": 1,
+            "code": CODE,
+            "model_type": "LR_Base",
+            "valid_from": "2025-04-01",
+            "valid_to": "2025-06-30",
+            "q50": 100.0,
+            # no "date" column at all.
+        }
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame([row])
+
+        with (
+            caplog.at_level(logging.WARNING, logger="src.data_reader"),
+            patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake),
+        ):
+            data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+
+        warn_lines = [r for r in caplog.records if "filter skipped" in r.message]
+        assert len(warn_lines) == 1
+        assert "date" in warn_lines[0].message
+
+    def test_read_latest_quarterly_forecasts_logs_dropped_future_issue_count(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [
+            _quarter_row("2026-10-01", "2026-12-31", "2026-09-25", model="LR_Base", q=100.0),
+            _quarter_row("2027-01-01", "2027-03-31", "2026-12-25", model="LR_Base", q=200.0),
+        ]
+        fake = _quarter_api_fake(rows)
+        with (
+            caplog.at_level(logging.INFO, logger="src.data_reader"),
+            patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake),
+        ):
+            data_reader.read_latest_quarterly_forecasts([CODE], forecast_date=dt.date(2026, 9, 25))
+
+        drop_lines = [r for r in caplog.records if "issued after forecast_date" in r.message]
+        assert len(drop_lines) == 1
+        assert "Dropped 1" in drop_lines[0].message
+        assert CODE not in drop_lines[0].message
