@@ -776,6 +776,55 @@ class TestA7WriterGuard:
         assert result is False
         self.mock_client.write_long_forecasts.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "year,quarter_in_year",
+        [
+            (999, 1),
+            (5, 2),
+        ],
+    )
+    def test_unpadded_small_year_rejected_even_with_both_null(self, year, quarter_in_year):
+        """U1: the lower-bound guard must compare NUMERICALLY, not as
+
+        unpadded strings -- "999-01-01" < "1677-09-22" is False
+        lexicographically (year 999 has fewer digits than 1677), so a
+        naive string compare would wrongly accept it. (Mutation:
+        restoring the string comparison makes the year-999 case fail;
+        year 5 is an even more extreme instance of the same bug.)
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [year],
+                "quarter_in_year": [quarter_in_year],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        result = self._write(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+
+    def test_year_1677_q4_written_both_null(self):
+        """The other side of the boundary: Q4 1677 synthesizes
+
+        valid_from "1677-10-01", AFTER the 1677-09-22 cutoff, so it must
+        still be written (matching the reader, which accepts it too).
+        """
+        data = pd.DataFrame(
+            {
+                "code": [CODE],
+                "year": [1677],
+                "quarter_in_year": [4],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        result = self._write(data)
+        assert result is True
+        records = self.mock_client.write_long_forecasts.call_args[0][0]
+        assert records[0]["valid_from"] == "1677-10-01"
+
 
 class TestS2ReaderWriterYear2262Agreement:
     def test_reader_rejects_year_2262_q1(self):
@@ -1642,8 +1691,17 @@ class TestP1LocalCalendarDateParsing:
         t2 = pd.Timestamp("2024-03-31 18:00", tz="UTC")
         assert t1 == t2  # same instant, different offset -- the setup
 
-        d1 = np.datetime64("2024-04-02", "D")
-        d2 = d1.astype("datetime64[2D]")  # unit-multiplier aliasing
+        # np.datetime64 unit-multiplier aliasing: same str() (so it DOES
+        # collide under a (type, str) key), but a different parsed date
+        # (a "2024-04-01" 2D-unit reinterpretation of a "D"-unit value
+        # rounds to a different underlying day count). A pair that
+        # merely prints differently (e.g. "2024-04-02" vs "2024-04-01")
+        # would pass here even on the broken generic-key designs,
+        # proving nothing.
+        d1 = np.datetime64("2024-04-01", "D")
+        d2 = d1.astype("datetime64[2D]")
+        assert str(d1) == str(d2)
+        assert _parse_local_calendar_date(d1) != _parse_local_calendar_date(d2)
 
         pairs = [
             (t1, t2),

@@ -1217,7 +1217,16 @@ def _write_aggregated_forecasts_to_api(
                 # writer would have written -- out-of-range data is
                 # nonsense; the only point is agreement between the two.
                 out_of_range_target_year = year > 2261
-                out_of_range_low = valid_from < "1677-09-22"
+                # U1: compare NUMERICALLY, not as unpadded strings --
+                # "999-01-01" < "1677-09-22" is False lexicographically
+                # (year 999 is misclassified as in-range, along with
+                # every other year with fewer digits than 1677: 2-9,
+                # 17-99, 170-999). (year, quarter start month) <
+                # (1677, 10) is equivalent to year < 1677, or year ==
+                # 1677 with a start month before October (quarters 1-3,
+                # whose windows start Jan/Apr/Jul -- all before the
+                # 1677-09-22 cutoff; only Q4's Oct 1 start clears it).
+                out_of_range_low = year < 1677 or (year == 1677 and quarter < 4)
                 out_of_range = out_of_range_target_year or out_of_range_low
                 row_has_valid_from = pd.notna(row.get("valid_from"))
                 row_has_valid_to = pd.notna(row.get("valid_to"))
