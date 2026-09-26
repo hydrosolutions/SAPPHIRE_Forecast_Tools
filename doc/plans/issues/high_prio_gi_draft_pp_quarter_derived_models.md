@@ -224,35 +224,19 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      (`data_reader.py:3415`), flag OFF calls raw `_read_long_forecasts_api(codes, start_year, end_year)`
      (`:3423`) — neither takes `today`/`forecast_date`, so a back-dated run could aggregate a monthly row
      issued after it into a quarter that should not be visible yet. This plan rewrites this reader (this
-     item, above), so it owns bounding it, **but the two flag paths need different placement**:
-     - **Flag OFF:** no `select_operational_issuances` is involved on this path — filter the raw rows
-       from `_read_long_forecasts_api` to issue `date <= forecast_date` (null/unparseable kept,
-       mirroring PP-064's Problem-6 pattern) any time **before** they reach
-       `aggregate_monthly_fc_to_quarterly` (unchanged, P1a).
-     - **Flag ON — the bound must run BEFORE `select_operational_issuances`, not after
-       `read_monthly_forecasts` returns.** `select_operational_issuances`' own tie-break keeps the
-       **latest**-dated candidate per `(code, model, year, month, lead)` (`data_reader.py:387-391`,
-       "latest date wins") — it has no `forecast_date` awareness. Filtering `read_monthly_forecasts`'
-       *output* by `date <= forecast_date` cannot recover an eligible issuance that a later, ineligible
-       (post-`forecast_date`) reissue for the same unit+lead already displaced inside that call
-       (`:1397-1401`): by the time the output is filtered, the eligible row is already gone, not merely
-       hidden. Add an **additive optional parameter** to `read_monthly_forecasts`, e.g.
-       `forecast_date: date | None = None`, defaulting to `None` — every other caller keeps passing
-       nothing, so their behaviour is byte-identical (unchanged contract). When given, filter the raw
-       candidate rows to issue `date <= forecast_date` **before** the internal
-       `select_operational_issuances` call, so the tie-break only ever sees eligible candidates. **Only a
-       null `date` is kept unconditionally** (mirroring PP-064's Problem-6 pattern) — do **not** promise
-       to keep an *unparseable, non-null* `date` string here: `select_operational_issuances`' own parse
-       (`:335`, a bare `pd.to_datetime` with no coercion) raises on one regardless of what this filter
-       does with it. That crash is PP-066's Problem 1 to fix, not addressed by this bound.
-       `read_latest_quarterly_forecasts` (this item) is the only caller that passes it.
-     - **Test (placement):** an eligible issuance and a later same-target reissue dated *after*
-       `forecast_date` for the same `(code, model, year, month, lead)` → the eligible issuance survives
-       and is used, flag ON. Filtering only `read_monthly_forecasts`' output (the wrong placement) fails
-       this test, because `select_operational_issuances` would already have selected the later,
-       ineligible reissue and discarded the eligible one before any output-side filter runs.
-     - **Test (aggregate-level, both flags):** `forecast_date = 2026-06-25`; monthly LR rows issued
-       2026-09-25 and 2026-10-25 (both after `forecast_date`) must not produce a Q4 aggregate.
+     item, above), so it owns bounding it: filter to issue `date <= forecast_date` (null kept) on the
+     rows this reader itself receives — `read_monthly_forecasts`' output under flag ON, the raw rows
+     from `_read_long_forecasts_api` under flag OFF — any time **before** they reach
+     `aggregate_monthly_fc_to_quarterly` (unchanged, P1a). `read_monthly_forecasts` itself is **not**
+     modified: filtering before or after its internal `select_operational_issuances` call is equivalent
+     here, because that call derives the lead from (issue month, target month) and additionally requires
+     the configured issue *day* (`data_reader.py:346-354`) — so a fixed (target month, lead) pins the
+     candidate issue date to one exact calendar date, leaving no same-unit "earlier eligible vs. later
+     ineligible reissue on a different day" case for filter placement to matter for.
+     - **Test:** `forecast_date = 2026-06-25`; monthly LR rows issued 2026-09-25 and 2026-10-25 (both
+       after `forecast_date`) must not produce a Q4 aggregate — under both flags.
+     - **Test:** no row dated after `forecast_date` reaches `aggregate_monthly_fc_to_quarterly` (assert
+       on a spy, or on the rows actually passed to it) — under both flags.
    - Trim to the requested **target** years. In the latest reader, target year `today.year + 1` is allowed,
      so a 25 Dec issue yields next year's Q1.
    - **Drop direct rows of the seven models before the sources are combined.** After this, the readers'
@@ -446,12 +430,9 @@ lead 0):
 - **Existing Source 1 forecast_date bound, latest reader, both flags.** `forecast_date = 2026-06-25`;
   monthly LR rows issued 2026-09-25 and 2026-10-25 (both after `forecast_date`) → no Q4 aggregate is
   produced, under both flags. Fails on the pre-P1b base (neither flag bounds this path today).
-- **Existing Source 1 forecast_date bound, correct placement, flag ON.** Two rows for the same
-  `(code, model, year, month, lead)` unit: one eligible issuance (`date <= forecast_date`) and one later
-  same-target reissue dated *after* `forecast_date` → the eligible issuance survives and is used. Fails
-  if the bound is applied only to `read_monthly_forecasts`' output instead of before its internal
-  `select_operational_issuances` call — that call's latest-date-wins tie-break would already have
-  discarded the eligible row in favour of the later, ineligible reissue.
+- **Existing Source 1 forecast_date bound, inputs to the aggregation.** No row dated after
+  `forecast_date` reaches `aggregate_monthly_fc_to_quarterly` (assert on a spy, or on the rows actually
+  passed to it), under both flags.
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
@@ -511,12 +492,9 @@ lead 0):
 - The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
   unexpected skips; only the pre-existing xfail.
 - `read_latest_quarterly_forecasts`' existing Source 1 (LR aggregation) is bounded by `forecast_date`
-  under **both** flags, with the flag-ON bound applied before `select_operational_issuances`' own
-  selection (not merely filtered from `read_monthly_forecasts`' output) — both back-dated tests above
-  pass, `read_monthly_forecasts`' new `forecast_date` parameter is additive-only (every other caller's
-  behaviour is unchanged, verified by the existing `read_monthly_forecasts` test suite passing
-  unmodified), and `aggregate_monthly_fc_to_quarterly` / `read_quarterly_forecasts` are otherwise
-  untouched (`git diff` shows no change to either).
+  under **both** flags on the rows it filters itself — both tests above pass, `read_monthly_forecasts`
+  is **not** modified (`git diff` shows no change to it), and `aggregate_monthly_fc_to_quarterly` /
+  `read_quarterly_forecasts` are otherwise untouched (`git diff` shows no change to either).
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1b file list.
 
