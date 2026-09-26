@@ -146,9 +146,14 @@ step 0 reads the real state per org. Both flag states are in scope.
 - `apps/postprocessing_forecasts/src/data_reader.py`:
   - `_normalize_combined_forecasts`: apply the helper **for `horizon == "quarter"` only, before the
     existing `valid_from` parse** (`:3748`); season behaviour unchanged
-  - `read_quarterly_forecasts`: the flag-OFF direct read (`:3120-3127`) only
+  - new module-level helper `_issue_date_local_calendar_date(s) -> pd.Series`, next to the delegate
+    section header: parses only the first 10 characters of a raw `date` column (the local calendar
+    date), so a column mixing tz-aware and tz-naive issue-date strings cannot make a bare
+    `pd.to_datetime(..., format="mixed")` fall back to object dtype and raise on `.dt` access
+  - `read_quarterly_forecasts`: the flag-OFF direct read (`:3120-3127`) only, using the helper above for
+    the issue-year mask
   - `read_latest_quarterly_forecasts`: the target-year upper bound (`:3331-3334, 3413`) and a direct-row
-    date bound
+    date bound, also using the helper above
 - `apps/postprocessing_forecasts/src/api_writer.py`: quarter branch of `_write_aggregated_forecasts_to_api`
   (`:1160-1204`)
 - Tests: new `apps/postprocessing_forecasts/tests/test_quarter_calendar_window.py`; new tests may be
@@ -194,8 +199,11 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
   bound to the monthly source.
   - **Placement:** immediately after `direct = _normalize_combined_forecasts(raw_q, "quarter")` (`:3405`)
     and **before** `select_operational_issuances` (`:3407`).
-  - Parse quarter `date` with `pd.to_datetime(..., format="mixed", errors="coerce")` for the mask only; do
-    not write it back (quarter `date` arrives unparsed, `:3770-3771` parses it for season only).
+  - Parse quarter `date` with `_issue_date_local_calendar_date` (below) for the mask only, not a bare
+    `pd.to_datetime(..., format="mixed", errors="coerce")`; do not write it back (quarter `date` arrives
+    unparsed, `:3770-3771` parses it for season only). A bare mixed-format parse raises `AttributeError`
+    on the subsequent `.dt` access when `date` mixes tz-aware and tz-naive strings — see
+    `TestRegressionMixedTimezoneIssueDate` below.
   - Rows with a null or unparseable `date` are **kept** and not subject to the bound (today's behaviour).
   - No `date` column → skip the bound.
 
@@ -203,24 +211,40 @@ Do not cherry-pick from `sandro_sapphire_2_quaterly_agg`. Never `git stash`.
 - Read issue years from `start_year − 1` (`:3110-3111`). Keep the `horizon_value` filter unchanged. Do
   **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3137`) here — an earlier version
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
-- Drop a direct row only when its issue year **and** target year are both `< start_year` — a normal,
-  non-cross-year issue/target pair fully inside `start_year − 1` that the widening admits but trunk's
-  original `[start_year, end_year]` issue-date read would not have returned.
-- Every other row the widened read admits is kept unconditionally, regardless of target year:
-  - a **backfill** row (issue year `>= start_year`, target year `< start_year`, e.g. a Q4
-    `start_year − 1` row issued in January of `start_year`, #521-style) — trunk had no target-year trim
-    at all and returned these;
-  - a row whose issue `date` is null or unparseable — trunk's API-side year filter could not have
-    excluded it by year either;
-  - a row whose target year is `> end_year` (e.g. a Dec-`end_year`-issued Q1 of `end_year + 1`) — this
-    one must survive so the direct row keeps precedence over a same-target monthly-derived (Source 1)
-    row in the later `drop_duplicates(keep="last")` combine.
+- **Invariant:** the flag-OFF direct set = trunk's set (every row with issue year in
+  `[start_year, end_year]`, any target year) **plus only** the December-issued Q1 of `start_year`.
+  Nothing else is added, nothing else is removed.
+- Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
+  checked via **both** target year `== start_year` **and** `quarter_in_year == 1`, not target year
+  alone. Checking target year alone (an earlier, round-2 version of this fix) was still too permissive:
+  it also kept an out-of-window row targeting some *other* calendar quarter of `start_year` (e.g. issued
+  2024-12-25 targeting Q2 2025, not Q1), which could then beat a same-target monthly-derived row — or
+  even an in-window direct row, depending on API order — via `drop_duplicates(keep="last")` (round-3
+  out-of-loop review of the round-2 fix).
+- Every row with issue year `>= start_year` is kept unconditionally, regardless of target year (trunk's
+  own set): a **backfill** row (target year `< start_year`, e.g. a Q4 `start_year − 1` row issued in
+  `start_year`, #521-style) and a row whose target year is `> end_year` (e.g. a Dec-`end_year`-issued Q1
+  of `end_year + 1`, which must survive so it keeps precedence over a same-target monthly-derived row in
+  the later `drop_duplicates(keep="last")` combine).
+- A row whose issue `date` is null or unparseable is kept — trunk's API-side year filter could not have
+  excluded it by year either.
+- Parse the issue year with `_issue_date_local_calendar_date` (new helper next to
+  `QUARTER_MONTHS`/`filter_calendar_quarter_windows`), not a bare `pd.to_datetime(..., format="mixed")`.
+  It keeps only the first 10 characters (the local calendar date) before parsing, so a `date` column
+  mixing tz-aware and tz-naive strings (e.g. `"2025-01-10"` next to `"2025-03-25T00:00:00+06:00"`)
+  cannot make `"mixed"` fall back to an object-dtype Series and raise `AttributeError` on the subsequent
+  `.dt` access — trunk's plain string comparison never had this failure mode. Use the same helper for
+  the Problem-6 issue-date bound in `read_latest_quarterly_forecasts`. No other pre-existing date parse
+  (e.g. `select_operational_issuances`' own) is touched.
 - Locked by `TestA10FirstYearQ1FlagOff` (first-year Q1 read; lower-bound trim),
   `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening` (next-year Q1 direct row wins over
   monthly-derived), `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (prior-year backfill row
-  survives, with and without a competing monthly-derived row) and
-  `TestUnparseableIssueDateKeptRegardlessOfTargetYear` (null/unparseable issue date kept) in
-  `tests/test_quarter_calendar_window.py`.
+  survives, with and without a competing monthly-derived row),
+  `TestUnparseableIssueDateKeptRegardlessOfTargetYear` (null/unparseable issue date kept),
+  `TestRegressionIssueYearMaskTooPermissive` (an out-of-window row targeting a *different* quarter of
+  `start_year` is dropped, both alone and alongside an in-window direct row, regardless of API order)
+  and `TestRegressionMixedTimezoneIssueDate` (a mixed tz-aware/naive `date` column raises no exception
+  through either quarterly reader, flag ON or OFF) in `tests/test_quarter_calendar_window.py`.
 
 **Tests (Arrange → Act → Assert, station `19999`)**
 
@@ -279,10 +303,16 @@ stable.)
 - **A-10. First-year Q1, flag OFF.** A direct row issued 2024-12-25 for 2025-01-01..03-31 at hv1:
   `read_quarterly_forecasts(codes, 2025, 2025)` returns it as Q1 2025
   (`test_december_issued_q1_of_first_year_is_read`). Fails on trunk. A row issued and targeting inside
-  2024 (issue year and target year both `< start_year`) is dropped
-  (`test_widened_window_still_trims_target_years_below_start_year`). A row issued 2025-12-25 for Q1 2026
-  is **kept, not trimmed** — see the next-year-precedence regression classes above, which own that
-  scenario: it must keep precedence over a same-target monthly-derived row.
+  2024 (issue year `< start_year`, target year `2024 != start_year`, so not the Q1-of-`start_year`
+  exception) is dropped (`test_widened_window_still_trims_target_years_below_start_year`). A row issued
+  2025-12-25 for Q1 2026 is **kept, not trimmed** — see the next-year-precedence regression classes
+  above, which own that scenario: it must keep precedence over a same-target monthly-derived row. An
+  out-of-window row issued 2024-12-25 but targeting a *different* quarter of `start_year` (e.g. Q2 2025,
+  not Q1) is dropped even though its target year alone would pass — locked by
+  `TestRegressionIssueYearMaskTooPermissive` (both alone and alongside an in-window direct row,
+  regardless of API order); checking target year without also checking `quarter_in_year == 1` was
+  itself a regression. A `date` column mixing tz-aware and tz-naive issue-date strings must not raise —
+  locked by `TestRegressionMixedTimezoneIssueDate`, through both quarterly readers and both flag states.
 
 **Acceptance**:
 - Record the full module suite counts before editing (a reviewer's simulated Chunk A gave 1832 passed /
