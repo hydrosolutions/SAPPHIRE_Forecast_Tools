@@ -598,6 +598,19 @@ Chunk B no longer edits `data_reader.py` or any other file.
    - Rolling-windowed rows (raw and EM), inert after Chunk A: owned by PP-041 / the stale-rows decision.
    - Old EM, Naive Mean and Skilled Mean rows at keys the recalc no longer emits (accepted, round-2
      decision 2; D8 / PP-041). Under flag OFF, rows with the same key as a fresh row are overwritten.
+7. **Rollback (flag ON → OFF) must remove the ensemble twins too, not only LR's.** FD-029's dedup
+   (`../mid_prio_gi_draft_fd_quarter_card_calendar_window.md`, item 5, "Known limitation (accepted):
+   rollback from flag ON to OFF") documents that a flag-ON native-shaped row keeps outranking a
+   flag-OFF rewrite at the same `(code, model_short, year, quarter_in_year)` key until the old row is
+   deleted, because `date` is part of the natural key so the two rows never collide — and that this
+   applies to EM/Naive Mean/Skilled Mean rows exactly as it does to LR, since `ensemble_calculator.py`
+   carries the member's `date` through via `agg("first")` (`_create_aggregated_ensemble_forecasts:758`,
+   `_add_skilled_mean_aggregated_ens:865`, `_add_naive_mean_aggregated_ens:906`) and `api_writer.py`'s
+   `record_date` logic (`:1264-1269`) stamps that `date` for any `model_short` under flag ON. If a flag
+   is ever rolled back to OFF on a deployed org, the rollback runbook must delete the stale flag-ON
+   native-shaped LR **and** ensemble rows for the affected quarters (not just LR's), or they keep
+   winning the dashboard's dedup indefinitely. No code change here — this is a rollout/runbook step, not
+   a Chunk A/B behaviour.
 
 ## Out of scope
 

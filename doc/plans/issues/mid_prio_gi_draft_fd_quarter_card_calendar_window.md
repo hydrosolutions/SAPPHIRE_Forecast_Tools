@@ -35,14 +35,18 @@ schedule-computed `issue_date(Q)` (Behaviour after, items 4 and 9).
 
 See PP-064 § "Mechanism and problems", item 5. A calendar Q2 for kghm can exist as three LR rows per model:
 - **(a) the native row**, dated 25 Mar;
-- **(b) a flag-OFF postprocessing rewrite**, dated `valid_from` = 1 Apr
-  (`apps/postprocessing_forecasts/src/api_writer.py:1199-1204`). PP-065 stops writing LR rows; existing
+- **(b) a flag-OFF postprocessing rewrite**, dated `valid_from` = 1 Apr — the `record_date` logic is at
+  trunk `apps/postprocessing_forecasts/src/api_writer.py:1199-1204`; PP-064's branch
+  (`fix_pp_quarter_calendar_window`) inserts its own calendar-window guard earlier in the same function,
+  shifting this same logic to `:1264-1269` there — cited as `:1264-1269` (PP-064 branch) from here on,
+  since that is the code this plan is deployed against. PP-065 stops writing LR rows; existing
   (b) rows persist;
 - **(c) a persisted monthly-derived row** (flag ON: dated 1 Mar for hv1).
 
 For tjhm (issue day 1, lead 0) a (b) row has the native key and is the same DB row as (a); PP-064 Chunk C
 (decision F) cleans those. The seven derived models and the Naive Mean / Skilled Mean rows (PP-065) are
-dated `valid_from` under flag OFF and carry the row's issue `date` under flag ON (`api_writer.py:1199-1204`).
+dated `valid_from` under flag OFF and carry the row's issue `date` under flag ON (`api_writer.py:1264-1269`,
+PP-064 branch).
 Old quarterly EM rows remain in the DB for past quarters (accepted, round-2 decision 2); no new ones are
 written, and P1 no longer returns them (Behaviour after, item 5).
 
@@ -153,6 +157,18 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    This mirrors `_safe_lead` (`db.py:1304-1312`). **Required:** the autouse fixture in
    `tests/test_db.py:19-42` writes `quarter.json` with the lead only, so raising here, or hiding LR rows
    when degraded, would break existing quarter tests.
+   - **Accepted limitation: degraded mode hides lead>=1 quarters between their issue date and quarter
+     start.** Degraded eligibility is `date <= today` (no schedule, so no `issue_date(Q)` from item 4), and
+     under flag OFF the fresh derived/ensemble rows are dated `valid_from` — the quarter's own start, not
+     the actual issue date, which for lead>=1 (kghm) falls `lead_time` months earlier. So on kghm, degraded
+     mode hides a quarter's Naive Mean/Skilled Mean (and every other flag-OFF derived row) for the whole
+     `lead_time`-month gap between when they are actually issued and `valid_from` itself — exactly the
+     window item 4's schedule-computed eligibility cutoff would otherwise show them in. Only triggers when
+     the schedule read fails or `issue_day` is misconfigured (not in steady state); does not affect tjhm
+     (lead 0, `valid_from` == the issue date). **Recommend:** PP-064 Chunk C step 0's per-org
+     `quarter.json`/`issue_day` read (`../high_prio_gi_draft_pp_quarter_calendar_window_validation.md`,
+     § Chunk C) also be a precondition of this plan's own Deploy step, so a bad or missing quarter config
+     on either org is caught before deploy rather than discovered as degraded mode in production.
 4. **Eligibility cutoff.** A target quarter is returned only once its **configured issue date** has
    arrived: `issue_date(Q) = date(y, m, issue_day)`, where (y, m) = Q's first month shifted back by
    `lead_time` months (year-aware), and `issue_date(Q) <= today`. This holds even when stored rows are
@@ -174,6 +190,16 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `ENSEMBLE_MEAN` (the API spelling is `EM`, `sapphire/services/postprocessing/app/models.py:38`). This
      mirrors FD-030's "EM is never a candidate" and covers the card and the bulletin input. Old rows stay in
      the DB (round-2 decision 2) but are not shown.
+   - **EM interim (until PP-065 P1b ships).** PP-064 A still writes fresh quarterly EM rows today:
+     `ensemble_calculator.py` sets `model_short = "EM"` directly in the quarter aggregation path
+     (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py` (its quarter-write loop,
+     `:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry (line ~27) — not
+     the `"ENSEMBLE_MEAN": "EM"` entry (line 50), which is a separate mapping used only by the
+     skill-metrics write path, not the quarter forecast write path. This plan's dedup above already drops
+     every quarter EM row it reads, consistent with the owner decision of no quarterly EM, but PP-065 P1b
+     is what stops the write. Until P1b ships, a quarter whose only rows are a fresh EM row plus a
+     non-native LR row shows **nothing** on the card: the EM row is dropped here and the LR row is dropped
+     by the native-only rule below.
    - A row is **native** iff `date.day == issue_day` **, clamped to the issue month's length** (item 4
      already computes `quarter_issue_date` with this clamp — `clamped_issue_day =
      np.minimum(int(schedule.issue_day), days_in_issue_month)`; mirrors the producer,
@@ -191,39 +217,64 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `valid_from` coexist with fresh rows dated at the issue date, and "latest `date`" alone would pick the
      legacy row. Rule: the native row if one exists; otherwise the latest `date`, ties broken by the
      highest API `id`.
-   - **Known limitation (accepted): rollback from flag ON to OFF — applies only where the older row is
-     genuinely native.** The caveat below is about (a) true native LR rows only. It does **not** apply to
-     (c) persisted monthly-derived rows: under flag ON those are dated `valid_from − horizon_value months`
-     ("How quarter rows are dated in the DB" above, e.g. 1 Mar for a kghm hv1 Q2), so `date.day` is
-     generally `1`, not the configured `issue_day` (25 for kghm) — `is_native` is already False for them
-     via the predicate above, and they never win the dedup over a fresh flag-OFF row on that account. It
-     also does not (yet) apply to PP-065's future derived-model/ensemble writes, which are dated
-     `valid_from` under flag OFF and the row's own issue date under flag ON ("How quarter rows are dated
-     in the DB" above) — those are a forward-looking case, not evaluated here; once PP-065 ships, its own
-     flag-ON writes could themselves become native-shaped and would then be subject to the same mechanism.
-     For a true (a) row: rows written while `SAPPHIRE_SKILL_LEAD_AWARE` was ON are native-shaped (`date` =
-     the schedule issue date, the Contract rule). After a rollback to OFF, fresh rows are re-dated to
-     `valid_from` (`api_writer.py:1199-1204`) and are non-native for any mode whose lead is not 0 (e.g.
-     kghm, lead 1). The dedup sorts `is_native` ahead of `date` (`src/db.py:1108-1121`:
-     `sort_values(["is_native", "date"], ascending=[False, False])`, `drop_duplicates(..., keep="first")`),
-     so an older flag-ON native row keeps outranking a newer flag-OFF rewrite for the same
-     `(code, model_short, year, quarter_in_year)` until the old native row is deleted or a fresh write
-     lands at its exact key. Unlike the "Flag OFF" bullet below, the upsert does not clear this twin:
-     `date` is part of the natural key, so a flag-OFF rewrite (dated `valid_from`) and the old flag-ON
-     native row (dated the issue date) occupy different keys and both persist. Accepted as a documented
-     rollback caveat, not a defect this plan fixes.
-   - **Move the `id` drop.** Today `id` is dropped **before** the dedup (`drop_cols` at `src/db.py:1000`),
+   - **Known limitation (accepted): rollback from flag ON to OFF — applies to today's ensemble rows too,
+     not only a hypothetical future case.** Rows written while `SAPPHIRE_SKILL_LEAD_AWARE` was ON are
+     native-shaped (`date` = the schedule issue date, the Contract rule) whenever their `date` is
+     non-null and `horizon_type == "quarter"` — `api_writer.py`'s `record_date` logic stamps
+     `record_date = date` under that condition regardless of `model_short` (`:1264-1269` on PP-064's
+     branch `fix_pp_quarter_calendar_window`, which shifts this from trunk's `:1199-1204`). This is not
+     LR-only: postprocessing's own quarterly ensemble aggregation (`ensemble_calculator.py`) carries the
+     `date` column through with `agg("first")` for EM (`_create_aggregated_ensemble_forecasts:758`),
+     Skilled Mean (`_add_skilled_mean_aggregated_ens:865`) and Naive Mean
+     (`_add_naive_mean_aggregated_ens:906`) — so an ensemble row built (today) from a native LR member
+     inherits that member's native `date`, gets stamped as `record_date` the same way, and is then
+     classified native by the `is_native` predicate here. Test 15 already fixes this in place (flag-ON
+     fresh `Naive Mean`/`Skilled Mean` rows dated at the issue date, i.e. native-shaped) — this bullet
+     states the general rule test 15 is an instance of, not a separate future concern.
+     - **(c) persisted monthly-derived rows are the exception — on kghm only.** Under flag ON those are
+       dated `valid_from − horizon_value months` ("How quarter rows are dated in the DB" above, e.g. 1
+       Mar for a kghm hv1 Q2), so `date.day` is generally `1`, not the configured `issue_day` (25 for
+       kghm) — `is_native` is already False for them via the predicate above, and they never win the
+       dedup over a fresh flag-OFF row on that account. **This does not hold for tjhm** (lead 0, issue
+       day 1): there, `valid_from − 0 months = valid_from`, whose day already **is** 1 — the exact
+       configured `issue_day` — so a (c) row is native-shaped by the same coincidence already noted for
+       (b) ("How quarter rows are dated in the DB" above: "a (b) row has the native key and is the same
+       DB row as (a)"). **Owner decision 2026-09-26: accept and document this interim on tjhm** — until
+       PP-065 P1b (the writer stops writing raw LR rows) and the decision-F cleanup land, tjhm's
+       monthly-derived LR_Base/LR_SM quarter rows are indistinguishable from genuinely native ones by
+       this predicate, so the card and the bulletin show them as native LR. kghm is unaffected. No code
+       change; see the overview's decisions section.
+     - **The rollback mechanism.** After a rollback to OFF, fresh rows (LR or ensemble) are re-dated to
+       `valid_from` (`api_writer.py:1264-1269`, PP-064 branch) and are non-native for any mode whose lead
+       is not 0 (e.g. kghm, lead 1). The dedup sorts `is_native` ahead of `date` (`src/db.py:1108-1121`:
+       `sort_values(["is_native", "date"], ascending=[False, False])`, `drop_duplicates(..., keep="first")`),
+       so an older flag-ON native row — LR **or ensemble** — keeps outranking a newer flag-OFF rewrite
+       for the same `(code, model_short, year, quarter_in_year)` until the old native row is deleted or a
+       fresh write lands at its exact key. Unlike the "Flag OFF" bullet below, the upsert does not clear
+       this twin: `date` is part of the natural key, so a flag-OFF rewrite (dated `valid_from`) and the
+       old flag-ON native row (dated the issue date) occupy different keys and both persist. Accepted as
+       a documented rollback caveat, not a defect this plan fixes. **A flag rollback must also remove
+       the ensemble twins**, not only LR's — added to PP-064 Chunk C (rollout).
+   - **Move the `id` drop.** Today (trunk `src/db.py:852`) `id` is dropped **before** the dedup, together
+     with `horizon_type` in one `drop_cols` list,
      so the tie-break has nothing to read. Drop `id` after the dedup instead; the `horizon_type` and flag-OFF
      `horizon_value` drops stay where they are. When the response has no `id` column, keep today's order
      (existing mocks do not all carry `id`).
-   - **LR_Base / LR_SM: native only (stricter).** Non-native LR rows ((b), (c)) are **never** returned;
-     with no native row the quarter has no LR row. Log the dropped count **at INFO, with the station
+   - **LR_Base / LR_SM: native only (stricter) — effective on kghm today; on tjhm only after PP-065 P1b +
+     decision F.** Non-native LR rows ((b), (c)) are **never** returned; with no native row the quarter
+     has no LR row. On **kghm** (lead 1) this filters real rewrites/persisted-derived rows out, since
+     their `date.day` differs from the configured `issue_day`. On **tjhm** (lead 0, issue day 1) it has
+     **no effect today**: (b) and (c) rows share the native key by construction (above), so this
+     predicate cannot tell them apart from a genuine native issuance until PP-065 P1b stops writing raw
+     LR rows and decision F cleans up the DB — until then, tjhm's card and bulletin show the same
+     monthly-derived values labelled as native LR. Log the dropped count **at INFO, with the station
      `code`** (`db.py:1082-1100`) — not a WARNING: under flag OFF (kghm) a persisted LR rewrite dated at
      `valid_from` is non-native in **steady state**, so this fires on every reservoir-station load and
      every bulletin site, not as an anomaly; the code is included to match the neighbouring INFO/"no
      data" lines in this same function (dashboard logs are local and already log codes).
    - **Flag OFF.** Fresh non-LR rows (the seven derived models, `Naive Mean`, `Skilled Mean`) are dated
-     `valid_from` (`api_writer.py:1199-1204`) and fall through to "latest `date`". For kghm the legacy hv1
+     `valid_from` (`api_writer.py:1264-1269`, PP-064 branch) and fall through to "latest `date`". For kghm
+     the legacy hv1
      rows with the same key are overwritten by the upsert, so no stale twin remains; for tjhm `valid_from`
      is the issue date, so fresh rows are native.
 6. **Card selection** (`update_quarterly_summary_tabulator`, `plot_manager.py:393-550`; the selection
@@ -257,6 +308,10 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - **Fallback quarters have no LR row (accepted, round-2 decision 3).** PP-065's temporary LR fallback
      is not persisted, so until LTF-014 P0/P2 a quarter without a native LR row shows the seven models and
      the ensembles but no LR_Base/LR_SM. This goes into the hydromet notice.
+   - **tjhm interim: monthly-derived LR shown as native (owner decision 2026-09-26, accepted).** Where a
+     (b)/(c) row *does* exist for tjhm, the "native only" rule above cannot hide it — it is shown on the
+     card and in the bulletin as if it were a genuine native LR issuance, until PP-065 P1b and decision F
+     land. kghm is unaffected. This also goes into the hydromet notice.
    - **An explicit `horizon_value` affects only the request filter and the fetch window, never
      eligibility or nativeness** (`db.py:833-841`, docstring): it widens/narrows the API `horizon_value`
      filter and sizes `fetch_lead` (item 1), but the eligibility cutoff (item 4) and the native predicate
@@ -318,7 +373,10 @@ new `EM` row.
    Q3 → the caption says Jul–Sep.
 7. **tjhm lead 0, fallback-derived Q1.** No LR row (tjhm Q1 2027 is fallback-derived while LTF-014 P0 is
    deferred); a GBT and a `Naive Mean` row dated 2027-01-01, Jan–Mar 2027, `today=2027-01-02` → the caption
-   reads "Jan 2027 – Mar 2027" **and** "1st of January 2027", from the schedule.
+   reads "Jan 2027 – Mar 2027" **and** "1st of January 2027", from the schedule. This fixture's "no LR
+   row" premise is idealized: in practice, until PP-065 P1b + decision F land, postprocessing may still
+   have written a (b)/(c) LR row for this tjhm quarter, which — per the tjhm interim accepted above —
+   would be shown as native LR here rather than absent. This test only covers the genuinely-empty case.
 8. **δ bounds.** A GBT row and a `Skilled Mean` row with null `Q25`/`Q75` and `delta` 5.0, forecast 100 →
    bounds 95/105 for both, card visible; a row with null `delta` → empty bounds, card still visible.
 9. **All-NaN accuracy.** Selected rows whose accuracy is all NaN → no warning (run with
@@ -352,7 +410,9 @@ new `EM` row.
     - flag OFF: fresh rows dated 2027-01-01 (`valid_from`) plus legacy rows dated 2026-12-01 (not native)
       → the fresh values are returned and shown.
 16. **No quarter EM.** Q2 rows for GBT, `Naive Mean` and an old `EM` row, `EM` also in
-    `model_selection.options` → neither `get_long_forecasts_quarter`'s result nor the card holds `EM`.
+    `model_selection.options` → `get_long_forecasts_quarter`'s result does not hold `EM` (only the `db.py`
+    result is asserted here; the card is not separately tested in this case, though it consumes that
+    same result, so `EM` cannot reach it either).
 17. **`id` tie-break.** Two non-native GBT rows for the same quarter, same `date`, different values, the
     lower-`id` row first in the response → the higher-`id` value is returned, and `id` is not a result
     column.
@@ -415,8 +475,11 @@ new `EM` row.
   `skipif` (`TEST_PENTAD`/`TEST_DECAD`/`TEST_LOCAL`).
 - `git diff --stat` is limited to the listed files.
 
-**Deploy.** Rebuild the dashboard image, redeploy it and restart the dashboard container on kghm and
-tjhm **before 2026-12-25**. To check: the card exists only on the month horizon, for reservoir stations.
+**Deploy.** Precondition: PP-064 Chunk C step 0's per-org `quarter.json`/`issue_day` read (see item 3's
+accepted limitation above) — confirm both orgs' schedule config resolves before deploying, so this card
+does not silently run in degraded mode. Rebuild the dashboard image, redeploy it and restart the dashboard
+container on kghm and tjhm **before 2026-12-25**. To check: the card exists only on the month horizon, for
+reservoir stations.
 
 ## Out of scope
 

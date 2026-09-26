@@ -65,6 +65,18 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
 5. **PP-065 is on the 2026-12-25 critical path.** Its fallback guarantees a kghm Q1 even without LTF-014 P0.
 6. **Early kghm runs** on the 20th–24th are accepted but produce no quarter product. They log a WARNING.
 
+**2026-09-26, round 4**
+1. **tjhm interim: accept and document.** Until PP-065 P1b (the writer stops writing raw LR rows) and the
+   decision-F cleanup land, the monthly-derived LR_Base/LR_SM quarter rows that postprocessing still
+   writes on tjhm (lead 0, issue day 1) carry the native date (flag OFF: `valid_from`; flag ON:
+   `valid_from` minus 0 months), so the dashboard card and the bulletin show them as native LR. kghm is
+   unaffected — its lead of 1 dates those same rows differently, so FD-029's native-only filter already
+   hides them there. No code change; goes into the hydromet notice (§ Rollout and communication).
+2. **Deploy order: PP-064 A (#527) and FD-029 (#528) may merge and deploy in either order.** If FD-029 is
+   deployed first on a flag-ON org, expect missing quarter ensembles until PP-064 A is also deployed:
+   FD-029 hides every rolling-window row (including rolling-window ensembles, which trunk still writes),
+   and PP-064 A is what makes the writer emit calendar-quarter-shaped ensembles in the first place.
+
 ## What is wrong today
 
 | Layer | Today | Plan |
@@ -135,8 +147,13 @@ Resolved since rev 2:
    - **Q1 (both orgs) and tjhm Q4 now appear.** They are built from monthly forecasts (the seven models plus
      Naive/Skilled Mean), with no LR row shown. The caption still shows the scheduled issue date.
    - Seven more models appear in the quarterly outputs.
-   - The quarterly ensembles are now Naive Mean and Skilled Mean, as for monthly. There is no quarterly
-     Ensemble Mean.
+   - The quarterly ensembles are now Naive Mean and Skilled Mean, as for monthly. **No quarterly Ensemble
+     Mean is shown** — FD-029 hides every quarter `EM` row on the dashboard and in the bulletin input
+     already, but postprocessing itself still **writes** them today (`api_writer.py` maps
+     `ENSEMBLE_MEAN` to `EM`) until PP-065 stops that write. A quarter whose only rows are `EM` plus a
+     non-native LR row shows **nothing** on the card.
+   - **tjhm interim, accepted:** until PP-065 P1b and the decision-F cleanup land, tjhm's monthly-derived
+     LR_Base/LR_SM rows are shown as native LR (round 4, decision 1 above) — kghm is unaffected.
    - Bounds for models without quantiles are ±δ on the dashboard. Until FD-030 lands, the bulletin range
      can be blank.
    - For those quarters LR is included in the ensembles but not shown as a row. This holds for as long as

@@ -278,6 +278,17 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      - **fallback LR is invisible (accepted, round-2 decision 3):** the dashboard card and the bulletin
        read the DB, so they show no LR row for fallback quarters until LTF-014 P0/P2. LR still enters the
        ensembles and skill.
+     - **EM interim, until this item ships.** PP-064 A (already deployable/deployed independently of this
+       plan) still writes fresh quarterly EM rows today: `ensemble_calculator.py` sets
+       `model_short = "EM"` directly in the quarter aggregation path
+       (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py`'s quarter-write loop
+       (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry (line ~27), not
+       the `"ENSEMBLE_MEAN": "EM"` entry (line 50, which serves the skill-metrics write path only).
+       FD-029 already hides every quarter EM row it reads on the dashboard side, consistent with the
+       owner decision of no quarterly EM, but this item is what stops the *write*. Between PP-064 A's
+       deploy and this item's own deploy, a quarter whose only rows are a fresh EM row plus a non-native
+       LR row shows nothing on the card or the bulletin (FD-029 drops the EM row; its native-only rule
+       drops the non-native LR row).
    - **Log** one aggregated skip count per call.
 4. **Combined reader and maintenance.**
    - `read_quarterly_combined_forecasts` drops direct rows of the seven models. It stays **filter only**,
