@@ -3041,35 +3041,6 @@ def read_seasonal_observations(
 # -------------------------------------------------------------------
 
 
-def _issue_date_local_calendar_date(s: pd.Series) -> pd.Series:
-    """Return a raw `date` column's LOCAL calendar date as naive datetime64.
-
-    ``pd.to_datetime(s, format="mixed", errors="coerce")`` raises
-    ``AttributeError`` on a subsequent ``.dt`` access when `s` mixes
-    tz-aware and tz-naive strings (e.g. ``"2025-01-10"`` next to
-    ``"2025-03-25T00:00:00+06:00"``): "mixed" then returns an
-    object-dtype Series of Python objects rather than datetime64,
-    aborting the whole read where a plain string comparison never
-    would have. Slicing the string form to the first 10 characters
-    keeps only the calendar date and sidesteps timezone parsing
-    entirely, at the cost of being a calendar date rather than an
-    instant -- every write path in this codebase already writes issue
-    `date` as a bare date (``valid_from[:10]`` etc.), so no row's issue
-    date carries meaningful sub-day/timezone information to lose here.
-
-    ``NaN``/``None``/``NaT`` all render as non-``%Y-%m-%d`` strings
-    under ``.astype(str)`` (``"nan"``, ``"None"``, ``"NaT"``), so they
-    coerce to ``NaT`` here exactly as they did before.
-
-    Args:
-        s: Raw `date` column (strings, Timestamps, or null).
-
-    Returns:
-        Series of naive datetime64[ns] (or NaT).
-    """
-    return pd.to_datetime(s.astype(str).str[:10], format="%Y-%m-%d", errors="coerce")
-
-
 def read_quarterly_forecasts(
     codes: list[str],
     start_year: int,
@@ -3098,7 +3069,7 @@ def read_quarterly_forecasts(
         model_short, q05-q95, forecasted_discharge, valid_from,
         valid_to].
     """
-    from src.aggregation import aggregate_monthly_fc_to_quarterly
+    from src.aggregation import aggregate_monthly_fc_to_quarterly, local_calendar_date
 
     empty_cols = [
         "code",
@@ -3205,7 +3176,7 @@ def read_quarterly_forecasts(
             # test.
             target_years = pd.to_numeric(direct["year"], errors="coerce")
             quarters = pd.to_numeric(direct["quarter_in_year"], errors="coerce")
-            issue_years = _issue_date_local_calendar_date(direct["date"]).dt.year
+            issue_years = local_calendar_date(direct["date"]).dt.year
             is_december_q1_of_start_year = (target_years == start_year) & (quarters == 1)
             drop_mask = (
                 issue_years.notna() & (issue_years < start_year) & ~is_december_q1_of_start_year
@@ -3423,6 +3394,7 @@ def read_latest_quarterly_forecasts(
     """
     from src.aggregation import (
         aggregate_monthly_fc_to_quarterly,
+        local_calendar_date,
     )
 
     today = forecast_date if forecast_date is not None else dt.date.today()
@@ -3506,13 +3478,16 @@ def read_latest_quarterly_forecasts(
         # back-dated run picking a later issue). Rows with a null or
         # unparseable date are kept, unaffected by the bound.
         if not direct.empty and "date" in direct.columns:
-            issue_date = _issue_date_local_calendar_date(direct["date"])
+            issue_date = local_calendar_date(direct["date"])
             keep_mask = issue_date.isna() | (issue_date.dt.normalize() <= pd.Timestamp(today))
             dropped_future_issue_rows = int((~keep_mask).sum())
             direct = direct[keep_mask].copy()
             if dropped_future_issue_rows:
                 logger.info(
-                    "Dropped %d quarterly direct forecast row(s) issued after forecast_date",
+                    "Dropped %d quarterly direct forecast row(s) dated after "
+                    "forecast_date (flag-OFF postprocessing writes these rows "
+                    "with date = valid_from, the quarter start, not the real "
+                    "issue date)",
                     dropped_future_issue_rows,
                 )
         if lead_aware and quarter_schedules and not direct.empty:
@@ -3885,16 +3860,20 @@ def _normalize_combined_forecasts(
             # _read_long_combined_forecasts_api's try/except). Return
             # the (empty) frame early with the columns downstream
             # expects instead.
+            if not df.empty and dropped_calendar_rows == 0:
+                # Neither valid_from nor valid_to was present at all --
+                # the helper returns such a frame UNCHANGED (0 dropped),
+                # so nothing has been logged yet, and every one of these
+                # rows is about to be discarded silently otherwise.
+                logger.warning(
+                    "Dropped %d %s forecast row(s) with neither valid_from nor valid_to present",
+                    len(df),
+                    horizon_type,
+                )
             return pd.DataFrame(
                 columns=[
-                    "code",
-                    "date",
-                    "model_short",
-                    "valid_from",
-                    "valid_to",
-                    "year",
-                    "quarter_in_year",
-                    "forecasted_discharge",
+                    *df.columns,
+                    *[c for c in ("year", "quarter_in_year") if c not in df.columns],
                 ]
             )
 

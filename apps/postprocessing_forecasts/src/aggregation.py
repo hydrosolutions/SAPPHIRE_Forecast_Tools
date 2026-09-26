@@ -35,29 +35,55 @@ QUARTER_MONTHS: dict[int, list[int]] = {
 MONTH_TO_QUARTER: dict[int, int] = {m: q for q, ms in QUARTER_MONTHS.items() for m in ms}
 
 
-def _local_calendar_date(s: pd.Series) -> pd.Series:
-    """Return a raw date-like column's LOCAL calendar date as naive datetime64.
+def _parse_local_calendar_date(v) -> pd.Timestamp:
+    """Return one raw value's LOCAL calendar date as a naive midnight Timestamp.
 
-    Twin of ``data_reader._issue_date_local_calendar_date``, duplicated
-    here rather than imported: ``data_reader`` imports from this module,
-    so importing ``data_reader`` back would create a cycle.
-
-    ``pd.to_datetime(s, format="mixed", errors="coerce")`` raises
-    ``AttributeError`` on a subsequent ``.dt`` access when `s` mixes
-    tz-aware and tz-naive strings (e.g. ``"2024-06-30"`` next to
-    ``"2024-09-30T00:00:00+06:00"``): "mixed" then returns an
-    object-dtype Series of Python objects rather than datetime64.
-    Slicing the string form to the first 10 characters keeps only the
-    calendar date and sidesteps timezone parsing entirely.
+    Element-wise helper behind ``local_calendar_date``. Any tz offset is
+    dropped via ``tz_localize(None)`` -- which keeps the LOCAL wall-clock
+    date, unlike ``tz_convert`` which would shift the underlying instant
+    to UTC first.
 
     Args:
-        s: Raw ``valid_from``/``valid_to`` column (strings, Timestamps,
-            or null).
+        v: A single raw value (string, Timestamp, date, or null).
 
     Returns:
-        Series of naive datetime64[ns] (or NaT).
+        A naive, midnight-normalized ``pd.Timestamp``, or ``pd.NaT``.
     """
-    return pd.to_datetime(s.astype(str).str[:10], format="%Y-%m-%d", errors="coerce")
+    try:
+        ts = pd.Timestamp(v)
+    except (ValueError, TypeError, OverflowError):
+        return pd.NaT
+    if pd.isna(ts):
+        return pd.NaT
+    if ts.tzinfo is not None:
+        ts = ts.tz_localize(None)
+    return ts.normalize()
+
+
+def local_calendar_date(s: pd.Series) -> pd.Series:
+    """Return a raw date-like column's LOCAL calendar date as naive datetime64.
+
+    Parses each value with ``pd.Timestamp`` (not a bare
+    ``pd.to_datetime(s, format="mixed", errors="coerce")``, which raises
+    ``AttributeError`` on a subsequent ``.dt`` access when `s` mixes
+    tz-aware and tz-naive strings across rows -- e.g. ``"2024-06-30"``
+    next to ``"2024-09-30T00:00:00+06:00"`` -- because "mixed" then
+    returns an object-dtype Series of Python objects rather than
+    datetime64). A previous version of this helper instead sliced the
+    string form to its first 10 characters and parsed with a fixed
+    ``format="%Y-%m-%d"``; that changed which values parse in BOTH
+    directions relative to ``format="mixed"`` (e.g. it silently accepted
+    ``"2024-04-01garbage"`` and rejected ``"2024/04/01"``), so it is not
+    used here.
+
+    Args:
+        s: Raw date-like column (strings, Timestamps, dates, or null).
+
+    Returns:
+        Series of naive datetime64[ns] (or NaT). Empty input returns an
+        empty datetime64[ns] Series.
+    """
+    return pd.to_datetime(s.map(_parse_local_calendar_date))
 
 
 def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -69,10 +95,10 @@ def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int
     A rolling window (different start day, different end month/year, or
     a mismatched span) is dropped -- never relabelled into a quarter.
 
-    ``valid_from`` and ``valid_to`` are parsed via ``_local_calendar_date``
-    (their first 10 characters, i.e. the calendar date) and normalized to
-    midnight, because reader output mixes date-only strings, timestamps,
-    and -- across rows -- tz-aware and tz-naive strings; a bare
+    ``valid_from`` and ``valid_to`` are parsed via ``local_calendar_date``
+    (their LOCAL calendar date, tz dropped) and normalized to midnight,
+    because reader output mixes date-only strings, timestamps, and --
+    across rows -- tz-aware and tz-naive strings; a bare
     ``format="mixed"`` parse can raise on the latter. The normalized
     ``valid_from`` is written back into the returned frame so that a
     subsequent plain ``pd.to_datetime(df["valid_from"])`` cannot raise on
@@ -107,11 +133,11 @@ def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int
         # verified as a calendar quarter, so every row is invalid.
         dropped = len(df)
         if has_valid_from:
-            df["valid_from"] = _local_calendar_date(df["valid_from"]).dt.normalize()
+            df["valid_from"] = local_calendar_date(df["valid_from"]).dt.normalize()
         return df.iloc[0:0].copy(), dropped
 
-    valid_from = _local_calendar_date(df["valid_from"]).dt.normalize()
-    valid_to = _local_calendar_date(df["valid_to"]).dt.normalize()
+    valid_from = local_calendar_date(df["valid_from"]).dt.normalize()
+    valid_to = local_calendar_date(df["valid_to"]).dt.normalize()
 
     is_quarter_start = valid_from.dt.day.eq(1) & valid_from.dt.month.isin([1, 4, 7, 10])
     # Last day of the quarter's third month, same year: adding 3 months

@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHyd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src import api_writer, data_reader
-from src.aggregation import filter_calendar_quarter_windows
+from src.aggregation import filter_calendar_quarter_windows, local_calendar_date
 from src.gap_detector import detect_missing_quarterly_ensembles
 
 CODE = "19999"
@@ -488,7 +488,14 @@ class TestA7WriterGuard:
         """A record identical to today's -- hv and date per flag state.
 
         Flag OFF (this fixture's default): hv falls back to
-        quarter_horizon_value() (1), date falls back to valid_from.
+        quarter_horizon_value() (1), date falls back to valid_from --
+        NOT the row's own horizon_value/date, which are deliberately
+        supplied here (3 / 2024-10-25) so this test can actually tell
+        the config fallback apart from a bug that honours them despite
+        the flag (a row supplying neither could not distinguish the
+        two: both would just read as the fallback values). (Mutation:
+        removing the flag gates in api_writer.py:1172-1175, 1199-1204
+        must make this test fail.)
         """
         data = pd.DataFrame(
             {
@@ -499,6 +506,8 @@ class TestA7WriterGuard:
                 "forecasted_discharge": [100.0],
                 "valid_from": ["2025-04-01"],
                 "valid_to": ["2025-06-30"],
+                "horizon_value": [3],
+                "date": ["2024-10-25"],
             }
         )
         result = self._write(data)
@@ -1083,6 +1092,32 @@ class TestRegressionMixedTimezoneValidTo:
         assert len(result) == 2
         assert set(result["quarter_in_year"]) == {2, 3}
 
+    def test_read_quarterly_forecasts_direct_reader_no_exception(self, monkeypatch):
+        """P6: guard for the R1 fix through read_quarterly_forecasts
+
+        directly (not just the combined reader). Passes on 1259efa4
+        (the guard, not a base-failing regression test); verified to
+        FAIL when local_calendar_date is swapped back to the old
+        format="mixed" parse.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [
+            _quarter_row("2024-04-01", "2024-06-30", "2024-03-25", model="LR_Base", q=100.0),
+            _quarter_row(
+                "2024-07-01",
+                "2024-09-30T00:00:00+06:00",
+                "2024-06-25",
+                model="LR_SM",
+                q=200.0,
+            ),
+        ]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2024, 2024)
+
+        assert len(result) == 2
+        assert set(result["quarter_in_year"]) == {2, 3}
+
 
 # ===========================================================================
 # R2 (final independent review of 275826de): _read_long_forecasts_api drops
@@ -1140,6 +1175,51 @@ class TestRegressionAllNullValidFromColumnDropped:
         df = pd.DataFrame({"code": [CODE], "valid_to": ["2025-06-30"]})
         result = data_reader._normalize_combined_forecasts(df, "quarter")
         assert result.empty
+
+    def test_empty_frame_columns_come_from_input_not_a_hard_coded_list(self):
+        """P3: the early-return empty frame's columns come from the
+
+        INPUT's own columns plus year/quarter_in_year -- not a
+        hard-coded list, which could differ from the pre-fix empty
+        frame (it would have silently dropped horizon_value, flag, and
+        q-columns that were never in that hard-coded list).
+        """
+        df = pd.DataFrame(
+            {
+                "code": [CODE],
+                "horizon_value": [1],
+                "flag": [0],
+                "q05": [10.0],
+                "valid_to": ["2025-06-30"],
+                # no "valid_from" column at all.
+            }
+        )
+        result = data_reader._normalize_combined_forecasts(df, "quarter")
+        assert result.empty
+        assert set(result.columns) == {
+            "code",
+            "horizon_value",
+            "flag",
+            "q05",
+            "valid_to",
+            "year",
+            "quarter_in_year",
+        }
+
+    def test_neither_valid_from_nor_valid_to_present_non_empty_warns(self, caplog):
+        """P4: a non-empty frame with NEITHER valid_from nor valid_to
+
+        must log a WARNING with the row count (no station codes) before
+        every row is discarded, instead of vanishing silently.
+        """
+        df = pd.DataFrame({"code": [CODE, CODE], "model_type": ["LR_Base", "LR_SM"]})
+        with caplog.at_level(logging.WARNING, logger="src.data_reader"):
+            result = data_reader._normalize_combined_forecasts(df, "quarter")
+        assert result.empty
+        warn_lines = [r for r in caplog.records if "neither valid_from" in r.message]
+        assert len(warn_lines) == 1
+        assert "Dropped 2" in warn_lines[0].message
+        assert CODE not in warn_lines[0].message
 
 
 # ===========================================================================
@@ -1230,7 +1310,96 @@ class TestR5Observability:
         ):
             data_reader.read_latest_quarterly_forecasts([CODE], forecast_date=dt.date(2026, 9, 25))
 
-        drop_lines = [r for r in caplog.records if "issued after forecast_date" in r.message]
+        drop_lines = [r for r in caplog.records if "dated after forecast_date" in r.message]
         assert len(drop_lines) == 1
         assert "Dropped 1" in drop_lines[0].message
         assert CODE not in drop_lines[0].message
+
+
+# ===========================================================================
+# P1 (final independent review of 1259efa4): the str(...)[:10] +
+# format="%Y-%m-%d" helper changed which values parse relative to
+# format="mixed", in BOTH directions -- it silently REJECTED values
+# format="mixed" always accepted (e.g. "2024/04/01", "20240401", a
+# leading space) and silently ACCEPTED values format="mixed" always
+# rejected (e.g. "2024-04-01T99:00:00", "2024-04-01garbage"). Replaced
+# with one element-wise pd.Timestamp-based helper in aggregation.py,
+# imported by data_reader (no cycle: data_reader already imports FROM
+# aggregation). The data_reader twin is deleted.
+# ===========================================================================
+
+
+class TestP1LocalCalendarDateParsing:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "2024-04-01",
+            "2024-04-01T00:00:00",
+            "2024-04-01 00:00:00",
+            "2024/04/01",
+            "20240401",
+            "2024-4-1",
+            pd.Timestamp("2024-04-01"),
+            dt.date(2024, 4, 1),
+        ],
+    )
+    def test_accepted_values_parse_to_2024_04_01(self, value):
+        result = local_calendar_date(pd.Series([value])).iloc[0]
+        assert result == pd.Timestamp("2024-04-01")
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pd.Timestamp("2024-04-01T00:00:00+06:00"),
+            "2024-04-01T00:00:00+06:00",
+        ],
+    )
+    def test_tz_aware_values_keep_local_wall_clock_date(self, value):
+        # LOCAL calendar date (2024-04-01), NOT converted to UTC.
+        result = local_calendar_date(pd.Series([value])).iloc[0]
+        assert result == pd.Timestamp("2024-04-01")
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "2024-04-01T99:00:00",
+            "2024-04-01garbage",
+            "garbage",
+            None,
+            float("nan"),
+            pd.NA,
+            pd.NaT,
+        ],
+    )
+    def test_rejected_values_are_nat(self, value):
+        result = local_calendar_date(pd.Series([value])).iloc[0]
+        assert pd.isna(result)
+
+    def test_mixed_timezone_column_does_not_raise(self):
+        s = pd.Series(["2024-06-30", "2024-09-30T00:00:00+06:00"])
+        result = local_calendar_date(s)
+        assert list(result) == [pd.Timestamp("2024-06-30"), pd.Timestamp("2024-09-30")]
+
+    def test_empty_series_returns_empty_datetime64(self):
+        result = local_calendar_date(pd.Series([], dtype=object))
+        assert result.empty
+        assert result.dtype.kind == "M"
+
+    def test_slash_date_accepted_and_garbage_hour_rejected_through_the_filter(self):
+        """Fails on 1259efa4: the old helper flips both outcomes -- it
+
+        REJECTS the slash-separated date (index 0) and ACCEPTS the
+        garbage-hour valid_to (index 1), the exact opposite of what is
+        asserted here.
+        """
+        df = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "valid_from": ["2024/04/01", "2024-07-01"],
+                "valid_to": ["2024/06/30", "2024-09-30T99:00:00"],
+            }
+        )
+        kept, dropped = filter_calendar_quarter_windows(df)
+        assert dropped == 1
+        assert len(kept) == 1
+        assert kept["valid_from"].iloc[0] == pd.Timestamp("2024-04-01")
