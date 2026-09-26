@@ -147,6 +147,17 @@ issue day that never needs clamping (the overwhelming majority — any day ≤ 2
   value, matching today's (pre-crash) tie-break contract. This is the regression test for the
   ordering risk above; if the fix explicitly changes the contract instead, this test documents and
   asserts the new, chosen behaviour rather than being silently invalidated.
+- **Same-target, same-day reissue, MIXED tz-aware/naive, both input orders.** Same shape as above, but
+  one of the two same-target rows is tz-aware and the other naive (e.g. `"2025-03-25T18:00:00+06:00"`
+  value A and `"2025-03-25T06:00:00"` value B — the harder case the all-naive test above does not
+  cover, since comparing an offset-aware and an offset-naive instant has no principled answer without a
+  chosen normalization). Run once with A first and once with B first. Assert **order-independence**:
+  both input orders must select the same value — whichever value that is is exactly the ordering
+  contract this fix's implementation chooses (e.g. normalize-then-compare, or an explicit fallback rule
+  for exactly this mixed case) and must be asserted and documented by this test, not left implicit. A
+  test that only checks "no exception" is insufficient — it would pass even if the fix silently fell
+  back to input order (the same untested, API-order-dependent failure mode PP-049 already describes for
+  a different mechanism).
 - **Clamped issue day, flag ON (Problem 2).** Schedule configured with `operational_issue_day = 31`,
   lead 1, target month July (a target whose issue month — June, one lead-month back — has 30 days): a
   row dated `date = <year>-06-30` (the producer's own clamp for a 31-configured day in a 30-day June),

@@ -172,7 +172,13 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      month (1/4/7/10); other issue dates produce nothing.
    - **Excluded (and counted):**
      - rows with a null or non-integer stored `horizon_value`, or no `horizon_value` column;
-     - rows whose `date.day` ≠ `issue_day`.
+     - rows whose `date.day` ≠ `issue_day`, **clamped to the length of the issue month** — the same
+       clamp the shared native-row rule applies below (item 2) and the producer schedules
+       (`lt_utils.py:170-172`). Without this clamp, a genuine on-schedule monthly issuance in a short
+       month (e.g. `issue_day = 31` in a 30-day June) would be wrongly excluded here, even though the
+       same row would pass the (already-clamped) native check everywhere else. Add a test: `issue_day`
+       configured as 31, an issue in a 30-day month → the row is NOT excluded, and both the derived-model
+       output and the LR-fallback output (item 2's "Derived rows") include it.
    - **Target month** = issue month + `horizon_value`, year-aware.
    - **Triplet:** for each (code, model, issue date `d`) whose month is Q's first month − `L`, the rows with
      `horizon_value` = `L`, `L+1`, `L+2` must all exist.
@@ -218,13 +224,35 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      (`data_reader.py:3415`), flag OFF calls raw `_read_long_forecasts_api(codes, start_year, end_year)`
      (`:3423`) — neither takes `today`/`forecast_date`, so a back-dated run could aggregate a monthly row
      issued after it into a quarter that should not be visible yet. This plan rewrites this reader (this
-     item, above), so it owns bounding it: filter the raw/selected monthly rows to issue `date <=
-     forecast_date` (null/unparseable kept, mirroring PP-064's Problem-6 pattern) **before** they reach
-     `aggregate_monthly_fc_to_quarterly` (unchanged, P1a) — under **both** flags, since neither path
-     bounds it today. `aggregate_monthly_fc_to_quarterly` itself and `read_quarterly_forecasts` (no
-     `forecast_date` concept) are unaffected.
-     - **Test:** `forecast_date = 2026-06-25`; monthly LR rows issued 2026-09-25 and 2026-10-25 (both
-       after `forecast_date`) must not produce a Q4 aggregate — under both flags.
+     item, above), so it owns bounding it, **but the two flag paths need different placement**:
+     - **Flag OFF:** no `select_operational_issuances` is involved on this path — filter the raw rows
+       from `_read_long_forecasts_api` to issue `date <= forecast_date` (null/unparseable kept,
+       mirroring PP-064's Problem-6 pattern) any time **before** they reach
+       `aggregate_monthly_fc_to_quarterly` (unchanged, P1a).
+     - **Flag ON — the bound must run BEFORE `select_operational_issuances`, not after
+       `read_monthly_forecasts` returns.** `select_operational_issuances`' own tie-break keeps the
+       **latest**-dated candidate per `(code, model, year, month, lead)` (`data_reader.py:387-391`,
+       "latest date wins") — it has no `forecast_date` awareness. Filtering `read_monthly_forecasts`'
+       *output* by `date <= forecast_date` cannot recover an eligible issuance that a later, ineligible
+       (post-`forecast_date`) reissue for the same unit+lead already displaced inside that call
+       (`:1397-1401`): by the time the output is filtered, the eligible row is already gone, not merely
+       hidden. Add an **additive optional parameter** to `read_monthly_forecasts`, e.g.
+       `forecast_date: date | None = None`, defaulting to `None` — every other caller keeps passing
+       nothing, so their behaviour is byte-identical (unchanged contract). When given, filter the raw
+       candidate rows to issue `date <= forecast_date` **before** the internal
+       `select_operational_issuances` call, so the tie-break only ever sees eligible candidates. **Only a
+       null `date` is kept unconditionally** (mirroring PP-064's Problem-6 pattern) — do **not** promise
+       to keep an *unparseable, non-null* `date` string here: `select_operational_issuances`' own parse
+       (`:335`, a bare `pd.to_datetime` with no coercion) raises on one regardless of what this filter
+       does with it. That crash is PP-066's Problem 1 to fix, not addressed by this bound.
+       `read_latest_quarterly_forecasts` (this item) is the only caller that passes it.
+     - **Test (placement):** an eligible issuance and a later same-target reissue dated *after*
+       `forecast_date` for the same `(code, model, year, month, lead)` → the eligible issuance survives
+       and is used, flag ON. Filtering only `read_monthly_forecasts`' output (the wrong placement) fails
+       this test, because `select_operational_issuances` would already have selected the later,
+       ineligible reissue and discarded the eligible one before any output-side filter runs.
+     - **Test (aggregate-level, both flags):** `forecast_date = 2026-06-25`; monthly LR rows issued
+       2026-09-25 and 2026-10-25 (both after `forecast_date`) must not produce a Q4 aggregate.
    - Trim to the requested **target** years. In the latest reader, target year `today.year + 1` is allowed,
      so a 25 Dec issue yields next year's Q1.
    - **Drop direct rows of the seven models before the sources are combined.** After this, the readers'
@@ -351,7 +379,9 @@ control flow. Your changes must be purely additive or modify only the specific b
 2. tjhm, `d` = 2027-01-01, hv 0/1/2 → Q1 2027, hv 0.
 3. These are still derived:
    - offset windows (`valid_from` on 01-02, 02-01 and 03-03);
-   - a GBT January row labelled with the issue year.
+   - a GBT January row labelled with the issue year;
+   - `issue_day` configured as 31, `d` issued on the 30th of a 30-day month (e.g. June) — the producer's
+     own clamp; excluded only by the unclamped check this fix removes.
 4. Negatives, each with an eligible control in the same frame:
    - wrong issue day;
    - issue month ≠ Q's start − `L`;
@@ -416,6 +446,12 @@ lead 0):
 - **Existing Source 1 forecast_date bound, latest reader, both flags.** `forecast_date = 2026-06-25`;
   monthly LR rows issued 2026-09-25 and 2026-10-25 (both after `forecast_date`) → no Q4 aggregate is
   produced, under both flags. Fails on the pre-P1b base (neither flag bounds this path today).
+- **Existing Source 1 forecast_date bound, correct placement, flag ON.** Two rows for the same
+  `(code, model, year, month, lead)` unit: one eligible issuance (`date <= forecast_date`) and one later
+  same-target reissue dated *after* `forecast_date` → the eligible issuance survives and is used. Fails
+  if the bound is applied only to `read_monthly_forecasts`' output instead of before its internal
+  `select_operational_issuances` call — that call's latest-date-wins tie-break would already have
+  discarded the eligible row in favour of the later, ineligible reissue.
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
@@ -475,8 +511,12 @@ lead 0):
 - The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
   unexpected skips; only the pre-existing xfail.
 - `read_latest_quarterly_forecasts`' existing Source 1 (LR aggregation) is bounded by `forecast_date`
-  under **both** flags — the back-dated test above passes, and `aggregate_monthly_fc_to_quarterly` /
-  `read_quarterly_forecasts` are otherwise untouched (`git diff` shows no change to either).
+  under **both** flags, with the flag-ON bound applied before `select_operational_issuances`' own
+  selection (not merely filtered from `read_monthly_forecasts`' output) — both back-dated tests above
+  pass, `read_monthly_forecasts`' new `forecast_date` parameter is additive-only (every other caller's
+  behaviour is unchanged, verified by the existing `read_monthly_forecasts` test suite passing
+  unmodified), and `aggregate_monthly_fc_to_quarterly` / `read_quarterly_forecasts` are otherwise
+  untouched (`git diff` shows no change to either).
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1b file list.
 
