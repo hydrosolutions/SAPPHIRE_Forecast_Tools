@@ -678,13 +678,21 @@ def _add_months_vectorized(year: pd.Series, month: pd.Series, delta) -> tuple[pd
 
 
 def _window_dedup_key(raw: pd.Series, parsed: pd.Series) -> pd.Series:
-    """Exact-duplicate identity key for one window column (PP-065 J1/K1/L1).
+    """Exact-duplicate identity key for one window column (PP-065 J1/K1/L1/M1).
 
     Deliberately SIMPLE and conservative -- this answers "are these two
     rows the same window" only for the cases below, each provably safe;
-    it is not a general normal form for arbitrary Python objects. Per
-    value ``v`` (with ``ts`` its ``local_calendar_date``-parsed
-    counterpart), in this exact order:
+    it is not a general normal form for arbitrary Python objects.
+    INPUT CONTRACT: a well-formed ``valid_from``/``valid_to`` value is an
+    ISO date/datetime string, a ``date``/``datetime``/``Timestamp``, or
+    null. For any other value, this function classifies it best-effort
+    and never raises -- see the last bullet below.
+
+    Per value ``v`` (with ``ts`` its ``local_calendar_date``-parsed
+    counterpart), in this exact order, and the WHOLE classification
+    wrapped in one ``try``/``except Exception`` (PP-065 M1) so that no
+    step -- including the null check itself -- can ever escape this
+    function:
 
     - a genuinely null SCALAR -- ``pd.api.types.is_scalar(v) and
       pd.isna(v)``, which covers ``None``, NaN of any float width
@@ -696,20 +704,30 @@ def _window_dedup_key(raw: pd.Series, parsed: pd.Series) -> pd.Series:
       pair were wrongly treated as DIFFERENT windows);
     - otherwise, if ``ts`` parsed (is not NaT) -- the parsed local
       calendar date;
-    - otherwise, if ``v`` is a ``str`` -- ``v`` itself, so two equal
+    - otherwise, if ``v`` is EXACTLY a ``str`` (``type(v) is str``, never
+      ``isinstance``, which would also admit a ``str`` SUBCLASS whose own
+      ``__hash__``/``__eq__`` can raise) -- ``v`` itself, so two equal
       unparseable strings still collapse (``"garbage" == "garbage"``)
       and two different ones never do (``"garbage" != "xx"``);
     - otherwise (any other non-null, unparseable value: a list, dict,
-      ndarray, or a custom object -- possibly one whose ``__str__`` or
-      ``__hash__`` raises, which ``local_calendar_date`` itself promises
-      never to do for ANY input) -- a key unique to THIS row's position,
-      so it is NEVER equal to any other row's key and neither ``str()``
-      nor ``hash()`` is ever called on the object. A prior version built
-      ``f"{type(v).__name__}|{v!s}"`` here, which could itself raise
-      (an exotic ``__str__``) or silently collide (two different objects
-      whose ``str()`` truncates to the same text, e.g. two long arrays).
-      Forcing such rows apart -- a false "ambiguous", never a wrong
-      collapse -- is the safe failure mode.
+      ndarray, a ``str`` subclass, a ``Decimal``, or any custom object --
+      possibly one that raises merely from being tested for null, e.g.
+      ``Decimal("sNaN")``, or from ``__str__``/``__hash__``/``__eq__``,
+      none of which ``local_calendar_date`` itself is ever allowed to
+      trigger for ANY input) -- a key unique to THIS row's position, so
+      it is NEVER equal to any other row's key and neither ``str()`` nor
+      ``hash()`` is ever called on the value. This is also the fallback
+      for any exception raised anywhere in the classification above,
+      which makes the "never crashes" guarantee true BY CONSTRUCTION
+      rather than by enumerating known-safe checks (a prior version's
+      null check, ``pd.isna(v)`` alone, already raised on
+      ``Decimal("sNaN")``, whose whole point is to raise on being
+      inspected). A prior version built ``f"{type(v).__name__}|{v!s}"``
+      here, which could itself raise (an exotic ``__str__``) or silently
+      collide (two different objects whose ``str()`` truncates to the
+      same text, e.g. two long arrays). Forcing such rows apart -- a
+      false "ambiguous", never a wrong collapse -- is the safe failure
+      mode.
 
     Args:
         raw: The original (unparsed) column, e.g. ``df["valid_from"]``.
@@ -720,14 +738,19 @@ def _window_dedup_key(raw: pd.Series, parsed: pd.Series) -> pd.Series:
     """
     keys = []
     for pos, (v, ts) in enumerate(zip(raw, parsed, strict=True)):
-        if pd.api.types.is_scalar(v) and pd.isna(v):
-            keys.append(None)
-        elif pd.notna(ts):
-            keys.append(ts)
-        elif isinstance(v, str):
-            keys.append(v)
-        else:
-            keys.append(("unparseable-object", pos))
+        try:
+            if pd.api.types.is_scalar(v) and pd.isna(v):
+                keys.append(None)
+                continue
+            if pd.notna(ts):
+                keys.append(ts)
+                continue
+            if type(v) is str:
+                keys.append(v)
+                continue
+        except Exception:
+            pass
+        keys.append(("unparseable-object", pos))
     return pd.Series(keys, index=raw.index, dtype=object)
 
 
@@ -800,7 +823,7 @@ def derive_quarterly_from_monthly_same_issue(
         check that depends on it (hv range needs a valid hv; quarter-start
         needs a valid date).
 
-        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1/K1/L1): a row is an
+        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1/K1/L1/M1): a row is an
         exact duplicate of another only if its identity (code, canonical
         model, ``d``, hv, ``valid_from``, ``valid_to`` -- windows
         compared as PARSED local calendar dates where they parse, PP-065
@@ -808,18 +831,19 @@ def derive_quarterly_from_monthly_same_issue(
         "2027-01-01T00:00:00+06:00" for the same row are the same
         window; see ``_window_dedup_key`` for the exact, deliberately
         SIMPLE and conservative fallback rule when a value does NOT
-        parse, PP-065 J1/K1/L1 -- in short: any genuinely null scalar
+        parse, PP-065 J1/K1/L1/M1, classified inside a try/except so it
+        can NEVER raise -- in short: any genuinely null scalar
         (``None``, NaN of any width, ``pd.NA``, ``NaT`` of any flavour)
-        matches another null; an unparseable string matches only an
-        identical string; anything else (a list, dict, ndarray, or a
-        custom object -- possibly one whose ``__str__``/``__hash__``
-        raises) gets a key unique to its own row, so it never collapses
-        with, or crashes on, anything) AND its point-value inputs
-        (``q`` and ``q50``, NaN-equal) both match -- so a same-window
-        pair with a DIFFERENT value is never silently dropped; it is
-        left for the uniqueness rule, where a missing ``valid_from``
-        column makes the group unresolvable (ambiguous) and a null
-        ``valid_from`` never matches.
+        matches another null; an EXACT ``str`` (never a subclass) matches
+        only an identical string; anything else (a list, dict, ndarray, a
+        ``str`` subclass, or any value that raises merely from being
+        classified, e.g. ``Decimal("sNaN")``) gets a key unique to its
+        own row, so it never collapses with, or crashes on, anything)
+        AND its point-value inputs (``q`` and ``q50``, NaN-equal) both
+        match -- so a same-window pair with a DIFFERENT value is never
+        silently dropped; it is left for the uniqueness rule, where a
+        missing ``valid_from`` column makes the group unresolvable
+        (ambiguous) and a null ``valid_from`` never matches.
         The window is ALWAYS part of this identity, whether or not ``id``
         is present: a non-null ``id`` never merges rows that key + window
         + value would not -- its only effect is to keep rows APART whose
@@ -1039,13 +1063,14 @@ def derive_quarterly_from_monthly_same_issue(
     # H3), the same rule the amendment applies everywhere else -- not as
     # raw strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00"
     # for the same row are the same window and do not block the collapse.
-    # Where a value does NOT parse, the key falls back to a hashable,
-    # type-qualified string built from the RAW value, with an actual null
-    # kept null (PP-065 J1/K1, see `_window_dedup_key`): two DIFFERENT
-    # unparseable strings (e.g. "garbage" vs "xx") must not both become
-    # NaT and therefore compare equal to each other -- only a genuinely
-    # null valid_from/valid_to matches another null -- and an UNHASHABLE
-    # raw value (e.g. a list) must not reach `drop_duplicates` as-is.
+    # Where a value does NOT parse, `_window_dedup_key` (PP-065 J1/K1/
+    # L1/M1) classifies it -- with the WHOLE classification wrapped so it
+    # can never raise -- as: null (any flavour) stays null; an exact
+    # `str` compares as itself, so "garbage" != "xx" but "garbage" ==
+    # "garbage"; anything else (unhashable, a `str` subclass, or any
+    # value that raises merely from being classified, e.g.
+    # `Decimal("sNaN")`) gets a key unique to its own row, so it is
+    # never `str()`'d, `hash()`'d, or merged with anything else.
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:

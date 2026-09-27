@@ -9,6 +9,7 @@ import os
 import sys
 import warnings
 from collections import Counter
+from decimal import Decimal
 
 import numpy as np
 import pandas as pd
@@ -79,13 +80,14 @@ def _reference_derive(
     vectorization rewrite) -- and since round-2/round-3 review, ALSO
     carrying the G1 (value-aware id dedup), G4 (bad_key), G5 (typed object
     columns), H3 (windows compared as parsed local dates), H4
-    (deterministic model_short spelling tiebreak) and J1/K1/L1
+    (deterministic model_short spelling tiebreak) and J1/K1/L1/M1
     (unparseable-window fallback key: a per-row-unique key for anything
-    that is not a genuinely null scalar or a plain string, via the
-    shared ``_window_dedup_key`` -- see its docstring in
-    ``src/aggregation.py`` for the exact rule) correctness fixes, since
-    those are behavioural guarantees, and the differential test is only
-    meaningful if both sides uphold them. Kept here ONLY as ground truth for
+    that is not a genuinely null scalar or an exact ``str``, classified
+    inside a try/except so it can never raise, via the shared
+    ``_window_dedup_key`` -- see its docstring in ``src/aggregation.py``
+    for the exact rule) correctness fixes, since those are behavioural
+    guarantees, and the differential test is only meaningful if both
+    sides uphold them. Kept here ONLY as ground truth for
     ``TestVectorizedMatchesReferenceDifferential`` below. Do NOT "fix"
     this to match the production function when they diverge for a real
     bug -- fix production and this copy will keep it honest. Any
@@ -261,11 +263,14 @@ def _reference_derive(
     # Windows compared as PARSED local calendar dates where they parse
     # (PP-065 H3), not raw strings -- consistent with the amendment's
     # parsing rule everywhere else. `_window_dedup_key` (shared with
-    # production, imported above) covers the unparseable fallback: a
-    # genuinely null scalar of any flavour stays null; an unparseable
-    # string is compared as itself; anything else non-null and
-    # unparseable (list, dict, ndarray, a raising-`__str__` object) gets
-    # a per-row-unique key, never `str()`/`hash()`'d (PP-065 J1/K1/L1).
+    # production, imported above) covers the unparseable fallback, with
+    # the WHOLE classification wrapped so it can never raise (PP-065 M1):
+    # a genuinely null scalar of any flavour stays null; an EXACT `str`
+    # (never a subclass, whose own `__hash__`/`__eq__` could raise) is
+    # compared as itself; anything else non-null and unparseable (list,
+    # dict, ndarray, a `str` subclass, or a value that raises merely from
+    # being classified, e.g. `Decimal("sNaN")`) gets a per-row-unique
+    # key, never `str()`/`hash()`'d (PP-065 J1/K1/L1/M1).
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:
@@ -1497,6 +1502,46 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         assert result.empty
         assert counts["ambiguous_duplicate"] == 1
 
+    def test_same_unparseable_valid_from_string_collapses_and_derives(self):
+        # The positive case for the `str` branch: two rows with the SAME
+        # unparseable valid_from string ("garbage") and the SAME value
+        # are an exact duplicate -- they collapse to a singleton and
+        # derive, with no ambiguous_duplicate. (A mutant that replaces
+        # the `type(v) is str` branch with `False` would instead give
+        # each row a per-position-unique key, so they'd survive as a
+        # group of 2 and, with no parseable valid_from, be ambiguous.)
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "garbage", None),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "garbage", None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+        assert "ambiguous_duplicate" not in counts
+
+    def test_same_unparseable_valid_to_string_collapses_and_derives(self):
+        # Same as above, on valid_to instead of valid_from.
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, "garbage"),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, "garbage"),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+        assert "ambiguous_duplicate" not in counts
+
     # ---- K1: an UNHASHABLE unparseable window must not crash --------------
 
     def test_unhashable_window_value_no_exception_control_derives(self):
@@ -1538,19 +1583,40 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         # and pd.isna` catches every null flavour: both rows' key becomes
         # None, they are an exact duplicate (same value too), and the
         # pair collapses to a singleton that derives normally.
+        #
+        # Without a non-null, non-numeric value ANYWHERE in the column,
+        # pandas' own DataFrame construction coerces the whole
+        # `valid_from` column to a single dtype (datetime64[ns] or
+        # float64), turning `np.datetime64("NaT")` into plain `pd.NaT`
+        # and `np.float32("nan")` into a plain `np.float64` nan BEFORE
+        # `_window_dedup_key` ever runs -- those two parametrizations
+        # would then pass even against a narrower null check that never
+        # exercises `np.datetime64`/`np.float32` specifically (measured:
+        # without the string row, `type(...)` at that cell is
+        # `NaTType`/`np.float64`, not `np.datetime64`/`np.float32`). The
+        # extra "MC_ALD" row's plain STRING `valid_from` forces the
+        # column to stay object dtype, so `null_b`'s own exact type
+        # survives into `_window_dedup_key`, and the assertions below
+        # confirm that survival before calling `derive`.
         raw = _frame(
             [
                 (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, null_a, None),
                 (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, null_b, None),
                 (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
                 (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 200.0, "2027-02-01", None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 210.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 220.0, None, None),
             ]
         )
+        assert raw["valid_from"].dtype == object
+        assert type(raw["valid_from"].iloc[1]) is type(null_b)
         result, counts = derive_quarterly_from_monthly_same_issue(
             raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
         )
-        assert len(result) == 1
-        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+        assert set(result["model_short"]) == {"GBT", "MC_ALD"}
+        gbt_row = result.loc[result["model_short"] == "GBT"].iloc[0]
+        assert abs(gbt_row["forecasted_discharge"] - 110.0) < 1e-9
         assert "ambiguous_duplicate" not in counts
 
     def test_object_with_raising_str_no_exception_control_derives(self):
@@ -1602,6 +1668,54 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         )
         assert result.empty
         assert counts["ambiguous_duplicate"] == 1
+
+    # ---- M1: the classification itself must never raise -------------------
+
+    def test_decimal_snan_window_no_exception_control_derives(self):
+        # Decimal("sNaN") (a SIGNALING NaN) raises decimal.InvalidOperation
+        # merely from being tested for null-ness (`pd.isna` alone, with no
+        # try/except around it, already raised here) -- the classification
+        # must be wrapped so this can never escape `_window_dedup_key`.
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, Decimal("sNaN"), None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert set(result["model_short"]) == {"MC_ALD", "GBT"}
+
+    def test_str_subclass_raising_hash_no_exception_control_derives(self):
+        # A `str` SUBCLASS whose `__hash__` raises: `isinstance(v, str)`
+        # would wrongly treat it as a safe string and let `drop_duplicates`
+        # hash it later; `type(v) is str` correctly routes it to the
+        # per-row-unique fallback instead, which never hashes the value.
+        class _RaisingHashStr(str):
+            def __hash__(self):
+                raise RuntimeError("boom-hash")
+
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, _RaisingHashStr("garbage"), None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert set(result["model_short"]) == {"MC_ALD", "GBT"}
 
     # ---- H4: deterministic model_short spelling tiebreak -------------------
 
