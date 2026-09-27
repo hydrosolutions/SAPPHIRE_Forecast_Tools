@@ -15,6 +15,7 @@ import re
 
 import pandas as pd
 from long_term_horizon_resolver import (
+    LongTermHorizonResolverError,
     OperationalSchedule,
     operational_schedule_for_mode,
     quarter_horizon_value,
@@ -3041,6 +3042,66 @@ def read_seasonal_observations(
 # -------------------------------------------------------------------
 
 
+def _quarter_native_q1_issue_date(start_year: int) -> pd.Timestamp | None:
+    """Return the schedule-dated Q1-of-`start_year` issue date, or None.
+
+    Used by `read_quarterly_forecasts`' flag-OFF exception (Problem 7) to
+    restrict the "December-issued Q1 of start_year" admit to the ONE
+    native, schedule-dated issuance -- never a persisted monthly-derived
+    Q1 row that also happens to fall in the pre-start_year widened read
+    window (see the dev-DB regression this guards: a Dec-1
+    monthly-derived Q1 row winning over the genuine Dec-25 issuance in
+    the later drop_duplicates(keep="last") combine).
+
+    The schedule issue date is `valid_from` (Jan 1 of `start_year`)
+    minus the quarter mode's configured `lead_time` months, on
+    `issue_day`, clamped to the length of that month -- the same rule
+    the producer (`long_term_forecasting/lt_utils.py`'s
+    `nearest_scheduled_issue_date`) and the dashboard use.
+
+    Args:
+        start_year: The requested read window's first year.
+
+    Returns:
+        A normalized (midnight) `pd.Timestamp` for the native Q1 issue
+        date, or None if the quarter operational schedule cannot be
+        resolved (config missing/invalid) or has an invalid
+        `issue_day` (< 1) -- in which case a single WARNING is logged
+        and callers must treat the Problem-7 exception as unavailable.
+    """
+    try:
+        schedule = operational_schedule_for_mode("quarter")
+    except (LongTermHorizonResolverError, FileNotFoundError) as exc:
+        logger.warning(
+            "Could not resolve the quarter operational schedule needed for "
+            "the flag-OFF December-issued-Q1-of-start_year exception (%s); "
+            "every quarterly direct row issued before the requested year "
+            "range will be dropped for start_year=%d.",
+            exc,
+            start_year,
+        )
+        return None
+
+    if schedule.issue_day < 1:
+        logger.warning(
+            "Quarter operational schedule has an invalid issue_day=%d; the "
+            "flag-OFF December-issued-Q1-of-start_year exception is "
+            "disabled for start_year=%d.",
+            schedule.issue_day,
+            start_year,
+        )
+        return None
+
+    # 0-based month index (Jan of year Y == Y*12) for valid_from (Jan 1 of
+    # start_year) minus lead_time whole months.
+    total_month_index = start_year * 12 - schedule.lead_time
+    issue_year = total_month_index // 12
+    issue_month = total_month_index % 12 + 1
+    max_day = calendar.monthrange(issue_year, issue_month)[1]
+    issue_day = min(schedule.issue_day, max_day)
+    return pd.Timestamp(issue_year, issue_month, issue_day)
+
+
 def read_quarterly_forecasts(
     codes: list[str],
     start_year: int,
@@ -3069,7 +3130,7 @@ def read_quarterly_forecasts(
         model_short, q05-q95, forecasted_discharge, valid_from,
         valid_to].
     """
-    from src.aggregation import aggregate_monthly_fc_to_quarterly
+    from src.aggregation import aggregate_monthly_fc_to_quarterly, local_calendar_date
 
     empty_cols = [
         "code",
@@ -3118,9 +3179,20 @@ def read_quarterly_forecasts(
             horizon_type="quarter",
         )
     else:
+        # Problem 7: read issue years from start_year - 1 (rather than
+        # start_year) so a December-issued Q1 of the first requested
+        # year is read; the horizon_value filter is unchanged. The extra
+        # rows this widening admits are filtered below, not by a
+        # two-sided target-year trim: the actual invariant is trunk's
+        # set (every row issued in [start_year, end_year], any target
+        # year) PLUS ONLY the December-issued Q1 of start_year -- see
+        # TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim,
+        # TestRegressionDirectPrecedenceSurvivesLowerBoundWidening and
+        # TestRegressionIssueYearMaskTooPermissive in
+        # tests/test_quarter_calendar_window.py.
         raw_q = _read_long_forecasts_api(
             codes,
-            start_year,
+            start_year - 1,
             end_year,
             horizon_type="quarter",
             horizon_value=quarter_horizon_value(),
@@ -3135,6 +3207,82 @@ def read_quarterly_forecasts(
                 target_period_col="quarter_in_year",
             )
             direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
+        elif (
+            not lead_aware
+            and not direct.empty
+            and "year" in direct.columns
+            and "quarter_in_year" in direct.columns
+            and "date" in direct.columns
+        ):
+            # Invariant: the flag-OFF direct set = trunk's set (every row
+            # with issue year in [start_year, end_year], ANY target year)
+            # PLUS ONLY the NATIVE, schedule-dated December-issued Q1 of
+            # start_year (Problem 7). Nothing else is added, nothing else
+            # is removed. A row issued before start_year is dropped UNLESS
+            # it is that exact Q1-of-start_year issuance -- checking target
+            # year alone (round-2 fix) was still too permissive: it also
+            # kept an out-of-window row targeting some OTHER calendar
+            # quarter of start_year (e.g. issued 2024-12-25 targeting Q2
+            # 2025), which could then beat a same-target monthly-derived
+            # row, or even an in-window direct row, in the
+            # drop_duplicates(keep="last") combine below depending on API
+            # order (round-3 out-of-loop review). Checking target
+            # year+quarter alone (Problem 7's original fix) was ALSO too
+            # permissive: a dev-DB read showed it also admits a PERSISTED
+            # MONTHLY-DERIVED Q1 row backdated to Dec 1 (valid_from minus
+            # horizon_value months) -- not the genuine Dec-25 issuance --
+            # which shares the (code, model, year, quarter) dedup key and,
+            # carrying a higher API id, can win keep="last" over the real
+            # issuance (owner decision: the exception admits ONLY the
+            # native issuance, identified by matching the configured
+            # quarter operational schedule's issue date exactly). Everything
+            # with issue year >= start_year is kept UNCONDITIONALLY
+            # regardless of target year (trunk's own set, including
+            # backfills like a Q4 start_year-1 row issued in start_year,
+            # #521-style). A null/unparseable issue date is kept: trunk's
+            # API-side year filter could not have excluded it by year
+            # either. A target year > end_year (e.g. a Dec-end_year issue's
+            # next-year Q1) also survives unconditionally -- see the
+            # next-year-precedence regression test.
+            target_years = pd.to_numeric(direct["year"], errors="coerce")
+            quarters = pd.to_numeric(direct["quarter_in_year"], errors="coerce")
+            issue_dates = local_calendar_date(direct["date"])
+            issue_years = issue_dates.dt.year
+            native_q1_issue_date = _quarter_native_q1_issue_date(start_year)
+            if native_q1_issue_date is None:
+                # Schedule unresolvable: no exception -- trunk's set only.
+                is_december_q1_of_start_year = pd.Series(False, index=direct.index)
+            else:
+                is_december_q1_of_start_year = (
+                    (target_years == start_year)
+                    & (quarters == 1)
+                    & (issue_dates == native_q1_issue_date)
+                )
+            drop_mask = (
+                issue_years.notna() & (issue_years < start_year) & ~is_december_q1_of_start_year
+            )
+            dropped_issue_year_rows = int(drop_mask.sum())
+            direct = direct[~drop_mask].copy()
+            if dropped_issue_year_rows:
+                logger.info(
+                    "Dropped %d quarterly direct forecast row(s) issued "
+                    "before the requested year range",
+                    dropped_issue_year_rows,
+                )
+        elif not lead_aware and not direct.empty:
+            # The mask above needs quarter_in_year and date to tell a
+            # genuine December-issued Q1 of start_year apart from any
+            # other out-of-window row; without them it cannot run at
+            # all (year alone was already shown insufficient -- see
+            # TestRegressionIssueYearMaskTooPermissive). Surface that
+            # rather than silently skipping it.
+            missing_cols = sorted({"quarter_in_year", "date"} - set(direct.columns))
+            if missing_cols:
+                logger.warning(
+                    "Flag-OFF quarterly issue-year filter skipped: direct "
+                    "rows missing column(s) %s",
+                    missing_cols,
+                )
     else:
         direct = pd.DataFrame()
 
@@ -3326,6 +3474,7 @@ def read_latest_quarterly_forecasts(
     """
     from src.aggregation import (
         aggregate_monthly_fc_to_quarterly,
+        local_calendar_date,
     )
 
     today = forecast_date if forecast_date is not None else dt.date.today()
@@ -3403,6 +3552,23 @@ def read_latest_quarterly_forecasts(
         )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
+        # Problem 6: under both flags, a direct row issued after
+        # forecast_date cannot be an operational issuance for this run
+        # (guards the widened target-year trim below against a
+        # back-dated run picking a later issue). Rows with a null or
+        # unparseable date are kept, unaffected by the bound.
+        if not direct.empty and "date" in direct.columns:
+            issue_date = local_calendar_date(direct["date"])
+            keep_mask = issue_date.isna() | (issue_date.dt.normalize() <= pd.Timestamp(today))
+            dropped_future_issue_rows = int((~keep_mask).sum())
+            direct = direct[keep_mask].copy()
+            if dropped_future_issue_rows:
+                logger.info(
+                    "Dropped %d quarterly direct forecast row(s) dated after "
+                    "forecast_date (back-dated run, or flag-OFF rows dated at "
+                    "the quarter start)",
+                    dropped_future_issue_rows,
+                )
         if lead_aware and quarter_schedules and not direct.empty:
             direct = select_operational_issuances(
                 direct,
@@ -3410,7 +3576,10 @@ def read_latest_quarterly_forecasts(
                 target_year_col="year",
                 target_period_col="quarter_in_year",
             )
-            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
+            # Problem 6: admit end_year + 1 so a 25 Dec issue's next-year
+            # Q1 survives (the date bound above prevents a back-dated
+            # run from picking a later issue through this wider bound).
+            direct = _trim_to_target_year_range(direct, "year", start_year, end_year + 1)
     else:
         direct = pd.DataFrame()
 
@@ -3740,9 +3909,52 @@ def _normalize_combined_forecasts(
     Extracts year/quarter/season from valid_from, renames model_type
     to model_short, adds derived columns.
     """
-    from src.aggregation import MONTH_TO_QUARTER, get_season_year
+    from src.aggregation import MONTH_TO_QUARTER, filter_calendar_quarter_windows, get_season_year
 
     df = df.copy()
+
+    # Calendar-window validation (PP-064 Chunk A): a non-calendar quarter
+    # window is excluded here, at the single choke point for every direct
+    # quarter read, rather than relabelled. Season is unaffected. This also
+    # writes a normalized valid_from back into df, so the parse below
+    # cannot raise on mixed date-only / timestamp strings.
+    if horizon_type == "quarter":
+        df, dropped_calendar_rows = filter_calendar_quarter_windows(df)
+        if dropped_calendar_rows:
+            logger.info(
+                "Dropped %d non-calendar %s forecast window row(s)",
+                dropped_calendar_rows,
+                horizon_type,
+            )
+        if df.empty or "valid_from" not in df.columns:
+            # The helper can leave zero rows with the valid_from column
+            # absent entirely: e.g. valid_from was null for every row of
+            # a batch, and _read_long_forecasts_api's upstream
+            # dropna(axis=1, how="all") already dropped the all-null
+            # column before this function ever saw it (only valid_to
+            # present). The parse below would then raise KeyError on a
+            # column that no longer exists, aborting callers that call
+            # this function directly with no try/except (e.g.
+            # read_quarterly_forecasts, unlike
+            # _read_long_combined_forecasts_api's try/except). Return
+            # the (empty) frame early with the columns downstream
+            # expects instead.
+            if not df.empty and dropped_calendar_rows == 0:
+                # Neither valid_from nor valid_to was present at all --
+                # the helper returns such a frame UNCHANGED (0 dropped),
+                # so nothing has been logged yet, and every one of these
+                # rows is about to be discarded silently otherwise.
+                logger.warning(
+                    "Dropped %d %s forecast row(s) with neither valid_from nor valid_to present",
+                    len(df),
+                    horizon_type,
+                )
+            return pd.DataFrame(
+                columns=[
+                    *df.columns,
+                    *[c for c in ("year", "quarter_in_year") if c not in df.columns],
+                ]
+            )
 
     # Parse valid_from for year extraction
     df["valid_from"] = pd.to_datetime(df["valid_from"])

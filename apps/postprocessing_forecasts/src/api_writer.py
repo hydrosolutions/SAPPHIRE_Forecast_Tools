@@ -1079,7 +1079,7 @@ def _write_aggregated_forecasts_to_api(
     """
     import calendar
 
-    from src.aggregation import QUARTER_MONTHS, get_season_months
+    from src.aggregation import QUARTER_MONTHS, get_season_months, local_calendar_date
 
     if data is None or data.empty:
         logger.info("No %s forecast data to write to API", label)
@@ -1149,6 +1149,7 @@ def _write_aggregated_forecasts_to_api(
             return False
 
         records = []
+        dropped_calendar_rows = 0
         for _, row in data.iterrows():
             code = str(row["code"]).replace(".0", "")
 
@@ -1190,11 +1191,75 @@ def _write_aggregated_forecasts_to_api(
                     valid_to = f"{end_year}-{end_m:02d}-{last_day:02d}"
                 horizon_value = int(row[period_col])
 
-            # Use existing valid_from/valid_to if present
-            if pd.notna(row.get("valid_from")):
-                valid_from = str(row["valid_from"])[:10]
-            if pd.notna(row.get("valid_to")):
-                valid_to = str(row["valid_to"])[:10]
+            # Calendar-window guard (PP-064 Chunk A, quarter branch only):
+            # a row whose own valid_from/valid_to disagree with the
+            # synthesized calendar window for (year, quarter_in_year) --
+            # a rolling window, a calendar valid_from paired with a null
+            # valid_to, or a present-but-unparseable value -- is dropped
+            # rather than written with the synthesized window. Both null
+            # keeps today's synthesized-window behavior. Parsed via
+            # local_calendar_date (not a str(...)[:10] prefix compare,
+            # which accepted a garbage time-of-day like
+            # "2024-06-30T99:00:00" and rejected a same-date value in a
+            # different format like "2024/06/30" or "20240630" that the
+            # reader's own calendar-window check already accepts).
+            # Season is unaffected.
+            if horizon_type == "quarter":
+                # S2/T3: match the reader's conservative cutoffs at BOTH
+                # ends -- filter_calendar_quarter_windows (aggregation.py)
+                # treats ANY row with valid_from.year > 2261 as not a
+                # calendar quarter regardless of month (upper,
+                # datetime64[ns] tops out at ~2262-04-11), and
+                # local_calendar_date itself rejects anything before
+                # 1677-09-22 (lower, just past pd.Timestamp.min). Without
+                # matching both here, the reader could reject a
+                # synthesized window (e.g. year 1677 Q3, "1677-07-01") the
+                # writer would have written -- out-of-range data is
+                # nonsense; the only point is agreement between the two.
+                out_of_range_target_year = year > 2261
+                # U1: compare NUMERICALLY, not as unpadded strings --
+                # "999-01-01" < "1677-09-22" is False lexicographically
+                # (year 999 is misclassified as in-range, along with
+                # every other year with fewer digits than 1677: 2-9,
+                # 17-99, 170-999). (year, quarter start month) <
+                # (1677, 10) is equivalent to year < 1677, or year ==
+                # 1677 with a start month before October (quarters 1-3,
+                # whose windows start Jan/Apr/Jul -- all before the
+                # 1677-09-22 cutoff; only Q4's Oct 1 start clears it).
+                out_of_range_low = year < 1677 or (year == 1677 and quarter < 4)
+                out_of_range = out_of_range_target_year or out_of_range_low
+                row_has_valid_from = pd.notna(row.get("valid_from"))
+                row_has_valid_to = pd.notna(row.get("valid_to"))
+                both_present = row_has_valid_from and row_has_valid_to
+                if out_of_range:
+                    mismatch = True
+                elif both_present:
+                    parsed_valid_from = local_calendar_date(pd.Series([row["valid_from"]])).iloc[0]
+                    parsed_valid_to = local_calendar_date(pd.Series([row["valid_to"]])).iloc[0]
+                    mismatch = (
+                        pd.isna(parsed_valid_from)
+                        or pd.isna(parsed_valid_to)
+                        or parsed_valid_from != pd.Timestamp(valid_from)
+                        or parsed_valid_to != pd.Timestamp(valid_to)
+                    )
+                else:
+                    mismatch = True
+                skip_row = out_of_range or ((row_has_valid_from or row_has_valid_to) and mismatch)
+                if skip_row:
+                    dropped_calendar_rows += 1
+                    continue
+
+            # Use existing valid_from/valid_to if present. Quarter rows
+            # that reach this point already had their own values
+            # verified equal to the synthesized calendar window above,
+            # so they keep writing the synthesized ISO dates (not the
+            # row's own, possibly differently-formatted, string) --
+            # season is unaffected, unchanged from before.
+            if horizon_type != "quarter":
+                if pd.notna(row.get("valid_from")):
+                    valid_from = str(row["valid_from"])[:10]
+                if pd.notna(row.get("valid_to")):
+                    valid_to = str(row["valid_to"])[:10]
 
             record_date = valid_from
             if (
@@ -1228,6 +1293,20 @@ def _write_aggregated_forecasts_to_api(
                 record["composition"] = str(comp)
 
             records.append(record)
+
+        if dropped_calendar_rows:
+            # WARNING, not INFO: unlike the reader filters (which drop
+            # rolling windows on every run by design), a drop here means
+            # an upstream invariant broke -- the readers already filter
+            # non-calendar windows out, so this row should never have
+            # reached the writer with one. INFO also never reaches the
+            # logs from production entry points (setup_library caps the
+            # root logger at WARNING on import -- INFRA-029).
+            logger.warning(
+                "Dropped %d %s forecast record(s) with a non-calendar quarter window",
+                dropped_calendar_rows,
+                label,
+            )
 
         if not records:
             logger.info("No %s forecast records to write to API", label)
