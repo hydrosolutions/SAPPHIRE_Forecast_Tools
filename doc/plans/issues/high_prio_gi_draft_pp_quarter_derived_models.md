@@ -512,17 +512,24 @@ longer exists; nothing here depends on it):
     windows.
   - **INPUT CONTRACT.** A well-formed `valid_from`/`valid_to` value is an ISO date/datetime string, a
     `date`/`datetime`/`Timestamp`, or null. Any OTHER value is out of contract; `_window_dedup_key`
-    (below) still classifies it best-effort and never crashes, but the specific key it assigns (a
-    key unique to that one row) is a deliberate refusal to reason about it, not a guarantee about
+    (below) itself still classifies it best-effort and never raises, but the specific key it assigns
+    (a key unique to that one row) is a deliberate refusal to reason about it, not a guarantee about
     its meaning. Separately, `id` (when present) must be a hashable scalar, as the API guarantees;
     an `id` value that is itself unhashable is out of scope for this helper (it is not a documented
     input shape, unlike an out-of-contract window value, which upstream data quality issues make a
-    real possibility).
+    real possibility). `derive_quarterly_from_monthly_same_issue` as a whole is guaranteed not to
+    raise only when its inputs meet this contract: an out-of-contract window value, e.g.
+    `Decimal("sNaN")`, is still classified safely by `_window_dedup_key` and does not corrupt the
+    result, but MAY still raise later, in pandas' own internals on some paths (e.g. the
+    per-partition `pd.concat` in the `id`-present branch, `src/aggregation.py:1143`) -- that
+    downstream risk is out of scope, not a gap in `_window_dedup_key` (M1-M3 follow-up below).
   - **Where a window value does NOT parse, the fallback rule is the FINAL, SIMPLE and conservative
     one in `_window_dedup_key`** (the shared helper, `src/aggregation.py:680-754`; findings J1, K1,
     L1, M1), applied per value in this exact order, with the WHOLE classification wrapped in one
     `try`/`except Exception` so that NO step -- including the null check itself -- can ever raise
-    out of the function (M1): a genuinely null SCALAR (`pd.api.types.is_scalar(v) and pd.isna(v)` --
+    out of `_window_dedup_key` ITSELF (M1; a guarantee about this helper, not about
+    `derive_quarterly_from_monthly_same_issue` as a whole -- see the INPUT CONTRACT bullet above): a
+    genuinely null SCALAR (`pd.api.types.is_scalar(v) and pd.isna(v)` --
     `None`, NaN of any float width, `pd.NA`, `NaT` of any flavour) -> `None`, so two nulls always
     match, however differently spelled; else, if the value is EXACTLY a `str` (`type(v) is str`,
     never `isinstance`, which would also admit a `str` SUBCLASS whose own `__hash__`/`__eq__` can
@@ -723,10 +730,25 @@ longer exists; nothing here depends on it):
   comment above the `_window_dedup_key` call sites and this bullet's own fallback-rule text were
   rewritten for the final M1 rule (they still described K1's retired type-qualified-string rule); an
   explicit INPUT CONTRACT was added below to state what a well-formed `valid_from`/`valid_to` value
-  is and that an out-of-contract value is still handled, never crashed on, but its assigned key
-  carries no meaning beyond "don't merge this with anything"; and the `bad_key` citation in the
-  "Updated line citations" bullet was corrected (its own early return is one line after
-  `log_counts()`, not on the same line as the count-only branch above it).
+  is and that an out-of-contract value is still handled, never raised on by `_window_dedup_key`
+  itself, but its assigned key carries no meaning beyond "don't merge this with anything"; and the
+  `bad_key` citation in the "Updated line citations" bullet was corrected (its own early return is
+  one line after `log_counts()`, not on the same line as the count-only branch above it).
+
+  **Post-M1 final review (2026-09-27, docs-only).** codex found nothing further, the real-data
+  re-run was identical again (eight versions agree), and a Claude reviewer verified the M1 rule,
+  order/index independence, and every M1/M2 mutation -- but flagged that the "never crashes on
+  anything" wording above overreached: `Decimal("sNaN")` in `valid_from`/`valid_to` is still
+  classified safely by `_window_dedup_key` itself (that guarantee holds, and is unchanged), but
+  `derive_quarterly_from_monthly_same_issue` as a whole can still raise on it downstream, inside
+  pandas' own `pd.concat` of the `id`-present/`id`-absent partitions (`src/aggregation.py:1143`),
+  when the frame has an `id` column. This is outside the documented INPUT CONTRACT, so it was never
+  a regression, just imprecise wording. No code or test changed; the derive docstring
+  (`src/aggregation.py` ~:834-850), the call-site comment (~:1077-1089), and the INPUT CONTRACT /
+  fallback-rule bullets above were reworded to scope the "never raises" guarantee to
+  `_window_dedup_key` itself, and to state plainly that `derive`'s own crash-free guarantee holds
+  only for the documented contract (ISO date/datetime `valid_from`/`valid_to` or null; a hashable
+  scalar `id`).
 - **Dev-DB validation (2026-09-27).** On the local dev DB, complete same-issue triplets across the
   seven derived models (2000-2026) were 30.96k (kghm) / 7.13k (tjhm), and 14.1k / 3.4k over
   2015-2026; the feasibility section above (~27.8k / ~5.2k) did not state its year window, so these

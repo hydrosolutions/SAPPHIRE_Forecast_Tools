@@ -831,14 +831,25 @@ def derive_quarterly_from_monthly_same_issue(
         "2027-01-01T00:00:00+06:00" for the same row are the same
         window; see ``_window_dedup_key`` for the exact, deliberately
         SIMPLE and conservative fallback rule when a value does NOT
-        parse, PP-065 J1/K1/L1/M1, classified inside a try/except so it
-        can NEVER raise -- in short: any genuinely null scalar
-        (``None``, NaN of any width, ``pd.NA``, ``NaT`` of any flavour)
-        matches another null; an EXACT ``str`` (never a subclass) matches
-        only an identical string; anything else (a list, dict, ndarray, a
-        ``str`` subclass, or any value that raises merely from being
-        classified, e.g. ``Decimal("sNaN")``) gets a key unique to its
-        own row, so it never collapses with, or crashes on, anything)
+        parse, PP-065 J1/K1/L1/M1, classified inside a try/except so THAT
+        HELPER ITSELF can never raise -- in short: any genuinely null
+        scalar (``None``, NaN of any width, ``pd.NA``, ``NaT`` of any
+        flavour) matches another null; an EXACT ``str`` (never a
+        subclass) matches only an identical string; anything else (a
+        list, dict, ndarray, a ``str`` subclass, or any value that raises
+        merely from being classified, e.g. ``Decimal("sNaN")``) gets a
+        key unique to its own row, so it never collapses with anything.
+        This function overall is guaranteed not to raise only for the
+        documented INPUT CONTRACT (``valid_from``/``valid_to`` as ISO
+        date/datetime strings, ``date``/``datetime``/``Timestamp``
+        values, or null; a hashable scalar ``id`` where ``id`` is
+        present, per the API's own contract); an exotic value outside
+        that contract (e.g. ``Decimal("sNaN")``) is still classified
+        safely by ``_window_dedup_key``, but MAY still raise later, in
+        pandas' own internals on some paths (e.g. the per-partition
+        ``pd.concat`` below when ``id`` is present) -- handling by the key
+        helper is not the same guarantee as a crash-free ``derive`` call
+        for arbitrary objects, which is out of scope)
         AND its point-value inputs (``q`` and ``q50``, NaN-equal) both
         match -- so a same-window pair with a DIFFERENT value is never
         silently dropped; it is left for the uniqueness rule, where a
@@ -1064,13 +1075,19 @@ def derive_quarterly_from_monthly_same_issue(
     # raw strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00"
     # for the same row are the same window and do not block the collapse.
     # Where a value does NOT parse, `_window_dedup_key` (PP-065 J1/K1/
-    # L1/M1) classifies it -- with the WHOLE classification wrapped so it
-    # can never raise -- as: null (any flavour) stays null; an exact
-    # `str` compares as itself, so "garbage" != "xx" but "garbage" ==
-    # "garbage"; anything else (unhashable, a `str` subclass, or any
-    # value that raises merely from being classified, e.g.
-    # `Decimal("sNaN")`) gets a key unique to its own row, so it is
-    # never `str()`'d, `hash()`'d, or merged with anything else.
+    # L1/M1) classifies it -- with the WHOLE classification wrapped so
+    # THAT HELPER ITSELF can never raise -- as: null (any flavour) stays
+    # null; an exact `str` compares as itself, so "garbage" != "xx" but
+    # "garbage" == "garbage"; anything else (unhashable, a `str`
+    # subclass, or any value that raises merely from being classified,
+    # e.g. `Decimal("sNaN")`) gets a key unique to its own row, never
+    # `str()`'d or `hash()`'d. This derive call is only guaranteed not to
+    # raise for the documented INPUT CONTRACT (valid_from/valid_to as ISO
+    # date strings, dates, datetimes or null; a hashable scalar `id`); an
+    # exotic value outside that contract is still classified safely here,
+    # but may still raise later in pandas' own internals on some paths
+    # (e.g. the per-partition pd.concat below when `id` is present) --
+    # that is out of scope, not a gap in this helper.
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:
