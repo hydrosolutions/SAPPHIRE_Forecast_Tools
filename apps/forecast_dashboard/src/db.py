@@ -1274,6 +1274,36 @@ def get_data(
     return data
 
 
+def _dedup_quarter_skill_by_priority(
+    quarter_skill_candidates: pd.DataFrame, quarter_merge_keys: list[str]
+) -> tuple[pd.DataFrame, int]:
+    """Keep exactly one row per ``quarter_merge_keys`` key.
+
+    Preference is FIRST-in-frame-order, not by recency: there is no
+    ``date``/``id`` column left on this frame (``get_forecast_stats`` drops
+    both before returning it), so row order is the only signal available.
+    The caller is responsible for the ordering that encodes priority --
+    ``_get_data_monthly``'s quarter block concatenates hv-0 rows ahead of
+    the configured-lead fallback rows before calling this, so hv-0 keeps
+    priority over the fallback for any key that (defensively -- e.g. a
+    join-key dtype/whitespace mismatch in the hv-0/fallback anti-join)
+    still has both when this runs.
+
+    Args:
+        quarter_skill_candidates: The concatenated hv-0/fallback candidate
+            rows (or any frame needing one row per key).
+        quarter_merge_keys: The columns identifying a unique key.
+
+    Returns:
+        The deduped frame, and the number of duplicate ROWS dropped.
+    """
+    dup_mask = quarter_skill_candidates.duplicated(subset=quarter_merge_keys, keep="first")
+    dup_count = int(dup_mask.sum())
+    if dup_count:
+        quarter_skill_candidates = quarter_skill_candidates[~dup_mask].copy()
+    return quarter_skill_candidates, dup_count
+
+
 def _get_data_monthly(
     station,
     all_stations,
@@ -1379,6 +1409,14 @@ def _get_data_monthly(
             not lead_aware
             and not quarter_forecast_stats.empty
             and "horizon_value" in quarter_forecast_stats.columns
+            # M5: the selection below indexes quarter_forecast_stats by
+            # quarter_merge_keys (e.g. for the anti-join and the dedup
+            # helper) -- guard on all of them being present, not just
+            # "horizon_value", so a malformed/partial stats frame is
+            # skipped gracefully (falls through unfiltered, same as
+            # c973c0d1's simpler hv-0-only filter did) instead of a
+            # KeyError from a dashboard read.
+            and all(k in quarter_forecast_stats.columns for k in quarter_merge_keys)
         ):
             # FD-029 follow-up (Z1): flag OFF, prefer the hv-0 sentinel row
             # per (code, quarter, model) key -- that is what the flag-OFF
@@ -1403,19 +1441,32 @@ def _get_data_monthly(
             try:
                 _configured_quarter_lead = _resolve_quarter_horizon_value(None)
             except (LongTermHorizonResolverError, FileNotFoundError):
-                # FD-031: a missing/unresolvable quarter config already
-                # makes get_long_forecasts_quarter (above) run degraded.
-                # Mirror that here rather than raising a NEW crash path
-                # from a dashboard read: the fallback is simply
-                # unavailable, hv-0 only.
+                # M6/FD-031: this except branch is DEFENSIVE, not the
+                # normal path. On the default (horizon_value=None) call
+                # used here, get_long_forecasts_quarter (called just above,
+                # same station) already resolves this SAME config via its
+                # own _resolve_quarter_horizon_value(None) and raises
+                # immediately on a missing/invalid quarter.json -- FD-031
+                # owns that crash, and execution would not normally reach
+                # this line at all in a real dashboard read. This branch
+                # exists only so that a future refactor, or a caller that
+                # reaches this code without that earlier resolution (e.g.
+                # a test), degrades to hv-0-only instead of raising a NEW
+                # crash from THIS code.
                 _configured_quarter_lead = None
 
-            _quarter_hv0_rows = quarter_forecast_stats[
-                quarter_forecast_stats["horizon_value"] == 0
-            ]
+            # M1: normalize horizon_value before comparing. A "0"/"1"
+            # string value (e.g. round-tripped through JSON without numeric
+            # coercion upstream) must still match; a genuinely non-numeric
+            # value stays unmatched (NaN never equals anything, including
+            # itself).
+            _quarter_hv_numeric = pd.to_numeric(
+                quarter_forecast_stats["horizon_value"], errors="coerce"
+            )
+            _quarter_hv0_rows = quarter_forecast_stats[_quarter_hv_numeric == 0]
             if _configured_quarter_lead is not None:
                 _quarter_fallback_rows = quarter_forecast_stats[
-                    quarter_forecast_stats["horizon_value"] == _configured_quarter_lead
+                    _quarter_hv_numeric == _configured_quarter_lead
                 ]
                 if not _quarter_hv0_rows.empty:
                     # Never use the fallback for a key that already has a
@@ -1431,11 +1482,17 @@ def _get_data_monthly(
             else:
                 _quarter_fallback_rows = quarter_forecast_stats.iloc[0:0]
 
-            if len(_quarter_fallback_rows):
+            # M3: log the number of DISTINCT keys using the fallback, not
+            # the row count -- defensive against a duplicate fallback row
+            # for the same key surviving the anti-join above.
+            _fallback_key_count = len(
+                _quarter_fallback_rows[quarter_merge_keys].drop_duplicates()
+            )
+            if _fallback_key_count:
                 logger.info(
                     "_get_data_monthly: %d quarter skill key(s) for station %s had no "
                     "live hv-0 row; used the configured-lead (%s) fallback",
-                    len(_quarter_fallback_rows),
+                    _fallback_key_count,
                     station,
                     _configured_quarter_lead,
                 )
@@ -1443,33 +1500,31 @@ def _get_data_monthly(
                 [_quarter_hv0_rows, _quarter_fallback_rows], ignore_index=True
             )
 
-            # Z2: the hv-0/fallback selection above picks a CATEGORY of row
-            # per key, not necessarily a single row -- a data-integrity
-            # duplicate (e.g. two live hv-0 rows for the same key) would
-            # still survive it. Enforce uniqueness on the skill SIDE here,
-            # before the merge, rather than deduping the merged output
-            # afterward: quarter_merge_keys has no "year", so a post-merge
-            # dedup on it cannot tell apart two forecast rows for the same
-            # quarter NUMBER in different years -- it would keep one and
-            # silently drop the other (the bug in the previous version of
-            # this fix). Deduping the skill side first means the merge
-            # itself never fans out or drops a forecast row: each forecast
-            # row matches at most one skill row.
-            # get_forecast_stats sorts ascending by `date` before its own
-            # (date/id-dropping) dedup, so a surviving row's position in
-            # this frame already approximates recency; there is no
-            # `date`/`id` column left here to key off directly, so keep
-            # the LAST row per key.
-            _quarter_dup_mask = quarter_forecast_stats.duplicated(
-                subset=quarter_merge_keys, keep="last"
+            # Z2/M2: the hv-0/fallback selection above picks a CATEGORY of
+            # row per key, not necessarily a single row -- a data-integrity
+            # duplicate within a category (e.g. two live hv-0 rows for the
+            # same key), or -- defensively -- an hv-0 row and a fallback row
+            # that slipped past the anti-join above (e.g. a join-key dtype
+            # mismatch), could still leave more than one row per key.
+            # Enforce uniqueness on the skill SIDE here, before the merge,
+            # rather than deduping the merged output afterward:
+            # quarter_merge_keys has no "year", so a post-merge dedup on it
+            # cannot tell apart two forecast rows for the same quarter
+            # NUMBER in different years -- it would keep one and silently
+            # drop the other (the bug in an earlier version of this fix).
+            # Deduping the skill side first means the merge itself never
+            # fans out or drops a forecast row: each forecast row matches
+            # at most one skill row. _dedup_quarter_skill_by_priority keeps
+            # the FIRST row per key -- the concat order just above places
+            # hv-0 rows ahead of the fallback rows, so hv-0 keeps priority.
+            quarter_forecast_stats, _quarter_dup_count = _dedup_quarter_skill_by_priority(
+                quarter_forecast_stats, quarter_merge_keys
             )
-            _quarter_dup_count = int(_quarter_dup_mask.sum())
             if _quarter_dup_count:
-                quarter_forecast_stats = quarter_forecast_stats[~_quarter_dup_mask].copy()
                 logger.warning(
                     "_get_data_monthly: %d duplicate quarter skill row(s) for station %s "
                     "shared a (code, quarter, model) key after hv-0/fallback selection; "
-                    "kept the last row per key",
+                    "kept the higher-priority (hv-0 over fallback) row per key",
                     _quarter_dup_count,
                     station,
                 )
