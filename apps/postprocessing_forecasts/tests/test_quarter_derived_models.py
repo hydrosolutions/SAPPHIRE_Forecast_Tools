@@ -26,6 +26,7 @@ from src.aggregation import (
     _quarter_end_date,
     _window_dedup_key,
     clamp_issue_day,
+    clamp_issue_days,
     derive_quarterly_from_monthly_same_issue,
     filter_calendar_quarter_windows,
     local_calendar_date,
@@ -73,11 +74,18 @@ def _reference_derive(
     issue_day: int,
     models: frozenset,
 ) -> tuple[pd.DataFrame, dict]:
-    """Row-wise reference implementation (PP-065 F3 safety net).
+    """Row-wise SAME-AUTHOR equivalence check for the F3 vectorization
+    (PP-065 N2) -- NOT an independent oracle and not "ground truth": it
+    was written by the same author as production, from the same spec
+    understanding, so an agreement between the two proves the
+    vectorization is equivalent to this row-wise version, not that either
+    one is correct. The actual spec oracle, computed independently of
+    BOTH implementations, is the hand-computed expected values in
+    ``TestHandComputedSpecDerivedResults`` below.
 
-    A FROZEN copy of ``derive_quarterly_from_monthly_same_issue`` as it
-    stood right after the F1/F2/F4/F5 fixes (commit-local, before the F3
-    vectorization rewrite) -- and since round-2/round-3 review, ALSO
+    Kept in lockstep with ``derive_quarterly_from_monthly_same_issue`` as
+    it stood right after the F1/F2/F4/F5 fixes (commit-local, before the
+    F3 vectorization rewrite) -- and since round-2/round-3 review, ALSO
     carrying the G1 (value-aware id dedup), G4 (bad_key), G5 (typed object
     columns), H3 (windows compared as parsed local dates), H4
     (deterministic model_short spelling tiebreak) and J1/K1/L1/M1
@@ -87,12 +95,11 @@ def _reference_derive(
     ``_window_dedup_key`` -- see its docstring in ``src/aggregation.py``
     for the exact rule) correctness fixes, since those are behavioural
     guarantees, and the differential test is only meaningful if both
-    sides uphold them. Kept here ONLY as ground truth for
-    ``TestVectorizedMatchesReferenceDifferential`` below. Do NOT "fix"
-    this to match the production function when they diverge for a real
-    bug -- fix production and this copy will keep it honest. Any
-    intentional behaviour change belongs in the production docstring and
-    in this frozen copy, applied identically, not a silent edit here.
+    sides uphold them. Do NOT "fix" this to match the production function
+    when they diverge for a real bug -- fix production and this copy
+    together, so the differential test stays honest. Any intentional
+    behaviour change belongs in the production docstring and here,
+    applied identically, not a silent edit to only one side.
     """
     has_q = "q" in monthly_raw.columns
     counts: Counter = Counter()
@@ -439,6 +446,37 @@ class TestClampIssueDay:
         assert clamp_issue_day(2026, 1, 25) == 25
 
 
+class TestClampIssueDays:
+    """PP-065 N5: the vectorized form must agree with the scalar
+    ``clamp_issue_day`` row for row, across the same clamp-relevant
+    calendar cases (short month, leap Feb, within-range, and both ends
+    of a mixed-length batch), plus a `NaT` row (never an exception)."""
+
+    def test_matches_scalar_across_mixed_months(self):
+        dates = pd.Series(
+            pd.to_datetime(
+                [
+                    "2026-06-15",  # 30-day June: 31 clamps to 30.
+                    "2028-02-10",  # leap Feb: 31 clamps to 29.
+                    "2027-02-10",  # non-leap Feb: 31 clamps to 28.
+                    "2026-01-05",  # within range: 25 unchanged.
+                    "2026-12-25",  # 31-day month: 31 unchanged.
+                ]
+            )
+        )
+        for issue_day in (25, 31):
+            vectorized = clamp_issue_days(dates, issue_day)
+            scalar = [clamp_issue_day(d.year, d.month, issue_day) for d in dates]
+            assert vectorized.tolist() == [float(v) for v in scalar]
+
+    def test_nat_row_is_nan_not_an_exception(self):
+        dates = pd.Series(pd.to_datetime(["2026-06-15", None, "2026-12-25"]))
+        result = clamp_issue_days(dates, 31)
+        assert result.iloc[0] == 30
+        assert pd.isna(result.iloc[1])
+        assert result.iloc[2] == 31
+
+
 # ===================================================================
 # Derivation helper
 # ===================================================================
@@ -600,6 +638,33 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         assert result.iloc[0]["model_short"] == "GBT"
         assert counts["wrong_issue_day"] == 3
 
+    def test_bad_date_excluded_control_derives_no_exception(self):
+        """N1: `bad_date` (an unparseable ``date``) is counted, not silent,
+        and the row is filtered out BEFORE `_add_months_vectorized` --
+        removing that filter makes an unparseable date reach
+        ``year.astype("int64")`` with a NaN year and raise
+        `IntCastingNaNError`, with every OTHER test still green (none of
+        them exercises an unparseable `date` on an otherwise-eligible
+        row)."""
+        raw = _frame(
+            [
+                # Negative: `date` does not parse at all.
+                (CODE, "MC_ALD", "not-a-date", 1, np.nan, 100.0, None, None),
+                (CODE, "MC_ALD", "not-a-date", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "not-a-date", 3, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert counts["bad_date"] == 3
+
     def test_issue_month_not_quarter_start_ignored_not_counted(self):
         raw = _frame(
             [
@@ -659,6 +724,58 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         assert result.iloc[0]["model_short"] == "GBT"
         assert counts["non_finite_value"] == 1
 
+    def test_infinite_q_falls_back_to_finite_q50(self):
+        """N3: an infinite `q` (not merely NaN) must fall back to `q50`,
+        exactly like a NaN `q` does -- the fallback checks
+        `np.isfinite(q_val)`, not `q_val.notna()` (which is True for
+        `inf`, so a mutant using it would keep the infinite value instead
+        of falling back, and the triplet would wrongly become
+        non_finite_value)."""
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.inf, 100.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert "non_finite_value" not in counts
+        assert len(result) == 1
+        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+
+    def test_float64_nullable_na_excluded_as_non_finite_not_averaged(self):
+        """N4: a `q50` column stored as pandas nullable ``Float64``
+        (capital F) with `pd.NA` for the missing month must be excluded
+        as `non_finite_value`, not silently averaged over the other two
+        months. Without casting to plain float64 after `pd.to_numeric`,
+        `_point_value` (and the wide frame it is pivoted into) stays
+        `Float64`, and `DataFrame.all(axis=1)` on
+        `np.isfinite(...)` -- a nullable boolean column -- defaults to
+        `skipna=True`, which IGNORES the `pd.NA` cell instead of treating
+        it as `False`, so the triplet wrongly passes the all-finite check
+        and its mean silently skips the missing month."""
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, pd.NA, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        raw["q50"] = raw["q50"].astype("Float64")
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert counts["non_finite_value"] == 1
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+
     def test_positive_q_nan_q50_finite_derives_from_q50(self):
         raw = _frame(
             [
@@ -701,6 +818,34 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
                 (CODE, "MC_ALD", "2026-12-25", 1.5, np.nan, 100.0, None, None),
                 (CODE, "MC_ALD", "2026-12-25", 2.0, np.nan, 110.0, None, None),
                 (CODE, "MC_ALD", "2026-12-25", 3.0, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert counts["bad_horizon_value"] == 1
+
+    def test_infinite_hv_excluded_as_bad_horizon_value_no_exception(self):
+        """N3: an infinite `horizon_value` must be excluded as
+        `bad_horizon_value`, not crash. `valid_hv` requires
+        `np.isfinite(hv_numeric)` in addition to `.notna()` and the
+        integer-value check -- `round(inf) == inf`, so a mutant that drops
+        the `np.isfinite` term would let `inf` through, and the later
+        ``.astype(int)`` on it raises (a float infinity has no integer
+        representation)."""
+        raw = _frame(
+            [
+                # Negative: hv=inf -- notna() and round-equality both pass;
+                # only np.isfinite catches it.
+                (CODE, "MC_ALD", "2026-12-25", np.inf, np.nan, 100.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
                 # Control.
                 (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
                 (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
@@ -2068,10 +2213,57 @@ class TestHandComputedSpecDerivedResults:
         assert row["valid_to"] == "2027-03-31"
         assert abs(row["forecasted_discharge"] - 110.0) < 1e-9
 
+    def test_non_progression_values_mean_not_median(self):
+        """N2: every OTHER hand-computed test above uses an arithmetic
+        progression (100, 110, 120), where mean == median == the middle
+        value by position -- so none of them can tell an unweighted
+        `.mean(axis=1)` apart from `.median(axis=1)` or a positional
+        `iloc[:, 1]`. Non-progression values (10, 20, 60) break that:
+        mean = 30, but median = 20 (and so is the positional middle
+        column here, since these values happen to already be sorted in
+        lead order -- the NEXT test breaks that coincidence too)."""
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 10.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 20.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 60.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert not counts
+        assert len(result) == 1
+        assert abs(result.iloc[0]["forecasted_discharge"] - 30.0) < 1e-9
+
+    def test_mean_median_and_positional_middle_all_differ(self):
+        """N2: mean, median and the positional middle column must all be
+        DIFFERENT values here, so a mutant using EITHER `.median(axis=1)`
+        OR `iloc[:, 1]` (the middle column of the hv-ordered pivot,
+        `(lead, lead+1, lead+2)`) is caught, not just one of them. Values
+        by hv (lead, lead+1, lead+2) = (50, 10, 60): mean = 40.0; sorted
+        [10, 50, 60] has median = 50.0; the positional middle column
+        (hv=lead+1) is 10.0. All three differ from each other."""
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 50.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 10.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 60.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert not counts
+        assert len(result) == 1
+        assert abs(result.iloc[0]["forecasted_discharge"] - 40.0) < 1e-9
+
 
 # =======================================================================
 # F3: randomized differential test -- production (vectorized) vs the
-# frozen row-wise `_reference_derive` above. The generator draws 1-3 fake
+# same-author row-wise `_reference_derive` above (PP-065 N2: an
+# equivalence check for the vectorization, not an independent oracle).
+# The generator draws 1-3 fake
 # station codes (19999/19998/19997, PP-065 G2/G3), multiple models, leads
 # 0-11, issue days including the ones that only differ from the day-of-
 # month via the clamp (29/30/31), and a battery of duplicate/scope/
@@ -2450,8 +2642,11 @@ def _sorted_for_compare(result: pd.DataFrame) -> pd.DataFrame:
 
 class TestVectorizedMatchesReferenceDifferential:
     """PP-065 F3: the production (vectorized) implementation must match
-    the frozen row-wise `_reference_derive` exactly, sorted output and
-    dtypes included, across a wide random sample of inputs."""
+    the same-author row-wise `_reference_derive` exactly, sorted output
+    and dtypes included, across a wide random sample of inputs. This is
+    an equivalence check for the vectorization (PP-065 N2), not a
+    correctness oracle -- see `TestHandComputedSpecDerivedResults` for
+    that."""
 
     @pytest.mark.parametrize("seed_offset", range(300))
     def test_matches_reference(self, seed_offset):

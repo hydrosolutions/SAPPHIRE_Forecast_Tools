@@ -219,6 +219,26 @@ class TestAggregateMonthlyObsToQuarterly:
         result = aggregate_monthly_obs_to_quarterly(obs)
         assert result.empty
 
+    def test_duplicated_month_is_averaged_not_first_or_max(self):
+        """N3: with 3 distinct months present (passes the coverage
+        threshold), a REPEATED month's own value must be the AVERAGE of
+        its rows, not the first or the largest -- Jan is duplicated (10
+        and 30, average 20) alongside single Feb (40) and Mar (60) rows,
+        so the quarter mean must be exactly (20+40+60)/3 = 40.0: not
+        (10+40+60)/3 = 36.67 (`.first()`) and not (30+40+60)/3 = 43.33
+        (`.max()`)."""
+        obs = _make_monthly_obs(
+            [
+                ("S1", 2024, 1, 10.0),
+                ("S1", 2024, 1, 30.0),
+                ("S1", 2024, 2, 40.0),
+                ("S1", 2024, 3, 60.0),
+            ]
+        )
+        result = aggregate_monthly_obs_to_quarterly(obs)
+        assert len(result) == 1
+        assert abs(result.iloc[0]["discharge_avg"] - 40.0) < 1e-9
+
     def test_delta_computation(self):
         """Delta = 0.674 * std across years for same quarter."""
         obs = _make_monthly_obs(

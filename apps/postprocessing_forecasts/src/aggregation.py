@@ -643,6 +643,28 @@ def clamp_issue_day(year: int, month: int, issue_day: int) -> int:
     return min(issue_day, calendar.monthrange(year, month)[1])
 
 
+def clamp_issue_days(dates: pd.Series, issue_day: int) -> pd.Series:
+    """Vectorized form of ``clamp_issue_day`` (PP-065 N5): the SAME clamp
+    rule, applied to a whole column of dates at once via
+    ``Series.dt.days_in_month`` instead of one ``calendar.monthrange``
+    call per row. Public: both this module's own derivation helper and
+    P1b's native-row selection rule use it.
+
+    Args:
+        dates: A datetime64 Series (any unit). Only each row's month
+            length is used -- the day-of-month already in ``dates`` is
+            irrelevant to the clamp itself. A ``NaT`` row's result is NaN,
+            never an exception.
+        issue_day: Configured issue day (any positive integer), broadcast
+            to every row.
+
+    Returns:
+        float64 Series (NaN wherever ``dates`` is ``NaT``) of clamped
+        issue days, same index as ``dates``.
+    """
+    return np.minimum(issue_day, dates.dt.days_in_month)
+
+
 def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
     """Year-aware month addition. Returns (year, month) for month + delta.
 
@@ -771,103 +793,72 @@ def derive_quarterly_from_monthly_same_issue(
     states, since the flag only affects how OTHER code groups monthly rows,
     not this derivation.
 
+    INPUT CONTRACT: ``date``/``valid_from``/``valid_to`` are ISO
+    date/datetime strings, ``date``/``datetime``/``Timestamp`` values, or
+    null; ``id`` (when present) is a hashable scalar, per the API's own
+    contract. An out-of-contract value never crashes this function (see
+    ``_window_dedup_key`` below for the window fallback rule), but IS
+    handled conservatively, not meaningfully. The DB schema behind
+    ``_read_long_forecasts_api`` (NOT NULL ``code``/``date``/
+    ``model_type``/``horizon_value``/``valid_from``/``valid_to``, an enum
+    ``model_type``, and a matching unique constraint) makes most
+    out-of-contract inputs below unreachable from a live read; the
+    defensive handling stays regardless, since this function is also
+    called with hand-built and test frames. See the plan's amendment
+    history (PP-065 P1a) for how each rule below reached its current form.
+
     Args:
         monthly_raw: Raw monthly rows, after the CALLER has renamed
             ``model_type`` -> ``model_short`` and normalised ``code`` (this
-            helper does neither). ``date`` and ``valid_from`` are string-like
-            and may mix tz-aware and naive values. ``horizon_value``, ``q``
-            and ``q50`` may be absent.
+            helper does neither). ``horizon_value``, ``q`` and ``q50`` may
+            be absent.
         lead: The configured quarter lead (the target quarter's first
             month's horizon_value).
-        issue_day: The configured monthly issue day (unclamped; clamped
-            internally per issue month via ``clamp_issue_day``).
+        issue_day: The QUARTER schedule's OWN configured issue day (owner
+            decision: the monthly forecasts this derives from are produced
+            on the quarter's issue date, not on some monthly mode's own
+            issue day) -- unclamped; clamped per row via the vectorized
+            ``clamp_issue_days``.
         models: Canonical model names to derive (callers pass
             ``QUARTERLY_DERIVED_MODELS`` or ``QUARTER_NATIVE_RAW_MODELS``
             from ``src/model_names.py``).
 
     Returns:
-        Tuple of (derived frame, dict of exclusion counts by reason). The
-        frame has a fixed column set: ``code``, ``model_short``, ``year``,
+        Tuple of (derived frame, dict of exclusion counts by reason).
+        Fixed column set: ``code``, ``model_short``, ``year``,
         ``quarter_in_year``, ``date``, ``horizon_value``, ``valid_from``,
         ``valid_to``, ``forecasted_discharge``, ``q`` (only if the input
-        had a ``q`` column), and every column of ``_FC_QUANTILE_COLS`` (all
-        NaN). Rows are never copied from the input -- every output column
-        is built fresh, so input-only columns (e.g. ``id``, ``flag``,
-        ``composition``, ``q_obs``, ``model_type_description``,
+        had one), and every ``_FC_QUANTILE_COLS`` column (all NaN). Every
+        output column is built fresh, so input-only columns (``id``,
+        ``flag``, ``composition``, ``q_obs``, ``model_type_description``,
         ``horizon_type``) never leak into the output. ``year``,
-        ``quarter_in_year`` and ``horizon_value`` are int64;
-        ``forecasted_discharge``, ``q`` and the quantile columns are
-        float64; ``code``, ``date``, ``valid_from`` and ``valid_to`` are
-        object (PP-065 G5: ``code`` is cast to object even when the input
-        ``code`` column is numeric or a pandas ``StringDtype``, so the
-        schema never depends on the caller's dtype); every other column
-        is object too -- identically whether the result is empty or not
-        (PP-065 F4). The counts dict is a ``Counter``: a missing key
-        reads as 0.
+        ``quarter_in_year`` and ``horizon_value`` are int64; the value
+        columns are float64; ``code``/``date``/``valid_from``/
+        ``valid_to`` and every other column are object -- identically
+        whether the result is empty or not. The counts dict is a
+        ``Counter``: a missing key reads as 0.
 
-        Exclusion order: a null ``code`` or ``model_short`` is excluded
-        first and counted as ``bad_key`` (PP-065 G4) -- a null group key
-        would otherwise reach the ambiguity check below and crash there
-        (pandas groupby drops null keys by default, so a bool `transform`
-        comes back NaN for that row, and ``~NaN`` raises). Among the
-        remaining rows, out-of-scope rows for this call -- model not in
-        ``models``, a valid ``horizon_value`` outside
+        Counted exclusions: ``bad_key`` (null ``code``/``model_short``),
+        ``bad_horizon_value``, ``bad_date``, ``wrong_issue_day``,
+        ``ambiguous_duplicate`` (a (code, model, ``d``) group that cannot
+        be resolved to exactly one row per lead), ``missing_lead``,
+        ``non_finite_value``. Silently ignored, NEVER counted -- these are
+        out of scope for THIS call, not a data defect: a model not in
+        ``models``, an in-scope ``horizon_value`` outside
         ``{lead, lead+1, lead+2}``, or an issue month that is not a
-        quarter start once offset by ``lead`` -- are dropped SILENTLY,
-        before ``wrong_issue_day`` (the only counted check that could
-        otherwise be confused by them); this is why e.g. a different
-        monthly mode's row (in-model, but the wrong lead for THIS call)
-        is never miscounted as ``wrong_issue_day`` (PP-065 F5).
-        ``bad_horizon_value`` and ``bad_date`` are each counted at the
-        point their own column is validated, necessarily before the scope
-        check that depends on it (hv range needs a valid hv; quarter-start
-        needs a valid date).
+        quarter start once offset by ``lead``.
 
-        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1/K1/L1/M1): a row is an
-        exact duplicate of another only if its identity (code, canonical
-        model, ``d``, hv, ``valid_from``, ``valid_to`` -- windows
-        compared as PARSED local calendar dates where they parse, PP-065
-        H3, not raw strings, so e.g. "2027-01-01" and
-        "2027-01-01T00:00:00+06:00" for the same row are the same
-        window; see ``_window_dedup_key`` for the exact, deliberately
-        SIMPLE and conservative fallback rule when a value does NOT
-        parse, PP-065 J1/K1/L1/M1, classified inside a try/except so THAT
-        HELPER ITSELF can never raise -- in short: any genuinely null
-        scalar (``None``, NaN of any width, ``pd.NA``, ``NaT`` of any
-        flavour) matches another null; an EXACT ``str`` (never a
-        subclass) matches only an identical string; anything else (a
-        list, dict, ndarray, a ``str`` subclass, or any value that raises
-        merely from being classified, e.g. ``Decimal("sNaN")``) gets a
-        key unique to its own row, so it never collapses with anything.
-        This function overall is guaranteed not to raise only for the
-        documented INPUT CONTRACT (``valid_from``/``valid_to`` as ISO
-        date/datetime strings, ``date``/``datetime``/``Timestamp``
-        values, or null; a hashable scalar ``id`` where ``id`` is
-        present, per the API's own contract); an exotic value outside
-        that contract (e.g. ``Decimal("sNaN")``) is still classified
-        safely by ``_window_dedup_key``, but MAY still raise later, in
-        pandas' own internals on some paths (e.g. the per-partition
-        ``pd.concat`` below when ``id`` is present) -- handling by the key
-        helper is not the same guarantee as a crash-free ``derive`` call
-        for arbitrary objects, which is out of scope)
-        AND its point-value inputs (``q`` and ``q50``, NaN-equal) both
-        match -- so a same-window pair with a DIFFERENT value is never
-        silently dropped; it is left for the uniqueness rule, where a
-        missing ``valid_from`` column makes the group unresolvable
-        (ambiguous) and a null ``valid_from`` never matches.
-        The window is ALWAYS part of this identity, whether or not ``id``
-        is present: a non-null ``id`` never merges rows that key + window
-        + value would not -- its only effect is to keep rows APART whose
-        ids differ (two null ids are not evidence of a repeat, so
-        null-``id`` rows fall back to the plain key+value+window rule).
-        A same-``id`` pair with a DIFFERENT value or window is a genuine
-        conflict, not a repeated read, so both rows are kept and reach
-        the uniqueness rule as a group of >= 2 -- deduping on ``id`` alone
-        would keep whichever row sorts first, making the output depend on
-        row order. When two rows are exact duplicates in every respect
-        except the stored ``model_short`` spelling, the lexicographically
-        smallest spelling wins, deterministically, regardless of input
-        row order (PP-065 H4).
+        Exact-duplicate identity (one row dropped as a repeated read of
+        another, checked BEFORE the uniqueness rule above): (code,
+        canonical model, ``d``, hv, ``valid_from``, ``valid_to``, ``q``,
+        ``q50``) all match -- windows compared as PARSED local calendar
+        dates where they parse, and via ``_window_dedup_key``'s
+        conservative fallback otherwise (see its own docstring for the
+        exact per-value rule). ``id``, when present, narrows this
+        further -- it keeps rows apart, never merges rows the key above
+        would not. When two duplicate rows differ only in ``model_short``
+        spelling, the lexicographically smallest spelling wins,
+        deterministically.
     """
     has_q = "q" in monthly_raw.columns
     counts: Counter = Counter()
@@ -1036,10 +1027,9 @@ def derive_quarterly_from_monthly_same_issue(
         log_counts()
         return empty_result(), counts
 
-    # Issue-day check, clamped to the issue month's length (counted).
-    # Vectorized (PP-065 F3): Series.dt.days_in_month replaces a per-row
-    # Python-level clamp_issue_day loop; same clamp rule.
-    df["_expected_day"] = np.minimum(issue_day, df["_d"].dt.days_in_month)
+    # Issue-day check, clamped to the issue month's length (counted), via
+    # the shared vectorized ``clamp_issue_days`` (PP-065 N5).
+    df["_expected_day"] = clamp_issue_days(df["_d"], issue_day)
     wrong_day = df["_d"].dt.day != df["_expected_day"]
     n_wrong_day = int(wrong_day.sum())
     if n_wrong_day:
@@ -1050,15 +1040,26 @@ def derive_quarterly_from_monthly_same_issue(
         return empty_result(), counts
 
     # Point value per row: q if present and finite, else q50. Both coerced
-    # numeric; a row with neither finite becomes NaN (excluded downstream
-    # as non_finite_value).
+    # numeric and cast to plain float64 (N4): `pd.to_numeric` on a nullable
+    # extension column (e.g. pandas "Float64") returns that SAME extension
+    # dtype, so `_point_value` (and the wide frame it is later pivoted
+    # into, see `complete` below) would stay `Float64` too, with `pd.NA`
+    # as its missing marker. `DataFrame.all(axis=1)` (used on
+    # `np.isfinite(complete)` below to require ALL THREE months finite)
+    # defaults to `skipna=True`, which on a `boolean`-dtype (nullable)
+    # column IGNORES a `pd.NA` cell rather than treating it as `False` --
+    # so a triplet with one genuinely-missing month would wrongly pass
+    # the all-finite check and get silently averaged over the other two
+    # months instead of being excluded as `non_finite_value`. Casting to
+    # plain float64 turns that `pd.NA` into `np.nan`, which IS `False`
+    # under `np.isfinite`, closing the gap.
     q_val = (
-        pd.to_numeric(df["q"], errors="coerce")
+        pd.to_numeric(df["q"], errors="coerce").astype("float64")
         if "q" in df.columns
         else pd.Series(np.nan, index=df.index)
     )
     q50_val = (
-        pd.to_numeric(df["q50"], errors="coerce")
+        pd.to_numeric(df["q50"], errors="coerce").astype("float64")
         if "q50" in df.columns
         else pd.Series(np.nan, index=df.index)
     )
@@ -1067,27 +1068,14 @@ def derive_quarterly_from_monthly_same_issue(
     # Exact duplicates (a repeated read, not an ambiguity): drop BEFORE the
     # uniqueness rule. A row is an exact duplicate of another only if its
     # identity key AND its point-value inputs (q, q50; NaN-equal) both
-    # match (PP-065 F1) -- a same-window pair with a DIFFERENT value is
-    # never silently collapsed; it is left for the uniqueness rule, where
-    # a missing valid_from column makes the group unresolvable. Windows
-    # are compared as PARSED local calendar dates where they parse (PP-065
-    # H3), the same rule the amendment applies everywhere else -- not as
-    # raw strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00"
-    # for the same row are the same window and do not block the collapse.
-    # Where a value does NOT parse, `_window_dedup_key` (PP-065 J1/K1/
-    # L1/M1) classifies it -- with the WHOLE classification wrapped so
-    # THAT HELPER ITSELF can never raise -- as: null (any flavour) stays
-    # null; an exact `str` compares as itself, so "garbage" != "xx" but
-    # "garbage" == "garbage"; anything else (unhashable, a `str`
-    # subclass, or any value that raises merely from being classified,
-    # e.g. `Decimal("sNaN")`) gets a key unique to its own row, never
-    # `str()`'d or `hash()`'d. This derive call is only guaranteed not to
-    # raise for the documented INPUT CONTRACT (valid_from/valid_to as ISO
-    # date strings, dates, datetimes or null; a hashable scalar `id`); an
-    # exotic value outside that contract is still classified safely here,
-    # but may still raise later in pandas' own internals on some paths
-    # (e.g. the per-partition pd.concat below when `id` is present) --
-    # that is out of scope, not a gap in this helper.
+    # match -- a same-window pair with a DIFFERENT value is never silently
+    # collapsed; it is left for the uniqueness rule, where a missing
+    # valid_from column makes the group unresolvable. Windows are compared
+    # as PARSED local calendar dates where they parse, and via
+    # `_window_dedup_key`'s conservative fallback otherwise (see its
+    # docstring for the exact rule; see the derive docstring's INPUT
+    # CONTRACT for what "otherwise" covers, and its own docstring for why
+    # this call as a whole is guaranteed crash-free only within it).
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:

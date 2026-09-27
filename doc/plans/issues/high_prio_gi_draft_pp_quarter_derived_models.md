@@ -164,9 +164,13 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      - The **caller** renames `model_type` → `model_short` and normalises `code` as the readers do
        (`src/data_reader.py:1493-1498`). It does not call `_normalize_monthly_forecasts`, which fills a
        null hv with 0 (`:1503`) and parses `valid_from` without `format="mixed"` (`:1488`).
-     - The **helper** parses `date` (and `valid_from`) with `pd.to_datetime(..., format="mixed")`, and
-       matches model names canonically, upper-case (`canonical_model_short_series`,
-       `src/model_names.py`).
+     - The **helper** parses `date` (and `valid_from`) with `pd.to_datetime(..., format="mixed")`
+       **[SUPERSEDED by the amendment below (N7): implemented with `local_calendar_date` instead --
+       `format="mixed"` raises `AttributeError` on a subsequent `.dt` access when a column mixes
+       tz-aware and tz-naive strings across rows, which the amendment's "Date parsing" bullet and
+       `src/aggregation.py:102-201`'s own docstring cover in full; this original bullet is kept for
+       history, not as the current contract]**, and matches model names canonically, upper-case
+       (`canonical_model_short_series`, `src/model_names.py`).
      - The output `model_short` keeps the **stored spelling**, so downstream name handling is unchanged.
    - **Scope:** it derives only (code, model, `d`) whose `d.month + L` (year-aware) is a quarter start
      month (1/4/7/10); other issue dates produce nothing.
@@ -402,9 +406,10 @@ control flow. Your changes must be purely additive or modify only the specific b
 
 **Observation tests:** 2 of 3 months → no quarterly observation; 3 of 3 → one. The existing test edits
 were **exactly** `test_two_months_passes` (renamed `test_three_months_passes`,
-`tests/test_aggregation.py:172`), `test_multiple_stations` (`:240`) and `test_multiple_quarters`
-(`:298`), each of which relied on 2 of 3 months (measured; line numbers as implemented, this branch's
-HEAD). `tests/test_aggregation.py:42-43` (`QUARTER_MIN_MONTHS == 2`) is unchanged.
+`tests/test_aggregation.py:172`), `test_multiple_stations` (`:260`) and `test_multiple_quarters`
+(`:318`), each of which relied on 2 of 3 months (re-measured on this branch's HEAD after the N3
+`test_duplicated_month_is_averaged_not_first_or_max` addition shifted both down from their
+original `:240`/`:298`). `tests/test_aggregation.py:42-43` (`QUARTER_MIN_MONTHS == 2`) is unchanged.
 
 **Mutations to record in the PR:**
 - drop the issue-day check → the wrong-day negative fails;
@@ -448,7 +453,7 @@ longer exists; nothing here depends on it):
   quarter-start check by coincidence and then be wrongly counted as `wrong_issue_day` instead of
   silently ignored. `bad_horizon_value` counts only in-model rows with a non-finite or non-integer
   `horizon_value`; a valid but out-of-range `horizon_value` is silently ignored, never counted
-  (`src/aggregation.py:980-1001` for the reordered hv checks, before the date parse at `:1006`).
+  (`src/aggregation.py:982-1003` for the reordered hv checks, before the date parse at `:1008`).
 - **`horizon_value` rule.** `hv = pd.to_numeric(col, errors="coerce")`; a row is eligible only if `hv`
   is finite and `hv == round(hv)`; cast to `int` only AFTER that filter (real API frames carry `hv` as
   float64 with NaN).
@@ -458,7 +463,7 @@ longer exists; nothing here depends on it):
   `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
   `model_type_description` and `horizon_type` never leak into the output.
 - **Exact-duplicate pre-step and singleton rule (2026-09-27 fix; extended 2026-09-27 after round-2
-  and round-3 review, `src/aggregation.py:1056-1129`).** Before the uniqueness rule, a row is an
+  and round-3 review, `src/aggregation.py:1068-1134`).** Before the uniqueness rule, a row is an
   exact duplicate of another only if its identity (code, canonical model, `d`, hv, `valid_from`,
   `valid_to`) AND its point-value inputs (`q` and `q50`, NaN-equal) BOTH match -- a same-window pair
   with a DIFFERENT value is never silently collapsed by whichever row happens to sort first; it is
@@ -521,10 +526,10 @@ longer exists; nothing here depends on it):
     raise only when its inputs meet this contract: an out-of-contract window value, e.g.
     `Decimal("sNaN")`, is still classified safely by `_window_dedup_key` and does not corrupt the
     result, but MAY still raise later, in pandas' own internals on some paths (e.g. the
-    per-partition `pd.concat` in the `id`-present branch, `src/aggregation.py:1143`) -- that
+    per-partition `pd.concat` in the `id`-present branch, `src/aggregation.py:1131`) -- that
     downstream risk is out of scope, not a gap in `_window_dedup_key` (M1-M3 follow-up below).
   - **Where a window value does NOT parse, the fallback rule is the FINAL, SIMPLE and conservative
-    one in `_window_dedup_key`** (the shared helper, `src/aggregation.py:680-754`; findings J1, K1,
+    one in `_window_dedup_key`** (the shared helper, `src/aggregation.py:702-776`; findings J1, K1,
     L1, M1), applied per value in this exact order, with the WHOLE classification wrapped in one
     `try`/`except Exception` so that NO step -- including the null check itself -- can ever raise
     out of `_window_dedup_key` ITSELF (M1; a guarantee about this helper, not about
@@ -564,14 +569,14 @@ longer exists; nothing here depends on it):
   - A singleton at (code, canonical model, `d`, hv) is used whatever its `valid_from`, including
     missing/NaT.
 - **`bad_key` (2026-09-27, round-2 finding G4).** A null `code` or `model_short` is excluded and
-  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:956-970`, the first
+  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:958-972`, the first
   per-row filter in the function, before even the model-scope check). Pandas `groupby` drops a null
   group key by default, so a null-`code` row's boolean `.transform()` result came back as `NaN`
   instead of `True`/`False`, and `~NaN` raised `TypeError` at the ambiguity check further down --
   this made the ENTIRE call crash, not merely mis-handle the one bad row.
 - **`code` (and date/window) output dtype (2026-09-27, round-2 finding G5).** The non-empty result's
   `code`, `date`, `valid_from` and `valid_to` columns are explicitly cast to `object`
-  (`src/aggregation.py:903-918`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
+  (`src/aggregation.py:905-920`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
   regardless of the input `code` column's own dtype (numeric, pandas `StringDtype`, etc.) -- the
   original version left `code` at whatever dtype it inherited from the input, so the empty and
   non-empty schemas could disagree.
@@ -584,8 +589,12 @@ longer exists; nothing here depends on it):
   under both flag states (verified by a parametrized test).
 - **Clamp helper.** `clamp_issue_day(year, month, issue_day)` = `min(issue_day,
   calendar.monthrange(year, month)[1])`, the same rule as the producer
-  (`apps/long_term_forecasting/lt_utils.py:170-172`) and PP-064's `data_reader.py:3097-3101`. P1b
-  reuses this helper for the native-row rule.
+  (`apps/long_term_forecasting/lt_utils.py:170-172`) and PP-064's `data_reader.py:3097-3101`.
+  **PP-065 N5:** a public vectorized twin, `clamp_issue_days(dates, issue_day)` (same rule via
+  `Series.dt.days_in_month`, `src/aggregation.py:646-665`), replaced `derive`'s own inline
+  `np.minimum(issue_day, df["_d"].dt.days_in_month)` call and is unit-tested against the scalar
+  helper across mixed month lengths (leap/non-leap Feb, a 30-day month, `NaT`). P1b's native-row
+  rule reuses THIS vectorized helper, not the scalar one, for its own per-row clamp.
 - **Distinct-month observation counting.** `aggregate_monthly_obs_to_quarterly` first averages per
   (code, year, quarter, month) skipping NaN, then aggregates those monthly means to the quarter
   (unweighted mean); `n_months` counts DISTINCT months with a non-null monthly mean, not non-null
@@ -601,21 +610,25 @@ longer exists; nothing here depends on it):
   typed direct-read frame could silently upcast `year` away from int64 (and, once pandas removes the
   deprecated empty/all-NA exclusion it currently warns about, change the concatenated dtype outright).
 - **Updated line citations** (this branch's HEAD, re-verified 2026-09-27 after round-3 review (H1-H5),
-  the J1-J3 follow-up, the K1-K2/L1-L2 follow-up, AND the M1-M3 follow-up (below) -- re-verify again
-  after any further edit to `src/aggregation.py`, since these drift with every change above them in
-  the file): `local_calendar_date` is at `:102-201`; the observation coverage filter is at
-  `src/aggregation.py:397`; the delta computation is at `:403-409`; `QUARTER_MIN_MONTHS` is defined
-  at `:284` and remains used only by `aggregate_monthly_fc_to_quarterly` (forecast aggregation,
-  unchanged by this phase); the shared `_window_dedup_key` helper (the SIMPLE, conservative,
-  exception-safe-by-construction unparseable-value fallback, finding M1) is at `:680-754`; the
-  `typed()` function (object-dtype cast included) is at `:903-918`; `bad_key` is at `:956-970` (its
+  the J1-J3 follow-up, the K1-K2/L1-L2 follow-up, the M1-M3 follow-up, AND the N1-N7 follow-up (below)
+  -- re-verify again after any further edit to `src/aggregation.py`, since these drift with every
+  change above them in the file): `local_calendar_date` is at `:102-201`; the observation coverage
+  filter is at `src/aggregation.py:397`; the delta computation is at `:403-409`; `QUARTER_MIN_MONTHS`
+  is defined at `:284` and remains used only by `aggregate_monthly_fc_to_quarterly` (forecast
+  aggregation, unchanged by this phase); `clamp_issue_days` (PP-065 N5's public vectorized clamp) is
+  at `:646-665`; the shared `_window_dedup_key` helper (the SIMPLE, conservative,
+  exception-safe-by-construction unparseable-value fallback, finding M1) is at `:702-776`; the
+  `typed()` function (object-dtype cast included) is at `:905-920`; `bad_key` is at `:958-972` (its
   own early return, one line after `log_counts()`, not on the same line as the filter itself); the
-  derivation helper's hv-check reorder is at `:980-1001`; the date parse itself is the single line
-  at `:1006`; the exact-duplicate pre-step (window-parsing via `_window_dedup_key` for BOTH
+  derivation helper's hv-check reorder is at `:982-1003`; the date parse itself is the single line
+  at `:1008`; the exact-duplicate pre-step (window-parsing via `_window_dedup_key` for BOTH
   `valid_from` and `valid_to`, the spelling-tiebreak sort, and the value- and natural-key-scoped
-  `id` dedup, across all three partitions) is at `:1056-1129`; the vectorized
-  uniqueness/triplet-assembly rewrite (see "Performance" below) spans `:1150-1266` (the end of the
-  file).
+  `id` dedup, across all three partitions) is at `:1068-1134` (the `id`-present branch's own
+  `pd.concat` is at `:1131`); the vectorized uniqueness/triplet-assembly rewrite (see "Performance"
+  below) spans `:1136-1271` (the end of the file). Every one of these moved from the M1-M3 HEAD
+  (`edbabca4`): the N5 `clamp_issue_days` addition pushed everything after it down, and the N6
+  derive docstring/comment trim then pulled everything after THAT back up -- each citation above was
+  re-measured directly on this round's HEAD, not computed from the net of the two.
 - **Performance (2026-09-27, PP-065 F3).** The original P1a implementation grouped rows with Python
   `for key, group in df.groupby(...)` loops for both the uniqueness rule and the final triplet
   assembly -- correct, but O(rows) in Python, measured at 8.5-38s for a ~200k-row synthetic monthly
@@ -631,9 +644,12 @@ longer exists; nothing here depends on it):
   byte-identical output to the pre-vectorization commit in all 8 runs, 4-13x faster, counts changing
   only by the intended out-of-scope-row exclusion (F5's month_0-style fix).
 
-  A frozen, deliberately non-vectorized reference copy of the pre-rewrite logic (`_reference_derive`
-  in `tests/test_quarter_derived_models.py`) is checked against the production function by a
-  randomized differential test (300 generated frames, fixed seed). The generator draws 1-3 fake
+  A same-author, deliberately non-vectorized reference copy of the pre-rewrite logic
+  (`_reference_derive` in `tests/test_quarter_derived_models.py`) is checked against the production
+  function by a randomized differential test (300 generated frames, fixed seed). This is an
+  equivalence check for the vectorization, NOT an independent oracle -- both sides were written by
+  the same author from the same spec understanding, so agreement proves the rewrite didn't change
+  behaviour, not that either implementation is correct. The generator draws 1-3 fake
   station codes (19999/19998/19997, so `code` is exercised in the grouping key -- round-2 finding
   G2), leads 0-11 (not just 0-2), issue days including 29/30/31 so the day-of-month clamp is
   exercised end to end in Feb and 30-day months, multiple models, wrong days, exact and ambiguous
@@ -645,9 +661,12 @@ longer exists; nothing here depends on it):
   testing missed: `id`-based dedup was scoped by `id` alone, so an (unrealistic but not impossible)
   `id` collision across two UNRELATED triplets could merge them; the fix scopes it by the natural key
   too. A small set of hand-computed expected results (the Dec-Jan rollover at leads 0/1/2/11, the Feb
-  29 and June 30 clamps, a same-`id` conflict, and a single-match-in-a-group win), computed directly
-  from the spec rather than via either implementation, lives in
-  `TestHandComputedSpecDerivedResults` in the same test file. Keep the reference frozen -- fix
+  29 and June 30 clamps, a same-`id` conflict, a single-match-in-a-group win, and -- PP-065 N2 -- two
+  NON-progression-value cases, since every one of the others uses an arithmetic progression where
+  mean, median and the positional middle column all coincide), computed directly from the spec
+  rather than via either implementation, lives in `TestHandComputedSpecDerivedResults` in the same
+  test file. THIS is the actual spec oracle, independent of both implementations -- the differential
+  test above is not. Keep `_reference_derive` UNEDITED except in lockstep with production -- fix
   production, the reference and the differential test together when they are found to disagree,
   never edit the reference alone to match a production change.
 
@@ -756,6 +775,19 @@ longer exists; nothing here depends on it):
   native Q1 LR rows on the 25 Dec issue date, which is expected while LTF-014 P0 is deferred (decision
   2's forecast_months restriction) -- this is exactly the gap the LR fallback (decision 2) exists to
   cover.
+- **Rollout note (N7): the 3-of-3 observation rule is the ONLY part of P1a that takes effect at
+  merge**, not gated behind P2's writer changes -- everything else in P1a (the derivation helper,
+  the exact-duplicate/uniqueness rules, the vectorization) is a pure function nothing calls yet.
+  `aggregate_monthly_obs_to_quarterly`'s `QUARTER_OBS_MIN_MONTHS = 3` threshold IS live on merge,
+  reached via `recalculate_skill_metrics.py:385` -> `data_reader.read_quarterly_observations`
+  (`:2976`) -> `aggregate_monthly_obs_to_quarterly`. **Therefore: do NOT run a quarter skill recalc on
+  any server between deploying P1a and P2's writer-paused export window** -- P2's export of the
+  current (pre-P1a) quarterly observation rows must precede any P1a-affected recalc, or the recalc
+  will silently apply the new coverage rule (and the N3 averaging fix) to a comparison baseline P2
+  never captured. Separately, "3 of 3 months" is NOT "a fully observed quarter": a month itself
+  counts as observed at >= 50% of its days (`data_reader.py` ~:1302, `monthly[monthly["non_missing_
+  days"] >= monthly["days_in_month"] * 0.5]`), so a quarter that passes the 3-of-3 threshold can still
+  be built from three half-empty months.
 
 ### P1b — readers, native-row selection, maintenance, writer
 
