@@ -62,17 +62,48 @@ def _format_forecast_info(issue_date, horizon_label: str, lead: int | None = Non
     )
 
 
-def _format_quarterly_forecast_info(_, site, issue_date) -> str:
+def _format_quarterly_forecast_info(
+    _, site, issue_date, *, valid_from=None, valid_to=None, quarter_issue_date=None,
+) -> str:
     """Build the info text for the quarterly forecast card.
 
     Args:
         _: Gettext translation callable.
         site: SapphireSite object with quarterly_valid_from / quarterly_valid_to.
-        issue_date: The forecast issue date (datetime-like).
+            Only consulted when `valid_from`/`valid_to` are not given (see
+            below) — kept for backward compatibility.
+        issue_date: The forecast issue date (datetime-like). Only consulted
+            when `valid_from`/`valid_to` are not given.
+        valid_from: FD-029 P1 item 9 — the selected target quarter's start,
+            taken from the selected forecast rows. When given (together
+            with `valid_to`), the period is read from it instead of
+            `site.quarterly_valid_from/to`, which can be stale (belong to a
+            different quarter than the one actually shown).
+        valid_to: The selected target quarter's end. See `valid_from`.
+        quarter_issue_date: The schedule-computed issue date of the
+            selected target quarter (FD-029 P1 item 4), read from the
+            selected rows. When given (together with `valid_from`/
+            `valid_to`), it is shown as the issue date instead of
+            `issue_date`/lead arithmetic. Not given (None/NaT), with
+            `valid_from`/`valid_to` given, means "degraded" (item 3): the
+            period is known but the issue date is not.
 
     Returns:
         Translated info string describing the quarterly period and issue date.
     """
+    if valid_from is not None and valid_to is not None:
+        period = f"{valid_from.strftime('%b %Y')} – {valid_to.strftime('%b %Y')}"
+        if quarter_issue_date is not None and quarter_issue_date == quarter_issue_date:
+            issue_month = month_name[quarter_issue_date.month]
+            day = _ordinal(quarter_issue_date.day)
+            date_str = f"{day} of {issue_month} {quarter_issue_date.year}"
+        else:
+            date_str = _("issue date not available")
+        return (
+            _("Quarterly runoff forecast for") + f" {period}.  \n"
+            + _("Forecast issue date:") + f" {date_str}."
+        )
+
     vf = getattr(site, "quarterly_valid_from", None)
     vt = getattr(site, "quarterly_valid_to", None)
     if vf is not None and vt is not None:
@@ -404,26 +435,113 @@ class PlotManager:
             card.visible = False
             return
 
-        # All conditions met: populate the table and show the card
-        m0_max_date = filtered["date"].max() if "date" in filtered.columns else None
-        if m0_max_date is not None and hasattr(m0_max_date, "date"):
-            m0_max_date = m0_max_date.date()
+        # FD-029 P1 item 6: select ALL models' rows for the station's
+        # latest eligible target quarter (max valid_from) — not the latest
+        # issue date. get_long_forecasts_quarter already dropped ineligible
+        # rows, so the remaining rows' max valid_from IS the latest eligible
+        # target quarter. Under mixed native/rewrite/derived dating, "latest
+        # date" alone can pick a different quarter per model and hide some
+        # of them from the card (Problem 3).
+        #
+        # V1/Y2: compute that selection only over rows the RENDERER would
+        # actually display. Names the three renderer filters it mirrors
+        # (create_forecast_summary_table, src/vizualization.py):
+        #   - model_short in model_checkbox.options (via
+        #     `model_selection.options.values()`);
+        #   - a non-null forecasted_discharge (the renderer's own
+        #     null-discharge drop);
+        #   - a non-null date (Y2: the renderer's `date <= date_picker +
+        #     1 day` comparison is always False against a NaT `date`, so
+        #     it drops those rows too — a single in-options row with a
+        #     NaT `date` would otherwise pass this selection but render
+        #     an empty table).
+        # Selecting over every row, including ones the renderer would
+        # drop anyway, can pick a quarter whose displayable rows are ALL
+        # filtered out downstream — an empty table with a caption for
+        # that quarter, where trunk fell back to older displayable rows.
+        displayable_models = set(self._wm.model_checkbox.options.values())
+        if "model_short" in filtered.columns and "forecasted_discharge" in filtered.columns:
+            displayable = filtered[
+                filtered["model_short"].isin(displayable_models)
+                & filtered["forecasted_discharge"].notna()
+            ]
+            if "date" in filtered.columns:
+                displayable = displayable[displayable["date"].notna()]
+        else:
+            displayable = filtered.iloc[0:0]
+        if displayable.empty:
+            card.visible = False
+            return
+
+        if "valid_from" in displayable.columns and displayable["valid_from"].notna().any():
+            selected = filtered[filtered["valid_from"] == displayable["valid_from"].max()].copy()
+        else:
+            selected = displayable.copy()
+        if selected.empty:
+            card.visible = False
+            return
+
+        # FD-029 P1 item 7: fill delta-based bounds for rows without native
+        # quantiles (the derived models, and ensembles with a derived
+        # member) — same arithmetic as processing.calculate_forecast_range's
+        # delta branch, applied here since the quarter/month renderer
+        # branch reads Q25/Q75 directly instead of routing through it. Rows
+        # with native Q25/Q75, or with no delta, are left untouched (empty
+        # bounds when delta is unavailable).
+        if "delta" in selected.columns and "forecasted_discharge" in selected.columns:
+            if "Q25" in selected.columns:
+                need_lower = selected["Q25"].isna() & selected["delta"].notna()
+                selected.loc[need_lower, "Q25"] = (
+                    selected.loc[need_lower, "forecasted_discharge"]
+                    - selected.loc[need_lower, "delta"]
+                )
+            if "Q75" in selected.columns:
+                need_upper = selected["Q75"].isna() & selected["delta"].notna()
+                selected.loc[need_upper, "Q75"] = (
+                    selected.loc[need_upper, "forecasted_discharge"]
+                    + selected.loc[need_upper, "delta"]
+                )
+
+        # All conditions met: populate the table and show the card. Pass
+        # max(date) OF THE SELECTED ROWS as date_picker, and skip the
+        # renderer's own max-date reduction (filter_by_date=False) so every
+        # selected model's row survives regardless of its own issue date.
+        selected_date = selected["date"].max() if "date" in selected.columns else None
+        date_for_picker = selected_date
+        if date_for_picker is not None and hasattr(date_for_picker, "date"):
+            date_for_picker = date_for_picker.date()
 
         self._cfg.viz.create_forecast_summary_tabulator(
             self._,
             self._wm,
-            filtered,
+            selected,
             self._wm.station_selector,
-            m0_max_date if m0_max_date is not None else self._wm.date_picker.value,
+            date_for_picker if date_for_picker is not None else self._wm.date_picker.value,
             self._wm.model_checkbox,
             self._wm.range_selector,
             self._wm.range_slider,
             self._wm.forecast_tabulator_q,
+            filter_by_date=False,
         )
 
-        # Update info text
+        # FD-029 P1 item 9: the caption is built from the SELECTED rows'
+        # valid_from/valid_to/quarter_issue_date — never from (possibly
+        # stale) site attributes, never from lead arithmetic.
+        selected_valid_from = (
+            selected["valid_from"].iloc[0] if "valid_from" in selected.columns else None
+        )
+        selected_valid_to = (
+            selected["valid_to"].iloc[0] if "valid_to" in selected.columns else None
+        )
+        selected_issue_date = (
+            selected["quarter_issue_date"].iloc[0]
+            if "quarter_issue_date" in selected.columns else None
+        )
         self._wm.forecast_info_q.object = _format_quarterly_forecast_info(
-            self._, site, m0_max_date
+            self._, site, date_for_picker,
+            valid_from=selected_valid_from,
+            valid_to=selected_valid_to,
+            quarter_issue_date=selected_issue_date,
         )
         card.visible = True
 
