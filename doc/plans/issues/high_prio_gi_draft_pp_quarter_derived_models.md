@@ -453,7 +453,7 @@ longer exists; nothing here depends on it):
   quarter-start check by coincidence and then be wrongly counted as `wrong_issue_day` instead of
   silently ignored. `bad_horizon_value` counts only in-model rows with a non-finite or non-integer
   `horizon_value`; a valid but out-of-range `horizon_value` is silently ignored, never counted
-  (`src/aggregation.py:982-1003` for the reordered hv checks, before the date parse at `:1008`).
+  (`src/aggregation.py:996-1017` for the reordered hv checks, before the date parse at `:1022`).
 - **`horizon_value` rule.** `hv = pd.to_numeric(col, errors="coerce")`; a row is eligible only if `hv`
   is finite and `hv == round(hv)`; cast to `int` only AFTER that filter (real API frames carry `hv` as
   float64 with NaN).
@@ -463,7 +463,7 @@ longer exists; nothing here depends on it):
   `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
   `model_type_description` and `horizon_type` never leak into the output.
 - **Exact-duplicate pre-step and singleton rule (2026-09-27 fix; extended 2026-09-27 after round-2
-  and round-3 review, `src/aggregation.py:1068-1134`).** Before the uniqueness rule, a row is an
+  and round-3 review, `src/aggregation.py:1082-1150`).** Before the uniqueness rule, a row is an
   exact duplicate of another only if its identity (code, canonical model, `d`, hv, `valid_from`,
   `valid_to`) AND its point-value inputs (`q` and `q50`, NaN-equal) BOTH match -- a same-window pair
   with a DIFFERENT value is never silently collapsed by whichever row happens to sort first; it is
@@ -628,7 +628,7 @@ longer exists; nothing here depends on it):
   unparseable-value fallback, finding M1) is at `:709-783`; the `typed()` function (object-dtype
   cast included) is at `:919-934`; `bad_key` is at `:972-986` (its own early return, one line after
   `log_counts()`, not on the same line as the filter itself); the derivation helper's hv-check
-  reorder is at `:996-1009`; the date parse itself is the single line at `:1022`; the
+  reorder is at `:996-1017`; the date parse itself is the single line at `:1022`; the
   exact-duplicate pre-step (window-parsing via `_window_dedup_key` for BOTH `valid_from` and
   `valid_to`, the spelling-tiebreak sort, and the value- and natural-key-scoped `id` dedup, across
   all three partitions) is at `:1082-1150` (the `id`-present branch's own `pd.concat` is at
