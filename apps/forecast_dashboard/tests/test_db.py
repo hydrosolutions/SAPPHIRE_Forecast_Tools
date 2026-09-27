@@ -1060,7 +1060,12 @@ class TestGetDataMonthly:
         hv-0 is deliberately NOT first in the API response list: a dedup
         safety net that merely kept the first row of a fan-out would land
         on hv-1's delta by luck if hv-0 happened to sort first, masking a
-        missing/broken hv-0 filter."""
+        missing/broken hv-0 filter.
+
+        Also Z1 test (b): hv-0 is present alongside hv-1 (the configured
+        lead) -- hv-0 must win, the fallback must never override a live
+        hv-0 row."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
         monthly_forecast = self._monthly_forecast_19999()
         monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
         quarter_skills = [
@@ -1094,14 +1099,20 @@ class TestGetDataMonthly:
         )
         assert quarter_rows["delta"].iloc[0] == 4.0
 
-    def test_monthly_quarter_frame_no_hv0_skill_row_keeps_forecast_with_nan(
+    def test_monthly_quarter_frame_uses_configured_lead_fallback_when_no_hv0(
         self, monkeypatch
     ):
-        """Flag OFF, LR_SM has quarter skill rows only at stale hv-1/hv-3
-        leads (no hv-0 row) -- e.g. left over from a period the flag was
-        ON. Its forecast row must stay present exactly once, with NaN
-        skill, not duplicated and not dropped. LR_Base (which does have an
-        hv-0 row) is included alongside to prove the merge still runs."""
+        """Z1 test (a) + (d): LR_SM has quarter skill rows only at hv-1
+        (the configured quarter lead -- see the `_long_term_resolver_env`
+        autouse fixture, "quarter": 1) and hv-3 (no hv-0 row) -- e.g. a DB
+        whose last quarter recalc ran SAPPHIRE_SKILL_LEAD_AWARE ON, which
+        tombstones the legacy hv-0 rows. Its forecast row must be kept
+        exactly once, carrying the hv-1 (configured-lead) skill, not
+        dropped and not duplicated across hv-1/hv-3. LR_Base (which does
+        have a live hv-0 row) is included alongside to prove hv-0 still
+        wins for a key that has one (Z1 test (b), also covered by the
+        sibling test above). One INFO line must log the fallback count."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
         monthly_forecast = self._monthly_forecast_19999()
         monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
         quarter_forecasts = [
@@ -1135,6 +1146,19 @@ class TestGetDataMonthly:
         monkeypatch.setattr(requests, "get", mock_get)
         self._patch_processing(monkeypatch)
 
+        # dashboard.logger.setup_logger() returns a `propagate=False` logger
+        # (a singleton shared across this module), so pytest's `caplog`
+        # (which taps the root logger) never sees its records. Capture
+        # directly on the logger instead.
+        info_messages = []
+        _real_info = db.logger.info
+
+        def _capture_info(msg, *args, **kwargs):
+            info_messages.append(msg % args if args else msg)
+            return _real_info(msg, *args, **kwargs)
+
+        monkeypatch.setattr(db.logger, "info", _capture_info)
+
         data = db.get_data("month", "19999", self._all_stations_19999_df())
 
         quarter = data["long_forecasts_quarter"]
@@ -1143,10 +1167,152 @@ class TestGetDataMonthly:
         assert len(base_rows) == 1
         assert base_rows["delta"].iloc[0] == 4.0
         assert len(sm_rows) == 1, (
-            f"Expected LR_SM's forecast row kept exactly once (no hv-0 skill "
-            f"row to match it), got {len(sm_rows)}: {sm_rows.to_dict('records')!r}"
+            f"Expected LR_SM's forecast row kept exactly once (fallback to "
+            f"the configured lead, not one row per stored lead), got "
+            f"{len(sm_rows)}: {sm_rows.to_dict('records')!r}"
         )
-        assert pd.isna(sm_rows["delta"].iloc[0])
+        assert sm_rows["delta"].iloc[0] == 88.0, (
+            "Expected the hv-1 (configured-lead) skill, not hv-3's"
+        )
+        fallback_logs = [m for m in info_messages if "fallback" in m]
+        assert len(fallback_logs) == 1, (
+            f"Expected exactly one INFO line logging the fallback count, "
+            f"got {len(fallback_logs)}: {fallback_logs!r}"
+        )
+        assert "1" in fallback_logs[0]
+
+    def test_monthly_quarter_frame_no_skill_when_no_hv0_and_no_lead_match(
+        self, monkeypatch
+    ):
+        """Z1 test (c): a key with only an hv-3 skill row -- no hv-0 and no
+        row at the configured quarter lead (1) -- must not be picked up by
+        the fallback either. The forecast row stays present exactly once,
+        with no skill columns populated (same as "no skill data at all")."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
+        quarter_skill = {
+            **_skill_metric_record_with_lead(2, "LR_Base", 3, delta=400.0),
+            "horizon_type": "quarter",
+        }
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([_QUARTER_FORECAST_RECORD_19999])
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response([quarter_skill])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        quarter = data["long_forecasts_quarter"]
+        quarter_rows = quarter[quarter["model_short"] == "LR_Base"]
+        assert len(quarter_rows) == 1, (
+            f"Expected the forecast row kept exactly once with no skill "
+            f"match, got {len(quarter_rows)}: {quarter_rows.to_dict('records')!r}"
+        )
+        assert quarter_rows["forecasted_discharge"].iloc[0] == 200.0
+        if "delta" in quarter.columns:
+            assert pd.isna(quarter_rows["delta"].iloc[0])
+
+    def test_monthly_quarter_frame_stats_side_dedup_preserves_both_forecast_years(
+        self, monkeypatch
+    ):
+        """Z2: quarter_merge_keys has no "year", so two forecast rows for
+        the same quarter NUMBER in different years (Q4-2025 and Q4-2026)
+        share one merge key. A duplicate skill row for that same key (both
+        forced onto live hv-0, simulating a data-integrity duplicate that
+        Z1's category selection alone does not dedup) must be resolved on
+        the SKILL side before the merge -- not by deduping the merged
+        output afterward, which cannot tell the two forecast years apart
+        and would silently drop one of them (the bug in the first version
+        of this fix). Both forecast rows must survive, each with exactly
+        one (the same, deduped) skill match."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+        forecast_2025 = {
+            **_QUARTER_FORECAST_RECORD_19999,
+            "id": 60,
+            "date": "2025-09-22",
+            "valid_from": "2025-10-01",
+            "valid_to": "2025-12-31",
+            "q": 111.0,
+        }
+        forecast_2026 = {
+            **_QUARTER_FORECAST_RECORD_19999,
+            "id": 61,
+            "date": "2026-09-20",
+            "valid_from": "2026-10-01",
+            "valid_to": "2026-12-31",
+            "q": 222.0,
+        }
+        duplicate_stats = pd.DataFrame(
+            [
+                {
+                    "code": "19999",
+                    "quarter_in_year": 4,
+                    "model_short": "LR_Base",
+                    "model_long": "LR_Base",
+                    "horizon_value": 0,
+                    "sdivsigma": 0.5,
+                    "nse": 0.8,
+                    "delta": 5.0,
+                    "accuracy": 90.0,
+                    "mae": 1.0,
+                },
+                {
+                    "code": "19999",
+                    "quarter_in_year": 4,
+                    "model_short": "LR_Base",
+                    "model_long": "LR_Base",
+                    "horizon_value": 0,
+                    "sdivsigma": 0.7,
+                    "nse": 0.8,
+                    "delta": 9.0,
+                    "accuracy": 92.0,
+                    "mae": 1.2,
+                },
+            ]
+        )
+
+        def fake_get_forecast_stats(horizon, station):
+            if horizon == "quarter":
+                return duplicate_stats.copy()
+            return pd.DataFrame()
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([forecast_2025, forecast_2026])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        monkeypatch.setattr(db, "get_forecast_stats", fake_get_forecast_stats)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        quarter = data["long_forecasts_quarter"]
+        base_rows = quarter[quarter["model_short"] == "LR_Base"]
+        assert len(base_rows) == 2, (
+            f"Expected BOTH forecast years to survive, got {len(base_rows)}: "
+            f"{base_rows.to_dict('records')!r}"
+        )
+        assert set(base_rows["forecasted_discharge"]) == {111.0, 222.0}
+        # Both years share the one (post-dedup) skill row -- the "last"
+        # surviving duplicate, delta=9.0 -- and each has exactly one match
+        # (no NaN, no fan-out).
+        assert (base_rows["delta"] == 9.0).all(), (
+            f"Expected both years to carry the single deduped skill row's "
+            f"delta (9.0), got {base_rows['delta'].tolist()!r}"
+        )
 
     def test_monthly_quarter_frame_multi_lead_skill_matches_own_lead_when_flag_on(
         self, monkeypatch

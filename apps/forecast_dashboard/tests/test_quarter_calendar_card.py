@@ -696,6 +696,7 @@ class TestCardQuarterMultiLeadSkillFlagOff:
         monkeypatch.setenv(
             "ieasyhydroforecast_ml_long_term_supported_modes", "quarter"
         )
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
         all_stations = pd.DataFrame(
             {"code": [STATION_CODE], "station_labels": ["Test River"]}
         )

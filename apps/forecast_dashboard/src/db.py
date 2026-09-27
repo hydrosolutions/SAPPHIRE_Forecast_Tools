@@ -1380,23 +1380,99 @@ def _get_data_monthly(
             and not quarter_forecast_stats.empty
             and "horizon_value" in quarter_forecast_stats.columns
         ):
-            # FD-029 follow-up: flag OFF, the quarter skill writer stores
-            # every row at the hv-0 sentinel (api_writer._write_skill_metrics_to_api
-            # defaults horizon_value to 0 whenever the skill frame it is given
-            # carries no per-lead column -- which is what
-            # skill_metrics._calculate_aggregated_skill_metrics produces for
-            # quarter when SAPPHIRE_SKILL_LEAD_AWARE is off, since its
-            # metric_group_cols then omits horizon_value entirely). A DB that
-            # has ever run with the flag ON also holds quarter skill rows at
-            # real leads (1, 2, 3) for the same (code, quarter, model).
-            # quarter_merge_keys does not include horizon_value in this
-            # branch, so without restricting to the sentinel first, the
-            # merge below fans one forecast row out into one card row per
-            # stored lead. Filtering to hv-0 keeps it one-to-one, mirroring
-            # month's operational-lead filter above.
-            quarter_forecast_stats = quarter_forecast_stats[
+            # FD-029 follow-up (Z1): flag OFF, prefer the hv-0 sentinel row
+            # per (code, quarter, model) key -- that is what the flag-OFF
+            # skill writer stores (api_writer._write_skill_metrics_to_api
+            # defaults horizon_value to 0 whenever the skill frame it is
+            # given carries no per-lead column, which is what
+            # skill_metrics._calculate_aggregated_skill_metrics produces
+            # for quarter when the flag is off). But a flag-ON quarter
+            # recalculation TOMBSTONES the legacy hv-0 rows
+            # (postprocessing's stale_tombstones.py), and get_forecast_stats
+            # drops tombstones (_drop_tombstone_rows) before this point --
+            # so on a DB whose last quarter recalc ran with the flag ON, a
+            # key can have no LIVE hv-0 row at all. Fall back to the skill
+            # row at the deployment's CONFIGURED quarter lead -- the same
+            # lead get_long_forecasts_quarter (above) fetched the displayed
+            # forecast at -- so the card still shows skill that matches
+            # what is actually on screen. Resolved once here (not re-read
+            # per row) and reused for both the selection and the log below.
+            # quarter_merge_keys never includes "year" in this branch (see
+            # the Z2 note further down), so this selection is keyed on
+            # (code, quarter, model) only, matching the merge itself.
+            try:
+                _configured_quarter_lead = _resolve_quarter_horizon_value(None)
+            except (LongTermHorizonResolverError, FileNotFoundError):
+                # FD-031: a missing/unresolvable quarter config already
+                # makes get_long_forecasts_quarter (above) run degraded.
+                # Mirror that here rather than raising a NEW crash path
+                # from a dashboard read: the fallback is simply
+                # unavailable, hv-0 only.
+                _configured_quarter_lead = None
+
+            _quarter_hv0_rows = quarter_forecast_stats[
                 quarter_forecast_stats["horizon_value"] == 0
-            ].copy()
+            ]
+            if _configured_quarter_lead is not None:
+                _quarter_fallback_rows = quarter_forecast_stats[
+                    quarter_forecast_stats["horizon_value"] == _configured_quarter_lead
+                ]
+                if not _quarter_hv0_rows.empty:
+                    # Never use the fallback for a key that already has a
+                    # live hv-0 row -- hv-0 always wins.
+                    _hv0_keys = _quarter_hv0_rows[quarter_merge_keys].drop_duplicates()
+                    _hv0_keys["_has_hv0"] = True
+                    _quarter_fallback_rows = _quarter_fallback_rows.merge(
+                        _hv0_keys, on=quarter_merge_keys, how="left"
+                    )
+                    _quarter_fallback_rows = _quarter_fallback_rows[
+                        _quarter_fallback_rows["_has_hv0"].isna()
+                    ].drop(columns=["_has_hv0"])
+            else:
+                _quarter_fallback_rows = quarter_forecast_stats.iloc[0:0]
+
+            if len(_quarter_fallback_rows):
+                logger.info(
+                    "_get_data_monthly: %d quarter skill key(s) for station %s had no "
+                    "live hv-0 row; used the configured-lead (%s) fallback",
+                    len(_quarter_fallback_rows),
+                    station,
+                    _configured_quarter_lead,
+                )
+            quarter_forecast_stats = pd.concat(
+                [_quarter_hv0_rows, _quarter_fallback_rows], ignore_index=True
+            )
+
+            # Z2: the hv-0/fallback selection above picks a CATEGORY of row
+            # per key, not necessarily a single row -- a data-integrity
+            # duplicate (e.g. two live hv-0 rows for the same key) would
+            # still survive it. Enforce uniqueness on the skill SIDE here,
+            # before the merge, rather than deduping the merged output
+            # afterward: quarter_merge_keys has no "year", so a post-merge
+            # dedup on it cannot tell apart two forecast rows for the same
+            # quarter NUMBER in different years -- it would keep one and
+            # silently drop the other (the bug in the previous version of
+            # this fix). Deduping the skill side first means the merge
+            # itself never fans out or drops a forecast row: each forecast
+            # row matches at most one skill row.
+            # get_forecast_stats sorts ascending by `date` before its own
+            # (date/id-dropping) dedup, so a surviving row's position in
+            # this frame already approximates recency; there is no
+            # `date`/`id` column left here to key off directly, so keep
+            # the LAST row per key.
+            _quarter_dup_mask = quarter_forecast_stats.duplicated(
+                subset=quarter_merge_keys, keep="last"
+            )
+            _quarter_dup_count = int(_quarter_dup_mask.sum())
+            if _quarter_dup_count:
+                quarter_forecast_stats = quarter_forecast_stats[~_quarter_dup_mask].copy()
+                logger.warning(
+                    "_get_data_monthly: %d duplicate quarter skill row(s) for station %s "
+                    "shared a (code, quarter, model) key after hv-0/fallback selection; "
+                    "kept the last row per key",
+                    _quarter_dup_count,
+                    station,
+                )
         can_merge_quarter = (
             not long_forecasts_quarter.empty
             and not quarter_forecast_stats.empty
@@ -1404,31 +1480,12 @@ def _get_data_monthly(
             and all(k in quarter_forecast_stats.columns for k in quarter_merge_keys)
         )
         if can_merge_quarter:
-            _quarter_row_count = len(long_forecasts_quarter)
             long_forecasts_quarter = long_forecasts_quarter.merge(
                 quarter_forecast_stats,
                 on=quarter_merge_keys,
                 how="left",
                 suffixes=("", "_stats"),
             )
-            if len(long_forecasts_quarter) != _quarter_row_count:
-                # Safety net: the hv-0 filter above should already make this
-                # merge 1:1. If a stored skill frame ever again holds more
-                # than one row per merge key, dedup deterministically rather
-                # than silently fanning the card out into duplicate rows.
-                _dropped = len(long_forecasts_quarter) - _quarter_row_count
-                _dedup_subset = [
-                    k for k in quarter_merge_keys if k in long_forecasts_quarter.columns
-                ]
-                long_forecasts_quarter = long_forecasts_quarter.drop_duplicates(
-                    subset=_dedup_subset, keep="first"
-                ).reset_index(drop=True)
-                logger.info(
-                    "_get_data_monthly: quarter skill merge fanned out %d row(s) for "
-                    "station %s; deduped to one row per forecast",
-                    _dropped,
-                    station,
-                )
 
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
