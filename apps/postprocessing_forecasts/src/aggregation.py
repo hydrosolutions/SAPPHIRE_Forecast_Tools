@@ -283,6 +283,12 @@ def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int
 # Minimum months required per quarter (out of 3)
 QUARTER_MIN_MONTHS = 2
 
+# Minimum DISTINCT calendar months required per quarter for observations
+# (out of 3; PP-065 item 8). Used only by aggregate_monthly_obs_to_quarterly.
+# Unlike QUARTER_MIN_MONTHS (forecasts), this counts distinct months, not
+# non-null rows, so a repeated month never inflates coverage.
+QUARTER_OBS_MIN_MONTHS = 3
+
 # Minimum fraction of season months required
 SEASON_MIN_COVERAGE = 0.5
 
@@ -359,8 +365,21 @@ def aggregate_monthly_obs_to_quarterly(
     df = monthly_obs.copy()
     df["quarter_in_year"] = df["month"].map(MONTH_TO_QUARTER)
 
+    # Count DISTINCT calendar months, not non-null rows: first average per
+    # (code, year, quarter, month) -- skipping NaN, as pandas mean() does by
+    # default -- so a duplicated month collapses to ONE value before the
+    # QUARTER_OBS_MIN_MONTHS coverage check. With the normal one-row-per-month
+    # input, this monthly average is a no-op (mean of a single value is that
+    # value), so discharge_avg and delta below are unchanged from before this
+    # rewrite; only the coverage threshold changed.
+    monthly_means = (
+        df.groupby(["code", "year", "quarter_in_year", "month"])["discharge_avg"]
+        .mean()
+        .reset_index()
+    )
+
     grouped = (
-        df.groupby(["code", "year", "quarter_in_year"])
+        monthly_means.groupby(["code", "year", "quarter_in_year"])
         .agg(
             discharge_avg=("discharge_avg", "mean"),
             n_months=("discharge_avg", "count"),
@@ -368,8 +387,8 @@ def aggregate_monthly_obs_to_quarterly(
         .reset_index()
     )
 
-    # Require >= QUARTER_MIN_MONTHS months present
-    grouped = grouped[grouped["n_months"] >= QUARTER_MIN_MONTHS].copy()
+    # Require >= QUARTER_OBS_MIN_MONTHS distinct months present
+    grouped = grouped[grouped["n_months"] >= QUARTER_OBS_MIN_MONTHS].copy()
     grouped = grouped.drop(columns=["n_months"])
 
     if grouped.empty:

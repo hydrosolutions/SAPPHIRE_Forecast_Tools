@@ -15,6 +15,7 @@ from src.aggregation import (
     MONTH_TO_QUARTER,
     QUARTER_MIN_MONTHS,
     QUARTER_MONTHS,
+    QUARTER_OBS_MIN_MONTHS,
     aggregate_monthly_fc_to_quarterly,
     aggregate_monthly_obs_to_quarterly,
     aggregate_monthly_obs_to_seasonal,
@@ -40,6 +41,9 @@ class TestQuarterConstants:
 
     def test_quarter_min_months(self):
         assert QUARTER_MIN_MONTHS == 2
+
+    def test_quarter_obs_min_months(self):
+        assert QUARTER_OBS_MIN_MONTHS == 3
 
 
 # ===================================================================
@@ -165,8 +169,29 @@ class TestAggregateMonthlyObsToQuarterly:
         result = aggregate_monthly_obs_to_quarterly(obs)
         assert result.empty
 
-    def test_two_months_passes(self):
-        """2 months in quarter passes the filter."""
+    def test_three_months_passes(self):
+        """3 of 3 months in quarter passes the filter.
+
+        PP-065 item 8 (P1a amendment): the coverage threshold is now
+        QUARTER_OBS_MIN_MONTHS = 3, not 2. This test previously used 2
+        months (BEFORE: 2 months -> 1 row, mean 55.0); it now uses 3
+        months (AFTER: 3 months -> 1 row, mean 60.0). The former 2-of-3
+        case is covered separately by test_two_of_three_months_fails.
+        """
+        obs = _make_monthly_obs(
+            [
+                ("S1", 2024, 4, 50.0),
+                ("S1", 2024, 5, 60.0),
+                ("S1", 2024, 6, 70.0),
+            ]
+        )
+        result = aggregate_monthly_obs_to_quarterly(obs)
+        assert len(result) == 1
+        assert result.iloc[0]["quarter_in_year"] == 2
+        assert abs(result.iloc[0]["discharge_avg"] - 60.0) < 1e-6
+
+    def test_two_of_three_months_fails(self):
+        """2 of 3 months no longer passes (PP-065 item 8)."""
         obs = _make_monthly_obs(
             [
                 ("S1", 2024, 4, 50.0),
@@ -174,9 +199,25 @@ class TestAggregateMonthlyObsToQuarterly:
             ]
         )
         result = aggregate_monthly_obs_to_quarterly(obs)
-        assert len(result) == 1
-        assert result.iloc[0]["quarter_in_year"] == 2
-        assert abs(result.iloc[0]["discharge_avg"] - 55.0) < 1e-6
+        assert result.empty
+
+    def test_january_twice_february_once_counts_as_two_distinct_months(self):
+        """A repeated month counts once: 2 distinct months -> no row.
+
+        PP-065 item 8: the coverage count is DISTINCT calendar months, not
+        non-null rows. Two January rows and one February row is only 2
+        distinct months, so this must NOT pass the 3-of-3 threshold (it
+        would have passed under a naive row-count implementation).
+        """
+        obs = _make_monthly_obs(
+            [
+                ("S1", 2024, 1, 100.0),
+                ("S1", 2024, 1, 200.0),
+                ("S1", 2024, 2, 110.0),
+            ]
+        )
+        result = aggregate_monthly_obs_to_quarterly(obs)
+        assert result.empty
 
     def test_delta_computation(self):
         """Delta = 0.674 * std across years for same quarter."""
@@ -197,13 +238,20 @@ class TestAggregateMonthlyObsToQuarterly:
         assert abs(result.iloc[0]["delta"] - expected_delta) < 1e-4
 
     def test_multiple_stations(self):
-        """Each station aggregated independently."""
+        """Each station aggregated independently.
+
+        PP-065 item 8 (P1a amendment): each station now needs 3 of 3
+        months (BEFORE: 2 months each, e.g. S1 Jan/Feb; AFTER: 3 months
+        each, Jan/Feb/Mar) to pass the QUARTER_OBS_MIN_MONTHS threshold.
+        """
         obs = _make_monthly_obs(
             [
                 ("S1", 2024, 1, 100.0),
                 ("S1", 2024, 2, 110.0),
+                ("S1", 2024, 3, 120.0),
                 ("S2", 2024, 1, 200.0),
                 ("S2", 2024, 2, 220.0),
+                ("S2", 2024, 3, 240.0),
             ]
         )
         result = aggregate_monthly_obs_to_quarterly(obs)
@@ -216,12 +264,49 @@ class TestAggregateMonthlyObsToQuarterly:
         assert result.empty
         assert "quarter_in_year" in result.columns
 
+    def test_delta_uses_only_full_quarters_partial_year_excluded(self):
+        """delta is computed only from quarters that pass the 3-of-3 threshold.
+
+        Three complete years (2020-2022) plus a 2-of-3 year (2023) carrying
+        an outlier value: the partial year must not affect delta, and must
+        produce no row of its own (PP-065 item 8).
+        """
+        obs = _make_monthly_obs(
+            [
+                ("S1", 2020, 1, 100.0),
+                ("S1", 2020, 2, 100.0),
+                ("S1", 2020, 3, 100.0),
+                ("S1", 2021, 1, 110.0),
+                ("S1", 2021, 2, 110.0),
+                ("S1", 2021, 3, 110.0),
+                ("S1", 2022, 1, 120.0),
+                ("S1", 2022, 2, 120.0),
+                ("S1", 2022, 3, 120.0),
+                # Partial year: only 2 of 3 months, with an outlier that
+                # must NOT influence delta.
+                ("S1", 2023, 1, 9999.0),
+                ("S1", 2023, 2, 9999.0),
+            ]
+        )
+        result = aggregate_monthly_obs_to_quarterly(obs)
+        assert len(result) == 3
+        assert set(result["year"]) == {2020, 2021, 2022}
+        expected_delta = 0.674 * np.std([100.0, 110.0, 120.0], ddof=1)
+        for delta in result["delta"]:
+            assert abs(delta - expected_delta) < 1e-6
+
     def test_multiple_quarters(self):
-        """Data in Q1 and Q3, each with enough months."""
+        """Data in Q1 and Q3, each with enough months.
+
+        PP-065 item 8 (P1a amendment): Q1 now needs a 3rd month (BEFORE:
+        Jan/Feb only, 2 months; AFTER: Jan/Feb/Mar, 3 months) to pass the
+        QUARTER_OBS_MIN_MONTHS threshold; Q3 already had 3 months.
+        """
         obs = _make_monthly_obs(
             [
                 ("S1", 2024, 1, 100.0),
                 ("S1", 2024, 2, 110.0),
+                ("S1", 2024, 3, 120.0),
                 ("S1", 2024, 7, 50.0),
                 ("S1", 2024, 8, 60.0),
                 ("S1", 2024, 9, 55.0),
