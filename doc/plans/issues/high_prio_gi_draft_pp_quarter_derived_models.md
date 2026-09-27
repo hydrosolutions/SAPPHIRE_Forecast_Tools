@@ -417,10 +417,12 @@ and `:219` (`test_multiple_quarters`), each of which relies on 2 of 3 months (me
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1a file list.
 
-#### P1a amendments (2026-09-27, readiness review)
+#### P1a amendments (2026-09-27, readiness review; extended 2026-09-27 after dev-DB validation)
 
-Two independent readiness reviews found gaps in the P1a spec above; the implementation followed
-`doc/plans/pp065/brief_p1a.md`, which amends this section as follows (the brief wins where they differ):
+Two independent readiness reviews, and later a real-dev-DB validation run plus a second pair of
+independent reviews (codex + a fresh Claude reviewer), found gaps in the P1a spec above. This
+subsection IS the amended spec (the implementing brief it was drafted from was a scratch file that no
+longer exists; nothing here depends on it):
 
 - **Date parsing.** `date` and `valid_from` are parsed with `local_calendar_date`
   (`src/aggregation.py:100-199`), not `pd.to_datetime(..., format="mixed")`: the latter raises on
@@ -431,6 +433,15 @@ Two independent readiness reviews found gaps in the P1a spec above; the implemen
   `{lead, lead+1, lead+2}`) are distinct from counted reasons (`bad_horizon_value`, `bad_date`,
   `wrong_issue_day`, `missing_lead`, `non_finite_value`, `ambiguous_duplicate`, plus
   `missing_column:*` and `invalid_config`).
+- **Exclusion order (2026-09-27 fix).** The three ignored-without-counting checks (model scope, hv
+  range, quarter-start) run BEFORE every counted check, not interleaved with them: originally the
+  issue-day check ran before the hv-range check, so an in-scope-model row from a DIFFERENT monthly
+  mode with a genuinely irrelevant lead (e.g. kghm's day-10 `month_0`, hv 0, when this call's lead is
+  1) could satisfy the quarter-start check by coincidence and then be wrongly counted as
+  `wrong_issue_day` instead of silently ignored. `bad_horizon_value` counts only in-model rows with a
+  non-finite or non-integer `horizon_value`; a valid but out-of-range `horizon_value` is silently
+  ignored, never counted (`src/aggregation.py:843-865` for the reordered hv checks, before the date
+  parse at `:866`).
 - **`horizon_value` rule.** `hv = pd.to_numeric(col, errors="coerce")`; a row is eligible only if `hv`
   is finite and `hv == round(hv)`; cast to `int` only AFTER that filter (real API frames carry `hv` as
   float64 with NaN).
@@ -439,10 +450,21 @@ Two independent readiness reviews found gaps in the P1a spec above; the implemen
   `forecasted_discharge`, `q` (present only if the input had a `q` column), and every column of
   `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
   `model_type_description` and `horizon_type` never leak into the output.
-- **Exact-duplicate pre-step and singleton rule.** Before the uniqueness rule, exact duplicates on
-  (code, canonical model, `d`, hv, `valid_from`, `valid_to`) -- or on `id` when present -- are dropped
-  (a repeated read, not an ambiguity). A singleton at (code, canonical model, `d`, hv) is used
-  whatever its `valid_from`, including missing/NaT.
+- **Exact-duplicate pre-step and singleton rule (2026-09-27 fix, `src/aggregation.py:919-938`).**
+  Before the uniqueness rule, a row is an exact duplicate of another only if its identity (code,
+  canonical model, `d`, hv, `valid_from`, `valid_to`) AND its point-value inputs (`q` and `q50`,
+  NaN-equal) BOTH match -- a same-window or same-`id` pair with a DIFFERENT value is never silently
+  collapsed by whichever row happens to sort first; it is left for the uniqueness rule below, where a
+  missing `valid_from` column makes the group unresolvable (ambiguous) and a null `valid_from` never
+  matches. The original version keyed only on identity, so two rows with different values but a null
+  or identical window (or no `valid_from` column at all) silently collapsed to one -- the
+  "no-`valid_from`-column implies ambiguous" branch was consequently unreachable. When `id` is
+  present, it is authoritative ONLY among rows with a non-null `id` (two null ids are not evidence of
+  a repeat); null-`id` rows fall back to the same key+value rule as when `id` is absent entirely --
+  the original version's `drop_duplicates(subset=["id"])` treated every null `id` as equal to every
+  other, so an all-null `id` column silently discarded 2 of a triplet's 3 rows regardless of model or
+  lead. A singleton at (code, canonical model, `d`, hv) is used whatever its `valid_from`, including
+  missing/NaT.
 - **Ambiguous-duplicate WARNING.** `ambiguous_duplicate > 0` logs at WARNING (count only, no station
   codes; it signals mislabelled upstream data, LTF-016). Every other count logs at INFO, except
   `invalid_config`, which also logs at WARNING.
@@ -458,12 +480,45 @@ Two independent readiness reviews found gaps in the P1a spec above; the implemen
   (code, year, quarter, month) skipping NaN, then aggregates those monthly means to the quarter
   (unweighted mean); `n_months` counts DISTINCT months with a non-null monthly mean, not non-null
   rows. With the normal one-row-per-month input this is unchanged from before; only the coverage
-  threshold (`QUARTER_MIN_MONTHS` -> `QUARTER_OBS_MIN_MONTHS = 3`) changed.
-- **Updated line citations** (trunk `f38e9bc3`, after this phase's edits): the observation coverage
-  filter is at `src/aggregation.py:391`; the delta computation is at `src/aggregation.py:397-410`;
+  threshold (`QUARTER_MIN_MONTHS` -> `QUARTER_OBS_MIN_MONTHS = 3`) changed. This equivalence is EXACT
+  only for input already sorted by (code, year, month), which is what the only caller produces --
+  differently-ordered input can differ by roughly 1e-14 from floating-point summation
+  reassociation, not by anything a caller should observe in practice.
+- **Typed empty schema (2026-09-27 fix).** `empty_result()` returns a schema typed identically to a
+  non-empty result: `year`, `quarter_in_year` and `horizon_value` are int64; `forecasted_discharge`,
+  `q` and the quantile columns are float64; the rest are object. The original version left every
+  empty-schema column as plain object dtype, so e.g. concatenating an empty derived frame with a
+  typed direct-read frame could silently upcast `year` away from int64 (and, once pandas removes the
+  deprecated empty/all-NA exclusion it currently warns about, change the concatenated dtype outright).
+- **Updated line citations** (this branch, after P1a): the observation coverage filter is at
+  `src/aggregation.py:391`; the delta computation is at `src/aggregation.py:397-410`;
   `QUARTER_MIN_MONTHS` is defined at `src/aggregation.py:284` and remains used only by
-  `aggregate_monthly_fc_to_quarterly` (`src/aggregation.py:530`, forecast aggregation, unchanged by
-  this phase).
+  `aggregate_monthly_fc_to_quarterly` (forecast aggregation, unchanged by this phase); the
+  derivation helper's exclusion-order fix is at `src/aggregation.py:843-865`; the exact-duplicate
+  pre-step is at `:921-947`; the vectorized uniqueness/triplet-assembly rewrite (see "Performance"
+  below) spans `:968-1088`.
+- **Performance (2026-09-27, PP-065 F3).** The original P1a implementation grouped rows with Python
+  `for key, group in df.groupby(...)` loops for both the uniqueness rule and the final triplet
+  assembly -- correct, but O(rows) in Python, measured at 8.5-38s for a ~200k-row synthetic monthly
+  frame depending on the reviewing environment. It was rewritten to be fully vectorized: group size
+  and match count via `groupby().transform()`, the triplet check and mean via a pivot/unstack on
+  `horizon_value`, and month arithmetic/clamping via integer "months since epoch" arithmetic and
+  `Series.dt.days_in_month` instead of per-row Python calls. Measured on the same 200k-row synthetic
+  frame (same machine): 30.4s -> 0.62s (about 49x). A frozen, deliberately non-vectorized reference
+  copy of the pre-rewrite logic (`_reference_derive` in `tests/test_quarter_derived_models.py`) is
+  checked against the production function by a randomized differential test (300 generated frames,
+  fixed seed) covering multiple models, all three leads, wrong days, exact and ambiguous duplicates,
+  NaN/float/out-of-range `horizon_value`, offset windows, mixed-tz date strings and missing `q`/`q50`
+  columns; it asserts the sorted output (dtypes included) and the counts match exactly. Keep this
+  reference frozen -- fix production and the differential test if the two are found to disagree, never
+  edit the reference to match a production change.
+- **Dev-DB validation (2026-09-27).** On the local dev DB, complete same-issue triplets across the
+  seven derived models (2000-2026) were 30.96k (kghm) / 7.13k (tjhm), and 14.1k / 3.4k over
+  2015-2026; the feasibility section above (~27.8k / ~5.2k) did not state its year window, so these
+  are not directly comparable, just a more precise re-measurement. Separately: kghm currently has no
+  native Q1 LR rows on the 25 Dec issue date, which is expected while LTF-014 P0 is deferred (decision
+  2's forecast_months restriction) -- this is exactly the gap the LR fallback (decision 2) exists to
+  cover.
 
 ### P1b — readers, native-row selection, maintenance, writer
 
