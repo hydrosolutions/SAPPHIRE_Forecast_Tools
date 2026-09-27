@@ -371,7 +371,13 @@ def aggregate_monthly_obs_to_quarterly(
     # QUARTER_OBS_MIN_MONTHS coverage check. With the normal one-row-per-month
     # input, this monthly average is a no-op (mean of a single value is that
     # value), so discharge_avg and delta below are unchanged from before this
-    # rewrite; only the coverage threshold changed.
+    # rewrite; only the coverage threshold changed. This equivalence is
+    # EXACT only for input already sorted by (code, year, month), which is
+    # what the only caller (data_reader's quarterly-observation path)
+    # produces -- floating-point summation is order-dependent, so
+    # differently-ordered input can differ from the pre-rewrite mean by
+    # roughly 1e-14 (a reassociation of the same addends), not by anything
+    # a caller should observe in practice.
     monthly_means = (
         df.groupby(["code", "year", "quarter_in_year", "month"])["discharge_avg"]
         .mean()
@@ -638,9 +644,37 @@ def clamp_issue_day(year: int, month: int, issue_day: int) -> int:
 
 
 def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
-    """Year-aware month addition. Returns (year, month) for month + delta."""
+    """Year-aware month addition. Returns (year, month) for month + delta.
+
+    Scalar helper kept for callers that need a single (year, month) pair
+    (e.g. tests, and any future non-bulk caller). The bulk production path
+    uses ``_add_months_vectorized`` below instead of looping over this.
+    """
     total = (month - 1) + delta
     return year + total // 12, total % 12 + 1
+
+
+def _add_months_vectorized(year: pd.Series, month: pd.Series, delta) -> tuple[pd.Series, pd.Series]:
+    """Vectorized year-aware month addition (PP-065 F3).
+
+    Same rule as ``_add_months``, applied to whole columns at once via the
+    "months since epoch" trick (``year*12 + (month-1)``) instead of a
+    Python-level loop. ``delta`` may be a scalar int (broadcast, e.g. the
+    quarter lead) or a ``pd.Series`` aligned to ``year``/``month`` by index
+    (e.g. each row's own stored ``horizon_value``).
+
+    Args:
+        year: Integer year values.
+        month: Integer month values (1-12), same index as ``year``.
+        delta: Months to add; scalar or a Series aligned to ``year``.
+
+    Returns:
+        Tuple of (new_year, new_month) Series, same index as ``year``.
+    """
+    total = (month.astype("int64") - 1) + delta
+    new_year = year.astype("int64") + total // 12
+    new_month = total % 12 + 1
+    return new_year, new_month
 
 
 def derive_quarterly_from_monthly_same_issue(
@@ -683,11 +717,37 @@ def derive_quarterly_from_monthly_same_issue(
         NaN). Rows are never copied from the input -- every output column
         is built fresh, so input-only columns (e.g. ``id``, ``flag``,
         ``composition``, ``q_obs``, ``model_type_description``,
-        ``horizon_type``) never leak into the output. The counts dict is a
-        ``Counter``: a missing key reads as 0.
+        ``horizon_type``) never leak into the output. ``year``,
+        ``quarter_in_year`` and ``horizon_value`` are int64;
+        ``forecasted_discharge``, ``q`` and the quantile columns are
+        float64; the rest are object -- identically whether the result is
+        empty or not (PP-065 F4). The counts dict is a ``Counter``: a
+        missing key reads as 0.
+
+        Exclusion order (PP-065 F5): rows out of scope for this call --
+        model not in ``models``, a valid ``horizon_value`` outside
+        ``{lead, lead+1, lead+2}``, or an issue month that is not a
+        quarter start once offset by ``lead`` -- are dropped SILENTLY,
+        before any of the counted checks run, so e.g. a different
+        monthly mode's row (in-model, but the wrong lead for THIS call)
+        is never miscounted as ``wrong_issue_day``.
+
+        Exact duplicates (PP-065 F1/F2): a row is an exact duplicate of
+        another only if its identity (code, canonical model, ``d``, hv,
+        ``valid_from``, ``valid_to``) AND its point-value inputs (``q``
+        and ``q50``, NaN-equal) both match -- so a same-window or
+        same-``id`` pair with a DIFFERENT value is never silently
+        dropped; it is left for the uniqueness rule, where a missing
+        ``valid_from`` column makes the group unresolvable (ambiguous)
+        and a null ``valid_from`` never matches. When ``id`` is present,
+        it dedups on its own only among rows with a NON-null ``id``
+        (two null ids are not evidence of a repeat); null-``id`` rows
+        fall back to the same key+value rule as when ``id`` is absent.
     """
     has_q = "q" in monthly_raw.columns
     counts: Counter = Counter()
+
+    _INT_COLS = ("year", "quarter_in_year", "horizon_value")
 
     def output_columns() -> list:
         cols = [
@@ -706,8 +766,34 @@ def derive_quarterly_from_monthly_same_issue(
         cols += list(_FC_QUANTILE_COLS)
         return cols
 
+    def _float_cols() -> list:
+        cols = ["forecasted_discharge"]
+        if has_q:
+            cols.append("q")
+        cols += list(_FC_QUANTILE_COLS)
+        return cols
+
     def empty_result() -> pd.DataFrame:
-        return pd.DataFrame(columns=output_columns())
+        cols = output_columns()
+        float_cols = set(_float_cols())
+        data = {}
+        for c in cols:
+            if c in _INT_COLS:
+                data[c] = pd.Series([], dtype="int64")
+            elif c in float_cols:
+                data[c] = pd.Series([], dtype="float64")
+            else:
+                data[c] = pd.Series([], dtype="object")
+        return pd.DataFrame(data, columns=cols)
+
+    def typed(result: pd.DataFrame) -> pd.DataFrame:
+        """Cast a freshly-built non-empty result to empty_result()'s dtypes."""
+        for c in _INT_COLS:
+            result[c] = result[c].astype("int64")
+        for c in _float_cols():
+            if c in result.columns:
+                result[c] = result[c].astype("float64")
+        return result
 
     def log_counts() -> None:
         for key, n in counts.items():
@@ -752,6 +838,29 @@ def derive_quarterly_from_monthly_same_issue(
         return empty_result(), counts
     df["_canon_model"] = canon_model.loc[in_scope]
 
+    # horizon_value validity (counted) then range (silent) run BEFORE any
+    # date-based check (PP-065 F5): a row from a different monthly mode --
+    # in scope for `models`, but the wrong lead for THIS call, e.g. kghm's
+    # day-10 month_0 rows when this call's lead is 1 -- must never reach,
+    # and be miscounted by, the date/issue-day checks below.
+    hv_numeric = pd.to_numeric(df["horizon_value"], errors="coerce")
+    valid_hv = hv_numeric.notna() & np.isfinite(hv_numeric) & hv_numeric.eq(np.round(hv_numeric))
+    n_bad_hv = int((~valid_hv).sum())
+    if n_bad_hv:
+        counts["bad_horizon_value"] = n_bad_hv
+    df = df.loc[valid_hv].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+    df["_hv"] = hv_numeric.loc[valid_hv].round().astype(int)
+
+    # hv outside {lead, lead+1, lead+2}: out of scope, routine -- not counted.
+    leads_needed = (lead, lead + 1, lead + 2)
+    df = df.loc[df["_hv"].isin(leads_needed)].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
     # Parse the issue date via local_calendar_date (NOT
     # pd.to_datetime(format="mixed"), which raises on mixed tz-aware/naive
     # strings and would shift the local date under utc=True).
@@ -767,45 +876,25 @@ def derive_quarterly_from_monthly_same_issue(
 
     # Quarter-start scope filter: (d.month + lead), year-aware, must land on
     # a quarter-start month. Out of scope, routine -- never counted.
-    target_years, target_months = [], []
-    for ts in df["_d"]:
-        ty, tm = _add_months(ts.year, ts.month, lead)
-        target_years.append(ty)
-        target_months.append(tm)
-    df["_target_year"] = target_years
-    df["_target_month"] = target_months
+    # Vectorized (PP-065 F3): _add_months_vectorized replaces a per-row
+    # Python-level _add_months loop.
+    target_year, target_month = _add_months_vectorized(df["_d"].dt.year, df["_d"].dt.month, lead)
+    df["_target_year"] = target_year
+    df["_target_month"] = target_month
     df = df.loc[df["_target_month"].isin(_QUARTER_START_MONTHS)].copy()
     if df.empty:
         log_counts()
         return empty_result(), counts
 
     # Issue-day check, clamped to the issue month's length (counted).
-    df["_expected_day"] = [clamp_issue_day(ts.year, ts.month, issue_day) for ts in df["_d"]]
+    # Vectorized (PP-065 F3): Series.dt.days_in_month replaces a per-row
+    # Python-level clamp_issue_day loop; same clamp rule.
+    df["_expected_day"] = np.minimum(issue_day, df["_d"].dt.days_in_month)
     wrong_day = df["_d"].dt.day != df["_expected_day"]
     n_wrong_day = int(wrong_day.sum())
     if n_wrong_day:
         counts["wrong_issue_day"] = n_wrong_day
     df = df.loc[~wrong_day].copy()
-    if df.empty:
-        log_counts()
-        return empty_result(), counts
-
-    # horizon_value validity: finite and integer-valued only, cast to int
-    # only AFTER the filter (real API frames carry hv as float64 with NaN).
-    hv_numeric = pd.to_numeric(df["horizon_value"], errors="coerce")
-    valid_hv = hv_numeric.notna() & np.isfinite(hv_numeric) & hv_numeric.eq(np.round(hv_numeric))
-    n_bad_hv = int((~valid_hv).sum())
-    if n_bad_hv:
-        counts["bad_horizon_value"] = n_bad_hv
-    df = df.loc[valid_hv].copy()
-    if df.empty:
-        log_counts()
-        return empty_result(), counts
-    df["_hv"] = hv_numeric.loc[valid_hv].round().astype(int)
-
-    # hv outside {lead, lead+1, lead+2}: out of scope, routine -- not counted.
-    leads_needed = (lead, lead + 1, lead + 2)
-    df = df.loc[df["_hv"].isin(leads_needed)].copy()
     if df.empty:
         log_counts()
         return empty_result(), counts
@@ -826,107 +915,166 @@ def derive_quarterly_from_monthly_same_issue(
     df["_point_value"] = q_val.where(np.isfinite(q_val), q50_val)
 
     # Exact duplicates (a repeated read, not an ambiguity): drop BEFORE the
-    # uniqueness rule, keyed on `id` when present, else on the full tuple.
+    # uniqueness rule. A row is an exact duplicate of another only if its
+    # identity key AND its point-value inputs (q, q50; NaN-equal) both
+    # match (PP-065 F1) -- a same-window pair with a DIFFERENT value is
+    # never silently collapsed; it is left for the uniqueness rule, where
+    # a missing valid_from column makes the group unresolvable. `id`, when
+    # present, is authoritative ONLY among rows with a non-null id (two
+    # null ids are not evidence of a repeat, PP-065 F2); null-id rows fall
+    # back to the same key+value rule as when `id` is absent entirely.
+    key_cols = ["code", "_canon_model", "_d", "_hv"]
+    key_cols += [c for c in ("valid_from", "valid_to") if c in df.columns]
+    value_cols = []
+    if "q" in df.columns:
+        df["_dedup_q"] = q_val
+        value_cols.append("_dedup_q")
+    if "q50" in df.columns:
+        df["_dedup_q50"] = q50_val
+        value_cols.append("_dedup_q50")
+
     if "id" in df.columns:
-        df = df.drop_duplicates(subset=["id"]).copy()
+        id_notna = df["id"].notna()
+        with_id = df.loc[id_notna].drop_duplicates(subset=["id"]).copy()
+        without_id = df.loc[~id_notna].drop_duplicates(subset=key_cols + value_cols).copy()
+        df = pd.concat([with_id, without_id])
     else:
-        dedup_cols = ["code", "_canon_model", "_d", "_hv"]
-        dedup_cols += [c for c in ("valid_from", "valid_to") if c in df.columns]
-        df = df.drop_duplicates(subset=dedup_cols).copy()
+        df = df.drop_duplicates(subset=key_cols + value_cols).copy()
+    df = df.drop(columns=[c for c in ("_dedup_q", "_dedup_q50") if c in df.columns])
 
     # Per-row target (year, month) for the uniqueness rule: d + hv months
     # (this row's own target month), NOT the triplet's quarter-start target.
-    row_target_years, row_target_months = [], []
-    for ts, hv in zip(df["_d"], df["_hv"], strict=True):
-        ry, rm = _add_months(ts.year, ts.month, int(hv))
-        row_target_years.append(ry)
-        row_target_months.append(rm)
-    df["_row_target_year"] = row_target_years
-    df["_row_target_month"] = row_target_months
+    # Vectorized (PP-065 F3): delta is now the `_hv` COLUMN (per-row), not
+    # a python loop calling the scalar helper once per row.
+    row_target_year, row_target_month = _add_months_vectorized(
+        df["_d"].dt.year, df["_d"].dt.month, df["_hv"]
+    )
+    df["_row_target_year"] = row_target_year
+    df["_row_target_month"] = row_target_month
 
     has_valid_from_col = "valid_from" in df.columns
     if has_valid_from_col:
         vf = local_calendar_date(df["valid_from"])
         df["_vf_year"] = vf.dt.year
         df["_vf_month"] = vf.dt.month
+    else:
+        df["_vf_year"] = np.nan
+        df["_vf_month"] = np.nan
 
     # Resolve each (code, canonical model, d, hv) group to at most one
     # winning row. A singleton wins regardless of its valid_from. In a
     # group of 2+, the unique row whose valid_from (year, month) equals the
     # target wins; zero or >= 2 matches marks the WHOLE triplet ambiguous.
-    winners = []
-    ambiguous_triplets = set()
-    for key, group in df.groupby(["code", "_canon_model", "_d", "_hv"], sort=False):
-        triplet_key = key[:3]
-        if len(group) == 1:
-            winners.append(group.iloc[0])
-            continue
-        if not has_valid_from_col:
-            ambiguous_triplets.add(triplet_key)
-            continue
-        target_y = group["_row_target_year"].iloc[0]
-        target_m = group["_row_target_month"].iloc[0]
-        match_mask = (
-            group["_vf_year"].notna()
-            & group["_vf_year"].eq(target_y)
-            & group["_vf_month"].eq(target_m)
-        )
-        matches = group.loc[match_mask]
-        if len(matches) == 1:
-            winners.append(matches.iloc[0])
-        else:
-            ambiguous_triplets.add(triplet_key)
+    # Vectorized (PP-065 F3) via groupby().transform, replacing a
+    # per-group Python loop with group.iloc access: group SIZE and MATCH
+    # COUNT are both computed for every row in one pass; a row wins if its
+    # group has exactly one row (singleton, unconditional) OR its group
+    # has exactly one match and this row IS that match. A missing
+    # valid_from column makes `_vf_year`/`_vf_month` all-NaN (set just
+    # above), so `is_match` is False for every row and every multi-row
+    # group there is correctly unresolvable (falls through to ambiguous).
+    group_cols = ["code", "_canon_model", "_d", "_hv"]
+    triplet_cols = ["code", "_canon_model", "_d"]
 
-    if ambiguous_triplets:
-        counts["ambiguous_duplicate"] = len(ambiguous_triplets)
+    group_size = df.groupby(group_cols)["_point_value"].transform("size")
+    is_match = (
+        df["_vf_year"].notna()
+        & df["_vf_year"].eq(df["_row_target_year"])
+        & df["_vf_month"].eq(df["_row_target_month"])
+    )
+    df["_is_match"] = is_match
+    match_count = df.groupby(group_cols)["_is_match"].transform("sum")
 
-    if not winners:
+    is_winner = (group_size == 1) | (is_match & (match_count == 1))
+    is_ambiguous_subgroup = (group_size >= 2) & (match_count != 1)
+    df["_is_ambiguous_subgroup"] = is_ambiguous_subgroup
+    # A single ambiguous hv-subgroup marks the WHOLE (code, model, d)
+    # triplet ambiguous ("skip the whole triplet"): OR-reduce (max of a
+    # bool column) up to the triplet level.
+    triplet_ambiguous = df.groupby(triplet_cols)["_is_ambiguous_subgroup"].transform("max")
+
+    if triplet_ambiguous.any():
+        n_ambiguous = df.loc[triplet_ambiguous, triplet_cols].drop_duplicates().shape[0]
+        if n_ambiguous:
+            counts["ambiguous_duplicate"] = n_ambiguous
+
+    winners_df = df.loc[is_winner & ~triplet_ambiguous].copy()
+    if winners_df.empty:
         log_counts()
         return empty_result(), counts
 
-    winners_df = pd.DataFrame(winners)
-    winners_df["_triplet_key"] = list(
-        zip(winners_df["code"], winners_df["_canon_model"], winners_df["_d"], strict=True)
-    )
-    winners_df = winners_df.loc[~winners_df["_triplet_key"].isin(ambiguous_triplets)].copy()
+    # Triplet assembly via pivot/unstack on hv (PP-065 F3), replacing a
+    # per-triplet Python loop with group.loc access. `_present` is
+    # unstacked SEPARATELY from `_point_value` so a hv that is genuinely
+    # ABSENT (missing_lead, NaN in `_present_wide`) is never confused with
+    # a hv that IS present but whose point value is non-finite (NaN only
+    # in `_value_wide`, not in `_present_wide`).
+    winners_df["_present"] = True
+    winners_indexed = winners_df.set_index([*triplet_cols, "_hv"])
+    value_wide = winners_indexed["_point_value"].unstack("_hv").reindex(columns=leads_needed)
+    present_wide = winners_indexed["_present"].unstack("_hv").reindex(columns=leads_needed)
 
-    rows_out = []
-    for _triplet_key, group in winners_df.groupby("_triplet_key", sort=False):
-        hv_present = set(group["_hv"])
-        if hv_present != set(leads_needed):
-            counts["missing_lead"] += 1
-            continue
+    missing_lead_mask = present_wide.isna().any(axis=1)
+    n_missing_lead = int(missing_lead_mask.sum())
+    if n_missing_lead:
+        counts["missing_lead"] = n_missing_lead
 
-        point_values = {
-            hv: group.loc[group["_hv"] == hv, "_point_value"].iloc[0] for hv in leads_needed
-        }
-        if not all(np.isfinite(v) for v in point_values.values()):
-            counts["non_finite_value"] += 1
-            continue
+    complete = value_wide.loc[~missing_lead_mask]
+    non_finite_mask = ~np.isfinite(complete).all(axis=1)
+    n_non_finite = int(non_finite_mask.sum())
+    if n_non_finite:
+        counts["non_finite_value"] = n_non_finite
 
-        lead_row = group.loc[group["_hv"] == lead].iloc[0]
-        year = int(lead_row["_target_year"])
-        quarter_in_year = MONTH_TO_QUARTER[int(lead_row["_target_month"])]
-        forecasted_discharge = float(np.mean(list(point_values.values())))
-
-        row = {
-            "code": lead_row["code"],
-            "model_short": lead_row["model_short"],
-            "year": year,
-            "quarter_in_year": quarter_in_year,
-            "date": lead_row["_d"].strftime("%Y-%m-%d"),
-            "horizon_value": lead,
-            "valid_from": f"{year}-{QUARTER_MONTHS[quarter_in_year][0]:02d}-01",
-            "valid_to": _quarter_end_date(year, quarter_in_year),
-            "forecasted_discharge": forecasted_discharge,
-        }
-        if has_q:
-            row["q"] = forecasted_discharge
-        for qcol in _FC_QUANTILE_COLS:
-            row[qcol] = np.nan
-        rows_out.append(row)
-
+    final_values = complete.loc[~non_finite_mask]
     log_counts()
-    if not rows_out:
+    if final_values.empty:
         return empty_result(), counts
-    return pd.DataFrame(rows_out, columns=output_columns()), counts
+
+    # Per-triplet metadata: _target_year/_target_month are constant across
+    # a triplet's rows (same `_d`, same `lead`), so any row's value (here,
+    # the hv == lead row's, which also carries the winning `model_short`
+    # spelling) is authoritative.
+    lead_rows = winners_df.loc[winners_df["_hv"] == lead].set_index(triplet_cols)
+    model_short_out = lead_rows["model_short"].reindex(final_values.index)
+    target_year_out = lead_rows["_target_year"].reindex(final_values.index)
+    target_month_out = lead_rows["_target_month"].reindex(final_values.index)
+
+    year_out = target_year_out.astype("int64")
+    quarter_out = target_month_out.map(MONTH_TO_QUARTER).astype("int64")
+    date_out = final_values.index.get_level_values("_d").strftime("%Y-%m-%d")
+    forecasted_discharge_out = final_values.mean(axis=1)
+
+    first_month_out = quarter_out.map({q: months[0] for q, months in QUARTER_MONTHS.items()})
+    valid_from_out = year_out.astype(str) + "-" + first_month_out.astype(str).str.zfill(2) + "-01"
+    # valid_to needs calendar.monthrange (via _quarter_end_date); compute it
+    # only on the handful of DISTINCT (year, quarter) pairs actually
+    # present, then map back -- never one Python call per row.
+    yq_pairs = pd.DataFrame({"year": year_out.to_numpy(), "quarter": quarter_out.to_numpy()})
+    unique_yq = yq_pairs.drop_duplicates()
+    unique_yq = unique_yq.assign(
+        valid_to=[
+            _quarter_end_date(int(y), int(q))
+            for y, q in zip(unique_yq["year"], unique_yq["quarter"], strict=True)
+        ]
+    )
+    valid_to_out = yq_pairs.merge(unique_yq, on=["year", "quarter"], how="left")["valid_to"]
+    valid_to_out.index = final_values.index
+
+    result = pd.DataFrame(
+        {
+            "code": final_values.index.get_level_values("code"),
+            "model_short": model_short_out.to_numpy(),
+            "year": year_out.to_numpy(),
+            "quarter_in_year": quarter_out.to_numpy(),
+            "date": date_out,
+            "horizon_value": lead,
+            "valid_from": valid_from_out.to_numpy(),
+            "valid_to": valid_to_out.to_numpy(),
+            "forecasted_discharge": forecasted_discharge_out.to_numpy(),
+        }
+    )
+    if has_q:
+        result["q"] = result["forecasted_discharge"]
+    for qcol in _FC_QUANTILE_COLS:
+        result[qcol] = np.nan
+    return typed(result[output_columns()]), counts
