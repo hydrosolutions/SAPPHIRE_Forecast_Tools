@@ -746,13 +746,17 @@ def derive_quarterly_from_monthly_same_issue(
         check that depends on it (hv range needs a valid hv; quarter-start
         needs a valid date).
 
-        Exact duplicates (PP-065 F1/F2/G1/H3/H4): a row is an exact
+        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1): a row is an exact
         duplicate of another only if its identity (code, canonical model,
         ``d``, hv, ``valid_from``, ``valid_to`` -- windows compared as
-        PARSED local calendar dates, PP-065 H3, not raw strings, so e.g.
-        "2027-01-01" and "2027-01-01T00:00:00+06:00" for the same row are
-        the same window) AND its point-value inputs (``q`` and ``q50``,
-        NaN-equal) both match -- so a same-window pair with a DIFFERENT
+        PARSED local calendar dates where they parse, PP-065 H3, not raw
+        strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00" for
+        the same row are the same window; where a value does NOT parse,
+        the comparison falls back to the RAW value, with an actual null
+        kept null, PP-065 J1 -- so two DIFFERENT unparseable strings, e.g.
+        "garbage" vs "xx", are never both coerced to NaT and thereby
+        treated as the same window) AND its point-value inputs (``q`` and
+        ``q50``, NaN-equal) both match -- so a same-window pair with a DIFFERENT
         value is never silently dropped; it is left for the uniqueness
         rule, where a missing ``valid_from`` column makes the group
         unresolvable (ambiguous) and a null ``valid_from`` never matches.
@@ -970,26 +974,38 @@ def derive_quarterly_from_monthly_same_issue(
     # identity key AND its point-value inputs (q, q50; NaN-equal) both
     # match (PP-065 F1) -- a same-window pair with a DIFFERENT value is
     # never silently collapsed; it is left for the uniqueness rule, where
-    # a missing valid_from column makes the group unresolvable. `id`, when
-    # present, is authoritative ONLY among rows with a non-null id (two
-    # null ids are not evidence of a repeat, PP-065 F2); null-id rows fall
-    # back to the same key+value rule as when `id` is absent entirely.
-    # Windows are compared as PARSED local calendar dates (PP-065 H3), the
-    # same rule the amendment applies everywhere else -- not as raw
-    # strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00" for
-    # the same row are the same window and do not block the collapse.
+    # a missing valid_from column makes the group unresolvable. Windows
+    # are compared as PARSED local calendar dates where they parse (PP-065
+    # H3), the same rule the amendment applies everywhere else -- not as
+    # raw strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00"
+    # for the same row are the same window and do not block the collapse.
+    # Where a value does NOT parse, the key falls back to the RAW value,
+    # with an actual null kept null (PP-065 J1): two DIFFERENT unparseable
+    # strings (e.g. "garbage" vs "xx") must not both become NaT and
+    # therefore compare equal to each other -- only a genuinely null
+    # valid_from matches another null.
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:
         df["_vf_parsed"] = local_calendar_date(df["valid_from"])
+        # Pre-cast to object before `.where()`: with both sides already
+        # object dtype, pandas never tries to reconcile them via an
+        # implicit datetime-compatibility parse of the raw (possibly
+        # mixed-tz) fallback column, which would otherwise raise pandas'
+        # "mixed time zones" FutureWarning even on rows where the parsed
+        # value (not the raw fallback) is the one actually kept.
+        df["_vf_dedup_key"] = (
+            df["_vf_parsed"].astype(object).where(df["_vf_parsed"].notna(), df["valid_from"])
+        )
     if has_valid_to_col:
-        df["_vt_parsed"] = local_calendar_date(df["valid_to"])
+        vt_parsed = local_calendar_date(df["valid_to"])
+        df["_vt_dedup_key"] = vt_parsed.astype(object).where(vt_parsed.notna(), df["valid_to"])
 
     key_cols = ["code", "_canon_model", "_d", "_hv"]
     if has_valid_from_col:
-        key_cols.append("_vf_parsed")
+        key_cols.append("_vf_dedup_key")
     if has_valid_to_col:
-        key_cols.append("_vt_parsed")
+        key_cols.append("_vt_dedup_key")
     value_cols = []
     if "q" in df.columns:
         df["_dedup_q"] = q_val
