@@ -447,7 +447,7 @@ longer exists; nothing here depends on it):
   quarter-start check by coincidence and then be wrongly counted as `wrong_issue_day` instead of
   silently ignored. `bad_horizon_value` counts only in-model rows with a non-finite or non-integer
   `horizon_value`; a valid but out-of-range `horizon_value` is silently ignored, never counted
-  (`src/aggregation.py:885-905` for the reordered hv checks, before the date parse at `:907`).
+  (`src/aggregation.py:892-913` for the reordered hv checks, before the date parse at `:918`).
 - **`horizon_value` rule.** `hv = pd.to_numeric(col, errors="coerce")`; a row is eligible only if `hv`
   is finite and `hv == round(hv)`; cast to `int` only AFTER that filter (real API frames carry `hv` as
   float64 with NaN).
@@ -457,36 +457,57 @@ longer exists; nothing here depends on it):
   `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
   `model_type_description` and `horizon_type` never leak into the output.
 - **Exact-duplicate pre-step and singleton rule (2026-09-27 fix; extended 2026-09-27 after round-2
-  review, `src/aggregation.py:961-1000`).** Before the uniqueness rule, a row is an exact duplicate
-  of another only if its identity (code, canonical model, `d`, hv, `valid_from`, `valid_to`) AND its
-  point-value inputs (`q` and `q50`, NaN-equal) BOTH match -- a same-window or same-`id` pair with a
-  DIFFERENT value is never silently collapsed by whichever row happens to sort first; it is left for
-  the uniqueness rule below, where a missing `valid_from` column makes the group unresolvable
-  (ambiguous) and a null `valid_from` never matches. The original version keyed only on identity, so
-  two rows with different values but a null or identical window (or no `valid_from` column at all)
-  silently collapsed to one -- the "no-`valid_from`-column implies ambiguous" branch was consequently
-  unreachable. When `id` is present, it is authoritative ONLY among rows with a non-null `id` AND
-  only when their point-value inputs also match (round-2 finding G1); a same-`id` pair with a
-  DIFFERENT value is a genuine conflict, not a repeated read, so both rows are kept and reach the
-  uniqueness rule as a group of >= 2 -- the first version of this fix still deduped on `id` alone
-  (ignoring the value), so the OUTPUT depended on row order, and `_reference_derive` carried the
-  identical bug (the differential test could not catch it, since both sides agreed). The `id`-scoped
-  dedup is additionally keyed on the natural (code, canonical model, `d`, hv[, window]) key, not `id`
-  alone, so an accidental `id` collision across two UNRELATED triplets (found by the G3
-  shuffled/duplicated-index invariance check, not by hand) can never merge them. Null-`id` rows fall
-  back to the same key+value rule as when `id` is absent entirely -- the original version's
-  `drop_duplicates(subset=["id"])` treated every null `id` as equal to every other, so an all-null
-  `id` column silently discarded 2 of a triplet's 3 rows regardless of model or lead. A singleton at
-  (code, canonical model, `d`, hv) is used whatever its `valid_from`, including missing/NaT.
+  and round-3 review, `src/aggregation.py:968-1034`).** Before the uniqueness rule, a row is an
+  exact duplicate of another only if its identity (code, canonical model, `d`, hv, `valid_from`,
+  `valid_to`) AND its point-value inputs (`q` and `q50`, NaN-equal) BOTH match -- a same-window pair
+  with a DIFFERENT value is never silently collapsed by whichever row happens to sort first; it is
+  left for the uniqueness rule below, where a missing `valid_from` column makes the group
+  unresolvable (ambiguous) and a null `valid_from` never matches. The original version keyed only on
+  identity, so two rows with different values but a null or identical window (or no `valid_from`
+  column at all) silently collapsed to one -- the "no-`valid_from`-column implies ambiguous" branch
+  was consequently unreachable.
+  - **The window is ALWAYS part of this identity** (round-3 finding H2), whether or not `id` is
+    present: a null-`id` or no-`id` frame drops window from the key exactly as easily as an `id`
+    frame would, so the SAME same-window/different-value and different-window/same-value negatives
+    apply in every partition (round-3 finding H1: the "without-`id`" partition must also apply the
+    value check, not only the fully-`id`-less path).
+  - **`id`, when present, does NOT make a pair authoritative on its own** (round-3 finding H5 --
+    avoid that word; restated plainly): `id` never merges rows that key + window + value would not.
+    Its only effect is to keep rows APART whose ids differ -- specifically, two null ids are never
+    treated as evidence of a repeat (a genuine risk with a naive `id`-only key), so null-`id` rows
+    fall back to the plain key+window+value rule, exactly as when `id` is absent entirely. A
+    same-`id` pair with a DIFFERENT value or window is a genuine conflict, not a repeated read, so
+    both rows are kept and reach the uniqueness rule as a group of >= 2 (round-2 finding G1) -- the
+    first version of this fix still deduped on `id` alone (ignoring value and window), so the OUTPUT
+    depended on row order, and `_reference_derive` carried the identical bug (the differential test
+    could not catch it, since both sides agreed). The `id`-scoped dedup is additionally keyed on the
+    natural (code, canonical model, `d`, hv, window) key, not `id` alone, so an accidental `id`
+    collision across two UNRELATED triplets (found by the G3 shuffled/duplicated-index invariance
+    check, not by hand) can never merge them. The original version's `drop_duplicates(subset=["id"])`
+    treated every null `id` as equal to every other, so an all-null `id` column silently discarded 2
+    of a triplet's 3 rows regardless of model or lead.
+  - **Windows are compared as PARSED local calendar dates** (round-3 finding H3), via
+    `local_calendar_date` -- the SAME parsing rule the amendment applies everywhere else -- not as
+    raw strings: `"2027-01-01"` and `"2027-01-01T00:00:00+06:00"` for the same row are the same
+    window and do not block the collapse. The original version compared raw `valid_from`/`valid_to`
+    strings, so two representations of the identical instant were wrongly treated as different
+    windows.
+  - **A deterministic spelling tiebreak** (round-3 finding H4): when two rows are exact duplicates in
+    every respect except the stored `model_short` spelling (they share one canonical model), the rows
+    are sorted by that raw spelling (a stable sort) before the drop, so the lexicographically smallest
+    spelling wins regardless of input row order. The original version left this to whichever row
+    `drop_duplicates(keep="first")` happened to see first.
+  - A singleton at (code, canonical model, `d`, hv) is used whatever its `valid_from`, including
+    missing/NaT.
 - **`bad_key` (2026-09-27, round-2 finding G4).** A null `code` or `model_short` is excluded and
-  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:861-873`, the first
+  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:868-881`, the first
   per-row filter in the function, before even the model-scope check). Pandas `groupby` drops a null
   group key by default, so a null-`code` row's boolean `.transform()` result came back as `NaN`
   instead of `True`/`False`, and `~NaN` raised `TypeError` at the ambiguity check further down --
   this made the ENTIRE call crash, not merely mis-handle the one bad row.
 - **`code` (and date/window) output dtype (2026-09-27, round-2 finding G5).** The non-empty result's
   `code`, `date`, `valid_from` and `valid_to` columns are explicitly cast to `object`
-  (`src/aggregation.py:816-824`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
+  (`src/aggregation.py:815-830`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
   regardless of the input `code` column's own dtype (numeric, pandas `StringDtype`, etc.) -- the
   original version left `code` at whatever dtype it inherited from the input, so the empty and
   non-empty schemas could disagree.
@@ -515,15 +536,17 @@ longer exists; nothing here depends on it):
   empty-schema column as plain object dtype, so e.g. concatenating an empty derived frame with a
   typed direct-read frame could silently upcast `year` away from int64 (and, once pandas removes the
   deprecated empty/all-NA exclusion it currently warns about, change the concatenated dtype outright).
-- **Updated line citations** (this branch's HEAD, re-verified 2026-09-27 after round-2 review;
+- **Updated line citations** (this branch's HEAD, re-verified 2026-09-27 after round-3 review;
   re-verify again after any further edit to `src/aggregation.py` -- these drift with every change
-  above them in the file): the observation coverage filter is at `src/aggregation.py:397`; the delta
-  computation is at `:403-409`; `QUARTER_MIN_MONTHS` is defined at `:284` and remains used only by
-  `aggregate_monthly_fc_to_quarterly` (forecast aggregation, unchanged by this phase); `bad_key` is at
-  `:861-873`; the derivation helper's hv-check reorder is at `:885-905`; the `typed()` object-dtype
-  cast is at `:816-824`; the exact-duplicate pre-step (value- and now natural-key-scoped `id` dedup)
-  is at `:961-1000`; the vectorized uniqueness/triplet-assembly rewrite (see "Performance" below)
-  spans `:1002-1137` (the end of the file).
+  above them in the file): `local_calendar_date` is at `:102-201`; the observation coverage filter is
+  at `src/aggregation.py:397`; the delta computation is at `:403-409`; `QUARTER_MIN_MONTHS` is
+  defined at `:284` and remains used only by `aggregate_monthly_fc_to_quarterly` (forecast
+  aggregation, unchanged by this phase); the `typed()` function (object-dtype cast included) is at
+  `:815-830`; `bad_key` is at `:868-881`; the derivation helper's hv-check reorder is at `:892-913`;
+  the date parse itself is the single line at `:918`; the exact-duplicate pre-step (window-parsing,
+  the spelling-tiebreak sort, and the value- and natural-key-scoped `id` dedup) is at `:968-1034`;
+  the vectorized uniqueness/triplet-assembly rewrite (see "Performance" below) spans `:1055-1171`
+  (the end of the file).
 - **Performance (2026-09-27, PP-065 F3).** The original P1a implementation grouped rows with Python
   `for key, group in df.groupby(...)` loops for both the uniqueness rule and the final triplet
   assembly -- correct, but O(rows) in Python, measured at 8.5-38s for a ~200k-row synthetic monthly
@@ -531,10 +554,11 @@ longer exists; nothing here depends on it):
   and match count via `groupby().transform()`, the triplet check and mean via a pivot/unstack on
   `horizon_value`, and month arithmetic/clamping via integer "months since epoch" arithmetic and
   `Series.dt.days_in_month` instead of per-row Python calls. Measured on the same 200k-row synthetic
-  frame (same machine): 30.4s -> ~0.65s (about 47x), re-confirmed after the round-2 fixes below. A
-  real-data re-run (8 org/mode combinations) landed the same conclusion independently: byte-identical
-  output to the pre-vectorization commit in all 8 runs, 4-13x faster, counts changing only by the
-  intended out-of-scope-row exclusion (F5's month_0-style fix).
+  frame (same machine): 30.4s -> ~0.65s (about 47x) after the round-2 fixes, ~0.75s after the round-3
+  fixes below (H3's window parsing and H4's sort add a little back), still comfortably under the 2s
+  target. A real-data re-run (8 org/mode combinations) landed the same conclusion independently:
+  byte-identical output to the pre-vectorization commit in all 8 runs, 4-13x faster, counts changing
+  only by the intended out-of-scope-row exclusion (F5's month_0-style fix).
 
   A frozen, deliberately non-vectorized reference copy of the pre-rewrite logic (`_reference_derive`
   in `tests/test_quarter_derived_models.py`) is checked against the production function by a
@@ -555,6 +579,16 @@ longer exists; nothing here depends on it):
   `TestHandComputedSpecDerivedResults` in the same test file. Keep the reference frozen -- fix
   production, the reference and the differential test together when they are found to disagree,
   never edit the reference alone to match a production change.
+
+  **Round-3 review (2026-09-27).** An independent spec-derived oracle (codex) matched production on
+  every frame; a real-data re-run was identical in all 8 runs; a second, spec-only Claude oracle
+  found no production defect beyond one interpretation question (resolved as the plain-language `id`
+  restatement above). It DID find two real test-coverage gaps that a targeted mutant could slip
+  through unnoticed (H1: the value check in the null-`id` partition was unpinned, because
+  `_reference_derive` shared that exact line so the differential test agreed with the bug; H2: the
+  window's presence in the exact-duplicate identity, independent of `id`, was unpinned) -- both are
+  now covered by a dedicated unit test AND mutation-verified. It also found two real, if minor,
+  production gaps (H3, H4) fixed above.
 - **Dev-DB validation (2026-09-27).** On the local dev DB, complete same-issue triplets across the
   seven derived models (2000-2026) were 30.96k (kghm) / 7.13k (tjhm), and 14.1k / 3.4k over
   2015-2026; the feasibility section above (~27.8k / ~5.2k) did not state its year window, so these

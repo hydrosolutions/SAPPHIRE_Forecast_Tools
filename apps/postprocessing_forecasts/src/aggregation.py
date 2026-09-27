@@ -746,22 +746,29 @@ def derive_quarterly_from_monthly_same_issue(
         check that depends on it (hv range needs a valid hv; quarter-start
         needs a valid date).
 
-        Exact duplicates (PP-065 F1/F2/G1): a row is an exact duplicate of
-        another only if its identity (code, canonical model, ``d``, hv,
-        ``valid_from``, ``valid_to``) AND its point-value inputs (``q``
-        and ``q50``, NaN-equal) both match -- so a same-window or
-        same-``id`` pair with a DIFFERENT value is never silently
-        dropped; it is left for the uniqueness rule, where a missing
-        ``valid_from`` column makes the group unresolvable (ambiguous)
-        and a null ``valid_from`` never matches. When ``id`` is present,
-        it is authoritative ONLY among rows with a NON-null ``id`` AND
-        only when their point-value inputs also match (PP-065 G1): a
-        same-id pair with a DIFFERENT value is a genuine conflict, not a
-        repeated read, so both rows are kept and reach the uniqueness
-        rule as a group of >= 2 -- deduping on ``id`` alone would keep
-        whichever row sorts first, making the output depend on row
-        order. Null-``id`` rows fall back to the same key+value rule as
-        when ``id`` is absent.
+        Exact duplicates (PP-065 F1/F2/G1/H3/H4): a row is an exact
+        duplicate of another only if its identity (code, canonical model,
+        ``d``, hv, ``valid_from``, ``valid_to`` -- windows compared as
+        PARSED local calendar dates, PP-065 H3, not raw strings, so e.g.
+        "2027-01-01" and "2027-01-01T00:00:00+06:00" for the same row are
+        the same window) AND its point-value inputs (``q`` and ``q50``,
+        NaN-equal) both match -- so a same-window pair with a DIFFERENT
+        value is never silently dropped; it is left for the uniqueness
+        rule, where a missing ``valid_from`` column makes the group
+        unresolvable (ambiguous) and a null ``valid_from`` never matches.
+        The window is ALWAYS part of this identity, whether or not ``id``
+        is present: a non-null ``id`` never merges rows that key + window
+        + value would not -- its only effect is to keep rows APART whose
+        ids differ (two null ids are not evidence of a repeat, so
+        null-``id`` rows fall back to the plain key+value+window rule).
+        A same-``id`` pair with a DIFFERENT value or window is a genuine
+        conflict, not a repeated read, so both rows are kept and reach
+        the uniqueness rule as a group of >= 2 -- deduping on ``id`` alone
+        would keep whichever row sorts first, making the output depend on
+        row order. When two rows are exact duplicates in every respect
+        except the stored ``model_short`` spelling, the lexicographically
+        smallest spelling wins, deterministically, regardless of input
+        row order (PP-065 H4).
     """
     has_q = "q" in monthly_raw.columns
     counts: Counter = Counter()
@@ -967,8 +974,22 @@ def derive_quarterly_from_monthly_same_issue(
     # present, is authoritative ONLY among rows with a non-null id (two
     # null ids are not evidence of a repeat, PP-065 F2); null-id rows fall
     # back to the same key+value rule as when `id` is absent entirely.
+    # Windows are compared as PARSED local calendar dates (PP-065 H3), the
+    # same rule the amendment applies everywhere else -- not as raw
+    # strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00" for
+    # the same row are the same window and do not block the collapse.
+    has_valid_from_col = "valid_from" in df.columns
+    has_valid_to_col = "valid_to" in df.columns
+    if has_valid_from_col:
+        df["_vf_parsed"] = local_calendar_date(df["valid_from"])
+    if has_valid_to_col:
+        df["_vt_parsed"] = local_calendar_date(df["valid_to"])
+
     key_cols = ["code", "_canon_model", "_d", "_hv"]
-    key_cols += [c for c in ("valid_from", "valid_to") if c in df.columns]
+    if has_valid_from_col:
+        key_cols.append("_vf_parsed")
+    if has_valid_to_col:
+        key_cols.append("_vt_parsed")
     value_cols = []
     if "q" in df.columns:
         df["_dedup_q"] = q_val
@@ -977,16 +998,29 @@ def derive_quarterly_from_monthly_same_issue(
         df["_dedup_q50"] = q50_val
         value_cols.append("_dedup_q50")
 
+    # Deterministic tiebreak (PP-065 H4): when two rows are exact
+    # duplicates in every respect above EXCEPT the raw `model_short`
+    # spelling (they share one canonical model), `drop_duplicates`'s
+    # keep="first" would otherwise keep whichever spelling happened to
+    # sort first in the INPUT, making the output depend on row order.
+    # Sorting by the stored spelling first (a stable sort, so it disturbs
+    # no other tie order) makes the lexicographically smallest spelling
+    # win regardless of input order.
+    df = df.sort_values("model_short", kind="stable")
+
     if "id" in df.columns:
         id_notna = df["id"].notna()
-        # A shared non-null id is authoritative only when the VALUES also
-        # agree (PP-065 G1): a same-id pair with a DIFFERENT value is a
-        # genuine conflict, not a repeated read, so it is NOT collapsed
-        # here -- both rows are kept for the uniqueness rule below, which
-        # sees a group of >= 2 and (absent an unambiguous valid_from
-        # match) correctly calls it ambiguous. Deduping on `id` alone
-        # would keep whichever row sorts first, making the OUTPUT depend
-        # on row order.
+        # A shared non-null id is NOT authoritative on its own: the
+        # window and value are still part of its identity (PP-065 H5),
+        # so `id` never merges rows that key + window + value would not
+        # -- its only effect is to keep rows apart whose ids differ. A
+        # same-id pair with a DIFFERENT value is a genuine conflict, not
+        # a repeated read, so it is NOT collapsed here -- both rows are
+        # kept for the uniqueness rule below, which sees a group of >= 2
+        # and (absent an unambiguous valid_from match) correctly calls it
+        # ambiguous. Deduping on `id` alone (ignoring key+value) would
+        # keep whichever row sorts first, making the OUTPUT depend on row
+        # order.
         # Scoped by the natural key too, not `id` alone (found via the G3
         # shuffled-invariance check): a "repeated read" is a repeat of
         # THIS (code, model, d, hv[, window]) row, not merely a row that
@@ -1009,11 +1043,11 @@ def derive_quarterly_from_monthly_same_issue(
     df["_row_target_year"] = row_target_year
     df["_row_target_month"] = row_target_month
 
-    has_valid_from_col = "valid_from" in df.columns
     if has_valid_from_col:
-        vf = local_calendar_date(df["valid_from"])
-        df["_vf_year"] = vf.dt.year
-        df["_vf_month"] = vf.dt.month
+        # Reuse `_vf_parsed` (already computed above for the dedup key)
+        # rather than re-parsing `valid_from`.
+        df["_vf_year"] = df["_vf_parsed"].dt.year
+        df["_vf_month"] = df["_vf_parsed"].dt.month
     else:
         df["_vf_year"] = np.nan
         df["_vf_month"] = np.nan

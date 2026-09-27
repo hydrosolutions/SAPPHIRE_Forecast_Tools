@@ -75,11 +75,13 @@ def _reference_derive(
 
     A FROZEN copy of ``derive_quarterly_from_monthly_same_issue`` as it
     stood right after the F1/F2/F4/F5 fixes (commit-local, before the F3
-    vectorization rewrite) -- and since round-2 review, ALSO carrying the
-    G1 (value-aware id dedup), G4 (bad_key) and G5 (typed object columns)
-    correctness fixes, since those are behavioural guarantees, not
-    vectorization concerns, and the differential test is only meaningful
-    if both sides uphold them. Kept here ONLY as ground truth for
+    vectorization rewrite) -- and since round-2/round-3 review, ALSO
+    carrying the G1 (value-aware id dedup), G4 (bad_key), G5 (typed object
+    columns), H3 (windows compared as parsed local dates) and H4
+    (deterministic model_short spelling tiebreak) correctness fixes,
+    since those are behavioural guarantees, not vectorization concerns,
+    and the differential test is only meaningful if both sides uphold
+    them. Kept here ONLY as ground truth for
     ``TestVectorizedMatchesReferenceDifferential`` below. Do NOT "fix"
     this to match the production function when they diverge for a real
     bug -- fix production and this copy will keep it honest. Any
@@ -252,8 +254,21 @@ def _reference_derive(
     )
     df["_point_value"] = q_val.where(np.isfinite(q_val), q50_val)
 
+    # Windows compared as PARSED local calendar dates (PP-065 H3), not raw
+    # strings -- consistent with the amendment's parsing rule everywhere
+    # else.
+    has_valid_from_col = "valid_from" in df.columns
+    has_valid_to_col = "valid_to" in df.columns
+    if has_valid_from_col:
+        df["_vf_parsed"] = local_calendar_date(df["valid_from"])
+    if has_valid_to_col:
+        df["_vt_parsed"] = local_calendar_date(df["valid_to"])
+
     key_cols = ["code", "_canon_model", "_d", "_hv"]
-    key_cols += [c for c in ("valid_from", "valid_to") if c in df.columns]
+    if has_valid_from_col:
+        key_cols.append("_vf_parsed")
+    if has_valid_to_col:
+        key_cols.append("_vt_parsed")
     value_cols = []
     if "q" in df.columns:
         df["_dedup_q"] = q_val
@@ -261,6 +276,12 @@ def _reference_derive(
     if "q50" in df.columns:
         df["_dedup_q50"] = q50_val
         value_cols.append("_dedup_q50")
+
+    # Deterministic spelling tiebreak (PP-065 H4): sort by the stored
+    # model_short spelling (stable sort) before the exact-duplicate drop,
+    # so the lexicographically smallest spelling wins regardless of input
+    # row order.
+    df = df.sort_values("model_short", kind="stable")
 
     if "id" in df.columns:
         id_notna = df["id"].notna()
@@ -279,11 +300,9 @@ def _reference_derive(
     df["_row_target_year"] = row_target_years
     df["_row_target_month"] = row_target_months
 
-    has_valid_from_col = "valid_from" in df.columns
     if has_valid_from_col:
-        vf = local_calendar_date(df["valid_from"])
-        df["_vf_year"] = vf.dt.year
-        df["_vf_month"] = vf.dt.month
+        df["_vf_year"] = df["_vf_parsed"].dt.year
+        df["_vf_month"] = df["_vf_parsed"].dt.month
 
     winners = []
     ambiguous_triplets = set()
@@ -1208,6 +1227,115 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         )
         assert len(result) == 1
         assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+        assert "ambiguous_duplicate" not in counts
+
+    # ---- H1: the value check also applies in the NULL-id partition -------
+
+    @pytest.mark.parametrize("order", ["a_then_b", "b_then_a"])
+    def test_null_id_partition_value_check_ambiguous_both_orders(self, order):
+        # An `id` column that is ALL None: every row falls into the
+        # "without_id" dedup partition. A same-window hv=1 pair with
+        # DIFFERENT values (q50 100 vs 999) must NOT collapse there
+        # either -- the value check applies in every partition, not just
+        # when `id` is absent entirely. Absent a matching valid_from
+        # column, the surviving group of 2 is ambiguous.
+        columns = ["code", "model_short", "date", "horizon_value", "q", "q50", "id"]
+        row_a = (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None)
+        row_b = (CODE, "GBT", "2026-12-25", 1, np.nan, 999.0, None)
+        pair = [row_a, row_b] if order == "a_then_b" else [row_b, row_a]
+        raw = _frame(
+            pair
+            + [
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None),
+            ],
+            columns=columns,
+        )
+        assert raw["id"].isna().all()
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert result.empty
+        assert counts["ambiguous_duplicate"] == 1
+
+    # ---- H2: the window is part of the exact-duplicate identity ----------
+
+    def test_window_is_part_of_exact_duplicate_identity(self):
+        # No id column. Two hv=1 rows with the SAME value (q50=100) but
+        # DIFFERENT windows (01-01..01-31 vs 01-02..02-01), both of which
+        # parse to January 2027 -- i.e. both MATCH the target month. If
+        # the window were not part of the exact-duplicate key, this pair
+        # would wrongly collapse to a singleton (same value); since it
+        # IS part of the key, they survive as a group of 2, both match,
+        # and 2 matches is ambiguous (not exactly 1).
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-01-31"),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-02", "2027-02-01"),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert result.empty
+        assert counts["ambiguous_duplicate"] == 1
+
+    # ---- H3: windows compared as parsed local dates -----------------------
+
+    def test_exact_duplicate_window_compared_as_parsed_local_date(self):
+        # Same value, same (code, model, d, hv); windows differ only in
+        # STRING form (naive vs tz-aware for the same local calendar
+        # date) -- must be treated as the same window and collapse to a
+        # singleton, deriving normally.
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 1.0, "2027-01-01", "2027-01-01"),
+                (
+                    CODE,
+                    "GBT",
+                    "2026-12-25",
+                    1,
+                    np.nan,
+                    1.0,
+                    "2027-01-01T00:00:00+06:00",
+                    "2027-01-01T00:00:00+06:00",
+                ),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 2.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 3.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert abs(result.iloc[0]["forecasted_discharge"] - 2.0) < 1e-9
+        assert "ambiguous_duplicate" not in counts
+
+    # ---- H4: deterministic model_short spelling tiebreak -------------------
+
+    @pytest.mark.parametrize("order", ["a_then_b", "b_then_a"])
+    def test_exact_duplicate_spelling_tiebreak_is_deterministic(self, order):
+        # Two exact-duplicate rows (same code/canonical-model/d/hv/window/
+        # value) differing ONLY in the raw model_short spelling: the
+        # surviving spelling must be the lexicographically smallest one,
+        # regardless of which row was first in the input.
+        row_a = (CODE, "SM_GBT_NORM", "2026-12-25", 1, np.nan, 100.0, None, None)
+        row_b = (CODE, "sm_gbt_norm", "2026-12-25", 1, np.nan, 100.0, None, None)
+        pair = [row_a, row_b] if order == "a_then_b" else [row_b, row_a]
+        raw = _frame(
+            pair
+            + [
+                (CODE, "SM_GBT_NORM", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "SM_GBT_NORM", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "SM_GBT_NORM"
         assert "ambiguous_duplicate" not in counts
 
     # ---- F5: out-of-scope rows are dropped before any counted check ------
