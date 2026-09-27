@@ -1206,6 +1206,78 @@ class TestGetDataMonthly:
             f"keys, got: {fallback_logs[0]!r}"
         )
 
+    def test_monthly_quarter_frame_fallback_count_is_distinct_keys_not_rows(
+        self, monkeypatch
+    ):
+        """M3 confirm-fix gap: the previous fallback test's two fallback
+        rows had DIFFERENT keys, so counting rows instead of distinct keys
+        would have given the same number (2) either way -- not
+        revert-sensitive. Here, TWO of the three fallback rows share one
+        (code, quarter, model) key (LR_Base, two rows both at the
+        configured lead, no hv-0 for it), and a THIRD fallback row sits on
+        a different key (LR_SM). Row count = 3, distinct keys = 2 -- only
+        the distinct-key count is correct.
+
+        Uses a monkeypatched get_forecast_stats (bypassing the real API
+        dedup, which would already collapse two same-key/same-lead rows)
+        so the duplicate-key-fallback row survives to reach this code, the
+        same technique as the Z2 duplicate-stats-key test above."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "false")
+        # Configured quarter lead is 1 (see the `_long_term_resolver_env`
+        # autouse fixture, "quarter": 1). No hv-0 row for either key.
+        fallback_stats = pd.DataFrame(
+            [
+                {
+                    "code": "19999", "quarter_in_year": 2, "model_short": "LR_Base",
+                    "model_long": "LR_Base", "horizon_value": 1, "delta": 40.0,
+                },
+                {
+                    "code": "19999", "quarter_in_year": 2, "model_short": "LR_Base",
+                    "model_long": "LR_Base", "horizon_value": 1, "delta": 41.0,
+                },
+                {
+                    "code": "19999", "quarter_in_year": 2, "model_short": "LR_SM",
+                    "model_long": "LR_SM", "horizon_value": 1, "delta": 88.0,
+                },
+            ]
+        )
+
+        def fake_get_forecast_stats(horizon, station):
+            if horizon == "quarter":
+                return fallback_stats.copy()
+            return pd.DataFrame()
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([])
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        monkeypatch.setattr(db, "get_forecast_stats", fake_get_forecast_stats)
+        self._patch_processing(monkeypatch)
+
+        info_messages = []
+        _real_info = db.logger.info
+
+        def _capture_info(msg, *args, **kwargs):
+            info_messages.append(msg % args if args else msg)
+            return _real_info(msg, *args, **kwargs)
+
+        monkeypatch.setattr(db.logger, "info", _capture_info)
+
+        db.get_data("month", "19999", self._all_stations_19999_df())
+
+        fallback_logs = [m for m in info_messages if "fallback" in m]
+        assert len(fallback_logs) == 1, (
+            f"Expected exactly one INFO line logging the fallback count, "
+            f"got {len(fallback_logs)}: {fallback_logs!r}"
+        )
+        assert "_get_data_monthly: 2 quarter skill key(s)" in fallback_logs[0], (
+            f"Expected the DISTINCT-key count (2: LR_Base, LR_SM), not the "
+            f"row count (3), got: {fallback_logs[0]!r}"
+        )
+
     def test_monthly_quarter_frame_no_skill_when_no_hv0_and_no_lead_match(
         self, monkeypatch
     ):
