@@ -310,11 +310,13 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
 - **Invariant, revised 2026-09-27 (owner decision, `115eb886` on branch `fix_pp_quarter_calendar_window`
   — see "Native-only restriction" below for why).** The flag-OFF direct set = trunk's set (every row
-  with issue year in `[start_year, end_year]`, any target year) **plus, at most, ONE row**: the prior-year
-  issuance targeting Q1 of `start_year` whose `date` exactly matches the quarter mode's own
-  schedule-computed native issue date (`valid_from` — Jan 1 of `start_year` — minus `lead_time` months,
-  on `issue_day`, clamped to that month's length). If the schedule cannot be resolved, or resolves with
-  `issue_day < 1`, there is **no** exception at all — trunk's set only — and one WARNING is logged.
+  with issue year in `[start_year, end_year]`, any target year) **plus only rows from the schedule-dated
+  native issuance**: any prior-year row targeting Q1 of `start_year` whose `date` exactly matches the
+  quarter mode's own schedule-computed native issue date (`valid_from` — Jan 1 of `start_year` — minus
+  `lead_time` months, on `issue_day`, clamped to that month's length) — the mask (`data_reader.py:3251-3264`
+  on `18efd261`) is evaluated per row across the whole `direct` frame, so it admits every matching row,
+  across stations and models, not a single row overall. If the schedule cannot be resolved, or resolves
+  with `issue_day < 1`, there is **no** exception at all — trunk's set only — and one WARNING is logged.
   Nothing else is added, nothing else is removed.
 - **Native-only restriction (`_quarter_native_q1_issue_date`, `data_reader.py`, `115eb886`).** Before
   2026-09-27 the mask checked only target year `== start_year` and `quarter_in_year == 1` — it did not
@@ -659,6 +661,15 @@ Chunk B no longer edits `data_reader.py` or any other file.
    native-shaped LR **and** ensemble rows for the affected quarters (not just LR's), or they keep
    winning the dashboard's dedup indefinitely. No code change here — this is a rollout/runbook step, not
    a Chunk A/B behaviour.
+   - **Skill needs the same rollback step (added 2026-09-27).** FD-029's rollback caveat also covers
+     quarter skill (`../mid_prio_gi_draft_fd_quarter_card_calendar_window.md`, ~:272-281, "The rollback
+     caveat extends to skill, not only to forecast rows"): a quarter skill row written during the flag-ON
+     era at the hv-0 sentinel holds genuine lead-0 skill, not a rewrite, so it keeps winning the
+     dashboard's flag-OFF selection's first preference (hv-0 over the configured-lead fallback) after the
+     rollback. On a **kghm** (lead 1) org this shows lead-0 accuracy against a lead-1 forecast until it is
+     overwritten. **The rollback runbook must therefore also run a flag-OFF quarter skill recalc per
+     org**, so hv-0 is rewritten with genuine flag-OFF (configured-lead) skill — until that recalc runs,
+     the affected org's card shows the flag-ON-era lead-0 skill. No code change here either.
 
 ## Out of scope
 
