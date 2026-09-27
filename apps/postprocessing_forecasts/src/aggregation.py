@@ -720,19 +720,33 @@ def derive_quarterly_from_monthly_same_issue(
         ``horizon_type``) never leak into the output. ``year``,
         ``quarter_in_year`` and ``horizon_value`` are int64;
         ``forecasted_discharge``, ``q`` and the quantile columns are
-        float64; the rest are object -- identically whether the result is
-        empty or not (PP-065 F4). The counts dict is a ``Counter``: a
-        missing key reads as 0.
+        float64; ``code``, ``date``, ``valid_from`` and ``valid_to`` are
+        object (PP-065 G5: ``code`` is cast to object even when the input
+        ``code`` column is numeric or a pandas ``StringDtype``, so the
+        schema never depends on the caller's dtype); every other column
+        is object too -- identically whether the result is empty or not
+        (PP-065 F4). The counts dict is a ``Counter``: a missing key
+        reads as 0.
 
-        Exclusion order (PP-065 F5): rows out of scope for this call --
-        model not in ``models``, a valid ``horizon_value`` outside
+        Exclusion order: a null ``code`` or ``model_short`` is excluded
+        first and counted as ``bad_key`` (PP-065 G4) -- a null group key
+        would otherwise reach the ambiguity check below and crash there
+        (pandas groupby drops null keys by default, so a bool `transform`
+        comes back NaN for that row, and ``~NaN`` raises). Among the
+        remaining rows, out-of-scope rows for this call -- model not in
+        ``models``, a valid ``horizon_value`` outside
         ``{lead, lead+1, lead+2}``, or an issue month that is not a
         quarter start once offset by ``lead`` -- are dropped SILENTLY,
-        before any of the counted checks run, so e.g. a different
+        before ``wrong_issue_day`` (the only counted check that could
+        otherwise be confused by them); this is why e.g. a different
         monthly mode's row (in-model, but the wrong lead for THIS call)
-        is never miscounted as ``wrong_issue_day``.
+        is never miscounted as ``wrong_issue_day`` (PP-065 F5).
+        ``bad_horizon_value`` and ``bad_date`` are each counted at the
+        point their own column is validated, necessarily before the scope
+        check that depends on it (hv range needs a valid hv; quarter-start
+        needs a valid date).
 
-        Exact duplicates (PP-065 F1/F2): a row is an exact duplicate of
+        Exact duplicates (PP-065 F1/F2/G1): a row is an exact duplicate of
         another only if its identity (code, canonical model, ``d``, hv,
         ``valid_from``, ``valid_to``) AND its point-value inputs (``q``
         and ``q50``, NaN-equal) both match -- so a same-window or
@@ -740,9 +754,14 @@ def derive_quarterly_from_monthly_same_issue(
         dropped; it is left for the uniqueness rule, where a missing
         ``valid_from`` column makes the group unresolvable (ambiguous)
         and a null ``valid_from`` never matches. When ``id`` is present,
-        it dedups on its own only among rows with a NON-null ``id``
-        (two null ids are not evidence of a repeat); null-``id`` rows
-        fall back to the same key+value rule as when ``id`` is absent.
+        it is authoritative ONLY among rows with a NON-null ``id`` AND
+        only when their point-value inputs also match (PP-065 G1): a
+        same-id pair with a DIFFERENT value is a genuine conflict, not a
+        repeated read, so both rows are kept and reach the uniqueness
+        rule as a group of >= 2 -- deduping on ``id`` alone would keep
+        whichever row sorts first, making the output depend on row
+        order. Null-``id`` rows fall back to the same key+value rule as
+        when ``id`` is absent.
     """
     has_q = "q" in monthly_raw.columns
     counts: Counter = Counter()
@@ -793,6 +812,14 @@ def derive_quarterly_from_monthly_same_issue(
         for c in _float_cols():
             if c in result.columns:
                 result[c] = result[c].astype("float64")
+        # `code` copies the input's dtype (e.g. int64, pandas StringDtype)
+        # via an index level; `date`/`valid_from`/`valid_to` are built as
+        # plain strings already, but are cast too for the same guarantee.
+        # empty_result() always uses object for these (PP-065 G5), so the
+        # two schemas must match regardless of the caller's `code` dtype.
+        for c in ("code", "date", "valid_from", "valid_to"):
+            if c in result.columns:
+                result[c] = result[c].astype("object")
         return result
 
     def log_counts() -> None:
@@ -830,6 +857,23 @@ def derive_quarterly_from_monthly_same_issue(
         return empty_result(), counts
 
     df = monthly_raw.copy()
+
+    # A null `code` or `model_short` (PP-065 G4) must be excluded before
+    # anything groups on `code`: a null group key makes pandas groupby
+    # (dropna=True, the default) drop that row from EVERY group's
+    # transform result, which comes back as NaN for a bool column -- and
+    # `~NaN` raises TypeError ("bad operand type for unary ~: 'float'")
+    # at the ambiguity check further down. Counted, not silent: a null
+    # key is a genuine data defect, not an out-of-scope routine row.
+    bad_key = df["code"].isna() | df["model_short"].isna()
+    n_bad_key = int(bad_key.sum())
+    if n_bad_key:
+        counts["bad_key"] = n_bad_key
+    df = df.loc[~bad_key].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
     canon_model = canonical_model_short_series(df["model_short"])
     in_scope = canon_model.isin(models)
     df = df.loc[in_scope].copy()
@@ -935,7 +979,20 @@ def derive_quarterly_from_monthly_same_issue(
 
     if "id" in df.columns:
         id_notna = df["id"].notna()
-        with_id = df.loc[id_notna].drop_duplicates(subset=["id"]).copy()
+        # A shared non-null id is authoritative only when the VALUES also
+        # agree (PP-065 G1): a same-id pair with a DIFFERENT value is a
+        # genuine conflict, not a repeated read, so it is NOT collapsed
+        # here -- both rows are kept for the uniqueness rule below, which
+        # sees a group of >= 2 and (absent an unambiguous valid_from
+        # match) correctly calls it ambiguous. Deduping on `id` alone
+        # would keep whichever row sorts first, making the OUTPUT depend
+        # on row order.
+        # Scoped by the natural key too, not `id` alone (found via the G3
+        # shuffled-invariance check): a "repeated read" is a repeat of
+        # THIS (code, model, d, hv[, window]) row, not merely a row that
+        # happens to carry the same `id` string as some UNRELATED row --
+        # an id collision across triplets must never merge them.
+        with_id = df.loc[id_notna].drop_duplicates(subset=[*key_cols, "id", *value_cols]).copy()
         without_id = df.loc[~id_notna].drop_duplicates(subset=key_cols + value_cols).copy()
         df = pd.concat([with_id, without_id])
     else:

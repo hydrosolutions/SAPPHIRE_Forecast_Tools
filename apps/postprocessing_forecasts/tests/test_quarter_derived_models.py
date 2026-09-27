@@ -75,12 +75,16 @@ def _reference_derive(
 
     A FROZEN copy of ``derive_quarterly_from_monthly_same_issue`` as it
     stood right after the F1/F2/F4/F5 fixes (commit-local, before the F3
-    vectorization rewrite), kept here ONLY as ground truth for
-    ``test_vectorized_matches_reference_differential`` below. Do NOT
-    "fix" this to match the production function when they diverge for a
-    real bug -- fix production and this copy will keep it honest. Any
+    vectorization rewrite) -- and since round-2 review, ALSO carrying the
+    G1 (value-aware id dedup), G4 (bad_key) and G5 (typed object columns)
+    correctness fixes, since those are behavioural guarantees, not
+    vectorization concerns, and the differential test is only meaningful
+    if both sides uphold them. Kept here ONLY as ground truth for
+    ``TestVectorizedMatchesReferenceDifferential`` below. Do NOT "fix"
+    this to match the production function when they diverge for a real
+    bug -- fix production and this copy will keep it honest. Any
     intentional behaviour change belongs in the production docstring and
-    in a new frozen copy, not a silent edit here.
+    in this frozen copy, applied identically, not a silent edit here.
     """
     has_q = "q" in monthly_raw.columns
     counts: Counter = Counter()
@@ -130,6 +134,9 @@ def _reference_derive(
         for c in _float_cols():
             if c in result.columns:
                 result[c] = result[c].astype("float64")
+        for c in ("code", "date", "valid_from", "valid_to"):
+            if c in result.columns:
+                result[c] = result[c].astype("object")
         return result
 
     def log_counts() -> None:
@@ -166,6 +173,16 @@ def _reference_derive(
         return empty_result(), counts
 
     df = monthly_raw.copy()
+
+    bad_key = df["code"].isna() | df["model_short"].isna()
+    n_bad_key = int(bad_key.sum())
+    if n_bad_key:
+        counts["bad_key"] = n_bad_key
+    df = df.loc[~bad_key].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
     canon_model = canonical_model_short_series(df["model_short"])
     in_scope = canon_model.isin(models)
     df = df.loc[in_scope].copy()
@@ -247,7 +264,7 @@ def _reference_derive(
 
     if "id" in df.columns:
         id_notna = df["id"].notna()
-        with_id = df.loc[id_notna].drop_duplicates(subset=["id"]).copy()
+        with_id = df.loc[id_notna].drop_duplicates(subset=[*key_cols, "id", *value_cols]).copy()
         without_id = df.loc[~id_notna].drop_duplicates(subset=key_cols + value_cols).copy()
         df = pd.concat([with_id, without_id])
     else:
@@ -1139,24 +1156,53 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         assert "missing_lead" not in counts
         assert "ambiguous_duplicate" not in counts
 
-    def test_id_dedup_ignores_value_divergence(self):
+    @pytest.mark.parametrize("order", ["a_then_b", "b_then_a"])
+    def test_same_id_different_values_is_ambiguous_both_orders(self, order):
         # Same id twice with a DIFFERENT value, and no valid_from column at
-        # all: the id rule must collapse this to ONE row regardless of the
-        # value mismatch (a repeated read, by construction, PP-065 F2).
-        # Without the id branch, the key+value rule would NOT collapse
-        # these (values differ), and -- with no valid_from column present
-        # -- the pair would become ambiguous instead of deriving.
+        # all (PP-065 G1): a same-id pair with a DIFFERENT value is a
+        # genuine conflict, not a repeated read -- both rows are kept and
+        # reach the uniqueness rule as a group of >= 2, which (with no
+        # valid_from column) is unresolvable: ambiguous, counted, in
+        # EITHER row order. Deduping on id alone (the pre-G1 behaviour)
+        # kept whichever row sorted first, making the output depend on
+        # row order -- that is exactly the bug this test guards against.
+        columns = ["code", "model_short", "date", "horizon_value", "q", "q50", "id"]
+        row_a = (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, "same-id-1")
+        row_b = (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 999.0, "same-id-1")
+        pair = [row_a, row_b] if order == "a_then_b" else [row_b, row_a]
+        raw = _frame(
+            pair
+            + [
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, "id-2"),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, "id-3"),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "gbt-1"),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, "gbt-2"),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, "gbt-3"),
+            ],
+            columns=columns,
+        )
+        assert "valid_from" not in raw.columns
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert counts["ambiguous_duplicate"] == 1
+
+    def test_same_id_same_value_is_exact_duplicate_derives(self):
+        # Same id, same value: a genuine repeated read -- collapses to a
+        # singleton (PP-065 G1's positive case) and derives normally.
         columns = ["code", "model_short", "date", "horizon_value", "q", "q50", "id"]
         raw = _frame(
             [
                 (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "same-id-1"),
-                (CODE, "GBT", "2026-12-25", 1, np.nan, 999.0, "same-id-1"),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "same-id-1"),
                 (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, "id-2"),
                 (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, "id-3"),
             ],
             columns=columns,
         )
-        assert "valid_from" not in raw.columns
         result, counts = derive_quarterly_from_monthly_same_issue(
             raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
         )
@@ -1272,13 +1318,235 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         assert ambiguous_records[0].levelname == "WARNING"
         assert CODE not in ambiguous_records[0].getMessage()
 
+    # ---- G2: `code` is part of the grouping key ---------------------------
+
+    def test_two_stations_derive_independently(self):
+        # Two fake stations (19999, 19998 -- both project-convention
+        # placeholders), same model, same issue date, each with its own
+        # complete triplet: `code` MUST be part of the (code, model, d, hv)
+        # grouping key, or the two stations' hv=1 rows (etc.) would land
+        # in the same group and, with no valid_from column to disambiguate,
+        # become ambiguous instead of deriving independently.
+        raw = _frame(
+            [
+                ("19999", "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                ("19999", "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                ("19999", "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+                ("19998", "GBT", "2026-12-25", 1, np.nan, 200.0, None, None),
+                ("19998", "GBT", "2026-12-25", 2, np.nan, 210.0, None, None),
+                ("19998", "GBT", "2026-12-25", 3, np.nan, 220.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 2
+        assert set(result["code"]) == {"19999", "19998"}
+        assert not counts
+
+    # ---- G4: null code / model_short (`bad_key`) --------------------------
+
+    def test_null_code_excluded_counted_no_exception_control_derives(self):
+        raw = _frame(
+            [
+                (None, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (None, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (None, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert counts["bad_key"] == 3
+
+    def test_null_model_short_excluded_counted_no_exception(self):
+        raw = _frame(
+            [
+                (CODE, None, "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert counts["bad_key"] == 1
+
+    # ---- G5: `code` output dtype is always object -------------------------
+
+    def test_code_string_dtype_input_output_is_object(self):
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        raw["code"] = raw["code"].astype("string")
+        result, _ = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert result["code"].dtype == object
+
+        raw_empty_trigger = raw.copy()
+        raw_empty_trigger["date"] = "2026-11-25"  # not a quarter start -> empty
+        empty_result, _ = derive_quarterly_from_monthly_same_issue(
+            raw_empty_trigger, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert empty_result["code"].dtype == object
+        assert empty_result["code"].dtype == result["code"].dtype
+
+
+class TestHandComputedSpecDerivedResults:
+    """PP-065 G3: expected results computed by hand against the SPEC (this
+    plan's rules), not by calling either implementation -- an oracle
+    independent of both production and `_reference_derive`. Values, target
+    months/years, and calendar day counts below are asserted as literal
+    facts (e.g. "March has 31 days"), never looked up via a helper."""
+
+    @pytest.mark.parametrize(
+        "lead,d_str",
+        [
+            (0, "2027-01-25"),  # d itself is Jan -- no rollover, included for contrast.
+            (1, "2026-12-25"),  # the canonical kghm-shaped Dec -> Jan rollover.
+            (2, "2026-11-25"),  # Nov -> Jan, two months forward.
+            (11, "2026-02-25"),  # Feb -> Jan of the FOLLOWING year, 11 months forward.
+        ],
+    )
+    def test_dec_jan_rollover_across_leads(self, lead, d_str):
+        raw = _frame(
+            [
+                (CODE, "GBT", d_str, lead, np.nan, 100.0, None, None),
+                (CODE, "GBT", d_str, lead + 1, np.nan, 110.0, None, None),
+                (CODE, "GBT", d_str, lead + 2, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=lead, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert not counts
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["code"] == CODE
+        assert row["model_short"] == "GBT"
+        assert row["year"] == 2027
+        assert row["quarter_in_year"] == 1
+        assert row["date"] == d_str
+        assert row["horizon_value"] == lead
+        assert row["valid_from"] == "2027-01-01"
+        assert row["valid_to"] == "2027-03-31"  # March has 31 days.
+        assert abs(row["forecasted_discharge"] - 110.0) < 1e-9
+
+    def test_feb_29_leap_year_clamp(self):
+        # issue_day=31 in Feb of a LEAP year (2028): clamps to 29.
+        raw = _frame(
+            [
+                (CODE, "GBT", "2028-02-29", 2, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2028-02-29", 3, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2028-02-29", 4, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=2, issue_day=31, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert not counts
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["year"] == 2028
+        assert row["quarter_in_year"] == 2
+        assert row["date"] == "2028-02-29"
+        assert row["valid_from"] == "2028-04-01"
+        assert row["valid_to"] == "2028-06-30"  # June has 30 days.
+        assert abs(row["forecasted_discharge"] - 110.0) < 1e-9
+
+    def test_june_30_day_month_clamp(self):
+        # issue_day=31 in June (30 days): clamps to 30.
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-06-30", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-06-30", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-06-30", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=31, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert not counts
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["year"] == 2026
+        assert row["quarter_in_year"] == 3
+        assert row["date"] == "2026-06-30"
+        assert row["valid_from"] == "2026-07-01"
+        assert row["valid_to"] == "2026-09-30"  # September has 30 days.
+        assert abs(row["forecasted_discharge"] - 110.0) < 1e-9
+
+    def test_same_id_conflict_ambiguous(self):
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, None, None, "same-id"),
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 999.0, None, None, "same-id"),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None, "id-2"),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None, "id-3"),
+                # Control: a fully independent, unambiguous triplet.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None, "gbt-1"),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None, "gbt-2"),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None, "gbt-3"),
+            ],
+            columns=FULL_COLUMNS + ["id"],
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert counts["ambiguous_duplicate"] == 1
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+
+    def test_single_match_in_group_of_two_wins(self):
+        # hv=1 has two rows: one whose valid_from (year, month) matches
+        # its own target (2027, 1) exactly, one that does not -- the
+        # matching row's value (100.0) must win, giving mean(100,110,120).
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-01-31"),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 999.0, "2027-02-15", "2027-02-28"),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert "ambiguous_duplicate" not in counts
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["year"] == 2027
+        assert row["quarter_in_year"] == 1
+        assert row["valid_from"] == "2027-01-01"
+        assert row["valid_to"] == "2027-03-31"
+        assert abs(row["forecasted_discharge"] - 110.0) < 1e-9
+
 
 # =======================================================================
 # F3: randomized differential test -- production (vectorized) vs the
-# frozen row-wise `_reference_derive` above. Station code 19999 only
-# (this generator never invents a second code, per the module convention;
-# model/date/duplicate/column-presence variety carries the coverage
-# burden instead).
+# frozen row-wise `_reference_derive` above. The generator draws 1-3 fake
+# station codes (19999/19998/19997, PP-065 G2/G3), multiple models, leads
+# 0-11, issue days including the ones that only differ from the day-of-
+# month via the clamp (29/30/31), and a battery of duplicate/scope/
+# missing-column scenarios. Every frame is also run with its rows
+# shuffled and a duplicated non-default index, asserting the production
+# output is identical (order/index invariance, PP-065 G3) -- this is
+# exactly the axis the G1 same-id bug lived on.
 # =======================================================================
 
 _POOL_DERIVED = sorted(QUARTERLY_DERIVED_MODELS)
@@ -1301,22 +1569,43 @@ def _tz_date_str(rng, ts: pd.Timestamp) -> str:
     return ts.strftime("%Y-%m-%d")
 
 
-def _quarter_issue_date(rng, lead: int) -> pd.Timestamp:
-    """A random issue date `d` such that d.month + lead lands on a quarter start."""
+_FAKE_CODES = ("19999", "19998", "19997")
+
+# Issue days including the exact days that only exist via the clamp
+# (PP-065 G3): 29/30/31 all require clamp_issue_day to land on a real day
+# in Feb/short months, at least some of the time.
+_ISSUE_DAYS = (1, 10, 25, 28, 29, 30, 31)
+
+
+def _quarter_issue_date(rng, lead: int, issue_day: int) -> pd.Timestamp:
+    """A random issue date `d` such that d.month + lead lands on a quarter start.
+
+    `d.day` is `clamp_issue_day(d.year, d.month, issue_day)` -- the SAME
+    clamp production applies -- so a large `issue_day` (29/30/31) lands
+    on the true schedule date even when `d.month` is Feb or a 30-day
+    month, instead of the pre-G3 `min(issue_day, 28)` approximation that
+    never actually exercised the clamp end to end.
+    """
     year = int(rng.integers(2020, 2031))
     target_month = int(rng.choice([1, 4, 7, 10]))
-    dm_total = target_month - 1 - lead
-    d_month = dm_total % 12 + 1
-    d_year = year - 1 if dm_total < 0 else year
-    day = 15  # scenario builders below adjust the day where the scenario needs to
+    # Invert _add_months_vectorized's "months since epoch" formula: find
+    # (d_year, d_month) such that d + lead months == (year, target_month),
+    # for ANY lead (correctly handles multi-year wraps for lead up to 11+).
+    total_target = year * 12 + (target_month - 1)
+    total_d = total_target - lead
+    d_year = total_d // 12
+    d_month = total_d % 12 + 1
+    day = clamp_issue_day(d_year, d_month, issue_day)
     return pd.Timestamp(year=d_year, month=d_month, day=day)
 
 
 def _random_frame_and_params(rng, idx: int):
-    lead = int(rng.integers(0, 3))
-    issue_day = int(rng.choice([1, 10, 25, 28]))
+    lead = int(rng.integers(0, 12))
+    issue_day = int(rng.choice(_ISSUE_DAYS))
     models = QUARTERLY_DERIVED_MODELS if rng.random() < 0.5 else QUARTER_NATIVE_RAW_MODELS
     pool = _POOL_DERIVED if models is QUARTERLY_DERIVED_MODELS else _POOL_NATIVE
+    n_codes = int(rng.integers(1, 4))
+    codes_pool = list(rng.choice(_FAKE_CODES, size=n_codes, replace=False))
 
     has_q = rng.random() < 0.7
     has_q50 = (rng.random() < 0.85) or not has_q
@@ -1336,8 +1625,8 @@ def _random_frame_and_params(rng, idx: int):
     if has_id:
         columns.append("id")
 
-    def make_row(model, d_str, hv, value=100.0, valid_from=None, valid_to=None, rid=None):
-        rec = {"code": CODE, "model_short": model, "date": d_str, "horizon_value": hv}
+    def make_row(code, model, d_str, hv, value=100.0, valid_from=None, valid_to=None, rid=None):
+        rec = {"code": code, "model_short": model, "date": d_str, "horizon_value": hv}
         if has_q:
             rec["q"] = value if rng.random() < 0.6 else np.nan
         if has_q50:
@@ -1371,13 +1660,15 @@ def _random_frame_and_params(rng, idx: int):
         "out_of_scope_model",
         "bad_hv",
         "id_dup_diff_value",
+        "single_match_group",
+        "bad_key",
     ]
     for _ in range(n_scenarios):
         scenario = rng.choice(scenario_names)
+        code = str(rng.choice(codes_pool))
         model = str(rng.choice(pool))
         model_spelled = _spelled(rng, model)
-        d = _quarter_issue_date(rng, lead)
-        d = d.replace(day=min(issue_day, 28))
+        d = _quarter_issue_date(rng, lead, issue_day)
         d_str = _tz_date_str(rng, d)
 
         if scenario == "clean":
@@ -1390,6 +1681,7 @@ def _random_frame_and_params(rng, idx: int):
                     vt = vf if has_valid_to else None
                 rows.append(
                     make_row(
+                        code,
                         model_spelled,
                         d_str,
                         hv,
@@ -1407,6 +1699,7 @@ def _random_frame_and_params(rng, idx: int):
                 vf = f"{by}-{bm:02d}-01" if has_valid_from else None
                 rows.append(
                     make_row(
+                        code,
                         model_spelled,
                         d_str,
                         hv,
@@ -1423,12 +1716,65 @@ def _random_frame_and_params(rng, idx: int):
                 vf = f"{ty}-{tm:02d}-01" if has_valid_from else None
                 rows.append(
                     make_row(
+                        code,
                         model_spelled,
                         d_str,
                         hv2,
                         value=float(rng.integers(10, 200)),
                         valid_from=vf,
                         valid_to=vf if has_valid_to else None,
+                        rid=next_id(),
+                    )
+                )
+
+        elif scenario == "single_match_group":
+            # Deliberately a group of >= 2 with EXACTLY one match (PP-065
+            # G3): one row's valid_from matches this row's own target
+            # (year, month), the other's does not -- the matching row
+            # must win, unambiguously.
+            hv = int(rng.choice(leads_needed))
+            ty, tm = _add_months(d.year, d.month, hv)
+            matching_vf = f"{ty}-{tm:02d}-01" if has_valid_from else None
+            oy, om = _add_months(d.year, d.month, hv + 1)
+            other_vf = f"{oy}-{om:02d}-01" if has_valid_from else None
+            rows.append(
+                make_row(
+                    code,
+                    model_spelled,
+                    d_str,
+                    hv,
+                    value=111.0,
+                    valid_from=matching_vf,
+                    valid_to=matching_vf if has_valid_to else None,
+                    rid=next_id(),
+                )
+            )
+            rows.append(
+                make_row(
+                    code,
+                    model_spelled,
+                    d_str,
+                    hv,
+                    value=222.0,
+                    valid_from=other_vf,
+                    valid_to=other_vf if has_valid_to else None,
+                    rid=next_id(),
+                )
+            )
+            for hv2 in leads_needed:
+                if hv2 == hv:
+                    continue
+                ty2, tm2 = _add_months(d.year, d.month, hv2)
+                vf2 = f"{ty2}-{tm2:02d}-01" if has_valid_from else None
+                rows.append(
+                    make_row(
+                        code,
+                        model_spelled,
+                        d_str,
+                        hv2,
+                        value=float(rng.integers(10, 200)),
+                        valid_from=vf2,
+                        valid_to=vf2 if has_valid_to else None,
                         rid=next_id(),
                     )
                 )
@@ -1441,6 +1787,7 @@ def _random_frame_and_params(rng, idx: int):
                 rid = f"c{idx}-dup-{hv}"
                 rows.append(
                     make_row(
+                        code,
                         model_spelled,
                         d_str,
                         hv,
@@ -1453,6 +1800,7 @@ def _random_frame_and_params(rng, idx: int):
                 if hv == leads_needed[0]:
                     rows.append(
                         make_row(
+                            code,
                             model_spelled,
                             d_str,
                             hv,
@@ -1468,20 +1816,24 @@ def _random_frame_and_params(rng, idx: int):
             wrong_d_str = _tz_date_str(rng, wrong_d)
             for hv in leads_needed:
                 rows.append(
-                    make_row(model_spelled, wrong_d_str, hv, value=float(rng.integers(10, 200)))
+                    make_row(
+                        code, model_spelled, wrong_d_str, hv, value=float(rng.integers(10, 200))
+                    )
                 )
 
         elif scenario == "missing_lead":
             chosen = list(leads_needed)
             rng.shuffle(chosen)
             for hv in chosen[:-1]:
-                rows.append(make_row(model_spelled, d_str, hv, value=float(rng.integers(10, 200))))
+                rows.append(
+                    make_row(code, model_spelled, d_str, hv, value=float(rng.integers(10, 200)))
+                )
 
         elif scenario == "non_finite":
             broken_hv = leads_needed[1]
             for hv in leads_needed:
                 if hv == broken_hv:
-                    rec = make_row(model_spelled, d_str, hv, value=np.nan)
+                    rec = make_row(code, model_spelled, d_str, hv, value=np.nan)
                     if has_q:
                         rec["q"] = np.nan
                     if has_q50:
@@ -1489,14 +1841,14 @@ def _random_frame_and_params(rng, idx: int):
                     rows.append(rec)
                 else:
                     rows.append(
-                        make_row(model_spelled, d_str, hv, value=float(rng.integers(10, 200)))
+                        make_row(code, model_spelled, d_str, hv, value=float(rng.integers(10, 200)))
                     )
 
         elif scenario == "out_of_range_hv":
-            out_of_range = [h for h in range(0, 6) if h not in leads_needed]
-            bad_hv_val = int(rng.choice(out_of_range)) if out_of_range else lead + 5
+            out_of_range = [h for h in range(0, 15) if h not in leads_needed]
+            bad_hv_val = int(rng.choice(out_of_range)) if out_of_range else lead + 20
             rows.append(
-                make_row(model_spelled, d_str, bad_hv_val, value=float(rng.integers(10, 200)))
+                make_row(code, model_spelled, d_str, bad_hv_val, value=float(rng.integers(10, 200)))
             )
 
         elif scenario == "out_of_scope_model":
@@ -1505,26 +1857,41 @@ def _random_frame_and_params(rng, idx: int):
             ) or ["ZZZ_NOT_A_MODEL"]
             other_model = str(rng.choice(other_pool))
             for hv in leads_needed:
-                rows.append(make_row(other_model, d_str, hv, value=float(rng.integers(10, 200))))
+                rows.append(
+                    make_row(code, other_model, d_str, hv, value=float(rng.integers(10, 200)))
+                )
 
         elif scenario == "bad_hv":
             hv_val = rng.choice([np.nan, float(lead) + 0.5])
-            rows.append(make_row(model_spelled, d_str, hv_val, value=float(rng.integers(10, 200))))
+            rows.append(
+                make_row(code, model_spelled, d_str, hv_val, value=float(rng.integers(10, 200)))
+            )
             for hv in leads_needed:
                 if rng.random() < 0.5:
                     rows.append(
-                        make_row(model_spelled, d_str, hv, value=float(rng.integers(10, 200)))
+                        make_row(code, model_spelled, d_str, hv, value=float(rng.integers(10, 200)))
                     )
+
+        elif scenario == "bad_key":
+            # A null code or model_short (PP-065 G4): must be excluded and
+            # counted, never reach the groupby that would otherwise crash.
+            if rng.random() < 0.5:
+                rows.append(
+                    make_row(None, model_spelled, d_str, lead, value=float(rng.integers(10, 200)))
+                )
+            else:
+                rows.append(make_row(code, None, d_str, lead, value=float(rng.integers(10, 200))))
 
         elif scenario == "id_dup_diff_value" and has_id:
             hv = int(rng.choice(leads_needed))
             rid = f"c{idx}-sameid"
-            rows.append(make_row(model_spelled, d_str, hv, value=100.0, rid=rid))
-            rows.append(make_row(model_spelled, d_str, hv, value=999.0, rid=rid))
+            rows.append(make_row(code, model_spelled, d_str, hv, value=100.0, rid=rid))
+            rows.append(make_row(code, model_spelled, d_str, hv, value=999.0, rid=rid))
             for hv2 in leads_needed:
                 if hv2 != hv:
                     rows.append(
                         make_row(
+                            code,
                             model_spelled,
                             d_str,
                             hv2,
@@ -1534,7 +1901,7 @@ def _random_frame_and_params(rng, idx: int):
                     )
 
     if not rows:
-        rows.append(make_row(pool[0], "2026-12-25", lead, value=100.0))
+        rows.append(make_row(codes_pool[0], pool[0], "2026-12-25", lead, value=100.0))
 
     frame = pd.DataFrame(rows, columns=columns)
     return frame, lead, issue_day, models
@@ -1570,3 +1937,22 @@ class TestVectorizedMatchesReferenceDifferential:
         ref_sorted = _sorted_for_compare(ref_result)
         pd.testing.assert_frame_equal(prod_sorted, ref_sorted, check_dtype=True)
         assert prod_counts == ref_counts, (seed_offset, prod_counts, ref_counts)
+
+        # Order/index invariance (PP-065 G3): shuffle the row order and
+        # assign a non-default, DUPLICATED index, then re-run production
+        # on that copy. The output must be byte-identical (sorted, dtypes
+        # included) to the unshuffled run. This is exactly the axis G1's
+        # bug lived on: `drop_duplicates(keep="first")` on a same-id pair
+        # with different values depended on which row happened to be
+        # first, so a shuffle could change the result even though nothing
+        # about the DATA changed.
+        if not frame.empty:
+            shuffle_seed = int(rng.integers(0, 1_000_000))
+            shuffled = frame.sample(frac=1, random_state=shuffle_seed).copy()
+            shuffled.index = np.zeros(len(shuffled), dtype=int)
+            shuffled_result, shuffled_counts = derive_quarterly_from_monthly_same_issue(
+                shuffled, lead=lead, issue_day=issue_day, models=models
+            )
+            shuffled_sorted = _sorted_for_compare(shuffled_result)
+            pd.testing.assert_frame_equal(prod_sorted, shuffled_sorted, check_dtype=True)
+            assert prod_counts == shuffled_counts, (seed_offset, prod_counts, shuffled_counts)
