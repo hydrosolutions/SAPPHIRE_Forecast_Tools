@@ -2205,3 +2205,33 @@ class TestPP064aNativeQ1IssuanceRestriction:
         assert q1_2026.empty
         warn_lines = [r for r in caplog.records if "quarter operational schedule" in r.message]
         assert len(warn_lines) == 1
+
+    @pytest.mark.parametrize("issue_day", [0, -1])
+    def test_invalid_issue_day_drops_prior_year_q1_and_logs_one_warning(
+        self, monkeypatch, kghm_quarter_config, caplog, issue_day
+    ):
+        """A resolvable schedule with an invalid ``operational_issue_day``
+
+        (0 or negative) disables the exception exactly like an
+        unresolvable schedule: there is NO exception, so a prior-year Q1
+        row -- even one dated on what WOULD be the native Dec-25
+        issuance under a valid (lead=1, day=25) config -- is dropped
+        like any other out-of-window row, and exactly one WARNING is
+        logged.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": issue_day})
+        )
+        rows = [_quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with (
+            caplog.at_level(logging.WARNING, logger="src.data_reader"),
+            patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake),
+        ):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
+        assert q1_2026.empty
+        warn_lines = [r for r in caplog.records if "invalid issue_day" in r.message]
+        assert len(warn_lines) == 1
