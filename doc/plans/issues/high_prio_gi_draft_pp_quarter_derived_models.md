@@ -10,6 +10,9 @@ graph lives there only.
 **Related**:
 - PP-064: calendar-window validation and the native-row rule (its Contract). This plan comes after its
   Chunk A and absorbs its rev-3 rules B2, B4 and B6.
+- PP-066: owns `select_operational_issuances`' own unclamped issue-day match (`data_reader.py:349-353`).
+  This plan's native-row helper (item 2) applies the clamp on its own comparison; it does not touch, and
+  does not need, the selector PP-066 fixes.
 - LTF-016: fix the monthly window labels upstream.
 - PP-056: superseded for the seven models by this plan (see DOC-009).
 - PP-059 (its "KEEP quarter EM" is superseded; DOC-009 adds the note).
@@ -169,7 +172,13 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      month (1/4/7/10); other issue dates produce nothing.
    - **Excluded (and counted):**
      - rows with a null or non-integer stored `horizon_value`, or no `horizon_value` column;
-     - rows whose `date.day` ≠ `issue_day`.
+     - rows whose `date.day` ≠ `issue_day`, **clamped to the length of the issue month** — the same
+       clamp the shared native-row rule applies below (item 2) and the producer schedules
+       (`lt_utils.py:170-172`). Without this clamp, a genuine on-schedule monthly issuance in a short
+       month (e.g. `issue_day = 31` in a 30-day June) would be wrongly excluded here, even though the
+       same row would pass the (already-clamped) native check everywhere else. Add a test: `issue_day`
+       configured as 31, an issue in a 30-day month → the row is NOT excluded, and both the derived-model
+       output and the LR-fallback output (item 2's "Derived rows") include it.
    - **Target month** = issue month + `horizon_value`, year-aware.
    - **Triplet:** for each (code, model, issue date `d`) whose month is Q's first month − `L`, the rows with
      `horizon_value` = `L`, `L+1`, `L+2` must all exist.
@@ -190,15 +199,44 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
 2. **Readers** (`read_quarterly_forecasts`, `read_latest_quarterly_forecasts`).
    - **Direct rows, native-row selection.** One shared helper, used by both readers under **both** flags:
      it parses `date` (quarter `date` arrives unparsed) and applies PP-064's Contract rule (`date.day` ==
-     quarter `issue_day` and year-aware lead == `lead_time`) **to LR rows only**. Non-native LR rows
-     (rewrites, persisted monthly-derived rows) are never selected.
+     quarter `issue_day`, **clamped to the length of the issue month** — the same clamp the producer
+     applies, `apps/long_term_forecasting/lt_utils.py:170-172 nearest_scheduled_issue_date`, and the same
+     rule FD-029 already implements — and year-aware lead == `lead_time`) **to LR rows only**. Non-native
+     LR rows (rewrites, persisted monthly-derived rows) are never selected. Add a test: issue day
+     configured as 31, a native row dated on the 30th of a 30-day issue month → selected as native, at
+     the helper level directly, and through both readers **under flag OFF** (which never calls
+     `select_operational_issuances`, below). Do **not** assert this end-to-end through the readers under
+     flag ON in P1b — `select_operational_issuances` still matches unclamped there and would drop the
+     row; that end-to-end proof is gated on PP-066 (its Tests list owns it).
    - **Stored leads (flag ON).** Before `select_operational_issuances`, drop and count direct rows whose
      stored `horizon_value` differs from the derived lead, then call it with `lead_output_cols=()` so the
-     stored value is preserved. `select_operational_issuances` itself is not modified.
+     stored value is preserved. `select_operational_issuances` itself is not modified — it keeps matching
+     the **unclamped** issue day (PP-066, which owns that gap), so under flag ON a clamped-day-only-valid
+     row is dropped here even though the native-row helper above would have classified it correctly.
    - **Derived rows.** Read raw monthly rows via `_read_long_forecasts_api` for issue years
      `start_year − 1 … end_year`. In the latest reader, also require issue date ≤ `forecast_date`. Derive
      for the seven models; while the fallback is active, also derive each LR model for (code, year,
      quarter) keys with no selected native row of that model.
+   - **Existing Source 1 (LR aggregation) forecast_date bound, latest reader, both flags — IN scope.**
+     `read_latest_quarterly_forecasts`' pre-existing monthly-derived path for LR_Base/LR_SM (unrelated to
+     the "Derived rows" step above, which is this plan's new seven-model/fallback mechanism) has no bound
+     against `forecast_date` today: flag ON calls `read_monthly_forecasts(codes, start_year, end_year)`
+     (`data_reader.py:3415`), flag OFF calls raw `_read_long_forecasts_api(codes, start_year, end_year)`
+     (`:3423`) — neither takes `today`/`forecast_date`, so a back-dated run could aggregate a monthly row
+     issued after it into a quarter that should not be visible yet. This plan rewrites this reader (this
+     item, above), so it owns bounding it: filter to issue `date <= forecast_date` (null kept) on the
+     rows this reader itself receives — `read_monthly_forecasts`' output under flag ON, the raw rows
+     from `_read_long_forecasts_api` under flag OFF — any time **before** they reach
+     `aggregate_monthly_fc_to_quarterly` (unchanged, P1a). `read_monthly_forecasts` itself is **not**
+     modified: filtering before or after its internal `select_operational_issuances` call is equivalent
+     here, because that call derives the lead from (issue month, target month) and additionally requires
+     the configured issue *day* (`data_reader.py:346-354`) — so a fixed (target month, lead) pins the
+     candidate issue date to one exact calendar date, leaving no same-unit "earlier eligible vs. later
+     ineligible reissue on a different day" case for filter placement to matter for.
+     - **Test:** `forecast_date = 2026-06-25`; monthly LR rows issued 2026-09-25 and 2026-10-25 (both
+       after `forecast_date`) must not produce a Q4 aggregate — under both flags.
+     - **Test:** no row dated after `forecast_date` reaches `aggregate_monthly_fc_to_quarterly` (assert
+       on a spy, or on the rows actually passed to it) — under both flags.
    - Trim to the requested **target** years. In the latest reader, target year `today.year + 1` is allowed,
      so a 25 Dec issue yields next year's Q1.
    - **Drop direct rows of the seven models before the sources are combined.** After this, the readers'
@@ -237,9 +275,23 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      would pass the native-row rule forever. Native LR rows are owned by the LT module.
    - **Consequences:**
      - flag-OFF output changes (fewer rows written), and flag-OFF rewrites of LR rows (population b) stop;
-     - **fallback LR is invisible (accepted, round-2 decision 3):** the dashboard card and the bulletin
-       read the DB, so they show no LR row for fallback quarters until LTF-014 P0/P2. LR still enters the
-       ensembles and skill.
+     - **fallback LR is invisible (accepted, round-2 decision 3) — on kghm.** The dashboard card and the
+       bulletin read the DB, so they show no LR row for fallback quarters until LTF-014 P0/P2. **On tjhm**,
+       monthly-derived LR may remain visible as native until **both** this item (P1b) **and** decision F
+       have landed (decision F runs after `deploy.pp` in the overview's dependency graph, i.e. inside the
+       same writer-paused window, not automatically the moment P1b merges) — see the round-4 tjhm interim
+       decision. LR still enters the ensembles and skill regardless of visibility.
+     - **EM interim, until this item ships.** PP-064 A (already deployable/deployed independently of this
+       plan) still writes fresh quarterly EM rows today: `ensemble_calculator.py` sets
+       `model_short = "EM"` directly in the quarter aggregation path
+       (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py`'s quarter-write loop
+       (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry (line ~27), not
+       the `"ENSEMBLE_MEAN": "EM"` entry (line 50, which serves the skill-metrics write path only).
+       FD-029 already hides every quarter EM row it reads on the dashboard side, consistent with the
+       owner decision of no quarterly EM, but this item is what stops the *write*. Between PP-064 A's
+       deploy and this item's own deploy, a quarter whose only rows are a fresh EM row plus a non-native
+       LR row shows nothing on the card or the bulletin (FD-029 drops the EM row; its native-only rule
+       drops the non-native LR row).
    - **Log** one aggregated skip count per call.
 4. **Combined reader and maintenance.**
    - `read_quarterly_combined_forecasts` drops direct rows of the seven models. It stays **filter only**,
@@ -325,7 +377,9 @@ control flow. Your changes must be purely additive or modify only the specific b
 2. tjhm, `d` = 2027-01-01, hv 0/1/2 → Q1 2027, hv 0.
 3. These are still derived:
    - offset windows (`valid_from` on 01-02, 02-01 and 03-03);
-   - a GBT January row labelled with the issue year.
+   - a GBT January row labelled with the issue year;
+   - `issue_day` configured as 31, `d` issued on the 30th of a 30-day month (e.g. June) — the producer's
+     own clamp; excluded only by the unclamped check this fix removes.
 4. Negatives, each with an eligible control in the same frame:
    - wrong issue day;
    - issue month ≠ Q's start − `L`;
@@ -381,6 +435,18 @@ lead 0):
   derived Dec-1 row for the same LR Q1 → the native row, in both readers; with and without an unrelated
   derived-model row; with shuffled row order. (For tjhm, rewrites and hv0 derived rows share the native
   key, PP-061; decision F handles them, so no tjhm variant of this case.)
+- **Native-row selection, clamped issue day.** `operational_issue_day` configured as 31, issue month a
+  30-day month (e.g. June): a native row dated on the 30th (the producer's own clamp,
+  `lt_utils.py:170-172`) → selected as native by the shared helper directly, and, **flag OFF only**,
+  through both readers. **Not** asserted end-to-end through the readers under flag ON here —
+  `select_operational_issuances` still matches unclamped and would drop the row regardless of the
+  helper's own classification; PP-066's Tests list carries that end-to-end case once its fix lands.
+- **Existing Source 1 forecast_date bound, latest reader, both flags.** `forecast_date = 2026-06-25`;
+  monthly LR rows issued 2026-09-25 and 2026-10-25 (both after `forecast_date`) → no Q4 aggregate is
+  produced, under both flags. Fails on the pre-P1b base (neither flag bounds this path today).
+- **Existing Source 1 forecast_date bound, inputs to the aggregation.** No row dated after
+  `forecast_date` reaches `aggregate_monthly_fc_to_quarterly` (assert on a spy, or on the rows actually
+  passed to it), under both flags.
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
@@ -439,6 +505,10 @@ lead 0):
 **Acceptance (P1b):**
 - The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
   unexpected skips; only the pre-existing xfail.
+- `read_latest_quarterly_forecasts`' existing Source 1 (LR aggregation) is bounded by `forecast_date`
+  under **both** flags on the rows it filters itself — both tests above pass, `read_monthly_forecasts`
+  is **not** modified (`git diff` shows no change to it), and `aggregate_monthly_fc_to_quarterly` /
+  `read_quarterly_forecasts` are otherwise untouched (`git diff` shows no change to either).
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1b file list.
 
@@ -550,7 +620,9 @@ contaminated quarter skill.
   irreversible, which is why the export is taken first.
 
 **Operationally:** on the next quarter issue day, derived rows appear on the dashboard with δ bounds
-(FD-029). Fallback quarters show no LR row (round-2 decision 3; hydromet notice).
+(FD-029). Fallback quarters show no LR row on kghm (round-2 decision 3; hydromet notice); on tjhm a
+monthly-derived LR row may still appear as native until decision F, run inside this same window, has
+also completed (round-4 tjhm interim).
 
 ### P3 — remove the LR fallback
 
