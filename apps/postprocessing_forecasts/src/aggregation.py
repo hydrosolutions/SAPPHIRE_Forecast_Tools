@@ -678,44 +678,57 @@ def _add_months_vectorized(year: pd.Series, month: pd.Series, delta) -> tuple[pd
 
 
 def _window_dedup_key(raw: pd.Series, parsed: pd.Series) -> pd.Series:
-    """Exact-duplicate identity key for one window column (PP-065 J1/K1).
+    """Exact-duplicate identity key for one window column (PP-065 J1/K1/L1).
 
-    The parsed local calendar date where it parses; otherwise a
-    hashable, type-qualified string built from the RAW value, so:
-    - two DIFFERENT unparseable strings (e.g. "garbage" vs "xx") never
-      compare equal just because both parsed to NaT (PP-065 J1);
-    - an UNHASHABLE raw value (e.g. a list or dict from malformed
-      upstream data) is safe to feed to ``drop_duplicates``, which
-      requires every key value to be hashable (PP-065 K1) -- without
-      this, keeping the raw value itself as the fallback raises
-      ``TypeError: unhashable type`` the first time such a row appears;
-    - a genuinely null value stays null, so two nulls still match.
+    Deliberately SIMPLE and conservative -- this answers "are these two
+    rows the same window" only for the cases below, each provably safe;
+    it is not a general normal form for arbitrary Python objects. Per
+    value ``v`` (with ``ts`` its ``local_calendar_date``-parsed
+    counterpart), in this exact order:
+
+    - a genuinely null SCALAR -- ``pd.api.types.is_scalar(v) and
+      pd.isna(v)``, which covers ``None``, NaN of any float width
+      (including ``np.float32``), ``pd.NA`` and ``NaT`` of any flavour
+      (``pd.NaT``, ``np.datetime64("NaT")``) -- becomes ``None``, so two
+      nulls always match, however differently spelled (a prior version
+      checked only ``v is None`` and ``isinstance(v, float)``, so e.g. a
+      ``None`` and a ``pd.NA`` on the two rows of an otherwise-identical
+      pair were wrongly treated as DIFFERENT windows);
+    - otherwise, if ``ts`` parsed (is not NaT) -- the parsed local
+      calendar date;
+    - otherwise, if ``v`` is a ``str`` -- ``v`` itself, so two equal
+      unparseable strings still collapse (``"garbage" == "garbage"``)
+      and two different ones never do (``"garbage" != "xx"``);
+    - otherwise (any other non-null, unparseable value: a list, dict,
+      ndarray, or a custom object -- possibly one whose ``__str__`` or
+      ``__hash__`` raises, which ``local_calendar_date`` itself promises
+      never to do for ANY input) -- a key unique to THIS row's position,
+      so it is NEVER equal to any other row's key and neither ``str()``
+      nor ``hash()`` is ever called on the object. A prior version built
+      ``f"{type(v).__name__}|{v!s}"`` here, which could itself raise
+      (an exotic ``__str__``) or silently collide (two different objects
+      whose ``str()`` truncates to the same text, e.g. two long arrays).
+      Forcing such rows apart -- a false "ambiguous", never a wrong
+      collapse -- is the safe failure mode.
 
     Args:
         raw: The original (unparsed) column, e.g. ``df["valid_from"]``.
         parsed: ``local_calendar_date(raw)`` -- NaT where unparseable.
 
     Returns:
-        An object-dtype Series: a ``Timestamp`` where ``parsed`` is not
-        NaT, else ``None`` (null raw) or ``f"{type(v).__name__}|{v!s}"``
-        (non-null, unparseable raw ``v``).
+        An object-dtype Series, same index as ``raw``.
     """
-
-    def _fallback(v: object) -> str | None:
-        if v is None or v is pd.NaT:
-            return None
-        if isinstance(v, float) and np.isnan(v):
-            return None
-        return f"{type(v).__name__}|{v!s}"
-
-    fallback = raw.map(_fallback)
-    # Pre-cast `parsed` to object before `.where()`: with both sides
-    # already object dtype, pandas never tries to reconcile them via an
-    # implicit datetime-compatibility parse of the raw (possibly
-    # mixed-tz) fallback column, which would otherwise raise pandas'
-    # "mixed time zones" FutureWarning even on rows where the parsed
-    # value (not the raw fallback) is the one actually kept.
-    return parsed.astype(object).where(parsed.notna(), fallback)
+    keys = []
+    for pos, (v, ts) in enumerate(zip(raw, parsed, strict=True)):
+        if pd.api.types.is_scalar(v) and pd.isna(v):
+            keys.append(None)
+        elif pd.notna(ts):
+            keys.append(ts)
+        elif isinstance(v, str):
+            keys.append(v)
+        else:
+            keys.append(("unparseable-object", pos))
+    return pd.Series(keys, index=raw.index, dtype=object)
 
 
 def derive_quarterly_from_monthly_same_issue(
@@ -787,24 +800,26 @@ def derive_quarterly_from_monthly_same_issue(
         check that depends on it (hv range needs a valid hv; quarter-start
         needs a valid date).
 
-        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1/K1): a row is an exact
-        duplicate of another only if its identity (code, canonical model,
-        ``d``, hv, ``valid_from``, ``valid_to`` -- windows compared as
-        PARSED local calendar dates where they parse, PP-065 H3, not raw
-        strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00" for
-        the same row are the same window; where a value does NOT parse,
-        the comparison falls back to a hashable, type-qualified string
-        built from the RAW value (``f"{type(v).__name__}|{v!s}"``, see
-        ``_window_dedup_key``), with an actual null kept null, PP-065
-        J1/K1 -- so two DIFFERENT unparseable strings, e.g. "garbage" vs
-        "xx", are never both coerced to NaT and thereby treated as the
-        same window, and an UNHASHABLE raw value (e.g. a list) never
-        reaches ``drop_duplicates`` and raises ``TypeError``) AND its
-        point-value inputs (``q`` and ``q50``, NaN-equal) both match --
-        so a same-window pair with a DIFFERENT value is never silently
-        dropped; it is left for the uniqueness
-        rule, where a missing ``valid_from`` column makes the group
-        unresolvable (ambiguous) and a null ``valid_from`` never matches.
+        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1/K1/L1): a row is an
+        exact duplicate of another only if its identity (code, canonical
+        model, ``d``, hv, ``valid_from``, ``valid_to`` -- windows
+        compared as PARSED local calendar dates where they parse, PP-065
+        H3, not raw strings, so e.g. "2027-01-01" and
+        "2027-01-01T00:00:00+06:00" for the same row are the same
+        window; see ``_window_dedup_key`` for the exact, deliberately
+        SIMPLE and conservative fallback rule when a value does NOT
+        parse, PP-065 J1/K1/L1 -- in short: any genuinely null scalar
+        (``None``, NaN of any width, ``pd.NA``, ``NaT`` of any flavour)
+        matches another null; an unparseable string matches only an
+        identical string; anything else (a list, dict, ndarray, or a
+        custom object -- possibly one whose ``__str__``/``__hash__``
+        raises) gets a key unique to its own row, so it never collapses
+        with, or crashes on, anything) AND its point-value inputs
+        (``q`` and ``q50``, NaN-equal) both match -- so a same-window
+        pair with a DIFFERENT value is never silently dropped; it is
+        left for the uniqueness rule, where a missing ``valid_from``
+        column makes the group unresolvable (ambiguous) and a null
+        ``valid_from`` never matches.
         The window is ALWAYS part of this identity, whether or not ``id``
         is present: a non-null ``id`` never merges rows that key + window
         + value would not -- its only effect is to keep rows APART whose

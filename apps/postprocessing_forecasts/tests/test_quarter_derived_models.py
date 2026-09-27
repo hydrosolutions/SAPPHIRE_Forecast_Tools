@@ -79,12 +79,13 @@ def _reference_derive(
     vectorization rewrite) -- and since round-2/round-3 review, ALSO
     carrying the G1 (value-aware id dedup), G4 (bad_key), G5 (typed object
     columns), H3 (windows compared as parsed local dates), H4
-    (deterministic model_short spelling tiebreak), J1 (unparseable
-    windows fall back to a raw-value key, not both-NaT) and K1 (that
-    fallback key is hashable and type-qualified, not the raw value
-    itself) correctness fixes, since those are behavioural guarantees,
-    and the differential test is only meaningful if both sides uphold
-    them. Kept here ONLY as ground truth for
+    (deterministic model_short spelling tiebreak) and J1/K1/L1
+    (unparseable-window fallback key: a per-row-unique key for anything
+    that is not a genuinely null scalar or a plain string, via the
+    shared ``_window_dedup_key`` -- see its docstring in
+    ``src/aggregation.py`` for the exact rule) correctness fixes, since
+    those are behavioural guarantees, and the differential test is only
+    meaningful if both sides uphold them. Kept here ONLY as ground truth for
     ``TestVectorizedMatchesReferenceDifferential`` below. Do NOT "fix"
     this to match the production function when they diverge for a real
     bug -- fix production and this copy will keep it honest. Any
@@ -259,12 +260,12 @@ def _reference_derive(
 
     # Windows compared as PARSED local calendar dates where they parse
     # (PP-065 H3), not raw strings -- consistent with the amendment's
-    # parsing rule everywhere else. Where a value does NOT parse, fall
-    # back to a hashable, type-qualified string built from the RAW value,
-    # with an actual null kept null (PP-065 J1/K1, see `_window_dedup_key`
-    # in src/aggregation.py): two DIFFERENT unparseable strings must not
-    # both become NaT and therefore compare equal, and an UNHASHABLE raw
-    # value (e.g. a list) must not reach `drop_duplicates` as-is.
+    # parsing rule everywhere else. `_window_dedup_key` (shared with
+    # production, imported above) covers the unparseable fallback: a
+    # genuinely null scalar of any flavour stays null; an unparseable
+    # string is compared as itself; anything else non-null and
+    # unparseable (list, dict, ndarray, a raising-`__str__` object) gets
+    # a per-row-unique key, never `str()`/`hash()`'d (PP-065 J1/K1/L1).
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:
@@ -1519,6 +1520,88 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         )
         assert set(result["model_short"]) == {"MC_ALD", "GBT"}
         assert not counts
+
+    # ---- L1: the fallback key is SIMPLE and conservative ------------------
+
+    @pytest.mark.parametrize(
+        "null_a,null_b",
+        [
+            (None, pd.NA),
+            (None, np.datetime64("NaT")),
+            (None, np.float32("nan")),
+        ],
+    )
+    def test_null_flavours_in_window_are_all_treated_as_equal(self, null_a, null_b):
+        # A prior version checked only `v is None` and `isinstance(v,
+        # float)`, so e.g. None vs pd.NA on an otherwise-identical pair
+        # were wrongly treated as DIFFERENT windows. `pd.api.types.is_scalar
+        # and pd.isna` catches every null flavour: both rows' key becomes
+        # None, they are an exact duplicate (same value too), and the
+        # pair collapses to a singleton that derives normally.
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, null_a, None),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, null_b, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert len(result) == 1
+        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+        assert "ambiguous_duplicate" not in counts
+
+    def test_object_with_raising_str_no_exception_control_derives(self):
+        # An object whose __str__ (and __repr__) raises: the fallback key
+        # must never call str()/hash() on it, only use its row position.
+        class _RaisesOnStr:
+            def __str__(self):
+                raise RuntimeError("boom")
+
+            __repr__ = __str__
+
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, _RaisesOnStr(), None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert set(result["model_short"]) == {"MC_ALD", "GBT"}
+
+    def test_different_arrays_with_same_truncated_repr_never_merged(self):
+        # Two DIFFERENT numpy arrays long enough that their default repr
+        # is truncated (and, chosen so the truncated text is identical):
+        # a str()-based key would wrongly treat them as the same window.
+        # The per-row-position key never merges them -- they survive as
+        # a group of 2 at the same hv and (both unparseable, so neither
+        # matches the target month) are correctly ambiguous.
+        arr_a = np.arange(10000)
+        arr_b = np.arange(10000).copy()
+        arr_b[5000] = -1  # differs only where a truncated repr never shows
+        assert str(arr_a) == str(arr_b)
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, arr_a, None),
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, arr_b, None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert result.empty
+        assert counts["ambiguous_duplicate"] == 1
 
     # ---- H4: deterministic model_short spelling tiebreak -------------------
 
