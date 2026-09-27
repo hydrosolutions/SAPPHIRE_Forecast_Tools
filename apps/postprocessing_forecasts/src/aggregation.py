@@ -13,10 +13,12 @@ Design decisions:
 
 import logging
 import os
+from collections import Counter
 
 import numpy as np
 import pandas as pd
 from skill_lead_aware_flag import skill_lead_aware_enabled
+from src.model_names import canonical_model_short_series
 from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
@@ -587,3 +589,325 @@ def _season_end_date(season_year: int) -> str:
 
     last_day = calendar.monthrange(end_year, end_month)[1]
     return f"{end_year}-{end_month:02d}-{last_day:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Quarter derived models (PP-065 P1a)
+# ---------------------------------------------------------------------------
+
+# Quarter-start calendar months: Jan, Apr, Jul, Oct.
+_QUARTER_START_MONTHS = frozenset({1, 4, 7, 10})
+
+
+def clamp_issue_day(year: int, month: int, issue_day: int) -> int:
+    """Clamp a configured issue day to the length of the given month.
+
+    Same rule as the producer (``apps/long_term_forecasting/lt_utils.py:170-172
+    nearest_scheduled_issue_date``) and PP-064's ``data_reader.py:3097-3101``:
+    a configured issue day past the end of a short month (e.g. 31 in June)
+    is scheduled/matched on that month's last day instead.
+
+    Args:
+        year: Calendar year of the month.
+        month: Month number (1-12).
+        issue_day: Configured issue day (any positive integer).
+
+    Returns:
+        ``issue_day``, or the month's last day if ``issue_day`` exceeds it.
+    """
+    return min(issue_day, calendar.monthrange(year, month)[1])
+
+
+def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
+    """Year-aware month addition. Returns (year, month) for month + delta."""
+    total = (month - 1) + delta
+    return year + total // 12, total % 12 + 1
+
+
+def derive_quarterly_from_monthly_same_issue(
+    monthly_raw: pd.DataFrame,
+    lead: int,
+    issue_day: int,
+    models: frozenset[str],
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Derive quarterly forecasts from same-issue monthly triplets.
+
+    For each (code, model, issue date ``d``) whose issue month, offset by
+    ``lead`` months (year-aware), lands on a calendar quarter's first month,
+    this averages the model's own monthly point forecasts for leads
+    ``lead``, ``lead + 1`` and ``lead + 2`` -- all issued on that same date
+    ``d`` -- into one quarterly row. This is independent of
+    ``SAPPHIRE_SKILL_LEAD_AWARE``: the output is identical under both flag
+    states, since the flag only affects how OTHER code groups monthly rows,
+    not this derivation.
+
+    Args:
+        monthly_raw: Raw monthly rows, after the CALLER has renamed
+            ``model_type`` -> ``model_short`` and normalised ``code`` (this
+            helper does neither). ``date`` and ``valid_from`` are string-like
+            and may mix tz-aware and naive values. ``horizon_value``, ``q``
+            and ``q50`` may be absent.
+        lead: The configured quarter lead (the target quarter's first
+            month's horizon_value).
+        issue_day: The configured monthly issue day (unclamped; clamped
+            internally per issue month via ``clamp_issue_day``).
+        models: Canonical model names to derive (callers pass
+            ``QUARTERLY_DERIVED_MODELS`` or ``QUARTER_NATIVE_RAW_MODELS``
+            from ``src/model_names.py``).
+
+    Returns:
+        Tuple of (derived frame, dict of exclusion counts by reason). The
+        frame has a fixed column set: ``code``, ``model_short``, ``year``,
+        ``quarter_in_year``, ``date``, ``horizon_value``, ``valid_from``,
+        ``valid_to``, ``forecasted_discharge``, ``q`` (only if the input
+        had a ``q`` column), and every column of ``_FC_QUANTILE_COLS`` (all
+        NaN). Rows are never copied from the input -- every output column
+        is built fresh, so input-only columns (e.g. ``id``, ``flag``,
+        ``composition``, ``q_obs``, ``model_type_description``,
+        ``horizon_type``) never leak into the output. The counts dict is a
+        ``Counter``: a missing key reads as 0.
+    """
+    has_q = "q" in monthly_raw.columns
+    counts: Counter = Counter()
+
+    def output_columns() -> list:
+        cols = [
+            "code",
+            "model_short",
+            "year",
+            "quarter_in_year",
+            "date",
+            "horizon_value",
+            "valid_from",
+            "valid_to",
+            "forecasted_discharge",
+        ]
+        if has_q:
+            cols.append("q")
+        cols += list(_FC_QUANTILE_COLS)
+        return cols
+
+    def empty_result() -> pd.DataFrame:
+        return pd.DataFrame(columns=output_columns())
+
+    def log_counts() -> None:
+        for key, n in counts.items():
+            level = (
+                logging.WARNING
+                if key in ("invalid_config", "ambiguous_duplicate")
+                else logging.INFO
+            )
+            logger.log(
+                level,
+                "derive_quarterly_from_monthly_same_issue: %s=%d (lead=%s, issue_day=%s)",
+                key,
+                n,
+                lead,
+                issue_day,
+            )
+
+    # Invalid config: no exception, empty schema, ONE warning.
+    if issue_day < 1 or lead < 0:
+        counts["invalid_config"] += 1
+        log_counts()
+        return empty_result(), counts
+
+    missing_required = [c for c in ("code", "model_short", "date") if c not in monthly_raw.columns]
+    if missing_required:
+        for c in missing_required:
+            counts[f"missing_column:{c}"] += 1
+        log_counts()
+        return empty_result(), counts
+
+    if "horizon_value" not in monthly_raw.columns:
+        counts["missing_column:horizon_value"] += 1
+        log_counts()
+        return empty_result(), counts
+
+    df = monthly_raw.copy()
+    canon_model = canonical_model_short_series(df["model_short"])
+    in_scope = canon_model.isin(models)
+    df = df.loc[in_scope].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+    df["_canon_model"] = canon_model.loc[in_scope]
+
+    # Parse the issue date via local_calendar_date (NOT
+    # pd.to_datetime(format="mixed"), which raises on mixed tz-aware/naive
+    # strings and would shift the local date under utc=True).
+    df["_d"] = local_calendar_date(df["date"])
+    bad_date = df["_d"].isna()
+    n_bad_date = int(bad_date.sum())
+    if n_bad_date:
+        counts["bad_date"] = n_bad_date
+    df = df.loc[~bad_date].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Quarter-start scope filter: (d.month + lead), year-aware, must land on
+    # a quarter-start month. Out of scope, routine -- never counted.
+    target_years, target_months = [], []
+    for ts in df["_d"]:
+        ty, tm = _add_months(ts.year, ts.month, lead)
+        target_years.append(ty)
+        target_months.append(tm)
+    df["_target_year"] = target_years
+    df["_target_month"] = target_months
+    df = df.loc[df["_target_month"].isin(_QUARTER_START_MONTHS)].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Issue-day check, clamped to the issue month's length (counted).
+    df["_expected_day"] = [clamp_issue_day(ts.year, ts.month, issue_day) for ts in df["_d"]]
+    wrong_day = df["_d"].dt.day != df["_expected_day"]
+    n_wrong_day = int(wrong_day.sum())
+    if n_wrong_day:
+        counts["wrong_issue_day"] = n_wrong_day
+    df = df.loc[~wrong_day].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # horizon_value validity: finite and integer-valued only, cast to int
+    # only AFTER the filter (real API frames carry hv as float64 with NaN).
+    hv_numeric = pd.to_numeric(df["horizon_value"], errors="coerce")
+    valid_hv = hv_numeric.notna() & np.isfinite(hv_numeric) & hv_numeric.eq(np.round(hv_numeric))
+    n_bad_hv = int((~valid_hv).sum())
+    if n_bad_hv:
+        counts["bad_horizon_value"] = n_bad_hv
+    df = df.loc[valid_hv].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+    df["_hv"] = hv_numeric.loc[valid_hv].round().astype(int)
+
+    # hv outside {lead, lead+1, lead+2}: out of scope, routine -- not counted.
+    leads_needed = (lead, lead + 1, lead + 2)
+    df = df.loc[df["_hv"].isin(leads_needed)].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Point value per row: q if present and finite, else q50. Both coerced
+    # numeric; a row with neither finite becomes NaN (excluded downstream
+    # as non_finite_value).
+    q_val = (
+        pd.to_numeric(df["q"], errors="coerce")
+        if "q" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    q50_val = (
+        pd.to_numeric(df["q50"], errors="coerce")
+        if "q50" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    df["_point_value"] = q_val.where(np.isfinite(q_val), q50_val)
+
+    # Exact duplicates (a repeated read, not an ambiguity): drop BEFORE the
+    # uniqueness rule, keyed on `id` when present, else on the full tuple.
+    if "id" in df.columns:
+        df = df.drop_duplicates(subset=["id"]).copy()
+    else:
+        dedup_cols = ["code", "_canon_model", "_d", "_hv"]
+        dedup_cols += [c for c in ("valid_from", "valid_to") if c in df.columns]
+        df = df.drop_duplicates(subset=dedup_cols).copy()
+
+    # Per-row target (year, month) for the uniqueness rule: d + hv months
+    # (this row's own target month), NOT the triplet's quarter-start target.
+    row_target_years, row_target_months = [], []
+    for ts, hv in zip(df["_d"], df["_hv"], strict=True):
+        ry, rm = _add_months(ts.year, ts.month, int(hv))
+        row_target_years.append(ry)
+        row_target_months.append(rm)
+    df["_row_target_year"] = row_target_years
+    df["_row_target_month"] = row_target_months
+
+    has_valid_from_col = "valid_from" in df.columns
+    if has_valid_from_col:
+        vf = local_calendar_date(df["valid_from"])
+        df["_vf_year"] = vf.dt.year
+        df["_vf_month"] = vf.dt.month
+
+    # Resolve each (code, canonical model, d, hv) group to at most one
+    # winning row. A singleton wins regardless of its valid_from. In a
+    # group of 2+, the unique row whose valid_from (year, month) equals the
+    # target wins; zero or >= 2 matches marks the WHOLE triplet ambiguous.
+    winners = []
+    ambiguous_triplets = set()
+    for key, group in df.groupby(["code", "_canon_model", "_d", "_hv"], sort=False):
+        triplet_key = key[:3]
+        if len(group) == 1:
+            winners.append(group.iloc[0])
+            continue
+        if not has_valid_from_col:
+            ambiguous_triplets.add(triplet_key)
+            continue
+        target_y = group["_row_target_year"].iloc[0]
+        target_m = group["_row_target_month"].iloc[0]
+        match_mask = (
+            group["_vf_year"].notna()
+            & group["_vf_year"].eq(target_y)
+            & group["_vf_month"].eq(target_m)
+        )
+        matches = group.loc[match_mask]
+        if len(matches) == 1:
+            winners.append(matches.iloc[0])
+        else:
+            ambiguous_triplets.add(triplet_key)
+
+    if ambiguous_triplets:
+        counts["ambiguous_duplicate"] = len(ambiguous_triplets)
+
+    if not winners:
+        log_counts()
+        return empty_result(), counts
+
+    winners_df = pd.DataFrame(winners)
+    winners_df["_triplet_key"] = list(
+        zip(winners_df["code"], winners_df["_canon_model"], winners_df["_d"], strict=True)
+    )
+    winners_df = winners_df.loc[~winners_df["_triplet_key"].isin(ambiguous_triplets)].copy()
+
+    rows_out = []
+    for _triplet_key, group in winners_df.groupby("_triplet_key", sort=False):
+        hv_present = set(group["_hv"])
+        if hv_present != set(leads_needed):
+            counts["missing_lead"] += 1
+            continue
+
+        point_values = {
+            hv: group.loc[group["_hv"] == hv, "_point_value"].iloc[0] for hv in leads_needed
+        }
+        if not all(np.isfinite(v) for v in point_values.values()):
+            counts["non_finite_value"] += 1
+            continue
+
+        lead_row = group.loc[group["_hv"] == lead].iloc[0]
+        year = int(lead_row["_target_year"])
+        quarter_in_year = MONTH_TO_QUARTER[int(lead_row["_target_month"])]
+        forecasted_discharge = float(np.mean(list(point_values.values())))
+
+        row = {
+            "code": lead_row["code"],
+            "model_short": lead_row["model_short"],
+            "year": year,
+            "quarter_in_year": quarter_in_year,
+            "date": lead_row["_d"].strftime("%Y-%m-%d"),
+            "horizon_value": lead,
+            "valid_from": f"{year}-{QUARTER_MONTHS[quarter_in_year][0]:02d}-01",
+            "valid_to": _quarter_end_date(year, quarter_in_year),
+            "forecasted_discharge": forecasted_discharge,
+        }
+        if has_q:
+            row["q"] = forecasted_discharge
+        for qcol in _FC_QUANTILE_COLS:
+            row[qcol] = np.nan
+        rows_out.append(row)
+
+    log_counts()
+    if not rows_out:
+        return empty_result(), counts
+    return pd.DataFrame(rows_out, columns=output_columns()), counts
