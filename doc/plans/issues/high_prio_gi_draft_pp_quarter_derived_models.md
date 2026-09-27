@@ -417,6 +417,54 @@ and `:219` (`test_multiple_quarters`), each of which relies on 2 of 3 months (me
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1a file list.
 
+#### P1a amendments (2026-09-27, readiness review)
+
+Two independent readiness reviews found gaps in the P1a spec above; the implementation followed
+`doc/plans/pp065/brief_p1a.md`, which amends this section as follows (the brief wins where they differ):
+
+- **Date parsing.** `date` and `valid_from` are parsed with `local_calendar_date`
+  (`src/aggregation.py:100-199`), not `pd.to_datetime(..., format="mixed")`: the latter raises on
+  mixed tz-aware/naive strings and shifts the local date under `utc=True`.
+- **Return shape.** `derive_quarterly_from_monthly_same_issue` returns `(frame, counts)`, where
+  `counts` is a `dict[str, int]` (a `Counter`) of exclusion counts by reason, not merely a diagnostic
+  log. Ignored-without-counting reasons (model out of scope, no quarter-start, hv outside
+  `{lead, lead+1, lead+2}`) are distinct from counted reasons (`bad_horizon_value`, `bad_date`,
+  `wrong_issue_day`, `missing_lead`, `non_finite_value`, `ambiguous_duplicate`, plus
+  `missing_column:*` and `invalid_config`).
+- **`horizon_value` rule.** `hv = pd.to_numeric(col, errors="coerce")`; a row is eligible only if `hv`
+  is finite and `hv == round(hv)`; cast to `int` only AFTER that filter (real API frames carry `hv` as
+  float64 with NaN).
+- **Output column set.** A FIXED list, never built by copying input rows: `code`, `model_short`,
+  `year`, `quarter_in_year`, `date`, `horizon_value`, `valid_from`, `valid_to`,
+  `forecasted_discharge`, `q` (present only if the input had a `q` column), and every column of
+  `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
+  `model_type_description` and `horizon_type` never leak into the output.
+- **Exact-duplicate pre-step and singleton rule.** Before the uniqueness rule, exact duplicates on
+  (code, canonical model, `d`, hv, `valid_from`, `valid_to`) -- or on `id` when present -- are dropped
+  (a repeated read, not an ambiguity). A singleton at (code, canonical model, `d`, hv) is used
+  whatever its `valid_from`, including missing/NaT.
+- **Ambiguous-duplicate WARNING.** `ambiguous_duplicate > 0` logs at WARNING (count only, no station
+  codes; it signals mislabelled upstream data, LTF-016). Every other count logs at INFO, except
+  `invalid_config`, which also logs at WARNING.
+- **Invalid-config handling.** `issue_day < 1` or `lead < 0` returns the empty schema with ONE
+  WARNING and `invalid_config` counted -- no exception raised.
+- **Flag independence.** The helper never reads `SAPPHIRE_SKILL_LEAD_AWARE`; its output is byte-identical
+  under both flag states (verified by a parametrized test).
+- **Clamp helper.** `clamp_issue_day(year, month, issue_day)` = `min(issue_day,
+  calendar.monthrange(year, month)[1])`, the same rule as the producer
+  (`apps/long_term_forecasting/lt_utils.py:170-172`) and PP-064's `data_reader.py:3097-3101`. P1b
+  reuses this helper for the native-row rule.
+- **Distinct-month observation counting.** `aggregate_monthly_obs_to_quarterly` first averages per
+  (code, year, quarter, month) skipping NaN, then aggregates those monthly means to the quarter
+  (unweighted mean); `n_months` counts DISTINCT months with a non-null monthly mean, not non-null
+  rows. With the normal one-row-per-month input this is unchanged from before; only the coverage
+  threshold (`QUARTER_MIN_MONTHS` -> `QUARTER_OBS_MIN_MONTHS = 3`) changed.
+- **Updated line citations** (trunk `f38e9bc3`, after this phase's edits): the observation coverage
+  filter is at `src/aggregation.py:391`; the delta computation is at `src/aggregation.py:397-410`;
+  `QUARTER_MIN_MONTHS` is defined at `src/aggregation.py:284` and remains used only by
+  `aggregate_monthly_fc_to_quarterly` (`src/aggregation.py:530`, forecast aggregation, unchanged by
+  this phase).
+
 ### P1b — readers, native-row selection, maintenance, writer
 
 Depends on P1a. It can run in parallel with P1c; the two touch disjoint source files.
