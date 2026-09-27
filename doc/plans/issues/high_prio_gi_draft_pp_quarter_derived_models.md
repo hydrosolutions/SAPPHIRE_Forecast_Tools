@@ -523,13 +523,15 @@ longer exists; nothing here depends on it):
     an `id` value that is itself unhashable is out of scope for this helper (it is not a documented
     input shape, unlike an out-of-contract window value, which upstream data quality issues make a
     real possibility). `derive_quarterly_from_monthly_same_issue` as a whole is guaranteed not to
-    raise only when its inputs meet this contract: an out-of-contract window value, e.g.
-    `Decimal("sNaN")`, is still classified safely by `_window_dedup_key` and does not corrupt the
-    result, but MAY still raise later, in pandas' own internals on some paths (e.g. the
-    per-partition `pd.concat` in the `id`-present branch, `src/aggregation.py:1131`) -- that
-    downstream risk is out of scope, not a gap in `_window_dedup_key` (M1-M3 follow-up below).
+    raise only when its inputs meet this contract (also `horizon_value`/`q`/`q50` numeric-or-null,
+    per the P1 fix below): an out-of-contract window value, e.g. `Decimal("sNaN")`, is still
+    classified safely by `_window_dedup_key` and does not corrupt the result, but MAY still raise
+    later -- confirmed for `Decimal("sNaN")` in `valid_from`/`valid_to` (inside the `id`-present
+    branch's `pd.concat`, `src/aggregation.py:1147`), in `horizon_value` or `q`/`q50` (inside
+    `pd.to_numeric` itself), and for an unhashable `id` (also inside that same `pd.concat`) -- this
+    downstream risk is out of scope, not a gap in `_window_dedup_key` (see the P1 follow-up below).
   - **Where a window value does NOT parse, the fallback rule is the FINAL, SIMPLE and conservative
-    one in `_window_dedup_key`** (the shared helper, `src/aggregation.py:702-776`; findings J1, K1,
+    one in `_window_dedup_key`** (the shared helper, `src/aggregation.py:709-783`; findings J1, K1,
     L1, M1), applied per value in this exact order, with the WHOLE classification wrapped in one
     `try`/`except Exception` so that NO step -- including the null check itself -- can ever raise
     out of `_window_dedup_key` ITSELF (M1; a guarantee about this helper, not about
@@ -569,14 +571,14 @@ longer exists; nothing here depends on it):
   - A singleton at (code, canonical model, `d`, hv) is used whatever its `valid_from`, including
     missing/NaT.
 - **`bad_key` (2026-09-27, round-2 finding G4).** A null `code` or `model_short` is excluded and
-  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:958-972`, the first
+  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:972-986`, the first
   per-row filter in the function, before even the model-scope check). Pandas `groupby` drops a null
   group key by default, so a null-`code` row's boolean `.transform()` result came back as `NaN`
   instead of `True`/`False`, and `~NaN` raised `TypeError` at the ambiguity check further down --
   this made the ENTIRE call crash, not merely mis-handle the one bad row.
 - **`code` (and date/window) output dtype (2026-09-27, round-2 finding G5).** The non-empty result's
   `code`, `date`, `valid_from` and `valid_to` columns are explicitly cast to `object`
-  (`src/aggregation.py:905-920`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
+  (`src/aggregation.py:919-934`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
   regardless of the input `code` column's own dtype (numeric, pandas `StringDtype`, etc.) -- the
   original version left `code` at whatever dtype it inherited from the input, so the empty and
   non-empty schemas could disagree.
@@ -591,10 +593,15 @@ longer exists; nothing here depends on it):
   calendar.monthrange(year, month)[1])`, the same rule as the producer
   (`apps/long_term_forecasting/lt_utils.py:170-172`) and PP-064's `data_reader.py:3097-3101`.
   **PP-065 N5:** a public vectorized twin, `clamp_issue_days(dates, issue_day)` (same rule via
-  `Series.dt.days_in_month`, `src/aggregation.py:646-665`), replaced `derive`'s own inline
+  `Series.dt.days_in_month`, `src/aggregation.py:646-672`), replaced `derive`'s own inline
   `np.minimum(issue_day, df["_d"].dt.days_in_month)` call and is unit-tested against the scalar
   helper across mixed month lengths (leap/non-leap Feb, a 30-day month, `NaT`). P1b's native-row
-  rule reuses THIS vectorized helper, not the scalar one, for its own per-row clamp.
+  rule reuses THIS vectorized helper, not the scalar one, for its own per-row clamp. **P3 fix:** its
+  return dtype is NOT fixed -- `int32` when `dates` has no `NaT`, `float64` when it does (since
+  `Series.dt.days_in_month` itself upcasts to hold NaN for a `NaT` row) -- documented rather than
+  forced to one dtype via an extra cast, since a `Series.dt.day != this` comparison (the only
+  caller) works correctly either way and a float64 cast would needlessly change that comparison's
+  dtype in the common no-`NaT` case.
 - **Distinct-month observation counting.** `aggregate_monthly_obs_to_quarterly` first averages per
   (code, year, quarter, month) skipping NaN, then aggregates those monthly means to the quarter
   (unweighted mean); `n_months` counts DISTINCT months with a non-null monthly mean, not non-null
@@ -610,25 +617,26 @@ longer exists; nothing here depends on it):
   typed direct-read frame could silently upcast `year` away from int64 (and, once pandas removes the
   deprecated empty/all-NA exclusion it currently warns about, change the concatenated dtype outright).
 - **Updated line citations** (this branch's HEAD, re-verified 2026-09-27 after round-3 review (H1-H5),
-  the J1-J3 follow-up, the K1-K2/L1-L2 follow-up, the M1-M3 follow-up, AND the N1-N7 follow-up (below)
-  -- re-verify again after any further edit to `src/aggregation.py`, since these drift with every
-  change above them in the file): `local_calendar_date` is at `:102-201`; the observation coverage
-  filter is at `src/aggregation.py:397`; the delta computation is at `:403-409`; `QUARTER_MIN_MONTHS`
-  is defined at `:284` and remains used only by `aggregate_monthly_fc_to_quarterly` (forecast
-  aggregation, unchanged by this phase); `clamp_issue_days` (PP-065 N5's public vectorized clamp) is
-  at `:646-665`; the shared `_window_dedup_key` helper (the SIMPLE, conservative,
-  exception-safe-by-construction unparseable-value fallback, finding M1) is at `:702-776`; the
-  `typed()` function (object-dtype cast included) is at `:905-920`; `bad_key` is at `:958-972` (its
-  own early return, one line after `log_counts()`, not on the same line as the filter itself); the
-  derivation helper's hv-check reorder is at `:982-1003`; the date parse itself is the single line
-  at `:1008`; the exact-duplicate pre-step (window-parsing via `_window_dedup_key` for BOTH
-  `valid_from` and `valid_to`, the spelling-tiebreak sort, and the value- and natural-key-scoped
-  `id` dedup, across all three partitions) is at `:1068-1134` (the `id`-present branch's own
-  `pd.concat` is at `:1131`); the vectorized uniqueness/triplet-assembly rewrite (see "Performance"
-  below) spans `:1136-1271` (the end of the file). Every one of these moved from the M1-M3 HEAD
-  (`edbabca4`): the N5 `clamp_issue_days` addition pushed everything after it down, and the N6
-  derive docstring/comment trim then pulled everything after THAT back up -- each citation above was
-  re-measured directly on this round's HEAD, not computed from the net of the two.
+  the J1-J3 follow-up, the K1-K2/L1-L2 follow-up, the M1-M3 follow-up, the N1-N7 follow-up, AND the
+  P1-P3 follow-up (below) -- re-verify again after any further edit to `src/aggregation.py`, since
+  these drift with every change above them in the file): `local_calendar_date` is at `:102-201`; the
+  observation coverage filter is at `src/aggregation.py:397`; the delta computation is at
+  `:403-409`; `QUARTER_MIN_MONTHS` is defined at `:284` and remains used only by
+  `aggregate_monthly_fc_to_quarterly` (forecast aggregation, unchanged by this phase);
+  `clamp_issue_days` (PP-065 N5's public vectorized clamp) is at `:646-672`; the shared
+  `_window_dedup_key` helper (the SIMPLE, conservative, exception-safe-by-construction
+  unparseable-value fallback, finding M1) is at `:709-783`; the `typed()` function (object-dtype
+  cast included) is at `:919-934`; `bad_key` is at `:972-986` (its own early return, one line after
+  `log_counts()`, not on the same line as the filter itself); the derivation helper's hv-check
+  reorder is at `:996-1009`; the date parse itself is the single line at `:1022`; the
+  exact-duplicate pre-step (window-parsing via `_window_dedup_key` for BOTH `valid_from` and
+  `valid_to`, the spelling-tiebreak sort, and the value- and natural-key-scoped `id` dedup, across
+  all three partitions) is at `:1082-1150` (the `id`-present branch's own `pd.concat` is at
+  `:1147`); the vectorized uniqueness/triplet-assembly rewrite (see "Performance" below) spans
+  `:1152-1287` (the end of the file). Every one of these moved again from the N1-N7 HEAD
+  (`8aff8cc6`): the P1 INPUT CONTRACT rewrite and the P3 `clamp_issue_days` docstring fix both grew
+  the file (net +16 lines by end of file) -- each citation above was re-measured directly on this
+  round's HEAD.
 - **Performance (2026-09-27, PP-065 F3).** The original P1a implementation grouped rows with Python
   `for key, group in df.groupby(...)` loops for both the uniqueness rule and the final triplet
   assembly -- correct, but O(rows) in Python, measured at 8.5-38s for a ~200k-row synthetic monthly
@@ -768,6 +776,36 @@ longer exists; nothing here depends on it):
   `_window_dedup_key` itself, and to state plainly that `derive`'s own crash-free guarantee holds
   only for the documented contract (ISO date/datetime `valid_from`/`valid_to` or null; a hashable
   scalar `id`).
+
+  **P1-P3 follow-up (2026-09-27, confirm-fixes pass on 8aff8cc6).** A fresh, no-history full-branch
+  review (codex: would merge as is; a fresh Claude reviewer: three items) found that the real-data
+  run was identical again and the only logic changes across the whole N1-N7 commit were the
+  intended ones -- but P1 (both reviewers) caught that the N6 trim had, while shortening the
+  docstring, PUT BACK the exact overclaim the Post-M1 fix above had just removed: "An out-of-contract
+  value never crashes this function." Verified false again, now for FOUR inputs, not just the
+  window value: `Decimal("sNaN")` in `valid_from`/`valid_to` (`pd.concat` in the `id`-present
+  branch), in `horizon_value` or `q`/`q50` (inside `pd.to_numeric` -- confirmed directly:
+  `decimal.InvalidOperation` for `horizon_value`, `ValueError: cannot convert signaling NaN to
+  float` for `q50`), and an unhashable `id` (the same `pd.concat`). Restored the narrowed wording
+  with the SAME rule Post-M1 established: `_window_dedup_key` itself never raises for any window
+  value; `derive` as a whole is crash-free only within the documented contract (this docstring's own
+  INPUT CONTRACT text, `src/aggregation.py:803-822`, and the call-site comment's closing pointer at
+  `:1089-1094`). P2 (test): the N4 float64 cast was only
+  ever pinned for `q50` -- added a dedicated `q`-column test (Float64 `pd.NA` in `q`, plain NaN in
+  `q50` for the same month, so there is no finite fallback), mutation-verified (removing only the
+  `q` cast reproduces the exact N4 silent-average bug, from the `q` side this time). P3 (lockstep):
+  applied the identical float64 cast to `_reference_derive`'s own `q`/`q50` handling -- without it,
+  the reference does not silently agree with a stale production bug the way K1/L1's reference gaps
+  once did; it CRASHES instead (`_reference_derive`'s point-value check is a plain Python
+  `all(np.isfinite(v) for v in ...)`, and `bool(pd.NA)` raises `TypeError`, confirmed directly), so
+  the cast is required for the differential test to run at all on such frames, not merely for
+  parity. Extended the differential generator to store `q`/`q50` as pandas nullable `Float64` on
+  ~25-30% of generated frames (confirmed by direct measurement: 53/300 for `q`, 80/300 for `q50`
+  across the fixed-seed run); all 300 frames still pass. Also fixed `clamp_issue_days`'s own
+  docstring, which claimed a fixed float64 return dtype -- confirmed by direct measurement it is
+  `int32` when the input has no `NaT` and `float64` only when it does; documented rather than
+  forced to one dtype via an extra cast, since the one caller's comparison works correctly either
+  way and a cast would needlessly change that comparison's dtype in the common case.
 - **Dev-DB validation (2026-09-27).** On the local dev DB, complete same-issue triplets across the
   seven derived models (2000-2026) were 30.96k (kghm) / 7.13k (tjhm), and 14.1k / 3.4k over
   2015-2026; the feasibility section above (~27.8k / ~5.2k) did not state its year window, so these

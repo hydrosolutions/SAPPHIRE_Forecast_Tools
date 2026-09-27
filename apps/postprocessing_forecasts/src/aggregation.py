@@ -659,8 +659,15 @@ def clamp_issue_days(dates: pd.Series, issue_day: int) -> pd.Series:
             to every row.
 
     Returns:
-        float64 Series (NaN wherever ``dates`` is ``NaT``) of clamped
-        issue days, same index as ``dates``.
+        Clamped issue days, same index as ``dates``. The dtype is NOT
+        fixed: ``int32`` when ``dates`` has no ``NaT`` (there is no NaN to
+        represent), ``float64`` when it does (``Series.dt.days_in_month``
+        itself upcasts to hold NaN for a ``NaT`` row, and ``np.minimum``
+        propagates that). Deliberately left as-is rather than forced to a
+        single dtype: a `Series.dt.day != this` comparison (`derive`'s own
+        call) works correctly either way, and a float64 cast would change
+        that comparison's dtype for the (common) no-``NaT`` case for no
+        behavioural benefit.
     """
     return np.minimum(issue_day, dates.dt.days_in_month)
 
@@ -795,10 +802,17 @@ def derive_quarterly_from_monthly_same_issue(
 
     INPUT CONTRACT: ``date``/``valid_from``/``valid_to`` are ISO
     date/datetime strings, ``date``/``datetime``/``Timestamp`` values, or
-    null; ``id`` (when present) is a hashable scalar, per the API's own
-    contract. An out-of-contract value never crashes this function (see
-    ``_window_dedup_key`` below for the window fallback rule), but IS
-    handled conservatively, not meaningfully. The DB schema behind
+    null; ``horizon_value``/``q``/``q50`` are numeric-or-null; ``id`` (when
+    present) is a hashable scalar, per the API's own contract. This
+    function is guaranteed not to raise ONLY within that contract. An
+    out-of-contract value is handled conservatively, not meaningfully, but
+    MAY still raise -- e.g. a ``Decimal("sNaN")`` in ``horizon_value`` or
+    ``q``/``q50`` raises inside ``pd.to_numeric``, and an unhashable ``id``
+    raises inside the ``id``-branch ``pd.concat`` (around line 1140).
+    ``_window_dedup_key`` (below) is the one piece that IS guaranteed never
+    to raise for any ``valid_from``/``valid_to`` value, in or out of
+    contract -- that guarantee is about the helper itself, not about this
+    function as a whole. The DB schema behind
     ``_read_long_forecasts_api`` (NOT NULL ``code``/``date``/
     ``model_type``/``horizon_value``/``valid_from``/``valid_to``, an enum
     ``model_type``, and a matching unique constraint) makes most
@@ -1072,10 +1086,12 @@ def derive_quarterly_from_monthly_same_issue(
     # collapsed; it is left for the uniqueness rule, where a missing
     # valid_from column makes the group unresolvable. Windows are compared
     # as PARSED local calendar dates where they parse, and via
-    # `_window_dedup_key`'s conservative fallback otherwise (see its
-    # docstring for the exact rule; see the derive docstring's INPUT
-    # CONTRACT for what "otherwise" covers, and its own docstring for why
-    # this call as a whole is guaranteed crash-free only within it).
+    # `_window_dedup_key`'s conservative fallback otherwise -- see its own
+    # docstring for the exact per-value rule (that helper never raises for
+    # ANY value); see this function's own docstring INPUT CONTRACT section
+    # above for what "otherwise" covers, and for why THIS function as a
+    # whole is guaranteed crash-free only within that contract, not for
+    # arbitrary out-of-contract values.
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:

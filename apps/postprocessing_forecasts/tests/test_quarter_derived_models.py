@@ -255,13 +255,19 @@ def _reference_derive(
         log_counts()
         return empty_result(), counts
 
+    # N4: cast to plain float64 after pd.to_numeric, in lockstep with
+    # production -- a pandas nullable "Float64" column would otherwise
+    # keep its pd.NA through to_numeric, and DataFrame.all(axis=1) on
+    # np.isfinite(...) of the wide pivot built from it (skipna=True by
+    # default) would IGNORE that pd.NA instead of treating it as False,
+    # silently averaging over a genuinely-missing month.
     q_val = (
-        pd.to_numeric(df["q"], errors="coerce")
+        pd.to_numeric(df["q"], errors="coerce").astype("float64")
         if "q" in df.columns
         else pd.Series(np.nan, index=df.index)
     )
     q50_val = (
-        pd.to_numeric(df["q50"], errors="coerce")
+        pd.to_numeric(df["q50"], errors="coerce").astype("float64")
         if "q50" in df.columns
         else pd.Series(np.nan, index=df.index)
     )
@@ -768,6 +774,37 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
             ]
         )
         raw["q50"] = raw["q50"].astype("Float64")
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert counts["non_finite_value"] == 1
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "GBT"
+        assert abs(result.iloc[0]["forecasted_discharge"] - 110.0) < 1e-9
+
+    def test_float64_nullable_na_in_q_column_excluded_as_non_finite(self):
+        """P2: the N4 float64 cast is applied to BOTH `q` and `q50` --
+        this pins the `q` side specifically (the earlier N4 test only
+        exercised `q50`). A `q` column stored as pandas nullable
+        ``Float64`` with `pd.NA` for one month, and `q50` ALSO non-finite
+        for that same month (a plain NaN, so there is no finite fallback
+        to rescue it), must be excluded as `non_finite_value`, not
+        silently averaged. Mutation: remove only the `.astype("float64")`
+        cast on `q_val` (leaving `q50_val`'s cast in place) -- the
+        triplet wrongly derives via the SAME `all(axis=1)` skipna gap N4
+        fixed, just triggered from the `q` side instead of `q50`."""
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, 100.0, 100.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 2, pd.NA, np.nan, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, 120.0, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, 100.0, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, 110.0, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, 120.0, 120.0, None, None),
+            ]
+        )
+        raw["q"] = raw["q"].astype("Float64")
         result, counts = derive_quarterly_from_monthly_same_issue(
             raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
         )
@@ -2628,6 +2665,21 @@ def _random_frame_and_params(rng, idx: int):
         rows.append(make_row(codes_pool[0], pool[0], "2026-12-25", lead, value=100.0))
 
     frame = pd.DataFrame(rows, columns=columns)
+
+    # P3: sometimes store q/q50 as pandas nullable "Float64" (capital F)
+    # instead of plain float64, so the differential test also exercises
+    # the N4 pd.NA-preservation path (a nullable NA survives differently
+    # than a plain NaN through `_point_value`'s pivot/`all(axis=1)` check)
+    # across the FULL scenario mix above, not just the two hand-built
+    # unit tests that target it directly. `.astype("Float64")` turns any
+    # existing NaN in the column into `pd.NA`, so this exercises the
+    # SAME rows the plain-float64 run already covers, just with a
+    # different missing-value representation.
+    if has_q and rng.random() < 0.3:
+        frame["q"] = frame["q"].astype("Float64")
+    if has_q50 and rng.random() < 0.3:
+        frame["q50"] = frame["q50"].astype("Float64")
+
     return frame, lead, issue_day, models
 
 
