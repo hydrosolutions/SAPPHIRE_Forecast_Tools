@@ -23,6 +23,7 @@ from src.aggregation import (
     QUARTER_MONTHS,
     _add_months,
     _quarter_end_date,
+    _window_dedup_key,
     clamp_issue_day,
     derive_quarterly_from_monthly_same_issue,
     filter_calendar_quarter_windows,
@@ -78,9 +79,10 @@ def _reference_derive(
     vectorization rewrite) -- and since round-2/round-3 review, ALSO
     carrying the G1 (value-aware id dedup), G4 (bad_key), G5 (typed object
     columns), H3 (windows compared as parsed local dates), H4
-    (deterministic model_short spelling tiebreak) and J1 (unparseable
-    windows fall back to the raw value, not both-NaT) correctness fixes,
-    since those are behavioural guarantees, not vectorization concerns,
+    (deterministic model_short spelling tiebreak), J1 (unparseable
+    windows fall back to a raw-value key, not both-NaT) and K1 (that
+    fallback key is hashable and type-qualified, not the raw value
+    itself) correctness fixes, since those are behavioural guarantees,
     and the differential test is only meaningful if both sides uphold
     them. Kept here ONLY as ground truth for
     ``TestVectorizedMatchesReferenceDifferential`` below. Do NOT "fix"
@@ -258,21 +260,19 @@ def _reference_derive(
     # Windows compared as PARSED local calendar dates where they parse
     # (PP-065 H3), not raw strings -- consistent with the amendment's
     # parsing rule everywhere else. Where a value does NOT parse, fall
-    # back to the RAW value, with an actual null kept null (PP-065 J1):
-    # two DIFFERENT unparseable strings must not both become NaT and
-    # therefore compare equal.
+    # back to a hashable, type-qualified string built from the RAW value,
+    # with an actual null kept null (PP-065 J1/K1, see `_window_dedup_key`
+    # in src/aggregation.py): two DIFFERENT unparseable strings must not
+    # both become NaT and therefore compare equal, and an UNHASHABLE raw
+    # value (e.g. a list) must not reach `drop_duplicates` as-is.
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:
         df["_vf_parsed"] = local_calendar_date(df["valid_from"])
-        # Pre-cast to object before `.where()` to avoid pandas' "mixed
-        # time zones" FutureWarning on the raw fallback column.
-        df["_vf_dedup_key"] = (
-            df["_vf_parsed"].astype(object).where(df["_vf_parsed"].notna(), df["valid_from"])
-        )
+        df["_vf_dedup_key"] = _window_dedup_key(df["valid_from"], df["_vf_parsed"])
     if has_valid_to_col:
         vt_parsed = local_calendar_date(df["valid_to"])
-        df["_vt_dedup_key"] = vt_parsed.astype(object).where(vt_parsed.notna(), df["valid_to"])
+        df["_vt_dedup_key"] = _window_dedup_key(df["valid_to"], vt_parsed)
 
     key_cols = ["code", "_canon_model", "_d", "_hv"]
     if has_valid_from_col:
@@ -1292,6 +1292,29 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         assert result.empty
         assert counts["ambiguous_duplicate"] == 1
 
+    def test_valid_to_alone_is_part_of_exact_duplicate_identity(self):
+        # No id column. Two hv=1 rows with the SAME value and the SAME
+        # valid_from, but DIFFERENT valid_to (01-31 vs 02-01). If
+        # valid_to were not part of the key, matching value + valid_from
+        # alone would wrongly collapse this to a singleton; since it IS
+        # part of the key, they survive as a group of 2 -- both still
+        # match the target month via valid_from (valid_to plays no part
+        # in the uniqueness rule's OWN matching), so 2 matches is
+        # ambiguous (PP-065 K2).
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-01-31"),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-02-01"),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert result.empty
+        assert counts["ambiguous_duplicate"] == 1
+
     # ---- J2: the window is part of the identity in the id-PRESENT --------
     # ---- partitions too (with-id and null-id-with-id-column) -------------
 
@@ -1318,6 +1341,24 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         assert result.empty
         assert counts["ambiguous_duplicate"] == 1
 
+    def test_valid_to_alone_is_part_of_exact_duplicate_identity_with_id(self):
+        # Same id + same value + same valid_from, DIFFERENT valid_to
+        # (PP-065 K2): the `with_id` subset must include valid_to too.
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-01-31", "x"),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-02-01", "x"),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None, "id-2"),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None, "id-3"),
+            ],
+            columns=FULL_COLUMNS + ["id"],
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert result.empty
+        assert counts["ambiguous_duplicate"] == 1
+
     def test_window_is_part_of_exact_duplicate_identity_null_id(self):
         # Same as above, but an `id` COLUMN is present and both rows'
         # `id` is None -- routed through the "without_id" (null-id)
@@ -1327,6 +1368,25 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
             [
                 (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-01-31", None),
                 (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-02", "2027-02-01", None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None, None),
+            ],
+            columns=FULL_COLUMNS + ["id"],
+        )
+        assert raw["id"].isna().all()
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert result.empty
+        assert counts["ambiguous_duplicate"] == 1
+
+    def test_valid_to_alone_is_part_of_exact_duplicate_identity_null_id(self):
+        # Same as the with-id valid_to variant, but both rows' `id` is
+        # None -- the "without_id" (null-id) partition (PP-065 K2).
+        raw = _frame(
+            [
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-01-31", None),
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, "2027-01-01", "2027-02-01", None),
                 (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None, None),
                 (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None, None),
             ],
@@ -1413,6 +1473,52 @@ class TestDeriveQuarterlyFromMonthlySameIssue:
         )
         assert result.empty
         assert counts["ambiguous_duplicate"] == 1
+
+    @pytest.mark.parametrize("order", ["a_then_b", "b_then_a"])
+    def test_unparseable_valid_to_not_treated_as_equal(self, order):
+        # Same as test_unparseable_windows_are_not_treated_as_equal, but
+        # on valid_to instead of valid_from (PP-065 K2): two hv=1 rows
+        # with the SAME value but DIFFERENT unparseable valid_to strings
+        # must not both become NaT and compare equal.
+        row_a = (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, "garbage")
+        row_b = (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, "xx")
+        pair = [row_a, row_b] if order == "a_then_b" else [row_b, row_a]
+        raw = _frame(
+            pair
+            + [
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert result.empty
+        assert counts["ambiguous_duplicate"] == 1
+
+    # ---- K1: an UNHASHABLE unparseable window must not crash --------------
+
+    def test_unhashable_window_value_no_exception_control_derives(self):
+        # A list-valued valid_from (malformed upstream data) is a
+        # singleton at its own hv, so it derives too -- the point of this
+        # test is that it does NOT raise `TypeError: unhashable type`
+        # inside drop_duplicates, next to an independent control triplet.
+        raw = _frame(
+            [
+                (CODE, "MC_ALD", "2026-12-25", 1, np.nan, 100.0, ["garbage"], None),
+                (CODE, "MC_ALD", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "MC_ALD", "2026-12-25", 3, np.nan, 120.0, None, None),
+                # Control.
+                (CODE, "GBT", "2026-12-25", 1, np.nan, 100.0, None, None),
+                (CODE, "GBT", "2026-12-25", 2, np.nan, 110.0, None, None),
+                (CODE, "GBT", "2026-12-25", 3, np.nan, 120.0, None, None),
+            ]
+        )
+        result, counts = derive_quarterly_from_monthly_same_issue(
+            raw, lead=1, issue_day=25, models=QUARTERLY_DERIVED_MODELS
+        )
+        assert set(result["model_short"]) == {"MC_ALD", "GBT"}
+        assert not counts
 
     # ---- H4: deterministic model_short spelling tiebreak -------------------
 

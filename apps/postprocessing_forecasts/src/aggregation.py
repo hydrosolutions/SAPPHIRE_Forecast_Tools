@@ -677,6 +677,47 @@ def _add_months_vectorized(year: pd.Series, month: pd.Series, delta) -> tuple[pd
     return new_year, new_month
 
 
+def _window_dedup_key(raw: pd.Series, parsed: pd.Series) -> pd.Series:
+    """Exact-duplicate identity key for one window column (PP-065 J1/K1).
+
+    The parsed local calendar date where it parses; otherwise a
+    hashable, type-qualified string built from the RAW value, so:
+    - two DIFFERENT unparseable strings (e.g. "garbage" vs "xx") never
+      compare equal just because both parsed to NaT (PP-065 J1);
+    - an UNHASHABLE raw value (e.g. a list or dict from malformed
+      upstream data) is safe to feed to ``drop_duplicates``, which
+      requires every key value to be hashable (PP-065 K1) -- without
+      this, keeping the raw value itself as the fallback raises
+      ``TypeError: unhashable type`` the first time such a row appears;
+    - a genuinely null value stays null, so two nulls still match.
+
+    Args:
+        raw: The original (unparsed) column, e.g. ``df["valid_from"]``.
+        parsed: ``local_calendar_date(raw)`` -- NaT where unparseable.
+
+    Returns:
+        An object-dtype Series: a ``Timestamp`` where ``parsed`` is not
+        NaT, else ``None`` (null raw) or ``f"{type(v).__name__}|{v!s}"``
+        (non-null, unparseable raw ``v``).
+    """
+
+    def _fallback(v: object) -> str | None:
+        if v is None or v is pd.NaT:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        return f"{type(v).__name__}|{v!s}"
+
+    fallback = raw.map(_fallback)
+    # Pre-cast `parsed` to object before `.where()`: with both sides
+    # already object dtype, pandas never tries to reconcile them via an
+    # implicit datetime-compatibility parse of the raw (possibly
+    # mixed-tz) fallback column, which would otherwise raise pandas'
+    # "mixed time zones" FutureWarning even on rows where the parsed
+    # value (not the raw fallback) is the one actually kept.
+    return parsed.astype(object).where(parsed.notna(), fallback)
+
+
 def derive_quarterly_from_monthly_same_issue(
     monthly_raw: pd.DataFrame,
     lead: int,
@@ -746,18 +787,22 @@ def derive_quarterly_from_monthly_same_issue(
         check that depends on it (hv range needs a valid hv; quarter-start
         needs a valid date).
 
-        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1): a row is an exact
+        Exact duplicates (PP-065 F1/F2/G1/H3/H4/J1/K1): a row is an exact
         duplicate of another only if its identity (code, canonical model,
         ``d``, hv, ``valid_from``, ``valid_to`` -- windows compared as
         PARSED local calendar dates where they parse, PP-065 H3, not raw
         strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00" for
         the same row are the same window; where a value does NOT parse,
-        the comparison falls back to the RAW value, with an actual null
-        kept null, PP-065 J1 -- so two DIFFERENT unparseable strings, e.g.
-        "garbage" vs "xx", are never both coerced to NaT and thereby
-        treated as the same window) AND its point-value inputs (``q`` and
-        ``q50``, NaN-equal) both match -- so a same-window pair with a DIFFERENT
-        value is never silently dropped; it is left for the uniqueness
+        the comparison falls back to a hashable, type-qualified string
+        built from the RAW value (``f"{type(v).__name__}|{v!s}"``, see
+        ``_window_dedup_key``), with an actual null kept null, PP-065
+        J1/K1 -- so two DIFFERENT unparseable strings, e.g. "garbage" vs
+        "xx", are never both coerced to NaT and thereby treated as the
+        same window, and an UNHASHABLE raw value (e.g. a list) never
+        reaches ``drop_duplicates`` and raises ``TypeError``) AND its
+        point-value inputs (``q`` and ``q50``, NaN-equal) both match --
+        so a same-window pair with a DIFFERENT value is never silently
+        dropped; it is left for the uniqueness
         rule, where a missing ``valid_from`` column makes the group
         unresolvable (ambiguous) and a null ``valid_from`` never matches.
         The window is ALWAYS part of this identity, whether or not ``id``
@@ -979,27 +1024,21 @@ def derive_quarterly_from_monthly_same_issue(
     # H3), the same rule the amendment applies everywhere else -- not as
     # raw strings, so e.g. "2027-01-01" and "2027-01-01T00:00:00+06:00"
     # for the same row are the same window and do not block the collapse.
-    # Where a value does NOT parse, the key falls back to the RAW value,
-    # with an actual null kept null (PP-065 J1): two DIFFERENT unparseable
-    # strings (e.g. "garbage" vs "xx") must not both become NaT and
-    # therefore compare equal to each other -- only a genuinely null
-    # valid_from matches another null.
+    # Where a value does NOT parse, the key falls back to a hashable,
+    # type-qualified string built from the RAW value, with an actual null
+    # kept null (PP-065 J1/K1, see `_window_dedup_key`): two DIFFERENT
+    # unparseable strings (e.g. "garbage" vs "xx") must not both become
+    # NaT and therefore compare equal to each other -- only a genuinely
+    # null valid_from/valid_to matches another null -- and an UNHASHABLE
+    # raw value (e.g. a list) must not reach `drop_duplicates` as-is.
     has_valid_from_col = "valid_from" in df.columns
     has_valid_to_col = "valid_to" in df.columns
     if has_valid_from_col:
         df["_vf_parsed"] = local_calendar_date(df["valid_from"])
-        # Pre-cast to object before `.where()`: with both sides already
-        # object dtype, pandas never tries to reconcile them via an
-        # implicit datetime-compatibility parse of the raw (possibly
-        # mixed-tz) fallback column, which would otherwise raise pandas'
-        # "mixed time zones" FutureWarning even on rows where the parsed
-        # value (not the raw fallback) is the one actually kept.
-        df["_vf_dedup_key"] = (
-            df["_vf_parsed"].astype(object).where(df["_vf_parsed"].notna(), df["valid_from"])
-        )
+        df["_vf_dedup_key"] = _window_dedup_key(df["valid_from"], df["_vf_parsed"])
     if has_valid_to_col:
         vt_parsed = local_calendar_date(df["valid_to"])
-        df["_vt_dedup_key"] = vt_parsed.astype(object).where(vt_parsed.notna(), df["valid_to"])
+        df["_vt_dedup_key"] = _window_dedup_key(df["valid_to"], vt_parsed)
 
     key_cols = ["code", "_canon_model", "_d", "_hv"]
     if has_valid_from_col:

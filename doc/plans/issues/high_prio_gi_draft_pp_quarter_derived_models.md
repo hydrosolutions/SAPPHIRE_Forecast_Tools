@@ -448,7 +448,7 @@ longer exists; nothing here depends on it):
   quarter-start check by coincidence and then be wrongly counted as `wrong_issue_day` instead of
   silently ignored. `bad_horizon_value` counts only in-model rows with a non-finite or non-integer
   `horizon_value`; a valid but out-of-range `horizon_value` is silently ignored, never counted
-  (`src/aggregation.py:896-917` for the reordered hv checks, before the date parse at `:922`).
+  (`src/aggregation.py:941-962` for the reordered hv checks, before the date parse at `:967`).
 - **`horizon_value` rule.** `hv = pd.to_numeric(col, errors="coerce")`; a row is eligible only if `hv`
   is finite and `hv == round(hv)`; cast to `int` only AFTER that filter (real API frames carry `hv` as
   float64 with NaN).
@@ -458,7 +458,7 @@ longer exists; nothing here depends on it):
   `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
   `model_type_description` and `horizon_type` never leak into the output.
 - **Exact-duplicate pre-step and singleton rule (2026-09-27 fix; extended 2026-09-27 after round-2
-  and round-3 review, `src/aggregation.py:972-1050`).** Before the uniqueness rule, a row is an
+  and round-3 review, `src/aggregation.py:1017-1089`).** Before the uniqueness rule, a row is an
   exact duplicate of another only if its identity (code, canonical model, `d`, hv, `valid_from`,
   `valid_to`) AND its point-value inputs (`q` and `q50`, NaN-equal) BOTH match -- a same-window pair
   with a DIFFERENT value is never silently collapsed by whichever row happens to sort first; it is
@@ -467,16 +467,23 @@ longer exists; nothing here depends on it):
   identity, so two rows with different values but a null or identical window (or no `valid_from`
   column at all) silently collapsed to one -- the "no-`valid_from`-column implies ambiguous" branch
   was consequently unreachable.
-  - **The window is ALWAYS part of this identity** (round-3 finding H2), whether or not `id` is
-    present, and covered in ALL THREE dedup partitions -- no `id` column at all, `id` present but
-    null on this row, and `id` present and non-null -- not just the no-`id` case: a null-`id` or
-    no-`id` frame drops window from the key exactly as easily as an `id`-present frame would, so the
-    SAME same-window/different-value and different-window/same-value negatives apply everywhere
-    (round-3 finding H1: the "without-`id`" partition must also apply the value check, not only the
-    fully-`id`-less path; round-3 finding J2: BOTH the `id`-present and the `id`-present-but-null
-    partitions needed their own dedicated test, since each uses its own `drop_duplicates` call with
-    its own subset list -- a mutant dropping window from just one of the three calls passed
-    everything until each partition had its own pin).
+  - **The window is ALWAYS part of this identity** (round-3 finding H2) -- BOTH ends, `valid_from`
+    AND `valid_to` independently, each pinned in ALL THREE dedup partitions: no `id` column at all,
+    `id` present but null on this row, and `id` present and non-null -- not just the no-`id` case. A
+    null-`id` or no-`id` frame drops window from the key exactly as easily as an `id`-present frame
+    would, so the SAME same-window/different-value and different-window/same-value negatives apply
+    everywhere (round-3 finding H1: the "without-`id`" partition must also apply the value check, not
+    only the fully-`id`-less path; round-3 finding J2: BOTH the `id`-present and the
+    `id`-present-but-null partitions needed their own dedicated test for `valid_from`, since each uses
+    its own `drop_duplicates` call with its own subset list -- a mutant dropping window from just one
+    of the three calls passed everything until each partition had its own pin). **This claim was
+    ITSELF wrong for `valid_to` until a follow-up round (finding K2)**: H1/H2/J2's tests all varied
+    `valid_from` only, so `valid_to`'s presence in the key was unpinned in EVERY partition -- four
+    mutants (J1's raw-fallback revert applied to `valid_to` only; dropping `valid_to`'s dedup column
+    from the `id`-present, `id`-present-but-null, and no-`id` subsets) all passed every existing test.
+    Each partition now has its own `valid_to`-only variant (same `valid_from`, different `valid_to`,
+    same value) alongside the existing `valid_from`-only ones, and its own unparseable-`valid_to`
+    variant alongside the unparseable-`valid_from` one (finding K2, below).
   - **`id`, when present, does NOT make a pair authoritative on its own** (round-3 finding H5 --
     avoid that word; restated plainly): `id` never merges rows that key + window + value would not.
     Its only effect is to keep rows APART whose ids differ -- specifically, two null ids are never
@@ -497,11 +504,18 @@ longer exists; nothing here depends on it):
     as raw strings: `"2027-01-01"` and `"2027-01-01T00:00:00+06:00"` for the same row are the same
     window and do not block the collapse. The original version compared raw `valid_from`/`valid_to`
     strings, so two representations of the identical instant were wrongly treated as different
-    windows. **Where a value does NOT parse, the key falls back to the RAW value, with an actual
-    null kept null** (round-3 finding J1): H3's first version keyed purely on the parsed value, so
-    two DIFFERENT unparseable strings (e.g. `"garbage"` vs `"xx"`) both became `NaT` and therefore
+    windows. **Where a value does NOT parse, the key falls back to a hashable, type-qualified
+    string built from the RAW value** (`f"{type(v).__name__}|{v!s}"`, via the shared
+    `_window_dedup_key` helper, `src/aggregation.py:680-718`), **with an actual null kept null**
+    (round-3 findings J1 and K1): H3's first version keyed purely on the parsed value, so two
+    DIFFERENT unparseable strings (e.g. `"garbage"` vs `"xx"`) both became `NaT` and therefore
     compared EQUAL to each other -- silently collapsing a pair the pre-H3 code correctly left
-    ambiguous. A genuinely null `valid_from` still matches another null.
+    ambiguous (J1). J1's own first version then kept the raw value itself as the fallback, which
+    raised `TypeError: unhashable type` the first time an UNHASHABLE raw value (e.g. a list or dict
+    from malformed upstream data) reached `drop_duplicates`, which requires every key value to be
+    hashable (K1); the type-qualified STRING fallback is always hashable, and the type prefix means
+    an unhashable value never collides with a same-content hashable one either. A genuinely null
+    `valid_from`/`valid_to` still matches another null.
   - **A deterministic spelling tiebreak** (round-3 finding H4): when two rows are exact duplicates in
     every respect except the stored `model_short` spelling (they share one canonical model), the rows
     are sorted by that raw spelling (a stable sort) before the drop, so the lexicographically smallest
@@ -510,14 +524,14 @@ longer exists; nothing here depends on it):
   - A singleton at (code, canonical model, `d`, hv) is used whatever its `valid_from`, including
     missing/NaT.
 - **`bad_key` (2026-09-27, round-2 finding G4).** A null `code` or `model_short` is excluded and
-  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:872-885`, the first
+  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:917-930`, the first
   per-row filter in the function, before even the model-scope check). Pandas `groupby` drops a null
   group key by default, so a null-`code` row's boolean `.transform()` result came back as `NaN`
   instead of `True`/`False`, and `~NaN` raised `TypeError` at the ambiguity check further down --
   this made the ENTIRE call crash, not merely mis-handle the one bad row.
 - **`code` (and date/window) output dtype (2026-09-27, round-2 finding G5).** The non-empty result's
   `code`, `date`, `valid_from` and `valid_to` columns are explicitly cast to `object`
-  (`src/aggregation.py:819-834`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
+  (`src/aggregation.py:864-878`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
   regardless of the input `code` column's own dtype (numeric, pandas `StringDtype`, etc.) -- the
   original version left `code` at whatever dtype it inherited from the input, so the empty and
   non-empty schemas could disagree.
@@ -546,18 +560,19 @@ longer exists; nothing here depends on it):
   empty-schema column as plain object dtype, so e.g. concatenating an empty derived frame with a
   typed direct-read frame could silently upcast `year` away from int64 (and, once pandas removes the
   deprecated empty/all-NA exclusion it currently warns about, change the concatenated dtype outright).
-- **Updated line citations** (this branch's HEAD, re-verified 2026-09-27 after round-3 review (H1-H5)
-  AND after the follow-up round (J1-J3) -- re-verify again after any further edit to
+- **Updated line citations** (this branch's HEAD, re-verified 2026-09-27 after round-3 review (H1-H5),
+  the J1-J3 follow-up AND the K1-K2 follow-up -- re-verify again after any further edit to
   `src/aggregation.py`, since these drift with every change above them in the file):
   `local_calendar_date` is at `:102-201`; the observation coverage filter is at
   `src/aggregation.py:397`; the delta computation is at `:403-409`; `QUARTER_MIN_MONTHS` is defined
   at `:284` and remains used only by `aggregate_monthly_fc_to_quarterly` (forecast aggregation,
-  unchanged by this phase); the `typed()` function (object-dtype cast included) is at `:819-834`;
-  `bad_key` is at `:872-885`; the derivation helper's hv-check reorder is at `:896-917`; the date
-  parse itself is the single line at `:922`; the exact-duplicate pre-step (window-parsing with the
-  raw-value fallback for unparseable strings, the spelling-tiebreak sort, and the value- and
-  natural-key-scoped `id` dedup, across all three partitions) is at `:972-1050`; the vectorized
-  uniqueness/triplet-assembly rewrite (see "Performance" below) spans `:1071-1187`
+  unchanged by this phase); the shared `_window_dedup_key` helper (K1's hashable, type-qualified
+  fallback) is at `:680-718`; the `typed()` function (object-dtype cast included) is at `:864-878`;
+  `bad_key` is at `:917-930`; the derivation helper's hv-check reorder is at `:941-962`; the date
+  parse itself is the single line at `:967`; the exact-duplicate pre-step (window-parsing via
+  `_window_dedup_key` for BOTH `valid_from` and `valid_to`, the spelling-tiebreak sort, and the
+  value- and natural-key-scoped `id` dedup, across all three partitions) is at `:1017-1089`; the
+  vectorized uniqueness/triplet-assembly rewrite (see "Performance" below) spans `:1110-1226`
   (the end of the file).
 - **Performance (2026-09-27, PP-065 F3).** The original P1a implementation grouped rows with Python
   `for key, group in df.groupby(...)` loops for both the uniqueness rule and the final triplet
