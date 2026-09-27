@@ -1375,6 +1375,28 @@ def _get_data_monthly(
     if "quarter" in supported_modes:
         long_forecasts_quarter = i18n_models(add_labels(get_long_forecasts_quarter(station)))
         quarter_forecast_stats = i18n_models(get_forecast_stats("quarter", station))
+        if (
+            not lead_aware
+            and not quarter_forecast_stats.empty
+            and "horizon_value" in quarter_forecast_stats.columns
+        ):
+            # FD-029 follow-up: flag OFF, the quarter skill writer stores
+            # every row at the hv-0 sentinel (api_writer._write_skill_metrics_to_api
+            # defaults horizon_value to 0 whenever the skill frame it is given
+            # carries no per-lead column -- which is what
+            # skill_metrics._calculate_aggregated_skill_metrics produces for
+            # quarter when SAPPHIRE_SKILL_LEAD_AWARE is off, since its
+            # metric_group_cols then omits horizon_value entirely). A DB that
+            # has ever run with the flag ON also holds quarter skill rows at
+            # real leads (1, 2, 3) for the same (code, quarter, model).
+            # quarter_merge_keys does not include horizon_value in this
+            # branch, so without restricting to the sentinel first, the
+            # merge below fans one forecast row out into one card row per
+            # stored lead. Filtering to hv-0 keeps it one-to-one, mirroring
+            # month's operational-lead filter above.
+            quarter_forecast_stats = quarter_forecast_stats[
+                quarter_forecast_stats["horizon_value"] == 0
+            ].copy()
         can_merge_quarter = (
             not long_forecasts_quarter.empty
             and not quarter_forecast_stats.empty
@@ -1382,12 +1404,31 @@ def _get_data_monthly(
             and all(k in quarter_forecast_stats.columns for k in quarter_merge_keys)
         )
         if can_merge_quarter:
+            _quarter_row_count = len(long_forecasts_quarter)
             long_forecasts_quarter = long_forecasts_quarter.merge(
                 quarter_forecast_stats,
                 on=quarter_merge_keys,
                 how="left",
                 suffixes=("", "_stats"),
             )
+            if len(long_forecasts_quarter) != _quarter_row_count:
+                # Safety net: the hv-0 filter above should already make this
+                # merge 1:1. If a stored skill frame ever again holds more
+                # than one row per merge key, dedup deterministically rather
+                # than silently fanning the card out into duplicate rows.
+                _dropped = len(long_forecasts_quarter) - _quarter_row_count
+                _dedup_subset = [
+                    k for k in quarter_merge_keys if k in long_forecasts_quarter.columns
+                ]
+                long_forecasts_quarter = long_forecasts_quarter.drop_duplicates(
+                    subset=_dedup_subset, keep="first"
+                ).reset_index(drop=True)
+                logger.info(
+                    "_get_data_monthly: quarter skill merge fanned out %d row(s) for "
+                    "station %s; deduped to one row per forecast",
+                    _dropped,
+                    station,
+                )
 
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),

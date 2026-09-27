@@ -605,3 +605,137 @@ class TestBulletinQuarterInput:
             f"Expected the native Q1 row to win head(1), got "
             f"{getattr(site, 'quarterly_valid_from', 'MISSING')!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# FD-029 follow-up: flag OFF, a multi-lead quarter skill frame (rows at
+# hv 0/1/3 for the same code/quarter/model, left over from a period the
+# SAPPHIRE_SKILL_LEAD_AWARE flag was ON) must not fan the card out into one
+# row per stored lead. Exercises the real db.get_data("month", ...) path
+# (same shape as apps/forecast_dashboard/tests/test_db.py's
+# TestGetDataMonthly quarter-merge tests) so the card sees exactly what
+# _get_data_monthly produces, then renders it through the same
+# update_quarterly_summary_tabulator() path as the tests above.
+# ---------------------------------------------------------------------------
+
+_QUARTER_FORECAST_RECORD_RAW = {
+    "id": 20,
+    "horizon_type": "quarter",
+    "horizon_value": 1,
+    "code": STATION_CODE,
+    "date": "2026-03-22",
+    "model_type": "LR_Base",
+    "model_type_description": "Linear regression base",
+    "valid_from": "2026-04-01",
+    "valid_to": "2026-06-30",
+    "flag": 0,
+    "composition": "",
+    "q": 200.0,
+    "q_obs": None,
+    "q_xgb": None,
+    "q_lgbm": None,
+    "q_catboost": None,
+    "q_loc": None,
+    "q05": 180.0,
+    "q10": 185.0,
+    "q25": 190.0,
+    "q50": 200.0,
+    "q75": 210.0,
+    "q90": 215.0,
+    "q95": 220.0,
+}
+
+
+def _quarter_skill_record_raw(horizon_value, delta):
+    """Raw skill-metric API record for LR_Base/quarter_in_year=2, station
+    19999 -- matches _QUARTER_FORECAST_RECORD_RAW's target quarter."""
+    return {
+        "id": 200 + horizon_value,
+        "horizon_type": "quarter",
+        "horizon_in_year": 2,
+        "code": STATION_CODE,
+        "model_type": "LR_Base",
+        "model_type_description": "Linear regression base",
+        "date": "2026-03-15",
+        "horizon_value": horizon_value,
+        "sdivsigma": 0.5,
+        "nse": 0.8,
+        "delta": delta,
+        "accuracy": 90.0,
+        "mae": 1.0,
+        "n_pairs": 12,
+        "crps": None,
+        "pbias": None,
+        "kgelf": None,
+        "nse_log": None,
+        "fhv": None,
+        "flv": None,
+    }
+
+
+class TestCardQuarterMultiLeadSkillFlagOff:
+    def test_multi_lead_quarter_skill_shows_one_row_per_model_on_card(
+        self, monkeypatch, tmp_path
+    ):
+        """Flag OFF: the quarter skill table holds hv 0/1/3 rows for the
+        same (code, quarter, model). hv-0 is deliberately not first in the
+        API response so a naive "keep-first" dedup can't get the right
+        answer by luck. The card must show exactly one LR_Base row."""
+        # Deliberately a lead-only config (no operational_issue_day), like
+        # test_db.py's `_long_term_resolver_env` fixture: this keeps
+        # get_long_forecasts_quarter running "degraded" (no native-issuance
+        # date matching), so the fixture record below doesn't also need to
+        # land on the schedule's exact computed issue date.
+        config_dir = tmp_path / "test_schedule"
+        config_dir.mkdir()
+        (config_dir / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1})
+        )
+        monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
+        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "test_schedule")
+        monkeypatch.setenv(
+            "ieasyhydroforecast_ml_long_term_supported_modes", "quarter"
+        )
+        all_stations = pd.DataFrame(
+            {"code": [STATION_CODE], "station_labels": ["Test River"]}
+        )
+        quarter_skills = [
+            _quarter_skill_record_raw(1, delta=40.0),
+            _quarter_skill_record_raw(3, delta=400.0),
+            _quarter_skill_record_raw(0, delta=4.0),
+        ]
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([_QUARTER_FORECAST_RECORD_RAW])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response(quarter_skills)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        monkeypatch.setattr(
+            "src.db.processing.internationalize_forecast_model_names",
+            lambda fn, df, **kw: df,
+        )
+
+        data = db.get_data("month", STATION_CODE, all_stations)
+        quarterly_df = data["long_forecasts_quarter"]
+        model_rows = quarterly_df[quarterly_df["model_short"] == "LR_Base"]
+        assert len(model_rows) == 1, (
+            f"db.get_data already fanned LR_Base out into {len(model_rows)} "
+            f"row(s) before it reached the card: "
+            f"{model_rows.to_dict('records')!r}"
+        )
+        assert model_rows["delta"].iloc[0] == 4.0
+
+        pm, _site = _make_stub_pm(quarterly_df)
+        pm.update_quarterly_summary_tabulator()
+
+        assert pm.summary_table_q_card.visible is True
+        table = pm._wm.forecast_tabulator_q.value
+        card_rows = table[table["Model"] == "LR_Base"]
+        assert len(card_rows) == 1, (
+            f"Expected one card row for LR_Base, got {len(card_rows)}: "
+            f"{card_rows.to_dict('records')!r}"
+        )

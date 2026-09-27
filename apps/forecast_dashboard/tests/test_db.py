@@ -1044,6 +1044,156 @@ class TestGetDataMonthly:
         assert "forecasted_discharge" in data["long_forecasts_quarter"].columns
         assert "quarter_in_year" in data["long_forecasts_quarter"].columns
 
+    def test_monthly_quarter_frame_multi_lead_skill_collapses_to_hv0_when_flag_off(
+        self, monkeypatch
+    ):
+        """FD-029 follow-up: flag OFF, a DB that has ever run with
+        SAPPHIRE_SKILL_LEAD_AWARE ON holds quarter skill rows at several
+        leads (0, 1, 3) for the same (code, quarter, model) -- the flag-OFF
+        skill writer itself always stores at the hv-0 sentinel
+        (api_writer._write_skill_metrics_to_api defaults horizon_value to 0
+        when the skill frame it is given carries no per-lead column, which
+        is what skill_metrics._calculate_aggregated_skill_metrics produces
+        for quarter when the flag is off). The single forecast row must not
+        fan out into one card row per stored lead; it must pick the hv-0 row.
+
+        hv-0 is deliberately NOT first in the API response list: a dedup
+        safety net that merely kept the first row of a fan-out would land
+        on hv-1's delta by luck if hv-0 happened to sort first, masking a
+        missing/broken hv-0 filter."""
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
+        quarter_skills = [
+            {**_skill_metric_record_with_lead(2, "LR_Base", 1, delta=40.0), "horizon_type": "quarter"},
+            {**_skill_metric_record_with_lead(2, "LR_Base", 3, delta=400.0), "horizon_type": "quarter"},
+            {**_skill_metric_record_with_lead(2, "LR_Base", 0, delta=4.0), "horizon_type": "quarter"},
+        ]
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([_QUARTER_FORECAST_RECORD_19999])
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response(quarter_skills)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        quarter = data["long_forecasts_quarter"]
+        quarter_rows = quarter[(quarter["code"] == "19999") & (quarter["model_short"] == "LR_Base")]
+        assert len(quarter_rows) == 1, (
+            f"Expected exactly one row per forecast, not one per stored lead; "
+            f"got {len(quarter_rows)}: {quarter_rows.to_dict('records')!r}"
+        )
+        assert quarter_rows["delta"].iloc[0] == 4.0
+
+    def test_monthly_quarter_frame_no_hv0_skill_row_keeps_forecast_with_nan(
+        self, monkeypatch
+    ):
+        """Flag OFF, LR_SM has quarter skill rows only at stale hv-1/hv-3
+        leads (no hv-0 row) -- e.g. left over from a period the flag was
+        ON. Its forecast row must stay present exactly once, with NaN
+        skill, not duplicated and not dropped. LR_Base (which does have an
+        hv-0 row) is included alongside to prove the merge still runs."""
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = _skill_metric_record_19999("month", 4, "LR_Base", 1.0)
+        quarter_forecasts = [
+            _QUARTER_FORECAST_RECORD_19999,
+            {
+                **_QUARTER_FORECAST_RECORD_19999,
+                "id": 41,
+                "model_type": "LR_SM",
+                "model_type_description": "Linear regression snowmelt",
+                "q": 220.0,
+            },
+        ]
+        quarter_skills = [
+            {**_skill_metric_record_with_lead(2, "LR_Base", 0, delta=4.0), "horizon_type": "quarter"},
+            {**_skill_metric_record_with_lead(2, "LR_SM", 1, delta=88.0), "horizon_type": "quarter"},
+            {**_skill_metric_record_with_lead(2, "LR_SM", 3, delta=888.0), "horizon_type": "quarter"},
+        ]
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response(quarter_forecasts)
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response(quarter_skills)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        quarter = data["long_forecasts_quarter"]
+        base_rows = quarter[quarter["model_short"] == "LR_Base"]
+        sm_rows = quarter[quarter["model_short"] == "LR_SM"]
+        assert len(base_rows) == 1
+        assert base_rows["delta"].iloc[0] == 4.0
+        assert len(sm_rows) == 1, (
+            f"Expected LR_SM's forecast row kept exactly once (no hv-0 skill "
+            f"row to match it), got {len(sm_rows)}: {sm_rows.to_dict('records')!r}"
+        )
+        assert pd.isna(sm_rows["delta"].iloc[0])
+
+    def test_monthly_quarter_frame_multi_lead_skill_matches_own_lead_when_flag_on(
+        self, monkeypatch
+    ):
+        """Flag ON: quarter_merge_keys already includes horizon_value, so a
+        multi-lead skill frame (hv 0, 1, 3) must match only the forecast
+        row's own lead (hv 1, from _QUARTER_FORECAST_RECORD_19999) -- one
+        row, not a fan-out. Confirms this fix does not need to (and does
+        not) change flag-ON behaviour."""
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monthly_forecast = self._monthly_forecast_19999()
+        monthly_skill = {
+            **_skill_metric_record_with_lead(4, "LR_Base", 1, delta=1.0),
+        }
+        quarter_skills = [
+            {**_skill_metric_record_with_lead(2, "LR_Base", 0, delta=4.0), "horizon_type": "quarter"},
+            {**_skill_metric_record_with_lead(2, "LR_Base", 1, delta=40.0), "horizon_type": "quarter"},
+            {**_skill_metric_record_with_lead(2, "LR_Base", 3, delta=400.0), "horizon_type": "quarter"},
+        ]
+
+        def mock_get(url, **kwargs):
+            params = kwargs.get("params", {})
+            if "/long-forecast/" in url and params.get("horizon_type") == "month":
+                return _make_mock_response([monthly_forecast])
+            if "/long-forecast/" in url and params.get("horizon_type") == "quarter":
+                return _make_mock_response([_QUARTER_FORECAST_RECORD_19999])
+            if "/skill-metric/" in url and params.get("horizon") == "month":
+                return _make_mock_response([monthly_skill])
+            if "/skill-metric/" in url and params.get("horizon") == "quarter":
+                return _make_mock_response(quarter_skills)
+            return _make_mock_response([])
+
+        monkeypatch.setattr(requests, "get", mock_get)
+        self._patch_processing(monkeypatch)
+
+        data = db.get_data("month", "19999", self._all_stations_19999_df())
+
+        quarter = data["long_forecasts_quarter"]
+        quarter_rows = quarter[(quarter["code"] == "19999") & (quarter["model_short"] == "LR_Base")]
+        assert len(quarter_rows) == 1, (
+            f"Expected exactly one row (merge keyed on horizon_value under "
+            f"the flag), got {len(quarter_rows)}: {quarter_rows.to_dict('records')!r}"
+        )
+        # _QUARTER_FORECAST_RECORD_19999 carries horizon_value=1, so only
+        # the hv1 stats row (delta=40.0) should match, not hv0's or hv3's.
+        assert quarter_rows["delta"].iloc[0] == 40.0
+
     def test_merges_skill_metrics_into_forecasts(self, monkeypatch):
         """Skill metric columns (delta, sdivsigma, mae, accuracy) appear in forecasts_all."""
         self._make_dispatch_mock(monkeypatch)
