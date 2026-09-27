@@ -1,6 +1,7 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a prior-year-issued Q1 through
 
-**Status**: Draft (2026-09-26, rev 6 after the fourth review round)
+**Status**: Draft (2026-09-26, rev 6 after the fourth review round; updated 2026-09-27 for the
+owner-approved native-Q1 restriction found by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`)
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High.
 - Stored quarterly skill is wrong today: a rolling window is scored against a different quarter's
@@ -67,9 +68,12 @@ step 0 reads the real state per org. Both flag states are in scope.
     (`src/model_names.py:14-16`) keeps quarter LR-only; this plan does not change it.
 - **Flag OFF stays byte-identical for calendar-aligned input** (PP-056 `:164`; flag-OFF golden
   `tests/test_skill_lead_aware_golden_baseline.py:93`), except for these intended changes:
-  - Chunk A: any prior-year row targeting Q1 of `start_year` at the configured `horizon_value` is read,
-    whatever its issue month or day (Dec 25 for kghm with on-schedule data; see the "First-year Q1
-    (Problem 7)" section below for why the mask does not check the issue date);
+  - Chunk A: **only** the schedule-dated native issuance targeting Q1 of `start_year` is read as the
+    prior-year exception — its `date` must equal the quarter mode's own schedule issue date (`valid_from`
+    minus `lead_time` months, on `issue_day`, clamped to that month's length; Dec 25 for kghm with
+    on-schedule data). If the schedule cannot be resolved, or resolves with `issue_day < 1`, there is no
+    exception at all (owner decision 2026-09-27, `115eb886` on branch `fix_pp_quarter_calendar_window`;
+    see the "First-year Q1 (Problem 7)" section below);
   - Chunk A: direct rows dated after `forecast_date` are ignored by the latest reader (Problem 6);
   - Chunk A: the writer drops a calendar `valid_from` with a null `valid_to`.
   - Chunk B makes no code change. PP-065 changes flag-OFF quarter output (owner-approved), including the
@@ -155,10 +159,14 @@ step 0 reads the real state per org. Both flag states are in scope.
   end_year)` flag ON, `:3415`, or raw `_read_long_forecasts_api(codes, start_year, end_year)` flag OFF,
   `:3423` — neither takes `today`/`forecast_date`) — that gap is out of this chunk's scope; PP-065
   rewrites this source and owns bounding it (PP-065 item 2).
-- Under flag OFF, a prior-year row targeting Q1 of `start_year` at the configured `horizon_value` is
-  read, whatever its issue month or day (Dec 25 for kghm with on-schedule data).
+- Under flag OFF, **only** the schedule-dated native issuance targeting Q1 of `start_year` is read as the
+  prior-year exception (Dec 25 for kghm with on-schedule data) — not any other prior-year row that merely
+  shares the target quarter (owner decision 2026-09-27, `115eb886`, after a dev-DB read found the
+  broader match also admitted a persisted monthly-derived Q1 row that nulled real values; see "First-year
+  Q1 (Problem 7)" below).
 
-**Files (only these may be modified; final shape, branch `fix_pp_quarter_calendar_window`)**:
+**Files (only these may be modified; final shape, branch `fix_pp_quarter_calendar_window`, now
+`18efd261`, incl. the 2026-09-27 native-Q1 restriction `115eb886`/`18efd261` below)**:
 - `apps/postprocessing_forecasts/src/aggregation.py`:
   - new date-parsing core: `_LOCAL_CALENDAR_DATE_LOWER_BOUND = pd.Timestamp("1677-09-22")` (`:38`),
     `_parse_local_calendar_date` (element-wise, `:41-86`), `_local_calendar_date_per_value` (the
@@ -300,23 +308,31 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
 - Read issue years from `start_year − 1` (`:3132-3138`). Keep the `horizon_value` filter unchanged. Do
   **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3148`) here — an earlier version
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
-- **Invariant:** the flag-OFF direct set = trunk's set (every row with issue year in
-  `[start_year, end_year]`, any target year) **plus** any prior-year row targeting Q1 of `start_year`
-  that is stored at the configured `horizon_value` (`quarter_horizon_value()`), **whatever its actual
-  issue month or day**. Nothing else is added, nothing else is removed.
-- **The mask does not check the issue date at all, by design.** `horizon_value` is a stored data
-  attribute the API filters on (`:3132-3138`) — not a schedule check against the row's own `date`; the
-  code never verifies that a prior-year Q1 row was genuinely issued on the org's configured issue day.
-  The mask itself (`:3173-3181`) checks only target year `== start_year` and `quarter_in_year == 1`;
-  `select_operational_issuances`, which *would* validate `date` against the schedule, runs only under
-  flag ON (`:3141`), never in this branch. With **on-schedule data** — the only kind LTF-015 (a
-  producer-side change, refuses an early run that falls in a different calendar month than its
-  scheduled issue date) allows to exist — this reduces in practice to: kghm lead 1 → the Dec 25 issue of
+- **Invariant, revised 2026-09-27 (owner decision, `115eb886` on branch `fix_pp_quarter_calendar_window`
+  — see "Native-only restriction" below for why).** The flag-OFF direct set = trunk's set (every row
+  with issue year in `[start_year, end_year]`, any target year) **plus, at most, ONE row**: the prior-year
+  issuance targeting Q1 of `start_year` whose `date` exactly matches the quarter mode's own
+  schedule-computed native issue date (`valid_from` — Jan 1 of `start_year` — minus `lead_time` months,
+  on `issue_day`, clamped to that month's length). If the schedule cannot be resolved, or resolves with
+  `issue_day < 1`, there is **no** exception at all — trunk's set only — and one WARNING is logged.
+  Nothing else is added, nothing else is removed.
+- **Native-only restriction (`_quarter_native_q1_issue_date`, `data_reader.py`, `115eb886`).** Before
+  2026-09-27 the mask checked only target year `== start_year` and `quarter_in_year == 1` — it did not
+  check the issue date at all, so it also admitted any OTHER prior-year row sharing that target quarter,
+  whatever its actual issue month or day. A read-only run against the real kghm dev DB found this also
+  admitted a **persisted monthly-derived Q1 row backdated to Dec 1** (population (c), "Mechanism" item 5)
+  — not the genuine Dec-25 issuance — which shares the `(code, model, year, quarter)` dedup key with the
+  real Jan-1 rewrite and, carrying a higher API id, won `drop_duplicates(keep="last")` over it: **21 real
+  LR values were nulled and 7 stations lost their Q1-2026 ensembles.** The mask now computes the native
+  issue date via `_quarter_native_q1_issue_date(start_year)` and requires an exact match on `date`, not
+  merely on target year and quarter. `horizon_value` is still a stored data attribute the API filters on
+  (`:3132-3138`), unchanged; `select_operational_issuances`, which validates `date` against the schedule
+  under flag ON, still runs only under flag ON (`:3141`), never in this branch — the new date check
+  replicates just enough of that validation for the flag-OFF exception. With **on-schedule data** — the
+  only kind LTF-015 allows to exist — this still reduces in practice to: kghm lead 1 → the Dec 25 issue of
   `start_year − 1`; tjhm lead 0 → issued Jan 1 of `start_year` itself, already inside
-  `[start_year, end_year]`, so the widening exception is never even exercised for it. Off-schedule
-  issue dates reaching this mask are the **producer's** concern (LTF-015), not this reader's — the
-  reader's own contract is exactly what it admits above, not what a well-behaved producer happens to
-  send it.
+  `[start_year, end_year]`, so the exception is never even exercised for it. Off-schedule issue dates are
+  now rejected by the date check itself, not left to the producer's concern (LTF-015) alone.
 - **Known limitation (accepted): the widened first-year Q1 can duplicate against its own rewrite.**
   The native Dec-25 Q1 row this widening admits for the *first* requested year, and that same
   quarter's flag-OFF rewrite (population (b), dated at `valid_from` = Jan 1 — see "Mechanism", item 5),
@@ -329,13 +345,30 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   first one in any multi-year read range — the widening only extends it to the first year too. This is
   the pre-existing **PP-049** (flag-OFF `keep="last"` API-order dependence) / **PP-061** (aggregated
   writer `date = valid_from` key collisions) duplicate class; accepted here, not fixed by this chunk.
+- **Known limitation (accepted): the Dec-1 monthly-derived Q1 row still competes with the Jan-1 rewrite
+  for target years > `start_year`.** `115eb886`'s date check above only tightens the **first requested
+  year's** Q1 exception — the one path that used to admit the Dec-1 row by mistake. It does nothing for
+  a target year `Y > start_year`: that year's issue year (`Y − 1`) already satisfies
+  `>= start_year` on its own, so the row is kept **unconditionally** by the "every row with issue year
+  `>= start_year` is kept" rule below, with no date check at all — the same **PP-049**/**PP-061**
+  duplicate class as the bullet above, just not gated behind the widened exception this time. This is
+  trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
+  properly**, in both readers, under both flags, by selecting the native row directly instead of relying
+  on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:434-436): "a native row, a
+  rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
+  both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
-  checked via **both** target year `== start_year` **and** `quarter_in_year == 1`, not target year
-  alone. Checking target year alone (an earlier, round-2 version of this fix) was still too permissive:
-  it also kept an out-of-window row targeting some *other* calendar quarter of `start_year` (e.g. issued
-  2024-12-25 targeting Q2 2025, not Q1), which could then beat a same-target monthly-derived row — or
-  even an in-window direct row, depending on API order — via `drop_duplicates(keep="last")` (round-3
-  out-of-loop review of the round-2 fix).
+  checked via **all three** of target year `== start_year`, `quarter_in_year == 1`, **and** (since
+  2026-09-27, `115eb886`) `date` equalling the schedule-computed native issue date — not target year and
+  quarter alone. Checking target year alone (an earlier, round-2 version of this fix) was still too
+  permissive: it also kept an out-of-window row targeting some *other* calendar quarter of `start_year`
+  (e.g. issued 2024-12-25 targeting Q2 2025, not Q1), which could then beat a same-target monthly-derived
+  row — or even an in-window direct row, depending on API order — via `drop_duplicates(keep="last")`
+  (round-3 out-of-loop review of the round-2 fix). Checking target year **and** quarter, but not `date`
+  (the fix that stood until 2026-09-27), was *also* too permissive: it admitted a persisted
+  monthly-derived Q1 row backdated to Dec 1 as well as the genuine native issuance — see "Native-only
+  restriction" above.
 - Every row with issue year `>= start_year` is kept unconditionally, regardless of target year (trunk's
   own set): a **backfill** row (target year `< start_year`, e.g. a Q4 `start_year − 1` row issued in
   `start_year`, #521-style) and a row whose target year is `> end_year` (e.g. a Dec-`end_year`-issued Q1
@@ -365,7 +398,12 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   survives, with and without a competing monthly-derived row),
   `TestUnparseableIssueDateKeptRegardlessOfTargetYear` (null/unparseable issue date kept),
   `TestRegressionIssueYearMaskTooPermissive` (an out-of-window row targeting a *different* quarter of
-  `start_year` is dropped, both alone and alongside an in-window direct row, regardless of API order)
+  `start_year` is dropped, both alone and alongside an in-window direct row, regardless of API order),
+  `TestPP064aNativeQ1IssuanceRestriction` (added 2026-09-27, `115eb886`/`18efd261` — the persisted
+  monthly-derived Dec-1 row does not clobber the Jan-1 rewrite whether it is null- or real-valued; the
+  native issue day is clamped to a short issue month exactly as the producer clamps it, with a
+  one-day-off distractor that must lose; an unresolvable schedule, and a resolvable one with
+  `issue_day < 1`, each disable the exception entirely and log exactly one WARNING)
   and `TestRegressionMixedTimezoneIssueDate` — precisely: (i) `read_quarterly_forecasts` flag OFF, (ii)
   `read_latest_quarterly_forecasts` flag OFF, and (iii) `read_latest_quarterly_forecasts` flag ON where
   the second, problematic row is dropped by the Problem-6 date bound *before* it reaches
@@ -478,6 +516,11 @@ stable.)
   flag state (flag ON only once the Problem-6 bound has dropped the problematic row before it would
   reach `select_operational_issuances`) — locked by `TestRegressionMixedTimezoneIssueDate`. A mixed batch
   that reaches `select_operational_issuances` still raises there today; that is PP-066's scope.
+  A-10's own 2024-12-25 issue date is the kghm fixture's schedule-computed native issue date (lead 1,
+  issue day 25), so A-10 exercises the case where the exception's date check (`115eb886`) matches; the
+  case where a target-year+quarter match exists but the date does **not** — the persisted
+  monthly-derived Dec-1 row, and the unresolvable/invalid-schedule fallback — is locked separately by
+  `TestPP064aNativeQ1IssuanceRestriction` above, not folded into A-10 (added 2026-09-27).
 
 **Acceptance**:
 - Record the full module suite counts before editing (a reviewer's simulated Chunk A gave 1832 passed /
@@ -595,7 +638,12 @@ Chunk B no longer edits `data_reader.py` or any other file.
      exist for those quarters. It changes again once P0/P2 land and the fallback is removed.
    - PP-065 P2 adds its own counts (stale ensemble rows, unfillable gaps).
 6. **What the recalc leaves behind:**
-   - Rolling-windowed rows (raw and EM), inert after Chunk A: owned by PP-041 / the stale-rows decision.
+   - **Rolling-windowed rows (raw and EM), inert after Chunk A.** Local count (dev DB, 2026-09-27):
+     31,282 kghm rolling-window quarter rows. Chunk A (this plan) and FD-029 stop *reading and writing*
+     them from their own deploy onward (Mechanism item 1; FD-029 "Problem 2") — neither deletes any row.
+     Their removal is owned by decision F (the tjhm-specific provenance predicate, step 3 above) for the
+     population it covers, and by D8 / PP-041 (the stale-rows decision) for the rest; it is not automatic
+     on deploy.
    - Old EM, Naive Mean and Skilled Mean rows at keys the recalc no longer emits (accepted, round-2
      decision 2; D8 / PP-041). Under flag OFF, rows with the same key as a fresh row are overwritten.
 7. **Rollback (flag ON → OFF) must remove the ensemble twins too, not only LR's.** FD-029's dedup

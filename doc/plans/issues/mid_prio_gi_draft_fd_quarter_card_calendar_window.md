@@ -19,13 +19,16 @@ schedule-computed `issue_date(Q)` (Behaviour after, items 4 and 9).
 ## Where quarter appears
 
 - "Quarter" is not a UI horizon. `create_horizon_selector` offers pentad, decad, month and season
-  (`dashboard/widgets.py:97-103`), so `_get_data_quarter` (`src/db.py:962-970, 1208-1253`) is unreachable.
+  (`dashboard/widgets.py:97-103`), so `_get_data_quarter` (trunk `src/db.py:962-970, 1208-1253`; branch
+  `fix_fd_quarter_card_calendar` `ab27ef36` `:1618-1663`, now contiguous) is unreachable.
 - The live consumers of `get_long_forecasts_quarter` (`src/db.py:816-871`) are:
   - the **"Quarterly forecast" card on the month horizon**, for reservoir stations only
     (`'вдхр'` in `punkt_name_ru`; `dashboard/plot_manager.py:362-428`, `dashboard/widget_manager.py:230-233`).
     Its load path is `_get_data_monthly` (trunk `src/db.py:1020`; branch `fix_fd_quarter_card_calendar`
-    `:1277`, shifted by the fetch-window and LR-drop-logging code inserted earlier in the file), which
-    then left-merges the quarter skill rows (trunk `:1108-1131`; branch `:1365-1389`); that merge is
+    `ab27ef36` `:1307`, shifted by the fetch-window, LR-drop-logging and flag-OFF quarter-skill-selection
+    code inserted earlier in the file), which
+    then left-merges the quarter skill rows (trunk `:1108-1131`; branch `ab27ef36` `:1531-1543`, after
+    the hv-0/fallback selection at `:1421-1526` has already picked one skill row per key); that merge is
     what puts `delta` on the card rows;
   - the month bulletin's quarterly section, three blocks that each call the function directly
     (`dashboard/bulletin_manager.py:394-399` in `_populate_forecast_attributes`, `:760-765` in `_on_add`,
@@ -91,8 +94,11 @@ fresh quarter EM row before returning (Behaviour after, item 5).
 ### P1 — Year-safe fetch, eligibility cutoff, native LR selection, renderer and caption (one code agent)
 
 **Files (only these may be modified)**:
-- `apps/forecast_dashboard/src/db.py`: **only** `get_long_forecasts_quarter`, plus adding
-  `operational_schedule_for_mode` to the existing `long_term_horizon_resolver` import (`:10-17`)
+- `apps/forecast_dashboard/src/db.py`: `get_long_forecasts_quarter`; plus adding
+  `operational_schedule_for_mode` to the existing `long_term_horizon_resolver` import (`:10-17`); plus,
+  added 2026-09-27 (owner-approved, dev-DB cross-check), `_get_data_monthly`'s flag-OFF quarter-skill
+  merge and the new `_dedup_quarter_skill_by_priority` helper (`:1277-1303`) — see item 7's "Flag-OFF
+  quarter-skill selection" bullet below
 - `apps/forecast_dashboard/src/vizualization.py`: `create_forecast_summary_table` (additive keyword
   `filter_by_date: bool = True`) and `create_forecast_summary_tabulator` (the same keyword, threaded
   through to `create_forecast_summary_table`); and the all-NaN guard at the `idxmax` in
@@ -106,9 +112,15 @@ fresh quarter EM row before returning (Behaviour after, item 5).
 flow. Your changes must be purely additive or modify only the specific behavior described."* Signature
 changes are limited to the additive keyword arguments named in this plan. Keep:
 - the pagination (`_read_data_paginated`) and the `horizon_value` request filter;
-- the flag-OFF skill fan-out golden (`tests/test_db.py:2017`);
+- the flag-OFF skill fan-out golden (`test_flag_off_golden_shows_the_pre_m1_cartesian_merge_baseline`,
+  `tests/test_db.py:2567` on branch `fix_fd_quarter_card_calendar` `ab27ef36` — shifted from `:2017` by
+  the later hv-0/fallback selection commits; confirmed still passing, byte-identical, on that branch: its
+  data shape does not satisfy the new selection's own guard, so it still exercises the pre-fix fan-out
+  path this golden documents);
 - every other caller of the renderer (default `filter_by_date=True` is byte-identical to trunk);
-- `_get_data_quarter`, `_get_data_monthly`, the bulletin code and `widgets.py`.
+- `_get_data_quarter`, the bulletin code and `widgets.py`. `_get_data_monthly` is untouched by P1 itself;
+  its flag-OFF quarter-skill merge was separately, additively touched on 2026-09-27 (owner-approved,
+  see item 7's "Flag-OFF quarter-skill selection" bullet below) — the rest of the function is unchanged.
 
 **Behaviour after**
 1. **Fetch window at call time, schedule-derived and widened both directions (coverage only).**
@@ -257,6 +269,16 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
        old flag-ON native row (dated the issue date) occupy different keys and both persist. Accepted as
        a documented rollback caveat, not a defect this plan fixes. **A flag rollback must also remove
        the ensemble twins**, not only LR's — added to PP-064 Chunk C (rollout).
+     - **The rollback caveat extends to skill, not only to forecast rows (added 2026-09-27).** The
+       flag-OFF quarter-skill selection above prefers a live hv-0 row, but an hv-0 row **written during
+       the flag-ON era** is not a rewrite — it is genuine lead-0 skill, scored against the lead-0 window,
+       because the flag-ON writer stamps `horizon_value` from the row's own per-lead value (Contract:
+       "Never overwrite a stored hv with a date-derived lead"). After a rollback to OFF on a **kghm**
+       (lead 1) deployment, such an hv-0 row still wins the flag-OFF selection's first preference, so the
+       card shows **lead-0 accuracy** for a lead-1 forecast until a flag-OFF quarter recalc rewrites hv 0
+       for that key. Keys whose flag-ON-era hv-0 row was itself tombstoned by a later flag-ON recalc fall
+       through to the configured-lead fallback instead, which is correct for the current (post-rollback,
+       lead 1) config. Accepted as part of the same rollback caveat, not a defect this plan fixes.
    - **Move the `id` drop.** Today (trunk `src/db.py:852`) `id` is dropped **before** the dedup, together
      with `horizon_type` in one `drop_cols` list,
      so the tie-break has nothing to read. Drop `id` after the dedup instead; the `horizon_type` and flag-OFF
@@ -328,6 +350,32 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - **K = 10 (PP-065).** Skill rows with fewer than 10 pairs are suppressed, so those models have no
      `delta` and empty bounds (accepted by decision D). tjhm may show empty bounds until more history is
      scored; PP-065 P2 measures how often.
+   - **Flag-OFF quarter-skill selection, per `(code, quarter, model)` key (`_get_data_monthly`,
+     `src/db.py`, branch `fix_fd_quarter_card_calendar`, now `ab27ef36`).** Under flag OFF the merge used
+     to key on `(code, quarter, model)` alone, ignoring `horizon_value` — fine for a DB that has only ever
+     run flag OFF (which writes quarter skill at the hv-0 sentinel only), but the dev DB carries flag-ON
+     history, where quarter skill is stored at leads 0–3 for the same key: without restricting to a single
+     lead first, one forecast row fanned out into one card row per stored lead, now visible on this
+     plan's card since it renders rows directly (`c973c0d1`). The fix selects, per key:
+     1. the **live hv-0 row** (`pd.to_numeric(horizon_value, errors="coerce") == 0`, `c973c0d1`/`M1`
+        normalization in `f70d132b`), the flag-OFF writer's own sentinel; otherwise
+     2. the row at the **deployment's configured quarter lead** (`_resolve_quarter_horizon_value(None)`,
+        the same lead `get_long_forecasts_quarter` fetched the displayed forecast at) — needed because a
+        flag-ON quarter recalc **tombstones** the legacy hv-0 rows, and `get_forecast_stats` drops
+        tombstones before this point, so a key can have **no live hv-0 row at all** (330 of 1,342 pairs on
+        the dev DB, `b8f9cfd5`); otherwise
+     3. no skill, same as today when skill is missing entirely.
+     **Uniqueness is enforced on the skill side, before the merge**, not after: any residual duplicate key
+     (a data-integrity case, not the normal path) is deduped by `_dedup_quarter_skill_by_priority` keeping
+     the hv-0 row over the fallback (`b8f9cfd5`/`M2`, `src/db.py:1277-1303`), logged at WARNING with the
+     count. An **INFO** line logs the number of *distinct* fallback keys (not the row count, `M3`). The
+     whole selection is guarded on every `quarter_merge_keys` column being present in the stats frame, not
+     just `horizon_value` (`M5`) — a malformed/partial stats frame is skipped gracefully (falls through
+     unfiltered) instead of a `KeyError`. Flag ON is unaffected: its merge already keys on `horizon_value`.
+     Tests: `TestGetDataMonthly` in `tests/test_db.py` (the hv-0/fallback selection, the Z1 tombstone-gap
+     case, the Z2 duplicate-key dedup, the M1 string-`horizon_value` normalization, the M3 distinct-key
+     count with two of three fallback rows sharing one key, `ab27ef36`) and
+     `tests/test_quarter_calendar_card.py` (through the card).
 8. **All-NaN accuracy.** In `create_forecast_summary_tabulator`, when the accuracy column has no
    non-null value, use index 0 without calling `idxmax` (all-NaN `idxmax` warns in pandas 2.3.3, the
    locked version, and raises in pandas 3). Behaviour for any non-all-NaN column is unchanged.
@@ -492,8 +540,13 @@ reservoir stations.
   `{CURRENT_YEAR}-12-31`). Quarter skill rows are dated in the recalc year, so a dashboard restarted in
   January, before that month's recalc, has no quarter skill and therefore no δ (empty bounds) until the
   recalc writes the new year's rows.
-- The quarter skill merge in `_get_data_monthly` (`src/db.py:1365-1389`) is not lead-filtered. Under
-  flag OFF, quarter skill is written at the sentinel hv 0 only
-  (`apps/postprocessing_forecasts/src/api_writer.py:661-669`), so the merge is 1:1; a fan-out needs skill
-  rows at more than one `horizon_value` (pre-existing).
+- **Corrected 2026-09-27 (was out of scope, now fixed — see item 7's "Flag-OFF quarter-skill selection"
+  bullet above).** This out-of-scope note previously claimed the flag-OFF quarter skill merge is 1:1
+  because flag OFF writes quarter skill at the sentinel hv 0 only
+  (`apps/postprocessing_forecasts/src/api_writer.py:661-669`). That premise does not hold on a DB that has
+  **ever** run flag ON: a flag-ON quarter recalc writes skill at leads 0–3 for the same
+  `(code, quarter, model)` key, and those rows persist regardless of the deployment's *current* flag
+  state — so the merge fanned out into duplicate card rows under flag OFF on exactly such a DB (measured
+  on the dev DB). Fixed by the hv-0/configured-lead selection described above; this bullet is kept only
+  as a record of the corrected premise, not as a remaining out-of-scope item.
 - Exposing "quarter" as a horizon.
