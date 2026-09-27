@@ -2032,3 +2032,176 @@ class TestRegressionOutOfRangeDatesDoNotCrash:
         q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
         assert len(q2_2024) == 1
         assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0
+
+
+# ===========================================================================
+# PP-064a regression: the Problem-7 exception must admit ONLY the NATIVE,
+# schedule-dated December-issued Q1 of start_year -- not any prior-year Q1
+# row that merely shares its (target year, quarter). A read-only run on the
+# real dev DB (kghm, flag OFF) showed the original target-year+quarter-only
+# exception also admits a PERSISTED MONTHLY-DERIVED Q1 row backdated to
+# Dec 1 (valid_from minus horizon_value months), not the genuine Dec-25
+# issuance. It shares the (code, model, year, quarter) dedup key with the
+# real Jan-1 rewrite and, being later in API return order (a higher API
+# id in the real bug), won drop_duplicates(keep="last") -- turning 21 real
+# LR values null and starving 7 stations' Q1-2026 ensembles. Owner
+# decision: the exception admits ONLY the issuance whose issue date
+# exactly matches the configured quarter operational schedule.
+# ===========================================================================
+
+
+def _quarter_row_with_horizon_value(
+    valid_from, valid_to, issue_date, horizon_value, *, code=CODE, model="LR_Base", q=100.0
+):
+    """Like ``_quarter_row``, but with a caller-chosen ``horizon_value``.
+
+    Needed when a test configures a non-default quarter lead (e.g. 2):
+    ``quarter_horizon_value()`` then requests that lead from the API, and
+    ``_quarter_api_fake`` filters rows by ``horizon_value`` exactly like
+    the real API, so a row still pinned to lead 1 (``_quarter_row``'s
+    default) would be filtered out before ever reaching the drop-mask
+    logic under test.
+    """
+    row = _quarter_row(valid_from, valid_to, issue_date, code=code, model=model, q=q)
+    row["horizon_value"] = horizon_value
+    return row
+
+
+def _monthly_q1_2026_rows(value=50.0, model="LR_Base"):
+    """Two months (Jan, Feb 2026), issued within [2026, 2026] (Source 1's
+
+    unwidened read window) -> ``aggregate_monthly_fc_to_quarterly``
+    synthesizes a competing Q1 2026 row. Needed to exercise the
+    concat + drop_duplicates(keep="last") combine at all: that step is
+    skipped entirely when Source 1 (aggregated) is empty (see
+    ``read_quarterly_forecasts``'s "Combine sources" block), which would
+    let two same-key direct rows survive side by side rather than
+    collapse to one -- masking the very defect these tests target.
+    """
+    rows = []
+    for month in (1, 2):
+        rows.append(
+            {
+                "code": CODE,
+                "date": "2026-01-05",
+                "model_type": model,
+                "valid_from": f"2026-{month:02d}-01",
+                "valid_to": f"2026-{month:02d}-28",
+                "forecasted_discharge": value,
+                "q50": value,
+                "horizon_value": 1,
+            }
+        )
+    return rows
+
+
+class TestPP064aNativeQ1IssuanceRestriction:
+    """The Problem-7 exception admits ONLY the native schedule issuance."""
+
+    def test_persisted_monthly_derived_dec1_q1_row_does_not_clobber_jan1_rewrite(self, monkeypatch):
+        """Dev-DB regression: a null-valued Dec-1 Q1 row (NOT the native
+
+        Dec-25 issuance under the kghm-shaped fixture config, lead=1,
+        issue_day=25) must not win over the real Jan-1 rewrite.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        direct_rows = [
+            # Jan-1 rewrite: the real, in-window value.
+            _quarter_row("2026-01-01", "2026-03-31", "2026-01-01", model="LR_Base", q=2.4),
+            # Persisted monthly-derived Q1 row, backdated to Dec 1 (NOT
+            # the native Dec-25 issuance) -- higher API id / later in API
+            # return order in the real bug, and null-valued (NaN).
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-01", model="LR_Base", q=float("nan")),
+        ]
+        fake = _quarter_and_month_api_fake(direct_rows, _monthly_q1_2026_rows())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
+        assert len(q1_2026) == 1
+        assert float(q1_2026["forecasted_discharge"].iloc[0]) == 2.4
+
+    def test_persisted_monthly_derived_dec1_q1_row_with_real_value_still_loses(self, monkeypatch):
+        """Same shape, but the Dec-1 row carries a real (non-null) value:
+
+        the Jan-1 rewrite must still win -- the Dec-1 row is not native.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        direct_rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "2026-01-01", model="LR_Base", q=2.4),
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-01", model="LR_Base", q=1.9),
+        ]
+        fake = _quarter_and_month_api_fake(direct_rows, _monthly_q1_2026_rows())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
+        assert len(q1_2026) == 1
+        assert float(q1_2026["forecasted_discharge"].iloc[0]) == 2.4
+
+    def test_native_issue_day_clamped_to_short_month_is_still_admitted(
+        self, monkeypatch, kghm_quarter_config
+    ):
+        """Issue day 31 with lead 2 (issue month = November, 30 days):
+
+        the schedule issue date clamps to Nov 30, and a row dated Nov 30
+        is admitted -- the same clamp rule the producer
+        (``long_term_forecasting/lt_utils.py``'s
+        ``nearest_scheduled_issue_date``) and the dashboard use. A
+        one-day-off distractor (Nov 29) -- what an off-by-one or
+        unclamped computation could wrongly treat as the match --
+        is placed LAST (so it would win drop_duplicates(keep="last")
+        if it were wrongly admitted too) and must lose.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 2, "operational_issue_day": 31})
+        )
+        direct_rows = [
+            # The genuine schedule issuance.
+            _quarter_row_with_horizon_value(
+                "2026-01-01", "2026-03-31", "2025-11-30", 2, model="LR_Base", q=100.0
+            ),
+            # Distractor: one day off the clamped schedule date.
+            _quarter_row_with_horizon_value(
+                "2026-01-01", "2026-03-31", "2025-11-29", 2, model="LR_Base", q=999.0
+            ),
+        ]
+        fake = _quarter_and_month_api_fake(direct_rows, _monthly_q1_2026_rows())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
+        assert len(q1_2026) == 1
+        assert float(q1_2026["forecasted_discharge"].iloc[0]) == 100.0
+
+    def test_unresolvable_schedule_drops_prior_year_q1_and_logs_one_warning(
+        self, monkeypatch, kghm_quarter_config, caplog
+    ):
+        """A config missing ``operational_issue_day`` (e.g. a taj-style
+
+        config -- see ``operational_lead_for_mode``'s docstring) makes
+        ``operational_schedule_for_mode`` raise. There is then NO
+        exception: a prior-year Q1 row -- even one dated on what WOULD be
+        the native Dec-25 issuance under the previous (lead=1, day=25)
+        config -- is dropped like any other out-of-window row, and
+        exactly one WARNING is logged. ``quarter_horizon_value`` only
+        needs ``operational_month_lead_time`` (present here), so the read
+        itself still proceeds rather than raising.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1})
+        )
+        rows = [_quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with (
+            caplog.at_level(logging.WARNING, logger="src.data_reader"),
+            patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake),
+        ):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
+        assert q1_2026.empty
+        warn_lines = [r for r in caplog.records if "quarter operational schedule" in r.message]
+        assert len(warn_lines) == 1

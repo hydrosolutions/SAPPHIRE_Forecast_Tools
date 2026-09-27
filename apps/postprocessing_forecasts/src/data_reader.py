@@ -15,6 +15,7 @@ import re
 
 import pandas as pd
 from long_term_horizon_resolver import (
+    LongTermHorizonResolverError,
     OperationalSchedule,
     operational_schedule_for_mode,
     quarter_horizon_value,
@@ -3041,6 +3042,66 @@ def read_seasonal_observations(
 # -------------------------------------------------------------------
 
 
+def _quarter_native_q1_issue_date(start_year: int) -> pd.Timestamp | None:
+    """Return the schedule-dated Q1-of-`start_year` issue date, or None.
+
+    Used by `read_quarterly_forecasts`' flag-OFF exception (Problem 7) to
+    restrict the "December-issued Q1 of start_year" admit to the ONE
+    native, schedule-dated issuance -- never a persisted monthly-derived
+    Q1 row that also happens to fall in the pre-start_year widened read
+    window (see the dev-DB regression this guards: a Dec-1
+    monthly-derived Q1 row winning over the genuine Dec-25 issuance in
+    the later drop_duplicates(keep="last") combine).
+
+    The schedule issue date is `valid_from` (Jan 1 of `start_year`)
+    minus the quarter mode's configured `lead_time` months, on
+    `issue_day`, clamped to the length of that month -- the same rule
+    the producer (`long_term_forecasting/lt_utils.py`'s
+    `nearest_scheduled_issue_date`) and the dashboard use.
+
+    Args:
+        start_year: The requested read window's first year.
+
+    Returns:
+        A normalized (midnight) `pd.Timestamp` for the native Q1 issue
+        date, or None if the quarter operational schedule cannot be
+        resolved (config missing/invalid) or has an invalid
+        `issue_day` (< 1) -- in which case a single WARNING is logged
+        and callers must treat the Problem-7 exception as unavailable.
+    """
+    try:
+        schedule = operational_schedule_for_mode("quarter")
+    except (LongTermHorizonResolverError, FileNotFoundError) as exc:
+        logger.warning(
+            "Could not resolve the quarter operational schedule needed for "
+            "the flag-OFF December-issued-Q1-of-start_year exception (%s); "
+            "every quarterly direct row issued before the requested year "
+            "range will be dropped for start_year=%d.",
+            exc,
+            start_year,
+        )
+        return None
+
+    if schedule.issue_day < 1:
+        logger.warning(
+            "Quarter operational schedule has an invalid issue_day=%d; the "
+            "flag-OFF December-issued-Q1-of-start_year exception is "
+            "disabled for start_year=%d.",
+            schedule.issue_day,
+            start_year,
+        )
+        return None
+
+    # 0-based month index (Jan of year Y == Y*12) for valid_from (Jan 1 of
+    # start_year) minus lead_time whole months.
+    total_month_index = start_year * 12 - schedule.lead_time
+    issue_year = total_month_index // 12
+    issue_month = total_month_index % 12 + 1
+    max_day = calendar.monthrange(issue_year, issue_month)[1]
+    issue_day = min(schedule.issue_day, max_day)
+    return pd.Timestamp(issue_year, issue_month, issue_day)
+
+
 def read_quarterly_forecasts(
     codes: list[str],
     start_year: int,
@@ -3155,29 +3216,48 @@ def read_quarterly_forecasts(
         ):
             # Invariant: the flag-OFF direct set = trunk's set (every row
             # with issue year in [start_year, end_year], ANY target year)
-            # PLUS ONLY the December-issued Q1 of start_year (Problem 7).
-            # Nothing else is added, nothing else is removed. A row issued
-            # before start_year is dropped UNLESS it is that Q1-of-
-            # start_year row -- checking target year alone (round-2 fix)
-            # was still too permissive: it also kept an out-of-window row
-            # targeting some OTHER calendar quarter of start_year (e.g.
-            # issued 2024-12-25 targeting Q2 2025), which could then beat
-            # a same-target monthly-derived row, or even an in-window
-            # direct row, in the drop_duplicates(keep="last") combine
-            # below depending on API order (round-3 out-of-loop review).
-            # Everything with issue year >= start_year is kept
-            # UNCONDITIONALLY regardless of target year (trunk's own set,
-            # including backfills like a Q4 start_year-1 row issued in
-            # start_year, #521-style). A null/unparseable issue date is
-            # kept: trunk's API-side year filter could not have excluded
-            # it by year either. A target year > end_year (e.g. a
-            # Dec-end_year issue's next-year Q1) also survives
-            # unconditionally -- see the next-year-precedence regression
-            # test.
+            # PLUS ONLY the NATIVE, schedule-dated December-issued Q1 of
+            # start_year (Problem 7). Nothing else is added, nothing else
+            # is removed. A row issued before start_year is dropped UNLESS
+            # it is that exact Q1-of-start_year issuance -- checking target
+            # year alone (round-2 fix) was still too permissive: it also
+            # kept an out-of-window row targeting some OTHER calendar
+            # quarter of start_year (e.g. issued 2024-12-25 targeting Q2
+            # 2025), which could then beat a same-target monthly-derived
+            # row, or even an in-window direct row, in the
+            # drop_duplicates(keep="last") combine below depending on API
+            # order (round-3 out-of-loop review). Checking target
+            # year+quarter alone (Problem 7's original fix) was ALSO too
+            # permissive: a dev-DB read showed it also admits a PERSISTED
+            # MONTHLY-DERIVED Q1 row backdated to Dec 1 (valid_from minus
+            # horizon_value months) -- not the genuine Dec-25 issuance --
+            # which shares the (code, model, year, quarter) dedup key and,
+            # carrying a higher API id, can win keep="last" over the real
+            # issuance (owner decision: the exception admits ONLY the
+            # native issuance, identified by matching the configured
+            # quarter operational schedule's issue date exactly). Everything
+            # with issue year >= start_year is kept UNCONDITIONALLY
+            # regardless of target year (trunk's own set, including
+            # backfills like a Q4 start_year-1 row issued in start_year,
+            # #521-style). A null/unparseable issue date is kept: trunk's
+            # API-side year filter could not have excluded it by year
+            # either. A target year > end_year (e.g. a Dec-end_year issue's
+            # next-year Q1) also survives unconditionally -- see the
+            # next-year-precedence regression test.
             target_years = pd.to_numeric(direct["year"], errors="coerce")
             quarters = pd.to_numeric(direct["quarter_in_year"], errors="coerce")
-            issue_years = local_calendar_date(direct["date"]).dt.year
-            is_december_q1_of_start_year = (target_years == start_year) & (quarters == 1)
+            issue_dates = local_calendar_date(direct["date"])
+            issue_years = issue_dates.dt.year
+            native_q1_issue_date = _quarter_native_q1_issue_date(start_year)
+            if native_q1_issue_date is None:
+                # Schedule unresolvable: no exception -- trunk's set only.
+                is_december_q1_of_start_year = pd.Series(False, index=direct.index)
+            else:
+                is_december_q1_of_start_year = (
+                    (target_years == start_year)
+                    & (quarters == 1)
+                    & (issue_dates == native_q1_issue_date)
+                )
             drop_mask = (
                 issue_years.notna() & (issue_years < start_year) & ~is_december_q1_of_start_year
             )
