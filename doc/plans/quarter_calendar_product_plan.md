@@ -73,7 +73,9 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
    `valid_from` minus 0 months), so the dashboard card and the bulletin show them as native LR. kghm is
    unaffected — its lead of 1 dates those same rows differently, so FD-029's native-only filter already
    hides them there. No code change; goes into the hydromet notice (§ Rollout and communication).
-2. **Deploy order: PP-064 A (#527) and FD-029 (#528) may merge and deploy in either order.** If FD-029 is
+2. **[SUPERSEDED for deployment by the 2026-09-28 rollout gate below — both now deploy TOGETHER with
+   PP-065 P2, in one window; the merge-order statement stays true and is kept.] Deploy order: PP-064 A
+   (#527) and FD-029 (#528) may merge and deploy in either order.** If FD-029 is
    deployed first on a flag-ON org, expect missing quarter ensembles until PP-064 A is also deployed:
    FD-029 hides every rolling-window row (including rolling-window ensembles, which trunk wrote before
    #527), and PP-064 A is what makes the writer emit calendar-quarter-shaped ensembles in the first place
@@ -111,11 +113,11 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
 | Layer | Today | Plan |
 |---|---|---|
 | Schedule (data-repo model configs) | `forecast_months [3..9]` in both orgs: a rolling window is issued monthly Mar–Sep, and there is **no Q1** | LTF-014 |
-| Postprocessing | [historical: pre-#527, fixed on trunk] The quarter label came from the `valid_from` month only, and skill joined on the calendar quarter, so rolling windows were scored against another quarter (#521); flag ON, a Dec-issued Q1 was trimmed out. Both are fixed since #527 (`read_quarterly_forecasts`/`read_latest_quarterly_forecasts` now exclude rolling-window rows at read, and the flag-ON direct-row path keeps the Dec-issued Q1 — see `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening`/`TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim`, `apps/postprocessing_forecasts/tests/test_quarter_calendar_window.py:995, 1046`). Rows are not deleted, only excluded at read (see LTF-019). Quarter rows still come in three date populations | PP-064 |
+| Postprocessing | [historical: pre-#527, fixed on trunk] The quarter label came from the `valid_from` month only, and skill joined on the calendar quarter, so rolling windows were scored against another quarter (#521); flag ON, a Dec-issued Q1 was trimmed out. Both are fixed since #527 (`read_quarterly_forecasts`/`read_latest_quarterly_forecasts` now exclude rolling-window rows at read; the flag-ON Dec-issued Q1 survives the latest reader — see `TestA5DecemberQ1FlagOn`, `apps/postprocessing_forecasts/tests/test_quarter_calendar_window.py:322`; the flag-OFF equivalent is `TestA10FirstYearQ1FlagOff` (`:913`) / `TestPP064aNativeQ1IssuanceRestriction` (`:2098`) — `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening`/`TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (`:995, 1046`) are also flag OFF, and cover a different precedence regression, not the flag-ON Dec-Q1 claim). Rows are not deleted, only excluded at read (see LTF-019). Quarter rows still come in three date populations | PP-064 |
 | Quarter model set and ensembles | LR-only since 2026-06-23. The old monthly-derived path averages across issue dates and accepts 2 of 3 months. [Still live on trunk — PP-065 P1b not yet merged; `derive_quarterly_from_monthly_same_issue` and the `QUARTER_SUPPORTED_MODELS`/`QUARTERLY_DERIVED_MODELS`/`QUARTER_NATIVE_RAW_MODELS` constants already exist on trunk since P1a (#530), but nothing calls the helper yet and the readers still filter on `AGGREGATED_SUPPORTED_MODELS` (LR + ensembles only), not `QUARTER_SUPPORTED_MODELS`] | PP-065 |
 | Monthly labels (stored data) | Pre-Feb-2026 hindcast rows carry offset windows (both orgs, mostly tjhm) and wrong January years (kghm GBT family). The producer is already fixed on trunk; the DB rows are stale and mis-score monthly skill | LTF-016 |
 | GBT-family climatological bounds | `_add_climatological_quantile_bounds` takes the σ month from the raw `valid_from` and leave-one-out from `today.year`, so the Q25/Q75 of GBT-family monthly models use the wrong month's σ for many issue months: kghm month_1–3 (month-dependent) and tjhm month_3 (Jul and Dec issues). **Live since 2026-04-14** | LTF-017 |
-| Dashboard quarterly card | [historical: pre-#528, fixed on trunk] The fetch window was set at import time and the latest issue won whatever window it covered. The renderer keeps only rows at the max date; the caption relies on lead-1 arithmetic | FD-029 |
+| Dashboard quarterly card | [historical: pre-#528, fixed on trunk] The fetch window was set at import time and the latest issue won whatever window it covered. The renderer kept only rows at the max date; the caption relied on lead-1 arithmetic | FD-029 |
 | Bulletin quarterly section | Uses the monthly norm, picks a model with `head(1)`, and shows a range only | FD-030 |
 | Docs | Describe quarter as "rolling, not calendar". EM-parity and "0 deprecated rows" gates would false-fail. Cleanup predicates would delete product rows | DOC-009 |
 | Early manual runs of issue-day-1 modes | The value is ratio-adjusted to the wrong month. This is live for the tjhm month modes | LTF-015 |
@@ -198,8 +200,11 @@ Resolved since rev 2:
      lines are unchanged from the pre-#527 branch — this write path is P1b's, not Chunk A's) resolves that
      through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry (`api_writer.py:30`)
      — not an `"ENSEMBLE_MEAN"`-to-`"EM"` mapping, which is a separate entry used only by the
-     skill-metrics write path. PP-065 P1b is what stops this write. Until then, a quarter whose only rows
-     are `EM` plus a non-native LR row shows **nothing** on the card.
+     skill-metrics write path. PP-065 P1b is what stops this write. This write is live on trunk only, not
+     on any server today: under the 2026-09-28 rollout gate, PP-064 A, FD-029 and PP-065 P1b deploy
+     together in the same window, so there is no server-visible interval where a quarter whose only rows
+     are `EM` plus a non-native LR row shows **nothing** on the card — that describes trunk code before
+     P1b lands.
    - **tjhm interim, accepted:** until PP-065 P1b and the decision-F cleanup land, tjhm's monthly-derived
      LR_Base/LR_SM rows are shown as native LR (round 4, decision 1 above) — kghm is unaffected.
    - Bounds for models without quantiles are ±δ on the dashboard. Until FD-030 lands, the bulletin range
@@ -261,16 +266,17 @@ Stages:
     "LTF-016.P2":      { "stage": "ops",    "depends_on": ["LTF-016.P1"], "note": "re-import and delete with the service owner, then the monthly recalc" },
     "LTF-017":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A":        { "stage": "merge",  "depends_on": [], "status": "MERGED #527", "parallel_agents": 1 },
-    "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A", "deploy.pp"], "deadline": "2026-12-25", "note": "gated on PP-065 P2 readiness (rollout gate, decision 2026-09-28): PP-064 A and FD-029 go live TOGETHER with the deploy.pp/recalc.1 (PP-065 P2) step, not standalone" },
+    "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A", "PP-065.P2.ready"], "deadline": "2026-12-25", "note": "gated on PP-065 P2 readiness (rollout gate, decision 2026-09-28): PP-064 A, FD-029 and deploy.pp (PP-065 P2) all deploy TOGETHER in the same window, not standalone and not staged one after another" },
     "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). Read-only; also FD-029.deploy's own precondition (its degraded-mode limitation)" },
     "FD-029":          { "stage": "merge",  "depends_on": [], "status": "MERGED #528 (P1)", "parallel_agents": 1 },
-    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029", "PP-064.C.step0", "deploy.pp"], "deadline": "2026-12-25", "note": "restart the dashboard container; gated on PP-065 P2 readiness (rollout gate, decision 2026-09-28), same as PP-064.A.deploy" },
+    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029", "PP-064.C.step0", "PP-065.P2.ready"], "deadline": "2026-12-25", "note": "restart the dashboard container; gated on PP-065 P2 readiness (rollout gate, decision 2026-09-28), deploys TOGETHER with PP-064.A.deploy and deploy.pp, same as PP-064.A.deploy" },
     "PP-065.P1a":      { "stage": "merge",  "depends_on": ["PP-064.A"], "status": "MERGED #530", "parallel_agents": 1 },
     "PP-065.P1b":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
     "PP-065.P1c":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
     "PP-065.P1d":      { "stage": "merge",  "depends_on": ["PP-065.P1b", "PP-065.P1c"], "parallel_agents": 1 },
     "PP-064.B":        { "stage": "merge",  "depends_on": ["PP-065.P1d", "D3"], "parallel_agents": 1, "note": "the B5 check only" },
-    "deploy.pp":       { "stage": "deploy", "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a"], "deadline": "2026-12-25", "note": "the P2-readiness node: no postprocessing or dashboard image from current trunk goes to a server before this (rollout gate, decision 2026-09-28)" },
+    "PP-065.P2.ready": { "stage": "ops",    "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a"], "note": "P2's code and runbook reviewed and the writer-paused window scheduled. deploy.pp, PP-064.A.deploy and FD-029.deploy all gate on this single node and execute TOGETHER in one window -- this node exists so none of the three is ordered strictly after another in the graph" },
+    "deploy.pp":       { "stage": "deploy", "depends_on": ["PP-065.P2.ready"], "deadline": "2026-12-25", "note": "no postprocessing or dashboard image from current trunk goes to a server before this (rollout gate, decision 2026-09-28); deploys TOGETHER with PP-064.A.deploy and FD-029.deploy in the same window" },
     "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp"], "note": "decision F, with the service owner" },
     "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export" },
     "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "recalc.1"] },

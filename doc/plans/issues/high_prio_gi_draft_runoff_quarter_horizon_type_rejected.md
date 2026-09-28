@@ -104,7 +104,7 @@ Three layers can each carry a stale `horizon_type` definition; the live `422` pr
 
 ## Acceptance criteria
 
-**Annotated 2026-09-28** (the Status line above already says "resolved 2026-09-25", but these boxes
+**Annotated 2026-09-28** (the Status line above already says "resolved 2026-06-12", but these boxes
 were never ticked; verified against trunk before annotating):
 
 - [x] Root cause confirmed. Not by deployed-image SHA (that diagnosis path was superseded) but by the

@@ -567,12 +567,13 @@ Chunk B no longer edits `data_reader.py` or any other file.
 - **Rollout gate (owner decision, 2026-09-28 — see the overview's "Rollout and communication").** Do **not**
   deploy trunk before PP-065 P2 is ready: Chunk A (this plan) and FD-029, though already merged to trunk
   (#527, #528), are **not** deployed standalone — no postprocessing or dashboard image built from current
-  trunk goes to a server, and servers must not pull `:latest` images, until PP-065 P1b–P1d and Chunk B are
-  also merged. Chunk A and FD-029 go live **together** with the `deploy.pp` step below. Reason: trunk
-  images already carry PP-065 P1a's 3-of-3 observation rule (live via `recalculate_skill_metrics()` →
-  `read_quarterly_observations()`), and `bin/bimonthly_long_term_skill_metrics_recalculation.sh` runs a
-  QUARTERLY recalc automatically and unconditionally — deploying Chunk A/FD-029 alone would let that
-  recalc run against a mid-migration quarter contract.
+  trunk goes to a server, and servers must not pull `:latest` **postprocessing or dashboard** images,
+  until PP-065 P1b–P1d and Chunk B are also merged. Chunk A and FD-029 go live **together** with the
+  `deploy.pp` step below. Reason: trunk images already carry PP-065 P1a's 3-of-3 observation rule (live
+  via `recalculate_skill_metrics()` → `read_quarterly_observations()`), and
+  `bin/bimonthly_long_term_skill_metrics_recalculation.sh` runs a QUARTERLY recalc automatically and
+  unconditionally — deploying Chunk A/FD-029 alone would let that recalc run against a mid-migration
+  quarter contract. Consequently, PP-065 P2 (and this deploy step) is on the 2026-12-25 critical path.
 - Chunk A and PP-065 deployed (PP-065 includes the 3-of-3 observation rule; 2-of-3 observations against
   3-of-3 derived forecasts would bias the scores).
 - **One writer-paused window** (ops instruction, no code): deploy PP-065, run the decision-F step (tjhm),

@@ -159,8 +159,8 @@ flow. Your changes must be purely additive or modify only the specific behavior 
      - if the `horizon_value` column is absent, keep all rows; if `quarter_horizon_value()` raises, log a
        WARNING and use no δ.
      - **Test:** flag OFF, no live hv-0 row for a key, a configured-quarter-lead row present with `delta`
-       5.0 → the helper finds it via the fallback and `Q_MIN` is 95 (this is the test the brief asks for;
-       it fails against a hv-0-only lookup, which is what this bullet described before #528).
+       5.0 → the helper finds it via the fallback and `Q_MIN` is 95 (added 2026-09-28, mirrors #528; it
+       fails against a hv-0-only lookup, which is what this bullet described before #528).
    - If δ is missing, the bounds stay empty. **K = 10 (PP-065):** skill rows with fewer than 10 pairs are
      suppressed, so those models have no δ. tjhm may print empty ranges until more history is scored;
      PP-065 P2 measures how often.

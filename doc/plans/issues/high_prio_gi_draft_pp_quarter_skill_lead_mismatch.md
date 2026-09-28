@@ -7,13 +7,14 @@ and DOC-009).**
   `doc/prod/longforecast_quarter_season_hv_convention.md` — so the "open question for the owner"
   below (which of the two populations is wrong) is resolved: `hv=0` for the seven GBT/MC/SM-family
   models was the deviation.
-- The kghm `hv=0` quarter skill rows of those seven models are **meant** to be replaced by `hv=1`
-  rows and tombstoned by the recalc (PP-065 § P2), once PP-065 P1b/P1c land and the recalc runs.
+- **Under flag ON**, the kghm `hv=0` quarter skill rows of those seven models are **meant** to be
+  replaced by `hv=1` rows and tombstoned by the recalc (PP-065 § P2), once PP-065 P1b/P1c land and the
+  recalc runs. **Under flag OFF**, quarter skill stays grouped without hv and written at the hv-0
+  sentinel (`src/api_writer.py:666-669`); it is replaced in place at hv 0, not moved to hv 1.
 - The acceptance items below for skill landing at leads 1..4, and the "do not drop the `hv=0` rows"
   contract, no longer apply to the seven models — they are superseded by PP-065's own skill-grouping
   rule (composition-free, keyed by `(code, quarter_in_year[, hv under flag ON])`).
-- **Month and season are unchanged** by PP-065 and remain this issue's scope for those two horizons,
-  if either shows the same `hv` mismatch (not observed above; recorded defensively).
+- **Month and season are unchanged by PP-065.**
 
 **Status**: Draft (2026-08-14)
 **Module**: `apps/postprocessing_forecasts` (quarter skill path — `recalculate_skill_metrics.py`,

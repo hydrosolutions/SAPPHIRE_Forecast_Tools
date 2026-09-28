@@ -9,17 +9,22 @@ the postprocessing *service* (sapphire/services) needs no change
 > **Scope expansion (2026-06-22):** an audit found the `apps/postprocessing_forecasts`
 > quarterly/seasonal **ensemble** pipeline writes `long_forecasts` with `horizon_value = quarter_in_year`
 > (1-4) for quarter and hardcoded `1` for season (`api_writer.py:1043-1067`, at the time of this audit),
-> contradicting the config-lead convention. This is the live source of the `QUARTER hv1-4` / `SEASON hv1`
-> rows. Decision: **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is
+> contradicting the config-lead convention. This **was** the source of the `QUARTER hv1-4` / `SEASON hv1`
+> rows -- P-PIPE (below) has since fixed the writer, so existing `QUARTER hv1-4` rows in the DB are
+> legacy, not currently being added to. Decision: **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is
 > a hard prerequisite (phase P-PIPE) for the data cleanup, which would otherwise be regenerated. P-PIPE
 > gets its own planner+reviewer pass.
 >
 > **P-PIPE has landed (verified 2026-09-28).** The writer now emits `horizon_value` = the configured
-> lead for both quarter and season: quarter branch, `apps/postprocessing_forecasts/src/api_writer.py:1174`
+> lead **for quarter**: `apps/postprocessing_forecasts/src/api_writer.py:1174`
 > (`horizon_value = int(row["horizon_value"])` when the flag is on and a per-row value is present) /
-> `:1176` (else `horizon_value = quarter_horizon_value()`); season branch, `:1192`
-> (`horizon_value = int(row[period_col])`). The `:1043-1067` citation above is historical -- the file has
-> grown since this audit and that range no longer holds the quarter/season branch.
+> `:1176` (else `horizon_value = quarter_horizon_value()`). **Season is different**: `:1192`
+> (`horizon_value = int(row[period_col])`) passes through the stored row's own `horizon_value`, with a
+> fallback of `1` only if that column is absent (`src/data_reader.py:3977-3981` --
+> `df["season_in_year"] = lead.astype(...)` when `"horizon_value"` is present, else `df["season_in_year"]
+> = 1`), rather than computing it from config the way the quarter branch does. The `:1043-1067` citation
+> above is historical -- the file has grown since this audit and that range no longer holds the
+> quarter/season branch.
 **Depends on**: MIG-007 (importer accepts `quarter`/`season`)
 **See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (question + service-owner answer);
 `doc/plans/archive/longforecast_hv_convention_plan.md` (phased plan, reviewed -> NO-GO on destructive
@@ -30,7 +35,9 @@ decision needed before any `long_forecasts` mutation)
 
 `horizon_value = operational_month_lead_time` from the config. The existing config-per-bucket
 mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-quarter mapping**.
-"Quarter" is a single quarterly product whose hv is just the config lead.
+"Quarter" is a single quarterly product whose hv is just the config lead. (This is about `horizon_value`
+only; the target-window contract, since owner-superseded to calendar quarters, is a separate question --
+see the DOC-009 row-3 note below, "What this corrects from the earlier draft".)
 
 - **Month**: hv = month lead. `month_0->0, month_1->1, month_2->2, month_3->3`. (Tajik filenames are
   off by one -- `month_1.json` carries lead 0 -- but the `operational_month_lead_time` value inside

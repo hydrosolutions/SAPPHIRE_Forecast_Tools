@@ -29,7 +29,8 @@ graph lives there only.
 - PP-059 (its "KEEP quarter EM" is superseded; DOC-009 adds the note).
 - PP-020 (averaging quantiles), PP-061 (writer `flag=0`), GitHub #521.
 
-Paths are relative to `apps/postprocessing_forecasts/`. Citations are to trunk `82946683`.
+Paths are relative to `apps/postprocessing_forecasts/`. Citations are to trunk `82946683`; citations
+added or corrected on 2026-09-28 are to trunk `6a4ecfae`.
 
 ## Owner decisions this plan implements (2026-09-25/26)
 
@@ -101,6 +102,18 @@ Paths are relative to `apps/postprocessing_forecasts/`. Citations are to trunk `
    both flags, rather than degrading. This deliberately differs from FD-031's fix on the dashboard side,
    which degrades on the same missing-file case instead of raising -- the two layers own different
    failure modes for the same root cause and are not meant to converge (see FD-031's own note).
+   **This FAIL behaviour already exists on trunk today, independent of P1b** -- P1b's job is to
+   PRESERVE it, not introduce it: flag OFF already raises via `quarter_horizon_value()`
+   (`src/data_reader.py:3198`), reached before any native-row logic; flag ON already propagates via
+   `_operational_schedules_for_horizon_type("quarter")` (`:3162`, which calls
+   `operational_schedule_for_mode`, itself propagating `FileNotFoundError` from
+   `_load_long_term_config`, `long_term_horizon_resolver.py:184`). The warn-and-disable branch on
+   `_quarter_native_q1_issue_date`'s own `except (LongTermHorizonResolverError, FileNotFoundError)`
+   (`:3072-3083`) is effective only when a plain `LongTermHorizonResolverError` is raised (e.g. a
+   lead-only config missing `operational_issue_day`) -- for `FileNotFoundError` specifically, the
+   flag-OFF direct read's own `quarter_horizon_value()` call (`:3198`) already raises earlier, before
+   `_quarter_native_q1_issue_date` is even reached (its call site is `:3251`), so that branch's
+   `FileNotFoundError` case is effectively unreachable via this path.
 
 ## Feasibility (verified; re-measure per server)
 
@@ -296,8 +309,10 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        precedence and is locked against by `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening` and
        `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim`
        (`tests/test_quarter_calendar_window.py:995, 1046`) — do not break them. Flag ON: the direct-row
-       target-year trim already exists (`_trim_to_target_year_range`, `src/data_reader.py:3209`, from
-       #527) and is unaffected by this item.
+       target-year trim already exists (`_trim_to_target_year_range`, `src/data_reader.py:3209`) and is
+       unaffected by this item. That `:3209` trim **predates #527** (it is from the earlier M1 P1
+       config-driven operational-issuance selection work); #527 is what added the latest reader's own
+       `end_year + 1` variant (`:3582`).
    - **Existing Source 1 (LR aggregation), latest reader, both flags — SUPERSEDED (owner decision
      2026-09-28, "PP-065 P1b replaces Source 1").** There is no longer a separate, bounded-but-otherwise-
      unchanged old LR aggregation path to maintain: `read_latest_quarterly_forecasts`' pre-existing
@@ -328,8 +343,13 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        after `forecast_date`) must not produce a Q4 aggregate — under both flags.
      - **Test:** no row dated after `forecast_date` reaches the derivation input (assert on a spy, or on
        the rows actually passed to `derive_quarterly_from_monthly_same_issue`) — under both flags.
-   - Trim to the requested **target** years. In the latest reader, target year `today.year + 1` is allowed,
-     so a 25 Dec issue yields next year's Q1.
+   - **[SUPERSEDED by the "Target-year trim scope" bullet above.]** ~~Trim to the requested **target**
+     years. In the latest reader, target year `today.year + 1` is allowed, so a 25 Dec issue yields next
+     year's Q1.~~ As originally written this applied the trim to ALL rows; the current contract restricts
+     the target-year trim to DERIVED rows only (this item's own new mechanism). Flag OFF direct rows keep
+     PP-064's Problem-7 invariant unchanged by this plan; flag ON direct rows keep the existing
+     `_trim_to_target_year_range` trim (`src/data_reader.py:3209`), unaffected by this item. Kept for
+     history, not as the current contract.
    - **Drop direct rows of the seven models before the sources are combined.** After this, the readers'
      `keep="last"` dedup has no LR or derived-model collision left to resolve.
    - **Output schema.** Keep `date` and `horizon_value` in the reader output under **both** flags (an
@@ -366,7 +386,10 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      own `except (UnsupportedLongTermModeError, LongTermHorizonResolverError)` (above) is a **different,
      narrower** tuple that deliberately excludes `FileNotFoundError`.
    - **Model filter.** Both quarter readers currently call `_filter_supported_aggregated_forecast_models`
-     (`src/data_reader.py:98-104`, called at `:3310, 3432, 3606, 3730`) after combining sources, which keeps
+     (`src/data_reader.py:98-104`) after combining sources. The **quarter** call sites are `:3310`
+     (`read_quarterly_forecasts`) and `:3606` (`read_latest_quarterly_forecasts`) only; `:3432`
+     (`read_seasonal_forecasts`) and `:3730` (`read_latest_seasonal_forecasts`) are the SEASON readers and
+     are unrelated to this item, named here only to avoid ambiguity. The call keeps
      only rows in `AGGREGATED_SUPPORTED_MODELS` (LR + the three ensemble aggregates,
      `src/model_names.py:14-16`) — that would silently discard every derived seven-model row this item
      produces. Change the two **quarter** readers' post-combine filter to keep `QUARTER_SUPPORTED_MODELS`
@@ -392,17 +415,19 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        have landed (decision F runs after `deploy.pp` in the overview's dependency graph, i.e. inside the
        same writer-paused window, not automatically the moment P1b merges) — see the round-4 tjhm interim
        decision. LR still enters the ensembles and skill regardless of visibility.
-     - **EM interim, until this item ships.** PP-064 A (already deployable/deployed independently of this
-       plan) still writes fresh quarterly EM rows today: `ensemble_calculator.py` sets
-       `model_short = "EM"` directly in the quarter aggregation path
-       (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py`'s quarter-write loop
-       (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry (line ~27), not
-       the `"ENSEMBLE_MEAN": "EM"` entry (line 50, which serves the skill-metrics write path only).
-       FD-029 already hides every quarter EM row it reads on the dashboard side, consistent with the
-       owner decision of no quarterly EM, but this item is what stops the *write*. Between PP-064 A's
-       deploy and this item's own deploy, a quarter whose only rows are a fresh EM row plus a non-native
-       LR row shows nothing on the card or the bulletin (FD-029 drops the EM row; its native-only rule
-       drops the non-native LR row).
+     - **EM interim, live on trunk only.** PP-064 A is merged to trunk (#527) but, under the 2026-09-28
+       rollout gate, **not deployed standalone** — it deploys together with FD-029 and this item, in the
+       same writer-paused window. The EM write this bullet describes is therefore live on trunk only, not
+       on any server, until that window: `ensemble_calculator.py` sets `model_short = "EM"` directly in the
+       quarter aggregation path (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py`'s
+       quarter-write loop (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"`
+       entry (`api_writer.py:30`), not the `"ENSEMBLE_MEAN": "EM"` entry (line 50, which serves the
+       skill-metrics write path only). FD-029 already hides every quarter EM row it reads on the dashboard
+       side, consistent with the owner decision of no quarterly EM, but this item is what stops the
+       *write*. Because PP-064 A, FD-029 and this item deploy together under the gate, there is no
+       server-visible window where a quarter's only rows are a fresh EM row plus a non-native LR row and
+       nothing shows on the card or the bulletin — this describes trunk code only, before this item lands
+       (FD-029 drops the EM row; its native-only rule drops the non-native LR row).
    - **Log** one aggregated skip count per call.
 4. **Combined reader and maintenance.**
    - `read_quarterly_combined_forecasts` drops direct rows of the seven models. It stays **filter only**,
@@ -951,6 +976,9 @@ longer exists; nothing here depends on it):
     ready, so there is no window in which a server could run P1a alone. N7's reasoning stays correct and
     is not withdrawn; the rollout gate is the operational control that makes its premise (a server running
     P1a without P2) not arise in practice.
+  - **Concrete instructions.** PP-064 A, FD-029 (restart the dashboard container) and PP-065 (P1b–P1d,
+    P2) deploy together, in one writer-paused window. Servers must not pull `:latest` postprocessing or
+    dashboard images before that window. P2 is on the 2026-12-25 critical path.
 
 ### P1b — readers, native-row selection, maintenance, writer
 
@@ -992,10 +1020,14 @@ lead 0):
 - **Model filter keeps derived-model rows.** A derived row for one of the seven models (e.g. GBT) survives
   the quarter readers' post-combine filter; a season reader's output for the same model is unaffected
   (still filtered to `AGGREGATED_SUPPORTED_MODELS`).
-- **Target-year trim scope.** A direct row with target year outside `[start_year, end_year]` but issue year
-  inside it is still returned (flag OFF: the Problem-7 invariant; flag ON: unaffected by this item). A
+- **Target-year trim scope.** Flag OFF: a direct row with target year outside `[start_year, end_year]` but
+  issue year inside it is still returned (the Problem-7 invariant, unchanged by this item) — assert this
+  only under flag OFF. Flag ON: assert instead that the existing direct-row target-year trim is
+  preserved, unaffected by this item — `read_quarterly_forecasts` trims direct rows to
+  `[start_year, end_year]` (`_trim_to_target_year_range`, `src/data_reader.py:3209`);
+  `read_latest_quarterly_forecasts` trims them to `[start_year, end_year + 1]` (`:3582`, from #527). A
   derived row with target year outside `[start_year, end_year]` (latest reader: `[start_year, end_year +
-  1]`) is trimmed.
+  1]`) is trimmed, under both flags.
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
@@ -1023,7 +1055,14 @@ lead 0):
   deliberately excludes `FileNotFoundError`, item 2's "Schedule resolution" bullet). The existing
   warn-and-disable behaviour for a `FileNotFoundError` stays **only** on `_quarter_native_q1_issue_date`'s
   own Problem-7 exception (`src/data_reader.py:3072-3083`, flag OFF only) — that narrow admit rule
-  degrades gracefully because disabling it only drops one exception case, not the whole read.
+  degrades gracefully because disabling it only drops one exception case, not the whole read. **This
+  propagation is existing trunk behaviour**, not new: flag OFF already raises via `quarter_horizon_value()`
+  (`:3198`), before reaching any native-row logic; flag ON already propagates via
+  `_operational_schedules_for_horizon_type("quarter")` (`:3162`). P1b's job here is to PRESERVE this in
+  the new derivation path, not introduce it. Do **not** write a reader-level "warn on a missing
+  `quarter.json`" test for either reader — that behaviour does not exist and would be wrong. The
+  propagate test above is therefore a regression guard: it passes on the pre-P1b base too — say so in
+  the PR.
 - **Degraded native rule.** `quarter.json` with the lead only (as the autouse fixture writes it): flag OFF
   → one WARNING, the direct LR rows are returned as on trunk (a non-native rewrite row included), no
   derived rows; flag ON → raises as on trunk.
@@ -1160,9 +1199,11 @@ Depends on P1b and P1c. Tests only.
 
 ### P2 — rollout (with PP-064 Chunk C)
 
-**One writer-paused window** (ops instruction, no code): deploy PP-065, run PP-064 Chunk C step 3
-(decision F, tjhm), then the recalc per org. Between deploy and recalc the gates would run on the old,
-contaminated quarter skill.
+**One writer-paused window** (ops instruction, no code): deploy PP-065 together with PP-064 A and FD-029
+(restart the dashboard container) — servers must not pull `:latest` postprocessing or dashboard images
+before this window; P2 is on the 2026-12-25 critical path — run PP-064 Chunk C step 3 (decision F, tjhm),
+then the recalc per org. Between deploy and recalc the gates would run on the old, contaminated quarter
+skill.
 - Pause **every** writer, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
   maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`), any
   other recalc, and manual runs.

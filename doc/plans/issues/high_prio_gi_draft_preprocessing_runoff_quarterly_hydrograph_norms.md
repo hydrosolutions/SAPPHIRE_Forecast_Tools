@@ -9,13 +9,16 @@
 **Status**: Apps-side implemented and merged to trunk (PR #358, commits `df8b424`, `8a27768`, verified
 present on trunk). Service-side already shipped by Max (`2be58f7`, migration `d4e5f6a7b8c9`). **Owner B
 is done**: `sapphire-api-client` is pinned at `4fd543e852f1eb0c834d8ab649a849a0a56d4e9b` (short `4fd543e8`)
-in every `apps/*/pyproject.toml` (verified: all 8 apps consistent), and the installed package's
-`VALID_HORIZONS` (derived from a single `HorizonTypeLiteral`, `sapphire_api_client/validators.py:14-19`)
-includes `"quarter"`, so `write_hydrograph`/`read_hydrograph` and the postprocessing modules' own
-`validate_enum_param` calls all validate against the same set now — the Literal-inconsistency root cause
-(INFRA-019) is resolved. **Remaining: end-to-end verification on a real deployment** (a live Postgres
-`ALTER TYPE` + a real API round-trip; apps-side tests use `MagicMock` and do not exercise the deployed
-schema).
+in every `apps/*/pyproject.toml` (verified: all 8 apps consistent). Per the pinned `sapphire-api-client`
+(not in this repo; pin `4fd543e8` verified in `apps/*/pyproject.toml`), its `VALID_HORIZONS` (derived from
+a single `HorizonTypeLiteral`, `sapphire_api_client/validators.py:14-19`) includes `"quarter"`, so
+`read_hydrograph` and the postprocessing modules' own `validate_enum_param` calls all validate against the
+same set now — the Literal-inconsistency root cause (INFRA-019) is resolved for those paths.
+`write_hydrograph` does **not** validate client-side at all (it posts records straight through, no
+`validate_enum_param` call) — its `"quarter"` support is enforced only server-side, by the deployed
+Postgres enum (rejected with a 422 if absent). **Remaining: end-to-end verification on a real deployment**
+(a live Postgres `ALTER TYPE` + a real API round-trip; apps-side tests use `MagicMock` and do not exercise
+the deployed schema).
 
 ---
 
@@ -69,11 +72,14 @@ can be verified end-to-end.**
 ### Owner B — `sapphire-api-client` (upstream library, external git repo) — ✅ DONE (verified 2026-09-28)
 - `"quarter"` is in `HorizonTypeLiteral` / `VALID_HORIZONS` in the pinned `sapphire_api_client/validators.py`
   (`HorizonTypeLiteral = Literal["day", "pentad", "decade", "month", "quarter", "season", "year"]`,
-  `VALID_HORIZONS = set(get_args(HorizonTypeLiteral))`, `:14-19`). `write_hydrograph` and `read_hydrograph`
-  (`preprocessing.py`) both validate against this same `VALID_HORIZONS`, as do the other API modules
+  `VALID_HORIZONS = set(get_args(HorizonTypeLiteral))`, `:14-19`). `read_hydrograph` (`preprocessing.py`)
+  validates against this same `VALID_HORIZONS`, as do the other API modules' read paths
   (`postprocessing.py`, `short_term.py`) — the write-path Literal inconsistency the original PREPQ-008
   root-cause analysis found (`postprocessing_base.py` vs. `postprocessing.py`/`short_term.py`) is resolved
-  by deriving every module's set from the one shared `HorizonTypeLiteral` (INFRA-019).
+  for those paths by deriving every module's set from the one shared `HorizonTypeLiteral` (INFRA-019).
+  `write_hydrograph` itself calls no `validate_enum_param` at all (per the pinned `sapphire-api-client`,
+  not in this repo) — it posts records straight through, so its `"quarter"` support is gated server-side
+  only, by the deployed Postgres enum (a 422 on rejection).
 - Every consumer's `apps/*/pyproject.toml` is re-pinned to
   `4fd543e852f1eb0c834d8ab649a849a0a56d4e9b` (verified: all 8 `apps/*/pyproject.toml` files, same pin).
 - **Owner C's tests still exercise this only via MagicMock** — a green app suite is not end-to-end proof
@@ -140,9 +146,9 @@ behaviour.
 ## Acceptance criteria
 
 1. `psql -d preprocessing_db -c "\dT+ horizontype"` lists `quarter` alongside the existing six. *(Owner A — done; verify on a real Postgres after migration.)*
-2. One run of `bin/yearly_runoff_hydrograph_aggregation.sh` for target year `YYYY` produces exactly `4 × N` new `hydrographs` rows with `horizon_type='quarter'` for N stations. *(Requires Owner B.)*
+2. One run of `bin/yearly_runoff_hydrograph_aggregation.sh` for target year `YYYY` produces exactly `4 × N` new `hydrographs` rows with `horizon_type='quarter'` for N stations. *(Requires a live deployment; Owner B is done — #373.)*
 3. Every QUARTER row has `count/mean/std/min/max/q05..q95` all NULL; `norm` non-NULL subject to the all-or-nothing rule.
-4. For each station × quarter, `norm` equals the mean of that station's three constituent MONTH `norm` values within `1e-9`. SQL spot-check on station `19999`. *(Requires Owner B.)*
+4. For each station × quarter, `norm` equals the mean of that station's three constituent MONTH `norm` values within `1e-9`. SQL spot-check on station `19999`. *(Requires a live deployment; Owner B is done — #373.)*
 5. Dates follow `{YYYY-01-01, YYYY-04-01, YYYY-07-01, YYYY-10-01}`; `day_of_year` is leap-aware.
 6. `horizon_value`, `horizon_in_year` ∈ `{1,2,3,4}`.
 7. `SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with zero skips beyond the documented
@@ -165,8 +171,11 @@ live in the writer (`horizon_value = int(row["horizon_value"])` under the flag, 
 `horizon_value = quarter_horizon_value()`). Preprocessing `hydrographs` QUARTER rows, by contrast, use
 `horizon_value` 1–4 as the **quarter number** itself (this issue's own "QUARTER row shape" table
 above). The two tables' `horizon_value` columns hold different quantities with the same name; joining
-on it directly would silently pair a kghm Q2 hydrograph norm (`horizon_value=2`) with a `long_forecasts`
-row at `horizon_value=1` (the lead), not with the row whose target quarter is actually Q2.
+on it directly (`hydrographs.horizon_value = long_forecasts.horizon_value`) would silently pair EVERY
+kghm `long_forecasts` row — whatever its actual target quarter — with the hydrograph's **Q1** norm
+(`horizon_value=1`, the quarter number), because every kghm `long_forecasts` QUARTER row carries
+`horizon_value=1` (the configured lead), not its target quarter; the Q2/Q3/Q4 hydrograph norms
+(`horizon_value=2/3/4`) would match no `long_forecasts` row at all.
 
 A future dashboard join between preprocessing QUARTER hydrograph norms and postprocessing
 `long_forecasts` QUARTER rows must instead join on **`code` + the calendar quarter number derived
@@ -216,7 +225,7 @@ dedup key; no further change is needed there for a 4-quarter norm join.
 
 ---
 
-## Verify locally (once Owner B lands and consumers re-pin)
+## Verify locally (requires a live deployment; Owner B is done — #373)
 
 ```bash
 cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff   # apps-side, MagicMock

@@ -61,8 +61,8 @@ branch, for the missing-file case.
 
 ## Proposed fix
 
-Wrap the early `_resolve_quarter_horizon_value(horizon_value)` call (trunk `:820`, FD-029
-branch `:858`) in `try`/`except (LongTermHorizonResolverError, FileNotFoundError)` — the same
+Wrap the early `_resolve_quarter_horizon_value(horizon_value)` call (trunk `:858`) in
+`try`/`except (LongTermHorizonResolverError, FileNotFoundError)` — the same
 exception set FD-029's later handler already catches, so both handlers agree on what
 "degraded" means. On catch: fall back so the function still reaches its own degraded path
 (e.g. proceed without a `horizon_value` request filter in `params`, rather than guessing a
@@ -73,7 +73,7 @@ way) — not only a missing file. There is no promise that behaviour is unchange
 
 **One-WARNING coordination (do not duplicate FD-029's later handler).** If the early resolve
 fails, the function must not go on to call `operational_schedule_for_mode("quarter")` a second
-time at the later handler (FD-029 branch `:873`) — that call would hit the *same* underlying
+time at the later handler (trunk `:873`) — that call would hit the *same* underlying
 config problem and log a *second* WARNING for one root cause. Carry the early failure into the
 degraded decision directly: when the early resolve already failed, skip the later
 `operational_schedule_for_mode` call entirely, set `schedule = None` / `degraded = True` from
@@ -115,7 +115,6 @@ under flag OFF).
 ## Acceptance
 
 - `SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard` passes, zero unexpected skips.
-- No existing test edited; the new tests fail on both trunk and the FD-029 branch before the
-  fix.
+- No existing test edited; the new tests fail on trunk before the fix.
 - `git diff --stat` limited to `apps/forecast_dashboard/src/db.py` and its tests.
 - Station code `19999` in any fixture; no real station codes.

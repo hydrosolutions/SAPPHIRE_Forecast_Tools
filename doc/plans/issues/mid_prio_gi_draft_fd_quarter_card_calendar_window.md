@@ -1,9 +1,13 @@
 # FD-029: Quarterly card shows the latest calendar quarter, fetched with a year-safe window
 
-**Status**: Draft (2026-09-26, rev 6 after the fourth review round)
+**Status**: P1 **merged to trunk (#528, 2026-09-28)**. Not deployed standalone: under the 2026-09-28
+rollout gate (see the overview's "Rollout and communication"), it deploys only together with PP-064 A and
+PP-065 P2, in the same writer-paused window.
 **Module**: `apps/forecast_dashboard`
 **Priority**: Medium. **Deploy before 2026-12-25**, when the first kghm calendar Q1 is issued: on Dec 25–31
-its flag-OFF derived and ensemble rows, dated 2027-01-01, fall outside the fetch window (Problem 1).
+its flag-OFF derived and ensemble rows, dated 2027-01-01, fall outside the fetch window (Problem 1). This
+deploy is gated on the PP-065 P2 rollout window — see the overview's dependency graph (`FD-029.deploy`
+depends on `PP-065.P2.ready`).
 **Labels**: `forecast_dashboard`, `long-term`, `quarter`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
 graph lives there only. Overview decision D5 (caption issue date) is **resolved here** by the
@@ -525,11 +529,12 @@ new `EM` row.
   `skipif` (`TEST_PENTAD`/`TEST_DECAD`/`TEST_LOCAL`).
 - `git diff --stat` is limited to the listed files.
 
-**Deploy.** Precondition: PP-064 Chunk C step 0's per-org `quarter.json`/`issue_day` read (see item 3's
-accepted limitation above) — confirm both orgs' schedule config resolves before deploying, so this card
-does not silently run in degraded mode. Rebuild the dashboard image, redeploy it and restart the dashboard
-container on kghm and tjhm **before 2026-12-25**. To check: the card exists only on the month horizon, for
-reservoir stations.
+**Deploy.** Merged (#528); deploy only together with PP-064 A and PP-065 P2, in the same writer-paused
+window (the 2026-09-28 rollout gate) — not standalone. Precondition: PP-064 Chunk C step 0's per-org
+`quarter.json`/`issue_day` read (see item 3's accepted limitation above) — confirm both orgs' schedule
+config resolves before deploying, so this card does not silently run in degraded mode. Rebuild the
+dashboard image, redeploy it and restart the dashboard container on kghm and tjhm **before 2026-12-25**,
+as part of that same window. To check: the card exists only on the month horizon, for reservoir stations.
 
 ## Out of scope
 
