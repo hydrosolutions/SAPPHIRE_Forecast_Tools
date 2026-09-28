@@ -1,6 +1,6 @@
 # FD-029: Quarterly card shows the latest calendar quarter, fetched with a year-safe window
 
-**Status**: P1 **merged to trunk (#528, 2026-09-28), presumed already live on both servers** via the
+**Status**: P1 **merged to trunk (#528, 2026-09-27), presumed already live on both servers** via the
 dashboard's own daily frontend auto-pull (owner decision R4-merge-is-deploy, 2026-09-28;
 `bin/daily_update_sapphire_frontend.sh`, run from the 19:00 UTC cron entry — verify per org, image
 creation date). This means FD-029 is already
@@ -398,7 +398,7 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - Only in degraded mode (item 3) show the period and "issue date not available". A row's `date` is never
      shown as an issue date.
 
-**Behaviour after — bulletin input (accepted in the interim, overview decision R4-merge-is-deploy).** The three bulletin
+**Behaviour after — bulletin input (accepted in the interim, overview decision E, 2026-09-26).** The three bulletin
 blocks call the same function with `head(1)` on the latest `date`. After P1:
 - rolling-window, non-native LR, quarter `EM` and not-yet-eligible rows are no longer returned;
 - rows dated 2027-01-01 appear on Dec 25–31;

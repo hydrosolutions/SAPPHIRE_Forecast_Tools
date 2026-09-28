@@ -133,6 +133,10 @@ added or corrected on 2026-09-28 are to trunk `6a4ecfae`.
    R4-native-lr-precedence — native LR precedence, full enumeration" below for the complete list of
    affected/unaffected tests. PP-064's own Problem-7 section (`../high_prio_gi_draft_pp_quarter_calendar_window_validation.md`)
    carries a pointer to this decision.
+   - **Degraded LR carve-out (owner).** When `quarter.json` lacks `operational_issue_day`, no LR row can be
+     classified as native or not — the native-row rule cannot run at all. P1b then keeps today's unfiltered
+     direct LR selection, with **one** WARNING, instead of dropping every LR row. This is an explicit
+     exception to native-row precedence: see "Degraded native rule, flag OFF" above (~:402-407).
 
 ## Feasibility (verified; re-measure per server)
 
@@ -295,6 +299,16 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      `select_operational_issuances`, below). Do **not** assert this end-to-end through the readers under
      flag ON in P1b — `select_operational_issuances` still matches unclamped there and would drop the
      row; that end-to-end proof is gated on PP-066 (its Tests list owns it).
+   - **Order (flag ON).** The full pipeline for a direct LR row, in order: (1) the native-row helper above
+     — parses `date`, drops and counts non-native rows AND null/unparseable-date rows; (2) the "Stored
+     leads" pre-filter below; (3) `select_operational_issuances`. This matters because
+     `select_operational_issuances` calls `pd.to_datetime(candidates[date_col])` **without**
+     `errors="coerce"` (`src/data_reader.py:336`; verified) — an unparseable date string reaching that call
+     would raise. The native-row helper's own null/unparseable-date drop (step 1) runs first, so an
+     unparseable date never reaches `select_operational_issuances` under this pipeline. **Add a flag-ON
+     reader test:** a direct LR row with an unparseable `date` (e.g. `"not-a-date"`) is dropped by
+     `read_quarterly_forecasts`/`read_latest_quarterly_forecasts` under flag ON, with **no exception**
+     raised — this is a regression guard for the ordering, not just the drop itself.
    - **Stored leads (flag ON).** Before `select_operational_issuances`, drop and count direct rows whose
      stored `horizon_value` differs from the derived lead, then call it with `lead_output_cols=()` so the
      stored value is preserved. `select_operational_issuances` itself is not modified — it keeps matching
@@ -337,9 +351,11 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        latest reader's own `end_year + 1` variant (`:3582`). `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening`
        and `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim`
        (`tests/test_quarter_calendar_window.py:995, 1046`) are **rewritten with native-shaped fixtures**
-       under this decision — see "Existing tests expected to change" below — so they keep locking the
-       **combine precedence** this plan actually needs (a native direct row beats a derived row for the
-       same key), not the old backfill/trunk-set precedent.
+       under this decision — see "Owner decision R4-native-lr-precedence — native LR precedence, full
+       enumeration" below (`TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` splits into two tests
+       there) — so they lock the **combine precedence** this plan actually needs (a native direct row
+       suppresses the decision-G fallback derivation for its key), not the old backfill/trunk-set
+       precedent.
    - **Existing Source 1 (LR aggregation), latest reader, both flags — SUPERSEDED (owner decision
      2026-09-28, "PP-065 P1b replaces Source 1").** There is no longer a separate, bounded-but-otherwise-
      unchanged old LR aggregation path to maintain: `read_latest_quarterly_forecasts`' pre-existing
@@ -375,7 +391,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      year's Q1.~~ As originally written this applied the trim to ALL rows; the current contract restricts
      the target-year trim to DERIVED rows only (this item's own new mechanism). **Flag OFF direct rows do
      NOT keep PP-064's Problem-7 invariant unchanged — this sentence, as originally written, is corrected
-     by owner decision R4-native-lr-precedence (above, "Target-year trim scope", ~:309-320) and no longer
+     by owner decision R4-native-lr-precedence (above, "Target-year trim scope", ~:321) and no longer
      describes the current contract.** Only the specific claim about the **target-year bound** stays true
      without qualification: this item does not add a NEW target-year trim to direct rows (Problem-7's own
      `start_year − 1` widened read is untouched, and flag ON's existing `_trim_to_target_year_range` trim,
@@ -424,7 +440,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      `_quarter_native_q1_issue_date`'s own `except (LongTermHorizonResolverError, FileNotFoundError)` for
      the derivation calls: that tuple's `FileNotFoundError` branch is specific to the Problem-7
      native-Q1-date exception (warn-and-continue is safe there because it only disables one admit rule),
-     and does **not** apply to the derivation/read path, where a missing config file FAILS (decision 3,
+     and does **not** apply to the derivation/read path, where a missing config file FAILS (item 8,
      "the missing-quarter-config split is intended" — see the overview's owner decisions). The derivation's
      own `except (UnsupportedLongTermModeError, LongTermHorizonResolverError)` (above) is a **different,
      narrower** tuple that deliberately excludes `FileNotFoundError`.
@@ -1129,7 +1145,7 @@ lead 0):
   behaves exactly as trunk (the direct path's `quarter_horizon_value()` raise is unchanged). This is
   distinct from the case below.
 - **Missing quarter config FILE (the mode IS supported, but its config file is absent — e.g. deleted or a
-  bad deployment), both flags — split per decision 3 ("the missing-quarter-config split is intended",
+  bad deployment), both flags — split per item 8 ("the missing-quarter-config split is intended",
   overview owner decisions 2026-09-28):** `_load_long_term_config` raises `FileNotFoundError`
   (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:184`) for the derivation/read path, and this
   **propagates** (FAILS the run) under **both** flags — it is not caught by the derivation's own
@@ -1174,16 +1190,36 @@ lead 0):
 - `tests/test_quarterly_data_reader.py:134, 245, 407, 654, 718, 985, 1015`, where they assert the old
   mixed-issue or 2-of-3 monthly aggregation, or the flag-OFF output columns. (`:443` moved to its own
   bullet below — it needs more than a one-line note.) **Per-test verification (all seven read against the
-  actual fixture code, not restated from memory) — new expected result for each:**
-  - **`:134` `test_aggregated_from_monthly`.** No config override -> the class-level autouse fixture
-    (`:29-49`) leaves `quarter.json` lead-only (degraded). Degraded flag OFF skips derivation entirely
-    (the "Degraded native rule, flag OFF" rule above). Its mocked `read_monthly_forecasts` return value is
-    also dead code under P1b: `read_quarterly_forecasts` no longer calls `read_monthly_forecasts` at all
-    (item 2's derivation reads via `_read_long_forecasts_api` directly). The only other source,
-    `_read_long_forecasts_api`, is mocked to return empty unconditionally. **New expected result: `result`
-    is empty** (`assert result.empty`, not `assert not result.empty`); the two column-presence assertions
-    become moot on an empty frame and should be dropped or asserted on `result.columns` regardless of
-    emptiness.
+  actual fixture code, not restated from memory) — new expected result for each. Five of the seven (`:134`,
+  `:407`, `:654`, `:985`, `:1015`) are rewritten to a full, non-degraded config with real derivation
+  fixtures — none of them are flipped to "empty", and none of the five classes are deleted; only `:245` and
+  `:718` keep the degraded-mode framing (they legitimately test that case, kept separate from derivation
+  coverage below):**
+  - **Shared derivation fixture template, used by `:134`, `:407`, `:654`, `:985` and `:1015` below (do NOT
+    flip these to "empty" — they must exercise the real derivation, not the degraded-mode skip).** Override
+    the class-level autouse config per test to a **full, non-degraded** `quarter.json` (`lead=1,
+    issue_day=25`, kghm shape). Mock `_read_long_forecasts_api` so `horizon_type="quarter"` (the
+    direct/native source) returns empty (isolating the derivation) and `horizon_type="month"` returns, for
+    a target quarter issued on date `d` (day 25): an `LR_Base` **day-25** triplet at hv 1/2/3 (target
+    months `L`/`L+1`/`L+2`), `forecasted_discharge` 100.0 / 105.0 / 110.0 → derived (decision-G fallback)
+    mean **105.0**; a `GBT` **day-25** triplet, same issue date and target months, `forecasted_discharge`
+    200.0 / 205.0 / 210.0 → derived (unconditional, `QUARTERLY_DERIVED_MODELS`) mean **205.0**; and an
+    `LR_Base` **day-10** "backfill" triplet, otherwise identical but issued on the 10th of the same issue
+    month, `forecasted_discharge` 900.0 / 910.0 / 920.0 — `issue_day=25` means this triplet fails
+    `derive_quarterly_from_monthly_same_issue`'s own `wrong_issue_day` check (`src/aggregation.py`, the
+    function's documented counted exclusions) and **contributes nothing**: no row at 910.0 (its mean) or
+    any blend with the day-25 values. No native/direct row exists for either model, so `LR_Base` is derived
+    only via the decision-G fallback and `GBT` only via the unconditional seven-model derivation — both
+    from the day-25 triplet exclusively.
+  - **`:134` `test_aggregated_from_monthly`** (`read_quarterly_forecasts`, flag OFF). Instantiate the
+    template for `d = 2024-03-25`, target quarter **Q2 2024** (Apr/May/Jun 2024, hv 1/2/3) — issue year and
+    target year both 2024, deliberately avoiding a year-boundary Q1 case so the derived-rows' own
+    target-year trim (`[start_year, end_year]` for this reader, item 2's "Target-year trim scope") cannot
+    accidentally exclude the row. Call `read_quarterly_forecasts([CODE], 2024, 2024)`. **New assertions:**
+    the Q2-2024 slice has exactly two rows — `LR_Base` at `forecasted_discharge == 105.0` and `GBT` at
+    `forecasted_discharge == 205.0`; assert none of `900.0`/`910.0`/`920.0` appear anywhere in
+    `result["forecasted_discharge"]`, i.e. the day-10 triplet contributes nothing, not even blended into
+    the mean.
   - **`:245` `test_filters_deprecated_models_after_combining_sources`.** Same degraded config (no
     override). `direct_api` (LR_SM, SM_GBT_Norm, EM; no `date`/issue-date column) is returned for
     `horizon_type="quarter"`; the `monthly` mock (LR_Base, GBT) is only reachable through the now-dead
@@ -1197,21 +1233,26 @@ lead 0):
     used to carry it is dead code either way). **New expected result: `set(result["model_short"]) ==
     {"LR_SM", "EM"}`** (drop `"LR_Base"` from the expected set); the second assertion (`GBT`/`SM_GBT_Norm`
     absent) is unchanged.
-  - **`:407` `test_monthly_aggregated_two_leads_survive`.** Flag ON, its OWN full config (`lead=1,
-    issue_day=25` — not degraded). But `_read_long_forecasts_api` is mocked to `return_value=pd.DataFrame()`
-    **unconditionally**, for every `horizon_type` — so both the direct/native read and the derivation's raw
-    monthly input come up empty. `read_monthly_forecasts` (mocked with the two-lead frame this test is
-    actually about) is dead code under P1b, as in `:134`/`:718`. **New expected result: `len(result) == 0`**
-    (was `== 2`). The test's premise (two `horizon_value`s from one aggregated source surviving as two
-    rows) does not translate to the new same-issue-triplet derivation at all — it needs either a real
-    fixture rewrite (a 3-month same-issue triplet via `_read_long_forecasts_api(horizon_type="month")`) to
-    keep testing something, or removal as redundant with `:985`/`:1015`'s replacement coverage.
-  - **`:654` `test_returns_most_recent_quarter`.** No config override -> degraded (same as `:134`).
-    `raw_monthly` (6 monthly LR_Base rows, no issue-`date` column) is returned only for
-    `horizon_type="month"`; the derivation that would consume it never runs in degraded mode. The direct
-    `horizon_type="quarter"` branch of the same mock returns empty. **New expected result: `result.empty`
-    is `True`** (was `not result.empty`, asserting Q2); the two content assertions (`quarter_call`
-    `horizon_value`, `quarter_in_year == 2`) no longer apply to an empty frame.
+  - **`:407` `test_monthly_aggregated_two_leads_survive`** (`read_quarterly_forecasts`, flag ON). Instantiate
+    the same template as `:134` (`d = 2024-03-25`, Q2 2024, read window `(2024, 2024)`), with
+    `SAPPHIRE_SKILL_LEAD_AWARE=true` and the test's own full config. Per decision A's own contract
+    (`src/aggregation.py` ~:798-801, "independent of `SAPPHIRE_SKILL_LEAD_AWARE`: the output is identical
+    under both flag states"), the derived rows are **flag-independent** — the flag only changes how OTHER
+    code groups DIRECT rows, and this fixture supplies no direct rows for `LR_Base`/`GBT` for the flag-ON
+    "Stored leads"/`select_operational_issuances` machinery to touch. **New assertions: identical to
+    `:134`** — `LR_Base == 105.0`, `GBT == 205.0`, day-10 triplet absent. The test's renamed purpose:
+    demonstrate that the derivation contract is unaffected by the lead-aware flag (this replaces its old
+    "two leads from one aggregated source" premise, which the same-issue-triplet derivation does not have —
+    only one native lead is admitted per key, decision R4-native-lr-precedence).
+  - **`:654` `test_returns_most_recent_quarter`** (`read_latest_quarterly_forecasts`, flag OFF). Apply the
+    shared fixture's day-25/day-10 triplets for Q1 2025 (issued `2024-12-25`), and additionally an OLDER
+    same-issue-day-25 triplet for Q4 2024 (issued `2024-09-25`): `LR_Base` 90.0/95.0/100.0 → mean **95.0**,
+    `GBT` 190.0/195.0/200.0 → mean **195.0**. Set `forecast_date = 2025-01-05` (after both issue dates).
+    **New assertions:** `read_latest_quarterly_forecasts` returns **only** the most recent quarter's rows —
+    `LR_Base == 105.0` and `GBT == 205.0` for Q1 2025 — and no Q4-2024 row (`95.0`/`195.0`) is present; the
+    day-10 backfill triplet still contributes nothing (no `910.0`/`920.0`-derived value anywhere in the
+    result). This keeps the test's original "most recent quarter" purpose, now against real derived data
+    instead of a degraded-mode empty frame.
   - **`:718` `test_latest_filters_deprecated_models_after_combining_sources`.** No config override ->
     degraded; no `SAPPHIRE_SKILL_LEAD_AWARE` set -> flag OFF (this repo's documented OFF default).
     `raw_quarter` (LR_SM, LR_SM_DT; no `date` column) is returned for `horizon_type="quarter"`;
@@ -1224,38 +1265,37 @@ lead 0):
     unconditional seven-model direct-row drop (same outcome, different mechanism). `GBT` is still absent
     (never in the direct "quarter" source). **New expected result: `set(result["model_short"]) ==
     {"LR_SM"}`** (drop `"LR_Base"`); the second assertion is unchanged.
-  - **`:985` `test_flag_on_source1_aggregates_only_operational_monthly`.** Flag ON, full config (own
-    `_config` helper writes `month_1.json` and `quarter.json`, both `lead=1, issue_day=25` — not
-    degraded). `fake_api` isolates Source 1 by returning empty for `horizon_type="quarter"`. Its `_rows()`
-    fixture (`:974-983`) has exactly **two** months (target `2024-01-01` issued `2023-12-25`; target
-    `2024-02-01` issued `2024-01-25`) at **two different issue dates**, plus two same-target backfill rows
-    at different issue days — there is no third month and no same-issue-date triplet at all. The new
-    `derive_quarterly_from_monthly_same_issue` requires all three leads (`L, L+1, L+2`) issued on the SAME
-    date; this fixture trips its `missing_lead` exclusion regardless of the different-issue-date problem.
-    LR_Base is also `QUARTER_NATIVE_RAW_MODELS`, eligible for the decision-G fallback derivation only under
-    the same same-issue-triplet rule — no fallback row is produced either. With the direct quarter source
-    isolated to empty, **the result is empty.** **New expected result: `result.empty` is `True`** (was
-    `forecasted_discharge == 100.0`, `horizon_value == 1`); every downstream assertion in the test body
-    (lines `1005-1013`) no longer applies. The whole class's stated purpose ("FINDING 1: Source 1 must
-    aggregate OPERATIONALLY-SELECTED monthly rows... rather than RAW monthly rows", `:930-939`) is retired
-    by P1b — the old operational-selection-then-aggregate Source 1 this class exists to test no longer
-    exists; its coverage is superseded by the same-issue-derivation tests specified elsewhere in this
-    Tests list (e.g. "Existing Source 1 (now unified) forecast_date bound" above). Recommend removing this
-    class rather than patching its fixtures to fit an unrelated mechanism.
-  - **`:1015` `test_flag_off_source1_keeps_raw_path_backfill_retained`.** Same `_rows()` fixture as `:985`,
-    flag OFF. Under P1b the old flag-OFF raw-averaging path (which used to include the backfill rows,
-    hence `300.0`) is replaced by the SAME unified same-issue derivation as flag ON (item 2: "applies under
-    both flags") — so the same `missing_lead`/different-issue-date failure applies, and the isolated-empty
-    quarter direct source contributes nothing either. **New expected result: `result.empty` is `True`**
-    (was `forecasted_discharge == 300.0`). Same retirement recommendation as `:985` — this test's
-    "backfill retained under flag OFF" premise no longer has a code path to exercise.
-  - **Degraded-mode derivation, stated once for all of the above:** per the plan's own "Degraded native
-    rule, flag OFF" rule (item 2 above), a lead-only `quarter.json` (no `operational_issue_day`) makes
-    `operational_schedule_for_mode("quarter")` raise, and P1b's response is to log one WARNING **and skip
-    the derivation too** ("log one WARNING (covering the skipped derivation too) and keep today's direct-LR
-    selection, with no native filter") — so in degraded mode P1b produces **no** seven-model rows and **no**
-    LR fallback rows, only whatever the direct/native read already returns unfiltered. This is why `:134`,
-    `:245`, `:654` and `:718` all lose their previously-aggregated `LR_Base` row with no replacement.
+  - **`:985` `test_flag_on_source1_aggregates_only_operational_monthly`** (`read_latest_quarterly_forecasts`,
+    flag ON). The old fixture (`_rows()`, `:974-983`: two months at two different issue dates, no
+    same-issue triplet) is retired — it cannot express the same-issue-triplet contract at all, and rewriting
+    its now-obsolete "operationally-selected vs. raw" premise is not useful. **Replace `_rows()` with the
+    same fixture as `:654`** (both quarters: Q1 2025 day-25/day-10, plus the older Q4-2024 day-25 triplet),
+    `SAPPHIRE_SKILL_LEAD_AWARE=true`, `forecast_date = 2025-01-05`. **New assertions: identical to `:654`**
+    — `LR_Base == 105.0`, `GBT == 205.0` for Q1 2025 only; no Q4-2024 row; day-10 triplet absent. This
+    demonstrates the same flag-independence as `:407`: the derivation is identical whether or not
+    `SAPPHIRE_SKILL_LEAD_AWARE` is set, which **replaces** the class's retired "FINDING 1: Source 1 must
+    aggregate OPERATIONALLY-SELECTED monthly rows... rather than RAW monthly rows" premise (`:930-939`) with
+    the actual current contract, rather than deleting the class's coverage.
+  - **`:1015` `test_flag_off_source1_keeps_raw_path_backfill_retained`** (`read_latest_quarterly_forecasts`,
+    flag OFF). Rename to reflect the CONTRACT CHANGE this test now demonstrates (e.g.
+    `test_flag_off_backfill_triplet_excluded_by_wrong_issue_day`). Same shared fixture as `:654`/`:985`, flag
+    OFF, `forecast_date = 2025-01-05`. Pre-P1b, the old flag-OFF "raw path" retained the day-10 backfill
+    triplet's mean (`forecasted_discharge == 300.0` in the old fixture) — that is exactly what this test used
+    to lock. **New assertions:** the day-10 backfill mean is **no longer present** anywhere in the result
+    (assert no row equals the day-10 triplet's mean); only the day-25 `LR_Base == 105.0` / `GBT == 205.0`
+    rows for Q1 2025 survive (same result as `:654`/`:985`). Update the docstring to say the backfill is now
+    **excluded** (`wrong_issue_day`), not retained — this is the explicit before/after contract change the
+    PR should call out.
+  - **Degraded-mode derivation, stated once, and now scoped to `:245`/`:718` only** (the plan's own
+    "Degraded native rule, flag OFF" rule, item 2 above; `:134`, `:407`, `:654`, `:985` and `:1015` above
+    are deliberately rewritten to use a FULL, non-degraded config instead, so degraded-mode coverage does
+    not disappear — it stays live on `:245` and `:718`, which are unaffected by this rewrite): a lead-only
+    `quarter.json` (no `operational_issue_day`) makes `operational_schedule_for_mode("quarter")` raise, and
+    P1b's response is to log one WARNING **and skip the derivation too** ("log one WARNING (covering the
+    skipped derivation too) and keep today's direct-LR selection, with no native filter") — so in degraded
+    mode P1b produces **no** seven-model rows and **no** LR fallback rows, only whatever the direct/native
+    read already returns unfiltered. This is why `:245` and `:718` (not `:134`/`:654` any more, per the
+    rewrite above) lose their previously-aggregated `LR_Base` row with no replacement.
 - Keep the direct-row exclusion assertions for the seven models (e.g. `:293-337`, `:765-810`).
 - **`tests/test_quarterly_data_reader.py:196, 293, 765` — corrected: flag OFF, LEAD-ONLY (degraded)
   config, mostly NOT a fix.** All three rely on the class-level autouse fixture (`:30-49`), which writes
@@ -1274,37 +1314,77 @@ lead 0):
     still wins) but becomes **vacuous**: under P1b, `read_quarterly_forecasts`' old Source 1 call site
     (`read_monthly_forecasts` -> `aggregate_monthly_fc_to_quarterly`) is removed, so this test's
     "aggregated" monthly mock is dead code, and the degraded config also skips the new derivation (same
-    shared-resolution failure) — there is nothing left to "win over". Retarget it to assert "direct LR is
-    kept unconditionally in degraded mode, no aggregated/derived row is produced", or list it for removal
-    as redundant with the degraded-mode coverage elsewhere.
+    shared-resolution failure) — there is nothing left to "win over". **Retarget it** (keep the class, do
+    not remove it): assert "direct LR is kept unconditionally in degraded mode, no aggregated/derived row is
+    produced" — rename the test and rewrite its docstring to say so; drop the now-dead "aggregated" monthly
+    mock from its fixture.
 
 **Owner decision R4-native-lr-precedence — native LR precedence, full enumeration** (`tests/test_quarter_calendar_window.py`;
 line numbers verified against this branch's HEAD):
 - `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening::test_direct_next_year_q1_wins_over_monthly_derived`
-  (class `:995`, test `:1024`). **Why:** its direct row (issued `2025-12-25`) is already kghm's native Q1
-  issue date (day 25 of the month before Q1, lead 1) — it was already native-shaped before this decision.
-  Its `_monthly_rows` fixture (two months, `horizon_value` fixed at 1 for both) additionally produces **no**
-  derived row under the 3-lead `derive_quarterly_from_monthly_same_issue` (missing leads 2/3 trips the
-  `missing_lead` exclusion, `src/aggregation.py:1224-1227`), so under P1b there is no derived row to "win"
-  against at all. **Change:** none to the fixture or assertion values; reword the docstring/comment — the
-  test now locks native-row selection (and the Problem-7 exception it already exercised), not "wins over a
-  monthly-derived competitor"; there is no competitor left.
-- `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (class `:1046`), both
-  `test_direct_prior_year_backfill_wins_over_monthly_derived` (`:1076`) and
-  `test_direct_prior_year_backfill_returned_without_monthly_source` (`:1087`). **Corrected — the proposed
-  fix in an earlier draft of this list does not work.** The read is
-  `read_quarterly_forecasts([CODE], 2025, 2025)`, i.e. `start_year = end_year = 2025`. Re-dating the direct
-  row to `2024-09-25` (a genuine native Q4-2024 issue date) does **not** make it survive: the flag-OFF
-  issue-year mask (`src/data_reader.py` ~:3247-3261) drops any row with `issue_year < start_year` UNLESS it
-  is the December-issued Q1-of-`start_year` exception (quarter 1 only) — `2024-09-25` has issue year 2024
-  `< 2025` and targets Q4, so it is dropped there, before native-row selection ever runs. The ORIGINAL date
-  (`2025-01-10`, issue year 2025, survives the mask) is not native either (native Q4-2024 is `2024-09-25`),
-  so decision R4-native-lr-precedence drops it too, for the native-row reason. **The row is dropped either way.** Its monthly
-  fixture is also 2 months at hv fixed = 1, so no derived row is produced either (`missing_lead`).
-  **New expected result: the Q4 2024 slice is empty for both tests.** The tests now lock decision R4-native-lr-precedence (no
-  direct row without a native issue date survives, regardless of the lower-bound trim they were originally
-  written to guard). Drop the "the direct value wins" claim and the "tests precedence" framing; rewrite the
-  class docstring to say so.
+  (class `:995`, test `:1024`). **Why the old fixture proved nothing:** its direct row (issued
+  `2025-12-25`, target Q1 2026) is already kghm's native Q1 issue date, but with read window
+  `read_quarterly_forecasts([CODE], 2025, 2025)` its issue year (2025) simply equals `start_year` — no
+  widening exception is even reached. Its `_monthly_rows` fixture (two months, `horizon_value` fixed at 1
+  for both) additionally produces **no** derived row under the 3-lead
+  `derive_quarterly_from_monthly_same_issue` (missing leads 2/3 trips the `missing_lead` exclusion,
+  `src/aggregation.py:1224-1227`), so there was never a competitor to "win" against — the old test only
+  locked native-row selection in isolation, and did not exercise "lower bound widening" at all. **Fix:
+  re-date to a genuine lower-bound-widening case, and add a real competitor.** Change the direct row to
+  issue date `2024-12-25` targeting **Q1 2025** (`valid_from = 2025-01-01`, `valid_to = 2025-03-31`),
+  keeping the read window `read_quarterly_forecasts([CODE], 2025, 2025)` (`start_year = end_year = 2025`)
+  unchanged. Now issue year (2024) `< start_year` (2025), so the row survives only via PP-064's own
+  December-Q1-of-`start_year` exception (`src/data_reader.py` ~:3251-3260,
+  `_quarter_native_q1_issue_date(2025)` resolves to `2024-12-25`, the genuine widening case this class is
+  named for) — and it is also native (day 25, lead 1 → Jan 2025). Add a same-issue monthly LR triplet:
+  `LR_Base`, hv 1/2/3, target months Jan/Feb/Mar 2025, all issued `2024-12-25` (the same date), with
+  DIFFERENT values (e.g. 200.0/210.0/220.0, mean 210.0) so the direct row's value (kept at 100.0) is
+  distinguishable from the derived mean. This satisfies `derive_quarterly_from_monthly_same_issue`'s 3-lead
+  requirement, and its target year (2025) is within the reader's own `[start_year, end_year] = [2025,
+  2025]` derived-rows trim (item 2's "Target-year trim scope"), so decision-G's LR fallback genuinely
+  produces a competing derived Q1-2025 row — unlike a same-fixture attempt targeting Q1 2026, which the
+  trim would exclude regardless of precedence. **New assertions:** `q1_2025 =
+  result[(result["year"]==2025)&(result["quarter_in_year"]==1)]`; the direct row's value wins
+  (`forecasted_discharge == 100.0`, not `210.0`), and no separate fallback-derived row appears at the same
+  key — `len(q1_2025[q1_2025["model_short"] == "LR_Base"]) == 1`. This now locks the actual invariant: **a
+  native direct row suppresses the decision-G fallback derivation for its key**, in a case that genuinely
+  exercises the lower-bound-widening exception, not merely "no competitor happened to exist."
+- `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (class `:1046`). **Split into two tests — one
+  fixed with a new read window, one kept as the original regression, per the corrected analysis below.**
+  - **Test A — native precedence over the fallback (rewritten; replaces
+    `test_direct_prior_year_backfill_wins_over_monthly_derived`, `:1076`).** The earlier draft tried
+    re-dating the direct row to `2024-09-25` while keeping the original `read_quarterly_forecasts([CODE],
+    2025, 2025)` call — that does not work: the flag-OFF issue-year mask (`src/data_reader.py`
+    ~:3247-3261) drops any row with `issue_year < start_year` unless it is the December-Q1-of-`start_year`
+    exception, and `2024-09-25` (issue year 2024 `< 2025`, targeting Q4) is neither native-Q1-shaped nor
+    admitted by that exception, so it is dropped by the mask **before native-row selection ever runs** —
+    changing only the date does not produce a native-precedence test. **Fix: change the read window
+    instead.** Call `read_quarterly_forecasts([CODE], 2024, 2024)` (`start_year = end_year = 2024`). Now
+    `2024-09-25` has `issue_year == start_year`, so the mask does not drop it, and it reaches native-row
+    selection as a genuine kghm-shape native Q4-2024 issue date (day 25, lead 1 → Oct/Nov/Dec 2024). Keep
+    the direct row's value at `100.0` (unchanged from the original fixture). Add a same-issue monthly LR
+    triplet — `LR_Base`, hv 1/2/3, target months Oct/Nov/Dec 2024, all issued `2024-09-25`, with DIFFERENT
+    values `300.0`/`310.0`/`320.0` (mean `310.0`) — so decision-G's fallback has a real, numerically
+    distinguishable competing derived row to produce. **New assertions:**
+    `q4_2024 = result[(result["year"]==2024)&(result["quarter_in_year"]==4)]`; the native direct row's
+    value wins (`forecasted_discharge == 100.0`, not `310.0`), and no fallback-derived row appears at the
+    same key (`len(q4_2024[q4_2024["model_short"] == "LR_Base"]) == 1`). This test now belongs conceptually
+    with the
+    widening test above (native beats fallback), not with the backfill-drop test below; rename it (e.g.
+    `test_native_direct_row_suppresses_monthly_derived_fallback`) and move its docstring out of the
+    "lower-bound trim" framing.
+  - **Test B — backfill-shaped rows are dropped (kept, using the ORIGINAL fixture unchanged; was
+    `test_direct_prior_year_backfill_returned_without_monthly_source`, `:1087`).** Keep the original
+    `read_quarterly_forecasts([CODE], 2025, 2025)` call and the original direct row dated `2025-01-10`
+    (issue year 2025, survives the mask, but is not native — native Q4-2024 is `2024-09-25`) with its
+    original 2-month, hv-fixed-at-1 monthly fixture (no derived competitor either, `missing_lead`). **New
+    expected result (unchanged from the prior "corrected" analysis, confirmed still accurate for this
+    window): the Q4-2024 slice is empty** — decision R4-native-lr-precedence drops the non-native direct
+    row, and no fallback row is derived. Rename to reflect the actual invariant it locks (e.g.
+    `test_backfill_shaped_direct_row_is_dropped`), and drop the "wins"/"survives" framing from its
+    docstring — it now demonstrates the drop, not a win.
+  - Rewrite the class-level docstring to state both invariants separately: Test A (native beats fallback)
+    and Test B (non-native, backfill-shaped rows are dropped, not returned).
 - `TestRegressionIssueYearMaskTooPermissive` (class `:1142`):
   - `test_stale_out_of_window_row_does_not_beat_monthly_derived` (`:1160`). **Corrected — the "assertion
     unchanged" claim in an earlier draft of this list is wrong.** Its `_monthly_q2_2025` fixture
@@ -1401,13 +1481,17 @@ line numbers verified against this branch's HEAD):
       Under P1b it is dropped instead. **Chosen fix:** flip the assertions to expect the row **dropped**
       (`len(result) == 0`) — more honest than setting the stored hv to `1`, which would stop testing the
       mismatched-hv scenario the test was written for.
-    - `:852`: the class's real purpose is that the operational issuance (day 25) beats a same-lead backfill
-      (day 10) via `select_operational_issuances` — a distinction the stored-lead pre-filter would
-      otherwise make moot, since both rows carry hv 99 and would both be dropped before that distinction is
-      reached. **Chosen fix:** change BOTH fixture rows' stored `horizon_value` from `99` to `1` (matching
-      the derived lead) so both pass the new pre-filter and `select_operational_issuances`'s issue-day
-      matching is what actually distinguishes them; assertions are unchanged (operational row wins, hv = 1,
-      value = 100.0).
+    - `:852`: **corrected rationale.** The class's real purpose is that the operational issuance (day 25)
+      beats a same-lead backfill (day 10). Under P1b's order (see item 2's "Order (flag ON)" bullet above),
+      the day-10 row is dropped by the **native-row helper** — it is not the scheduled issue day, so it
+      fails native-row selection outright, before either the stored-leads pre-filter or
+      `select_operational_issuances` ever runs. `select_operational_issuances`'s own issue-day matching is
+      therefore **not** what distinguishes the two rows here; it never gets a competing candidate to choose
+      between. **Chosen fix (unchanged in outcome):** change BOTH fixture rows' stored `horizon_value` from
+      `99` to `1` (matching the derived lead) — needed so the surviving day-25 native row itself passes the
+      stored-leads pre-filter (at hv 99 it would be dropped there even after winning native-row selection);
+      the day-10 row's own stored hv no longer matters, since it is already excluded upstream. Assertions
+      are unchanged (operational row wins, hv = 1, value = 100.0).
     These two different fixes (drop vs. correct-the-stored-lead) are deliberate, not arbitrary: `:361`'s
     test purpose is specifically about a mismatched stored lead, while `:852`'s is about issue-day
     selection — dropping both rows in `:852` would silently remove its entire reason to exist.
@@ -1421,24 +1505,31 @@ line numbers verified against this branch's HEAD):
     asserted. The test's premise — two rows differing only by `horizon_value` both surviving the combine —
     is **obsolete** under decision R4-native-lr-precedence: only one native lead is admitted per (code, year, quarter, model) key
     now. Repurpose it (e.g. to demonstrate the Stored-leads drop directly) or remove it.
-  - **Other test files that call the quarter readers — swept** (`grep -rln
-    "read_quarterly_forecasts\|read_latest_quarterly_forecasts"
-    apps/postprocessing_forecasts/tests`, 10 files). Eight are unaffected because they mock
-    `data_reader.read_quarterly_forecasts`/`read_latest_quarterly_forecasts` itself (or the whole
-    `data_reader` module) and never exercise the real reader body: `test_maintenance_long_term.py:594,
-    724`, `test_recalc_supported_modes_gate.py:212,226,233`, `test_monthly_workflow_integration.py:610,
-    680`, `test_wiring_integration.py:2273`, `test_recalc_workflow.py:123` (all mocked returns), and
-    `test_lead_aware_latest_readers.py` (its one hit is a docstring comment, not a call).
-    `test_lead_aware_empty_schedules.py:207` (`TestQuarterlyEmptySchedulesFlagOn`) and `:239`
-    (`TestLatestQuarterlyEmptySchedulesFlagOn`) DO call the real readers, but both configure `quarter` as
-    an **unsupported** mode — already covered above ("Mode unsupported (uzb-like...)"): flag ON unchanged,
-    already cited correctly as unchanged by this plan.
+  - **Other test files that call the quarter readers — swept and re-counted** (`grep -rln
+    "read_quarterly_forecasts\|read_latest_quarterly_forecasts" apps/postprocessing_forecasts/tests`, 10
+    files total; excluding `test_quarter_calendar_window.py` and `test_quarterly_data_reader.py` themselves,
+    the other **8** break down as follows, not uniformly "unaffected because they mock":
+    - **Six** are unaffected because they mock `data_reader.read_quarterly_forecasts`/
+      `read_latest_quarterly_forecasts` itself (or the whole `data_reader` module) and never exercise the
+      real reader body: `test_maintenance_long_term.py:594, 724`, `test_recalc_supported_modes_gate.py:212,
+      226, 233`, `test_monthly_workflow_integration.py:610, 680`, `test_wiring_integration.py:2273`,
+      `test_recalc_workflow.py:123` (all mocked returns), and `test_lead_aware_latest_readers.py` (its one
+      hit is a docstring comment, not a call).
+    - **One** (`test_lead_aware_empty_schedules.py:207` `TestQuarterlyEmptySchedulesFlagOn` and `:239`
+      `TestLatestQuarterlyEmptySchedulesFlagOn`) DOES call the real readers, but both configure `quarter` as
+      an **unsupported** mode — already covered above ("Mode unsupported (uzb-like...)"): flag ON
+      unchanged, already cited correctly as unchanged by this plan.
+    - **One** (`test_lead_aware_operational_issuance_wiring.py`) DOES call the real reader and **IS
+      affected** — see the entry below ("add to this list; not previously enumerated"). It is not
+      "unaffected because it mocks."
   - **`test_lead_aware_operational_issuance_wiring.py::TestReadQuarterlyForecastsQ1Boundary::test_expands_window_and_selects_prior_year_issuance`
     (`:199-253`) — add to this list; not previously enumerated.** Flag ON, kghm shape (lead 1, day 25). Its
     one LR_Base row is dated `2023-12-25` — the genuine native Q1-2024 issue date — but carries a stale
-    stored `horizon_value = 99` (derived lead = 1). This is the same "Stored leads (flag ON)" mechanism as
-    `:361`/`:852` above: P1b drops the row **before** `select_operational_issuances` runs, so `len(result)
-    == 1` and the trailing `result.iloc[0]["horizon_value"] == 1` assertion both fail on an empty frame.
+    stored `horizon_value = 99` (derived lead = 1). This fixture has no competing day-10 backfill row, so it
+    is not exercising the native-vs-backfill distinction `:852` is about — this is purely the "Stored leads
+    (flag ON)" pre-filter mechanism (item 2 above, same as `:361`/`:852`): P1b drops the row **before**
+    `select_operational_issuances` runs, so `len(result) == 1` and the trailing
+    `result.iloc[0]["horizon_value"] == 1` assertion both fail on an empty frame.
     **Chosen fix — correct the stored lead, not drop-and-assert-empty (matching `:852`, not `:361`):** the
     test's actual purpose, per its own assertions on `mock_api.call_args_list` and
     `quarter_calls[0].args[1] <= target_year - 1`, is to verify the flag-ON Q1 boundary expansion picks up
@@ -1573,51 +1664,43 @@ Depends on P1b and P1c. Tests only.
 
 **One writer-paused window** (ops instruction, no code): merge the integration branch
 `integ_quarter_p1b_p2` (PP-065 P1b–P1d, PP-064 B) into `maxat_sapphire_2` — that merge **is** the
-postprocessing deploy (owner decision R4-integration-branch; `deploy.pp` in the overview's dependency
-graph). PP-064 A, FD-029 P1 and PP-065 P1a are already live separately (owner decision R4-merge-is-deploy;
-verify per org, `PP-064.C.step0`) and are not part of this merge. **The automatic bimonthly QUARTERLY
-recalc is allowed to run before this window and does not need to be paused** (owner decision
-R4-recalc-runs, 2026-09-28 — see N7 above): it already applies P1a's 3-of-3 rule on servers today. P2 is
-on the 2026-12-25 critical path — run PP-064 Chunk C step 3 (decision F, tjhm), then the recalc per org.
-Between the merge and the recalc, the gates would run on stale (pre-P1b) quarter forecasts, not
-"contaminated" skill (R4-recalc-runs already let the skill side catch up).
-- Pause **every** writer, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
-  maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`), any
-  other recalc, and manual runs — for this window only; the automatic bimonthly recalc does not need
-  pausing beforehand (R4-recalc-runs).
-- Wait for running jobs to finish. Then:
-  1. Export (per PP-064 Chunk C step 1).
-  2. Merge the integration branch (`deploy.pp`).
-  3. **Wait for the CI run on the merge commit to succeed**
-     (`.github/workflows/deploy_production.yml`) — the merge only makes CI build and push a new
-     `:latest` postprocessing image; it does not put anything on a server.
-  4. **On each server, pull the new image**: `docker pull mabesa/sapphire-postprocessing:latest`.
-     With writers paused, nothing else will: Luigi only pulls when a task starts
-     (`apps/pipeline/pipeline_docker.py:296-304`), and the recalc wrapper
-     (`bin/bimonthly_long_term_skill_metrics_recalculation.sh:77-85`) only pulls when no image exists
-     locally at all — so without this explicit pull, the mutate/recalc/verify steps below silently run
-     against the OLD (pre-P1b) image.
-  5. **Verify the pulled image**: `docker image inspect mabesa/sapphire-postprocessing:latest --format
-     '{{.Created}}'` (and digest) matches the build from step 3, per org. Do this **before** any of the
-     following steps.
-  6. Mutate (PP-064 Chunk C step 3, decision F, tjhm), recalc (PP-064 Chunk C step 4 + this section's
-     "Before/After the recalc" checks below), and verify.
-  7. Only then resume the paused writers.
-- **After resuming, run the quarterly operational postprocessing job manually, promptly** — do not wait
-  for the next scheduled LT cron day (kghm 10/25; tjhm 1). This is what actually writes P1b's derived
-  seven-model rows and the Naive Mean / Skilled Mean rows; until it runs, a quarter whose only pre-merge
-  rows were a fresh `EM` row plus a non-native LR row keeps showing the **blank card** that is already the
-  current state (FD-029 already hides both of those today — see the overview's EM-interim paragraph;
-  owner decisions R4-merge-is-deploy/R4-integration-branch). This manual run, verified, is the actual
-  recovery point for the blank card — not the merge in step 2 above — and closes the gap instead of
-  leaving it open until the next natural cron day.
+postprocessing deploy trigger (owner decision R4-integration-branch; `deploy.pp` in the overview's
+dependency graph). PP-064 A, FD-029 P1 and PP-065 P1a are already live separately (owner decision
+R4-merge-is-deploy; verify per org, `PP-064.C.step0`) and are not part of this merge. **The automatic
+bimonthly QUARTERLY recalc is allowed to run before this window and does not need to be paused** (owner
+decision R4-recalc-runs, 2026-09-28 — see N7 above): it already applies P1a's 3-of-3 rule, on calendar
+windows only, on servers today.
 
-**Before the recalc**, per org:
-- a private export of the QUARTER `long_forecasts` and `skill_metrics` rows — **this now captures
-  3-of-3-era quarter skill** (whatever the automatic bimonthly recalc has already produced under P1a's rule
-  since it merged, owner decision R4-recalc-runs), not the original pre-P1a skill; treat it as such when comparing
-  before/after;
-- a count of rule-A triplets per model × quarter.
+**This window follows PP-064 Chunk C's canonical "Order" sequence exactly**
+(`../high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout and verification");
+it is stated once there, including the abort path if CI or the pull/verify step fails, and referenced here:
+pause writers → the pre-deploy DB audit and **PP-065's own count of rule-A (same-issue monthly triplet)
+rows per model × quarter** (done here, at the audit step, i.e. **before** the merge and the export — not
+"before the recalc") → export → merge (`deploy.pp`) → wait for CI → pull and verify the image on each
+server (using the configured tag, not a hardcoded `:latest`) → decision F (tjhm, PP-064 Chunk C detail 3)
+→ recalc per org (detail 4 + this section's "After the recalc" checks below) → post-recalc checks →
+resume writers → **run the first operational quarterly postprocessing run promptly** (canonical step 11) —
+do not wait for the next scheduled LT cron day (kghm 10/25; tjhm 1). Exact command, per org: `bash
+bin/bimonthly_long_term_postprocessing.sh <env_file_path> operational` (this also processes monthly and
+seasonal ensembles — there is no quarter-only mode).
+
+**Why the operational run, not the recalc, is the blank-card recovery point.** The in-window recalc (step
+8) writes the derived seven-model rows for every quarter, the current one included
+(`src/skill_metrics.py` ~:2741, `joint_forecasts = forecasts.copy()`), but EM/Skilled Mean/Naive Mean are
+built from `merged`, an **inner join with observations** (~:2682-2690, ~:2806-2831) — so the recalc writes
+**no** ensemble rows for the current, unobserved quarter. Only the quarterly block of
+`postprocessing_operational_long_term.py` (~:207-232) writes them, from existing skill plus the latest
+derived forecasts, with no observation requirement. Until that operational run executes, a quarter whose
+only pre-merge rows were a fresh `EM` row plus a non-native LR row keeps showing the **blank card** that is
+already the current state (FD-029 already hides both of those today — see the overview's "User-visible
+consequence" paragraph; owner decisions R4-merge-is-deploy/R4-integration-branch). This manual run,
+verified, is the actual recovery point for the blank card — not the merge, and not the recalc alone — and
+closes the gap instead of leaving it open until the next natural cron day.
+
+The export (canonical step 3) now captures **calendar-window-era, 3-of-3-era** quarter skill (whatever the
+automatic bimonthly recalc has already produced under P1a's rule since it merged, owner decision
+R4-recalc-runs — see the overview's R4-recalc-runs decision for the full list of what that recalc already
+does), not the original pre-P1a skill; treat it as such when comparing before/after.
 
 **After the recalc**, check and report per org (aggregate counts only):
 - the four tombstone outcomes:
@@ -1625,7 +1708,7 @@ Between the merge and the recalc, the gates would run on stale (pre-P1b) quarter
   - tjhm: hv0 replaced;
   - flag OFF: sentinel replaced;
   - sub-K groups and the old quarter EM skill rows tombstoned;
-- the quarter skill rows suppressed by K = 10 (PP-064 C step 5);
+- the quarter skill rows suppressed by K = 10 (PP-064 C detail 5);
 - persisted Naive Mean / Skilled Mean / EM forecast rows at keys the recalc did not emit (accepted,
   round-2 decision 2; report the count);
 - unfillable gaps: quarter keys the maintenance detector reports that the gap-fill cannot fill (e.g. no
@@ -1634,10 +1717,12 @@ Between the merge and the recalc, the gates would run on stale (pre-P1b) quarter
 - the Dataset B rows overwritten by fresh derived rows with the same key under flag OFF. This upsert is
   irreversible, which is why the export is taken first.
 
-**Operationally:** on the next quarter issue day, derived rows appear on the dashboard with δ bounds
-(FD-029). Fallback quarters show no LR row on kghm (round-2 decision 3; hydromet notice); on tjhm a
-monthly-derived LR row may still appear as native until decision F, run inside this same window, has
-also completed (round-4 tjhm interim).
+**Operationally:** derived rows appear on the dashboard with δ bounds (FD-029) once the canonical step-11
+operational run above has executed and been verified — **not** "on the next quarter issue day": that
+framing is what the step-11 prompt-run requirement exists to avoid (the blank-card interval must not extend
+to the next natural LT cron day). Fallback quarters show no LR row on kghm (round-2 decision 3; hydromet
+notice); on tjhm a monthly-derived LR row may still appear as native until decision F, run inside this same
+window, has also completed (round-4 tjhm interim).
 
 ### P3 — remove the LR fallback
 

@@ -1,6 +1,6 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a prior-year-issued Q1 through
 
-**Status**: In Progress. **Chunk A merged to trunk (#527, `955bd384`, 2026-09-28), presumed already live on
+**Status**: In Progress. **Chunk A merged to trunk (#527, `955bd384`, 2026-09-27), presumed already live on
 both servers** via auto-pull (owner decision R4-merge-is-deploy, 2026-09-28; verify per org, Chunk C step 0). Remaining:
 Chunk B (the B5 check only, after PP-065 P1d) merges into the integration branch `integ_quarter_p1b_p2`
 (owner decision R4-integration-branch, 2026-09-28), alongside PP-065 P1b–P1d; that branch merges to trunk only in the P2
@@ -23,8 +23,10 @@ restriction found by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`, bo
 **Labels**: `postprocessing_forecasts`, `skill-metrics`, `long-term`, `quarter`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
 graph lives there only. Owner decisions of 2026-09-26 are cited by letter (A–H), round 2 by number
-("round-2 decision 1–6"), and 2026-09-28 (round 4) decisions by number 4–7 (numbered, not lettered, to
-avoid colliding with the 2026-09-26 letters E/F/G).
+("round-2 decision 1–6"), and 2026-09-28 decisions by the `R4-*` labels (R4-native-lr-precedence,
+R4-merge-is-deploy, R4-integration-branch, R4-recalc-runs — labelled, not lettered or bare-numbered, to
+avoid colliding with the 2026-09-26 letters E/F/G and with PP-065's own independently-numbered decision
+list; see the overview's "2026-09-28, round 4" heading for the full reasoning).
 **Supersedes the code approach of**: GitHub #521 / branch `sandro_sapphire_2_quaterly_agg` (f0a83352)
 **Related**:
 - PP-065 (derived models, native-row selection, quarterly Naive/Skilled Mean, LR fallback), PP-066
@@ -595,23 +597,67 @@ Chunk B no longer edits `data_reader.py` or any other file.
   paragraph — check it is understood correctly in the P1b readiness review.
 - Chunk A and PP-065 deployed (PP-065 includes the 3-of-3 observation rule; 2-of-3 observations against
   3-of-3 derived forecasts would bias the scores).
-- **One writer-paused window** (ops instruction, no code): merge `integ_quarter_p1b_p2` into trunk (this
-  merge is the postprocessing deploy, `deploy.pp`), run the decision-F step (tjhm), then the recalc per
-  org.
-  - Pause **every** writer, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
-    maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`),
-    any recalc other than the one below, and manual runs — for this window only; the automatic bimonthly
-    recalc does not need pausing beforehand (owner decision R4-recalc-runs).
-  - Wait for running jobs to finish. Then: export → merge → **wait for CI on the merge commit to succeed
-    → pull the new image on each server → verify the pulled image's creation date/digest matches the new
-    build** (step 0 covers the verification mechanics; do it again here, post-merge, since step 0's own
-    reading may predate this merge) → mutate (decision-F step) → recalc → verify → only then resume.
-    Merging `integ_quarter_p1b_p2` (`deploy.pp`) only makes CI build and push a new `:latest` image; with
-    writers paused, **nothing else pulls it**: Luigi only pulls when a task starts
-    (`apps/pipeline/pipeline_docker.py:296-304`), and the recalc wrapper
-    (`bin/bimonthly_long_term_skill_metrics_recalculation.sh:77-85`) only pulls when no image exists
-    locally at all — so without an explicit `docker pull` on each server, the recalc and any manual
-    verification below run against the OLD image, silently.
+- **Pre-window step** (before the writer-paused window opens, no code): merge trunk into
+  `integ_quarter_p1b_p2` and run `SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` (and
+  `forecast_dashboard` if a dashboard-affecting change is also in this window) on that exact tree. CI does
+  not test these modules (INFRA-059), so this local run is the only test gate before the merge below.
+- **One writer-paused window** (ops instruction, no code). This is the **canonical in-window sequence** —
+  PP-065 § "P2 — rollout" and the overview's rollout step 3.4 reference this list rather than restating it:
+  1. **Pause every writer**, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
+     maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`), any
+     recalc other than the one at step 8, and manual runs — the automatic bimonthly recalc does not need
+     pausing beforehand (owner decision R4-recalc-runs). Wait for running jobs to finish before continuing.
+  2. **The read-only pre-deploy DB audit** (detail 2 below) and **PP-065's count of rule-A (same-issue
+     monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", "Before the recalc").
+  3. **Export** (detail 1 below: `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
+     rows, kept out of the repo) — this is the SAME export PP-065 P2 refers to; state it once here.
+  4. **Merge** `integ_quarter_p1b_p2` into trunk — this merge **is** the postprocessing deploy trigger
+     (`deploy.pp` in the overview's dependency graph).
+  5. **Wait for the CI run on the merge commit to succeed** (`.github/workflows/deploy_production.yml`) —
+     the merge only builds and pushes the configured-tag image; it does not by itself put anything on a
+     server. **If CI fails: keep writers paused, and revert the merge or fix forward before resuming** — see
+     "Abort path" below; do not proceed to step 6.
+  6. **On each server, pull the new image and verify it**: `docker pull
+     mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest}` (and
+     `mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}` if this window
+     also carries a dashboard-affecting change) — **use the org's configured tag, not a hardcoded
+     `:latest`**. Then `docker image inspect
+     mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest} --format
+     '{{.Created}}'` (and digest) and confirm it matches the new build from step 5, not a stale local image
+     (detail 0/`PP-064.C.step0`'s own reading may predate this merge — re-verify here). Nothing else pulls
+     it inside this window: Luigi only pulls when a task starts
+     (`apps/pipeline/pipeline_docker.py:296-304`), and the recalc wrapper
+     (`bin/bimonthly_long_term_skill_metrics_recalculation.sh:77-85`) only pulls when no image exists
+     locally at all — so without this explicit pull, steps 7-9 below would silently run against the OLD
+     image. **If the pull or the verification fails or does not match: keep writers paused, do not
+     proceed** — see "Abort path" below.
+  7. **Decision F (tjhm)**, inside the window, before the recalc — detail 3 below.
+  8. **Recalc** per org — detail 4 below.
+  9. **Post-recalc checks** — detail 5 below.
+  10. **Resume the paused writers.**
+  11. **Run the first operational quarterly postprocessing run promptly**, and verify it — do not wait for
+      the next scheduled LT cron day. Exact command, per org: `bash
+      bin/bimonthly_long_term_postprocessing.sh <env_file_path> operational`. This invokes
+      `postprocessing_operational_long_term.py`, which has no quarter-only mode — the same run also
+      processes monthly and seasonal ensembles. This is what actually writes the derived seven-model rows'
+      Naive Mean / Skilled Mean ensemble rows for the CURRENT (unobserved) quarter: the in-window recalc
+      (step 8) only writes ensembles for quarters with 3-of-3 observations (`src/skill_metrics.py`
+      ~:2682-2690, ~:2806-2831, an inner join with observations), never the current one; only this
+      operational run's quarterly block (`postprocessing_operational_long_term.py` ~:207-232) does, from
+      existing skill plus the latest derived forecasts, with no observation requirement. See the overview's
+      "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card framing this
+      closes.
+
+  **Abort path.** If CI (step 5) or the pull/verify step (step 6) fails after the merge: keep writers
+  paused, and revert the merge or fix forward before resuming — do not leave a merged-but-unverified
+  `integ_quarter_p1b_p2` sitting on trunk across the window boundary. Otherwise the next unrelated trunk
+  merge, or the monthly `scheduled_security_rebuild` workflow
+  (`.github/workflows/scheduled_security_rebuild.yml`, cron `0 0 1 * *`; verify), rebuilds and publishes a
+  P1b image at the configured tag regardless of this window's own CI/pull outcome, which Luigi then
+  auto-pulls **outside any writer-paused window**.
+
+**Details, keyed to the canonical steps above by number** (these are reference detail, not a second,
+competing order — "step N" above is the canonical sequence; "detail N" below is this list):
 
 0. **Server state read per org** (read-only): `SAPPHIRE_SKILL_LEAD_AWARE`,
    `ieasyhydroforecast_ml_long_term_supported_modes` and `ieasyhydroforecast_min_pairs_long_term_quarter`
@@ -621,11 +667,13 @@ Chunk B no longer edits `data_reader.py` or any other file.
    `operational_schedule_for_mode("quarter")` raises (`long_term_horizon_resolver.py:138-142`). Under flag
    OFF, PP-065 then skips the derivation and the native-row filter with one WARNING; under flag ON the
    quarter readers raise, as on trunk (`long_term_horizon_resolver.py:84-111` notes taj-style configs that
-   omit it). **Decision 5's per-org verification (2026-09-28):** also record the image tag and the
+   omit it). **R4-merge-is-deploy's per-org verification (2026-09-28):** also record the image tag and the
    postprocessing/dashboard image creation dates (`docker image inspect
-   mabesa/sapphire-postprocessing:latest --format '{{.Created}}'`, same for `sapphire-dashboard`), to
-   confirm Chunk A and FD-029 are actually live. The automatic bimonthly QUARTERLY recalc is allowed to run
-   and does not need pausing (owner decision R4-recalc-runs, 2026-09-28).
+   mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest} --format
+   '{{.Created}}'`, same for `sapphire-dashboard` with `ieasyhydroforecast_frontend_docker_image_tag` —
+   use the org's *configured* tag, not a hardcoded `:latest`), to confirm Chunk A and FD-029 are actually
+   live. The automatic bimonthly QUARTERLY recalc is allowed to run and does not need pausing (owner
+   decision R4-recalc-runs, 2026-09-28).
 1. **Pre-recalc backup per org:** `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
    rows, kept out of the repo.
 2. **Pre-deploy DB audit per org** (read-only SQL, aggregate counts only, no station codes).

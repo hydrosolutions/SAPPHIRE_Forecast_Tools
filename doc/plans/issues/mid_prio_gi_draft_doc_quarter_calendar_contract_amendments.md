@@ -123,6 +123,14 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 
 ### P2a — released with the PP-065 deploy (rows 10 and 12)
 
+**Route (orchestrator decision, 2026-09-28).** Rows 10 and 12 describe **post-P1b** behaviour (the
+seven-model derivation, the LR fallback, the writer/ensemble changes). Since that behaviour does not exist
+on trunk until PP-065 P1b–P1d merge, this P2a documentation PR merges into the **integration branch**
+`integ_quarter_p1b_p2` alongside PP-065 P1b–P1d (owner decision R4-integration-branch), not directly into
+`maxat_sapphire_2` — it reaches trunk only when that branch merges (`deploy.pp`), so the docs and the code
+they describe land together. See the overview's `DOC-009.P2a` graph node for the matching dependency-graph
+statement.
+
 **Merged-vs-deployed note (added 2026-09-28; tied to the overview's owner decisions
 R4-merge-is-deploy/R4-integration-branch/R4-recalc-runs, 2026-09-28 — numbered/labelled, not lettered,
 to avoid colliding with the 2026-09-26 decisions E/F/G above).**

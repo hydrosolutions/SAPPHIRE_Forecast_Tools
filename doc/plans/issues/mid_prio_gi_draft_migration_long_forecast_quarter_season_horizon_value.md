@@ -15,7 +15,12 @@ the postprocessing *service* (sapphire/services) needs no change
 > `hv = quarter_horizon_value()` (the configured lead); under flag ON it passes each row's own
 > `horizon_value` through (`api_writer.py:1173-1174`), and the flag-ON reader can legitimately emit
 > several leads for the same quarter (`tests/test_quarterly_data_reader.py`
-> `test_monthly_aggregated_two_leads_survive`). So "legacy" means the pre-P-PIPE quarter-number rows
+> `test_monthly_aggregated_two_leads_survive`) -- **this evidence holds only for pre-P1b trunk.** PP-065
+> P1b (`high_prio_gi_draft_pp_quarter_derived_models.md`, owner decision R4-native-lr-precedence) admits
+> only **one native lead per (code, year, quarter, model) key**, and rewrites this same test accordingly
+> (PP-065's "Existing tests expected to change" list). Once P1b lands, "several leads for the same quarter"
+> no longer describes the reader's behaviour; re-check this claim against P1b's own multi-lead handling
+> before relying on it. So "legacy" means the pre-P-PIPE quarter-number rows
 > specifically -- it does **not** mean every row with `hv != config-lead` is legacy; a flag-ON multi-lead
 > row can have `hv != config-lead` and still be current. Decision: **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is
 > a hard prerequisite (phase P-PIPE) for the data cleanup, which would otherwise be regenerated. P-PIPE

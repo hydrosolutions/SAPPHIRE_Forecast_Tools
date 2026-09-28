@@ -23,7 +23,7 @@ do not touch, so the fix in this issue is unaffected by their merge or deploy st
   although the LT module's own quarter forecast CSV has a value for the same station, model, `date` and
   `valid_from`.
 - **kghm**: 16 Q2-2026, and **tjhm**: 3 Q3-2026, calendar-window LR rows are stored with a null `q`. **Since
-  #527/#528** (PP-064 Chunk A / FD-029 P1, merged 2026-09-28), the quarter readers and the dashboard card
+  #527/#528** (PP-064 Chunk A / FD-029 P1, merged 2026-09-27), the quarter readers and the dashboard card
   *exclude* rolling-window rows *at read* (they are not deleted from the DB) — those stations would
   otherwise have fallen back on a rolling-window row, so on trunk today these stations already show **no**
   LR value at all for that quarter. This is not a future prediction; it is the present-tense state of
