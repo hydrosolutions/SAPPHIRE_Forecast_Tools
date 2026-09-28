@@ -61,6 +61,24 @@ Paths are relative to `apps/postprocessing_forecasts/`. Citations are to trunk `
 6. **Unchanged:**
    - season (model set, ensembles including season EM);
    - `horizon_value` = the configured quarter lead (kghm 1, tjhm 0).
+7. **P1a amendments approved by the owner (2026-09-28).** A codex plan-conformance check found four
+   P1a amendments (below, in the P1a section) that change the ORIGINAL "Target behaviour" spec's
+   semantics without an owner decision recorded. The owner has approved all four:
+   1. **Parser.** `date`/`valid_from` are parsed with `local_calendar_date`, not
+      `pd.to_datetime(..., format="mixed")` (Target behaviour item 1, marked SUPERSEDED below).
+   2. **Exact duplicates collapse, not ambiguous.** A row that is an exact duplicate of another --
+      same identity key, AND both window ends, AND the point value(s) all match; OR the same `id`
+      plus matching values -- collapses to ONE row, instead of making the whole triplet ambiguous
+      (Target behaviour item 1's original "Duplicates" sentence, marked SUPERSEDED below).
+   3. **Singleton rule scoped to groups of >= 2.** A singleton row at (code, canonical model, `d`,
+      hv) is used WHATEVER its `valid_from` -- including an offset or mislabelled window (decision 1
+      above) -- with no window match required; the uniqueness rule (the original "exactly one
+      matching row" check) applies only within a group of >= 2 rows at that same key (also
+      superseding Target behaviour item 1's original sentence).
+   4. **Observations: average within the month, then require 3 distinct months.** Duplicate rows of
+      one calendar month are averaged together FIRST (skipping NaN); the resulting per-month means
+      are what the `QUARTER_OBS_MIN_MONTHS = 3` distinct-month coverage check counts (Target
+      behaviour item 8, marked as refined below).
 
 ## Feasibility (verified; re-measure per server)
 
@@ -190,6 +208,14 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      equals the target (year, month) wins; zero or ≥ 2 matching rows → skip the triplet and count it.
      Evidence: the local DB has 519 tjhm and 38 kghm MONTH groups where two rows match (one calendar and
      one offset window); today these are all ensembles.
+     **[SUPERSEDED by the approved amendments (2) and (3) in "Owner decisions this plan implements"
+     above: an EXACT duplicate (same key, both window ends, and values) collapses to one row instead
+     of making the triplet ambiguous; a SINGLETON at this key is used whatever its `valid_from`, so
+     "zero matching rows" is no longer itself a reason to skip; the uniqueness rule (this sentence's
+     "exactly one row ... wins") applies only within a group of >= 2 rows. This original sentence is
+     kept for history, not as the current contract -- see the P1a section's "Exact-duplicate
+     pre-step and singleton rule" and "A singleton ... is used whatever its `valid_from`" bullets
+     below for the current rule.]**
    - **Point value** per month = `q` if the column exists and the value is finite, else `q50`. All three
      must be finite.
    - **Output row:**
@@ -343,6 +369,10 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
 8. **Observations: 3 of 3 months** (rev-3 PP-064 "B4"). Add `QUARTER_OBS_MIN_MONTHS = 3`, used only at
    `src/aggregation.py:125-126`, unweighted. This also changes δ (`:132-141`), which is computed from the
    surviving years. `QUARTER_MIN_MONTHS` (`:38`) is unchanged.
+   **[Refined by the approved amendment (4) in "Owner decisions this plan implements" above: a
+   DUPLICATE row for one calendar month is averaged together with its own month's other row(s)
+   FIRST, skipping NaN, and it is that per-month mean the "3 of 3" DISTINCT-month count is over --
+   see the P1a section's "Distinct-month observation counting" bullet below for the current rule.]**
 
 ## Plan: four agent phases, then rollout
 
@@ -430,7 +460,8 @@ independent reviews (codex + a fresh Claude reviewer), found gaps in the P1a spe
 subsection IS the amended spec (the implementing brief it was drafted from was a scratch file that no
 longer exists; nothing here depends on it):
 
-- **Date parsing.** `date` and `valid_from` are parsed with `local_calendar_date`
+- **Date parsing** (owner-approved amendment (1), "Owner decisions this plan implements" above,
+  2026-09-28). `date` and `valid_from` are parsed with `local_calendar_date`
   (`src/aggregation.py:102-201`), not `pd.to_datetime(..., format="mixed")`: the latter raises on
   mixed tz-aware/naive strings and shifts the local date under `utc=True`.
 - **Return shape.** `derive_quarterly_from_monthly_same_issue` returns `(frame, counts)`, where
@@ -463,7 +494,8 @@ longer exists; nothing here depends on it):
   `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
   `model_type_description` and `horizon_type` never leak into the output.
 - **Exact-duplicate pre-step and singleton rule (2026-09-27 fix; extended 2026-09-27 after round-2
-  and round-3 review, `src/aggregation.py:1082-1150`).** Before the uniqueness rule, a row is an
+  and round-3 review, `src/aggregation.py:1082-1150`; owner-approved amendments (2) and (3), "Owner
+  decisions this plan implements" above, 2026-09-28).** Before the uniqueness rule, a row is an
   exact duplicate of another only if its identity (code, canonical model, `d`, hv, `valid_from`,
   `valid_to`) AND its point-value inputs (`q` and `q50`, NaN-equal) BOTH match -- a same-window pair
   with a DIFFERENT value is never silently collapsed by whichever row happens to sort first; it is
@@ -602,7 +634,8 @@ longer exists; nothing here depends on it):
   forced to one dtype via an extra cast, since a `Series.dt.day != this` comparison (the only
   caller) works correctly either way and a float64 cast would needlessly change that comparison's
   dtype in the common no-`NaT` case.
-- **Distinct-month observation counting.** `aggregate_monthly_obs_to_quarterly` first averages per
+- **Distinct-month observation counting** (owner-approved amendment (4), "Owner decisions this plan
+  implements" above, 2026-09-28). `aggregate_monthly_obs_to_quarterly` first averages per
   (code, year, quarter, month) skipping NaN, then aggregates those monthly means to the quarter
   (unweighted mean); `n_months` counts DISTINCT months with a non-null monthly mean, not non-null
   rows. With the normal one-row-per-month input this is unchanged from before; only the coverage
