@@ -1,9 +1,9 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a prior-year-issued Q1 through
 
 **Status**: In Progress. **Chunk A merged to trunk (#527, `955bd384`, 2026-09-28), presumed already live on
-both servers** via auto-pull (owner decision E, 2026-09-28; verify per org, Chunk C step 0). Remaining:
+both servers** via auto-pull (owner decision R4-merge-is-deploy, 2026-09-28; verify per org, Chunk C step 0). Remaining:
 Chunk B (the B5 check only, after PP-065 P1d) merges into the integration branch `integ_quarter_p1b_p2`
-(owner decision F, 2026-09-28), alongside PP-065 P1b–P1d; that branch merges to trunk only in the P2
+(owner decision R4-integration-branch, 2026-09-28), alongside PP-065 P1b–P1d; that branch merges to trunk only in the P2
 window, which is the postprocessing deploy. Chunk C (ops, rollout and verification) follows. Draft
 (2026-09-26, rev 6 after the fourth review round; updated 2026-09-27 for the owner-approved native-Q1
 restriction found by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`, both now inside the merged
@@ -14,7 +14,7 @@ restriction found by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`, bo
   observations. With `SAPPHIRE_SKILL_LEAD_AWARE=true` the wrong window is picked deterministically
   (#521: NSE ≈ −75 → +0.1 after correction).
 - Chunk A must be deployed **before 2026-12-25**, as the prerequisite of PP-065 — **presumed already
-  satisfied** via auto-pull (owner decision E; verify per org). LTF-014 P0 is deferred
+  satisfied** via auto-pull (owner decision R4-merge-is-deploy; verify per org). LTF-014 P0 is deferred
   (configs stay `forecast_months [3..9]`), so no native kghm LR row is issued on Dec 25. The first kghm
   Q1 comes from PP-065's derived path (the seven models plus decision G's LR fallback), which needs the
   same next-year target (PP-065 item 2); under flag OFF its derived and ensemble rows are persisted
@@ -23,7 +23,8 @@ restriction found by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`, bo
 **Labels**: `postprocessing_forecasts`, `skill-metrics`, `long-term`, `quarter`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
 graph lives there only. Owner decisions of 2026-09-26 are cited by letter (A–H), round 2 by number
-("round-2 decision 1–6").
+("round-2 decision 1–6"), and 2026-09-28 (round 4) decisions by number 4–7 (numbered, not lettered, to
+avoid colliding with the 2026-09-26 letters E/F/G).
 **Supersedes the code approach of**: GitHub #521 / branch `sandro_sapphire_2_quaterly_agg` (f0a83352)
 **Related**:
 - PP-065 (derived models, native-row selection, quarterly Naive/Skilled Mean, LR fallback), PP-066
@@ -327,6 +328,16 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   across stations and models, not a single row overall. If the schedule cannot be resolved, or resolves
   with `issue_day < 1`, there is **no** exception at all — trunk's set only — and one WARNING is logged.
   Nothing else is added, nothing else is removed.
+- **Superseded for LR rows by PP-065 P1b (owner decision R4-native-lr-precedence, 2026-09-28).** The "trunk's set" described
+  above (every row with issue year in `[start_year, end_year]`, any target year, widened by this Q1
+  exception) is this chunk's own contract for direct rows in general. For **LR rows specifically**,
+  PP-065 P1b's native-row rule wins instead, under both flags: only a direct LR row that passes native-row
+  selection survives; non-native, backfill-shaped, and null/unparseable-date direct LR rows are dropped
+  and counted. See the overview's owner decisions (2026-09-28, decision R4-native-lr-precedence) and PP-065 § "Owner decisions
+  this plan implements" (item 9) for the full rule; PP-065's "Target-year trim scope" note narrates the
+  same override from PP-065's side. This chunk's own Problem-7 widening (the `start_year − 1` read and the
+  native-Q1 exception above) is unaffected in what it **admits** — it still widens which issue years are
+  read — but every row it admits must still pass PP-065's native-row rule to survive, for LR models.
 - **Native-only restriction (`_quarter_native_q1_issue_date`, `data_reader.py`, `115eb886`).** Before
   2026-09-27 the mask checked only target year `== start_year` and `quarter_in_year == 1` — it did not
   check the issue date at all, so it also admitted any OTHER prior-year row sharing that target quarter,
@@ -569,16 +580,16 @@ Chunk B no longer edits `data_reader.py` or any other file.
 ## Chunk C — rollout and verification (ops; mostly no code)
 
 **Order** (as in the overview graph):
-- **Rollout mechanism (owner decisions E/F/G, 2026-09-28 — see the overview's "Rollout and
+- **Rollout mechanism (owner decisions R4-merge-is-deploy, R4-integration-branch, R4-recalc-runs, 2026-09-28 — see the overview's "Rollout and
   communication").** Chunk A (this plan) and FD-029 are both merged to trunk (#527, #528), and **both are
-  presumed already deployed** — owner decision E: Chunk A via Luigi's automatic `:latest` pull whenever the
+  presumed already deployed** — owner decision R4-merge-is-deploy: Chunk A via Luigi's automatic `:latest` pull whenever the
   Docker Hub digest differs (`apps/pipeline/pipeline_docker.py:296-304`), and FD-029 via the dashboard's own
   daily frontend auto-pull (`bin/daily_update_sapphire_frontend.sh`, run from the 19:00 UTC cron entry) —
   verify per org (image tags, postprocessing/dashboard image creation dates; step 0 below). Because merge
   already means deploy, the remaining work (PP-065 P1b–P1d and Chunk B) is **held on the integration branch
-  `integ_quarter_p1b_p2`** (owner decision F) instead of being gated at a deploy step — there is nothing
+  `integ_quarter_p1b_p2`** (owner decision R4-integration-branch) instead of being gated at a deploy step — there is nothing
   left to gate at deploy time once something is merged. The automatic bimonthly quarterly recalc is
-  **allowed to run** in the meantime and is not paused (owner decision G). **Open, unverified:** the
+  **allowed to run** in the meantime and is not paused (owner decision R4-recalc-runs). **Open, unverified:** the
   interaction between live Chunk A (postprocessing) and the live FD-029 dashboard, while PP-065 P1b has not
   merged, is exactly the current-state blank-card consequence documented in the overview's EM-interim
   paragraph — check it is understood correctly in the P1b readiness review.
@@ -590,8 +601,17 @@ Chunk B no longer edits `data_reader.py` or any other file.
   - Pause **every** writer, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
     maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`),
     any recalc other than the one below, and manual runs — for this window only; the automatic bimonthly
-    recalc does not need pausing beforehand (owner decision G).
-  - Wait for running jobs to finish. Then export, merge, mutate, recalc and verify; only then resume.
+    recalc does not need pausing beforehand (owner decision R4-recalc-runs).
+  - Wait for running jobs to finish. Then: export → merge → **wait for CI on the merge commit to succeed
+    → pull the new image on each server → verify the pulled image's creation date/digest matches the new
+    build** (step 0 covers the verification mechanics; do it again here, post-merge, since step 0's own
+    reading may predate this merge) → mutate (decision-F step) → recalc → verify → only then resume.
+    Merging `integ_quarter_p1b_p2` (`deploy.pp`) only makes CI build and push a new `:latest` image; with
+    writers paused, **nothing else pulls it**: Luigi only pulls when a task starts
+    (`apps/pipeline/pipeline_docker.py:296-304`), and the recalc wrapper
+    (`bin/bimonthly_long_term_skill_metrics_recalculation.sh:77-85`) only pulls when no image exists
+    locally at all — so without an explicit `docker pull` on each server, the recalc and any manual
+    verification below run against the OLD image, silently.
 
 0. **Server state read per org** (read-only): `SAPPHIRE_SKILL_LEAD_AWARE`,
    `ieasyhydroforecast_ml_long_term_supported_modes` and `ieasyhydroforecast_min_pairs_long_term_quarter`
@@ -601,11 +621,11 @@ Chunk B no longer edits `data_reader.py` or any other file.
    `operational_schedule_for_mode("quarter")` raises (`long_term_horizon_resolver.py:138-142`). Under flag
    OFF, PP-065 then skips the derivation and the native-row filter with one WARNING; under flag ON the
    quarter readers raise, as on trunk (`long_term_horizon_resolver.py:84-111` notes taj-style configs that
-   omit it). **Decision E's per-org verification (2026-09-28):** also record the image tag and the
+   omit it). **Decision 5's per-org verification (2026-09-28):** also record the image tag and the
    postprocessing/dashboard image creation dates (`docker image inspect
    mabesa/sapphire-postprocessing:latest --format '{{.Created}}'`, same for `sapphire-dashboard`), to
    confirm Chunk A and FD-029 are actually live. The automatic bimonthly QUARTERLY recalc is allowed to run
-   and does not need pausing (owner decision G, 2026-09-28).
+   and does not need pausing (owner decision R4-recalc-runs, 2026-09-28).
 1. **Pre-recalc backup per org:** `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
    rows, kept out of the repo.
 2. **Pre-deploy DB audit per org** (read-only SQL, aggregate counts only, no station codes).

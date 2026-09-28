@@ -8,8 +8,8 @@ an otherwise-correct row, not a row hidden by the calendar-window fixes.
 **Related**: PP-064 (calendar-window validation), PP-065 (derived models, native-row selection), PP-061
 (flag stamping on aggregated writer paths — **do not duplicate**, cross-reference only).
 
-**Priority re-check (2026-09-28).** PP-064 (#527) and FD-029 (#528) are merged to trunk. **Owner decision E
-(2026-09-28, merge = deploy)** establishes that both halves are presumed already live on servers: PP-064 A
+**Priority re-check (2026-09-28).** PP-064 (#527) and FD-029 (#528) are merged to trunk. **Owner decision
+R4-merge-is-deploy (2026-09-28, merge = deploy)** establishes that both halves are presumed already live on servers: PP-064 A
 (the postprocessing reader's exclusion) via Luigi's automatic `:latest` pull, and FD-029 (the dashboard's
 own exclusion) via the dashboard's own daily frontend auto-pull — verify per org, either way. There is no
 longer an asymmetry between them; see the observation below for what that means for each population.
@@ -28,8 +28,8 @@ do not touch, so the fix in this issue is unaffected by their merge or deploy st
   otherwise have fallen back on a rolling-window row, so on trunk today these stations already show **no**
   LR value at all for that quarter. This is not a future prediction; it is the present-tense state of
   `apps/postprocessing_forecasts/tests/test_quarter_calendar_window.py` and
-  `apps/forecast_dashboard/src/db.py` on trunk. **Both halves are presumed already live (owner decision E,
-  2026-09-28):** the postprocessing reader's exclusion (`data_reader.py`, PP-064 A) via Luigi's auto-pull,
+  `apps/forecast_dashboard/src/db.py` on trunk. **Both halves are presumed already live (owner decision
+  R4-merge-is-deploy, 2026-09-28):** the postprocessing reader's exclusion (`data_reader.py`, PP-064 A) via Luigi's auto-pull,
   and the dashboard's own exclusion (`apps/forecast_dashboard/src/db.py`, FD-029) via the dashboard's daily
   frontend auto-pull — verify per org, but a null-`q` row either one excludes may already show as
   no-LR-value today, in both the API response and the dashboard card.

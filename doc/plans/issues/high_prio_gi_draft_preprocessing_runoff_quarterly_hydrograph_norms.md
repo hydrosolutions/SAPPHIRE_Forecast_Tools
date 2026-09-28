@@ -166,13 +166,19 @@ behaviour.
    `sapphire-api-client` gate. *(Apps-side: ✅ 337 passed, 2 pre-existing unrelated skips in
    `test_src.py`.)*
 8. `doc/data_flow_long_term.md` reflects the QUARTER aggregation step and the join contract.
-   *(✅ commit `8a27768`.)*
+   *(⚠️ commit `8a27768` added the aggregation-step description, but its "Consumer join contract" note
+   (`doc/data_flow_long_term.md:269-274`) still tells consumers to join on period keys including
+   `horizon_value` — the exact hv-keyed contract this issue's own "Consumer / join contract" section
+   below found wrong and corrected. The aggregation-step half of this criterion is met; the join-contract
+   half is NOT. Fix is owned by DOC-009 row 10, not this issue — see `mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md`.)*
 
 ---
 
 ## Consumer / join contract (for the deferred dashboard work) — CORRECTED 2026-09-28
 
-**The join-on-`horizon_value` contract above was wrong; it does not hold.** Verified against trunk
+**The original join-on-`horizon_value` contract (in this issue's earlier revision, and still the text
+currently published in `doc/data_flow_long_term.md:269-274` — see acceptance item 8 above) was wrong; it
+does not hold.** Verified against trunk
 `apps/postprocessing_forecasts/src/api_writer.py:1160-1176` (the current location of the quarter
 write branch; the file has grown since this issue's original `:1043-1051` citation): for
 `long_forecasts` QUARTER rows, `horizon_value` is the **configured operational lead** (kghm 1, tjhm 0

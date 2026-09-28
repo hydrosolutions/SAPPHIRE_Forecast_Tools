@@ -1,11 +1,12 @@
 # FD-029: Quarterly card shows the latest calendar quarter, fetched with a year-safe window
 
 **Status**: P1 **merged to trunk (#528, 2026-09-28), presumed already live on both servers** via the
-dashboard's own daily frontend auto-pull (owner decision E, 2026-09-28; `bin/daily_update_sapphire_frontend.sh`,
-run from the 19:00 UTC cron entry — verify per org, image creation date). This means FD-029 is already
+dashboard's own daily frontend auto-pull (owner decision R4-merge-is-deploy, 2026-09-28;
+`bin/daily_update_sapphire_frontend.sh`, run from the 19:00 UTC cron entry — verify per org, image
+creation date). This means FD-029 is already
 hiding every quarter `EM` row and every non-native LR row on the dashboard, while PP-065 P1b (which stops
 writing fresh `EM` rows and starts writing the replacement derived/ensemble rows) is still held on the
-integration branch `integ_quarter_p1b_p2` (owner decision F) — so a quarter whose only DB rows are a fresh
+integration branch `integ_quarter_p1b_p2` (owner decision R4-integration-branch) — so a quarter whose only DB rows are a fresh
 `EM` row plus a non-native LR row shows a **blank card right now**, not only once a future joint deploy
 happens (see the overview's EM-interim paragraph).
 **Module**: `apps/forecast_dashboard`
@@ -397,7 +398,7 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - Only in degraded mode (item 3) show the period and "issue date not available". A row's `date` is never
      shown as an issue date.
 
-**Behaviour after — bulletin input (accepted in the interim, overview decision E).** The three bulletin
+**Behaviour after — bulletin input (accepted in the interim, overview decision R4-merge-is-deploy).** The three bulletin
 blocks call the same function with `head(1)` on the latest `date`. After P1:
 - rolling-window, non-native LR, quarter `EM` and not-yet-eligible rows are no longer returned;
 - rows dated 2027-01-01 appear on Dec 25–31;
@@ -535,8 +536,8 @@ new `EM` row.
 - `git diff --stat` is limited to the listed files.
 
 **Deploy.** Merged (#528) and **presumed already live on both servers** via the dashboard's own daily
-frontend auto-pull (owner decision E; verify per org, PP-064 Chunk C step 0). PP-064 A is presumed live the
-same way, independently. PP-065 P1b–P1d are still held on the integration branch (owner decision F) — this
+frontend auto-pull (owner decision R4-merge-is-deploy; verify per org, PP-064 Chunk C step 0). PP-064 A is presumed live the
+same way, independently. PP-065 P1b–P1d are still held on the integration branch (owner decision R4-integration-branch) — this
 card is already reading calendar-window PP-064-shaped rows, but the seven derived models and the Naive
 Mean / Skilled Mean rows PP-065 P1b writes are not there yet, and neither are P1b's fixes for degraded-mode
 schedule handling. Precondition for P1b's own merge (the writer-paused window / `deploy.pp`): PP-064 Chunk
