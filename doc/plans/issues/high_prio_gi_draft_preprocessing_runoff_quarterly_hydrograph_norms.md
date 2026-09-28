@@ -6,10 +6,16 @@
 
 **Assignees**: max, mabesa
 
-**Status**: Apps-side implemented (commits `df8b424`, `8a27768` on
-`develop_preprocessing_runoff_quarterly_hydrograph_norms`). Service-side already shipped by Max
-(`2be58f7`, migration `d4e5f6a7b8c9`). **Blocked on Owner B** (`sapphire-api-client`) before
-end-to-end verification and deploy.
+**Status**: Apps-side implemented and merged to trunk (PR #358, commits `df8b424`, `8a27768`, verified
+present on trunk). Service-side already shipped by Max (`2be58f7`, migration `d4e5f6a7b8c9`). **Owner B
+is done**: `sapphire-api-client` is pinned at `4fd543e852f1eb0c834d8ab649a849a0a56d4e9b` (short `4fd543e8`)
+in every `apps/*/pyproject.toml` (verified: all 8 apps consistent), and the installed package's
+`VALID_HORIZONS` (derived from a single `HorizonTypeLiteral`, `sapphire_api_client/validators.py:14-19`)
+includes `"quarter"`, so `write_hydrograph`/`read_hydrograph` and the postprocessing modules' own
+`validate_enum_param` calls all validate against the same set now — the Literal-inconsistency root cause
+(INFRA-019) is resolved. **Remaining: end-to-end verification on a real deployment** (a live Postgres
+`ALTER TYPE` + a real API round-trip; apps-side tests use `MagicMock` and do not exercise the deployed
+schema).
 
 ---
 
@@ -60,18 +66,19 @@ can be verified end-to-end.**
 - **Still outstanding for A:** service-side tests covering a `quarter` hydrograph payload (none
   exist yet). We cannot add these (ownership boundary) — Max to decide.
 
-### Owner B — `sapphire-api-client` (upstream library, external git repo) — 🚩 BLOCKER
-- Add `"quarter"` to `VALID_HORIZONS` in `sapphire_api_client/validators.py`. Today:
-  `{"day","pentad","decade","month","season","year"}` — no `quarter`. (`quarter` exists only in
-  `VALID_LONG_FORECAST_HORIZONS`, which the hydrograph path does not use.)
-- `write_hydrograph` **and** `read_hydrograph` validate against `VALID_HORIZONS`
-  (`preprocessing.py:180`). Until this lands, both the preprocessing_runoff write and the dashboard
-  read of `"quarter"` raise `ValueError` before reaching the API. **This gates both directions.**
-- Tag a release / new commit; re-pin every consumer's `apps/*/pyproject.toml` (currently
-  `a196e1728f2447ec416c77cd54c9d6899a86d9e6`).
-- **Owner C's tests pass today via MagicMock and do not exercise this gate** — a green app suite is
-  not end-to-end proof. No real write/read of `"quarter"` is valid until B lands and consumers
-  re-pin.
+### Owner B — `sapphire-api-client` (upstream library, external git repo) — ✅ DONE (verified 2026-09-28)
+- `"quarter"` is in `HorizonTypeLiteral` / `VALID_HORIZONS` in the pinned `sapphire_api_client/validators.py`
+  (`HorizonTypeLiteral = Literal["day", "pentad", "decade", "month", "quarter", "season", "year"]`,
+  `VALID_HORIZONS = set(get_args(HorizonTypeLiteral))`, `:14-19`). `write_hydrograph` and `read_hydrograph`
+  (`preprocessing.py`) both validate against this same `VALID_HORIZONS`, as do the other API modules
+  (`postprocessing.py`, `short_term.py`) — the write-path Literal inconsistency the original PREPQ-008
+  root-cause analysis found (`postprocessing_base.py` vs. `postprocessing.py`/`short_term.py`) is resolved
+  by deriving every module's set from the one shared `HorizonTypeLiteral` (INFRA-019).
+- Every consumer's `apps/*/pyproject.toml` is re-pinned to
+  `4fd543e852f1eb0c834d8ab649a849a0a56d4e9b` (verified: all 8 `apps/*/pyproject.toml` files, same pin).
+- **Owner C's tests still exercise this only via MagicMock** — a green app suite is not end-to-end proof
+  against a real deployed schema. The remaining verification step is a real write/read of `"quarter"`
+  against a live preprocessing service + Postgres instance (Acceptance items 2/4 below).
 
 ### Owner C — `apps/preprocessing_runoff/` (our team) — ✅ IMPLEMENTED
 - Quarterly aggregation helpers + orchestration hook in `sync_long_horizon_hydrograph.py`
@@ -146,15 +153,30 @@ behaviour.
 
 ---
 
-## Consumer / join contract (for the deferred dashboard work)
+## Consumer / join contract (for the deferred dashboard work) — CORRECTED 2026-09-28
+
+**The join-on-`horizon_value` contract above was wrong; it does not hold.** Verified against trunk
+`apps/postprocessing_forecasts/src/api_writer.py:1160-1176` (the current location of the quarter
+write branch; the file has grown since this issue's original `:1043-1051` citation): for
+`long_forecasts` QUARTER rows, `horizon_value` is the **configured operational lead** (kghm 1, tjhm 0
+under flag OFF; the row's own per-lead value under flag ON), **not** the calendar quarter number —
+this is the MIG-008-resolved convention (`horizon_value = operational_month_lead_time`), confirmed
+live in the writer (`horizon_value = int(row["horizon_value"])` under the flag, else
+`horizon_value = quarter_horizon_value()`). Preprocessing `hydrographs` QUARTER rows, by contrast, use
+`horizon_value` 1–4 as the **quarter number** itself (this issue's own "QUARTER row shape" table
+above). The two tables' `horizon_value` columns hold different quantities with the same name; joining
+on it directly would silently pair a kghm Q2 hydrograph norm (`horizon_value=2`) with a `long_forecasts`
+row at `horizon_value=1` (the lead), not with the row whose target quarter is actually Q2.
 
 A future dashboard join between preprocessing QUARTER hydrograph norms and postprocessing
-`long_forecasts` QUARTER rows **must use period keys** (`code`, `horizon_type`, `horizon_value`),
-**not** `date` or `day_of_year`: hydrograph norm rows are written for the current target year only
-(no historical backfill), while `long_forecasts` span many years. The QUARTER period keys
-(`date = YYYY-{01,04,07,10}-01`, `horizon_value` 1–4, `horizon_type` `"quarter"`) deliberately match
-the postprocessing convention at `apps/postprocessing_forecasts/src/api_writer.py:1043-1051`, so no
-translation layer is needed.
+`long_forecasts` QUARTER rows must instead join on **`code` + the calendar quarter number derived
+from `long_forecasts.valid_from` (or its `quarter_in_year` column, where present) + the target
+year**, matched against the hydrograph row's own `horizon_value` (1–4, the quarter number) and `date`
+year — **not** on `long_forecasts.horizon_value` (the lead) and **not** on hydrograph `date`/
+`day_of_year` alone either: hydrograph norm rows are written for the current target year only (no
+historical backfill), while `long_forecasts` span many years, so a bare `date` match would miss every
+year but the current one. A translation layer (deriving the quarter number from `long_forecasts`) is
+needed; the original "no translation layer is needed" claim does not hold.
 
 ---
 
@@ -186,8 +208,11 @@ translation layer is needed.
 No long-horizon norm (MONTH/SEASON/QUARTER) is read or plotted today (`src/db.py` returns empty
 hydrograph frames; `data_manager.py:273` short-circuits long horizons). PR-QHN-002 should surface
 all three. Latent quirks to fix there: `DataManager.horizon_in_year("quarter")` returns `None`
-(diverges from `src/db.py:_horizon_in_year_col` → `"quarter_in_year"`); `get_long_forecasts_quarter`
-dedups on `["code","model_short"]` and would need `quarter_in_year` in any 4-quarter norm join.
+(diverges from `src/db.py:_horizon_in_year_col` → `"quarter_in_year"`). **Superseded (2026-09-28):**
+`get_long_forecasts_quarter` no longer dedups on `["code","model_short"]` — since FD-029 (#528) it
+dedups on `["code", "model_short", "year", "quarter_in_year"]` (plus `horizon_value` under the flag),
+`apps/forecast_dashboard/src/db.py:1108-1119` — so `quarter_in_year` (and `year`) are already in its
+dedup key; no further change is needed there for a 4-quarter norm join.
 
 ---
 

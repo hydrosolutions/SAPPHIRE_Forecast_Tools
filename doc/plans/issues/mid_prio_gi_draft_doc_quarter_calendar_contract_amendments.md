@@ -123,6 +123,14 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 
 ### P2a — released with the PP-065 deploy (rows 10 and 12)
 
+**Merged-vs-deployed note (added 2026-09-28, tied to the overview's rollout gate, decision 1).** Row
+12's content is not entirely future work: its "quarterly observations need 3 of 3 months" sentence
+(`QUARTER_OBS_MIN_MONTHS = 3`) is **already live on trunk since #530** (PP-065 P1a's own "Rollout note
+(N7)": the 3-of-3 rule takes effect at merge, not gated behind P2's writer changes) — but it is **not
+live on any server** until the P2 deploy, per the rollout gate (do not deploy trunk before PP-065 P2 is
+ready). "Released with the PP-065 deploy" therefore still describes correctly when this doc edit ships
+to *readers of a deployed system*; it does not mean the underlying behaviour is unmerged code today.
+
 | # | File:line | Depends on | Edit |
 |---|---|---|---|
 | 10 | `doc/data_flow_long_term.md:240-242, 270-275` | released with the PP-065 deploy | For long forecasts `horizon_value` is the **lead**, not the quarter number. **Year-specific actuals** (`previous`/`current`): join on `code` + calendar quarter from `valid_from` + target year. **Climatology** (`norm`): join on `code` + quarter; the reference snapshot for a December-issued Q1 is overview D6 (FD-030's norm-reference-year decision). Say so; do not decide it here |

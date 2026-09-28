@@ -7,6 +7,13 @@
 handler wraps `operational_schedule_for_mode` only); PP-064 (native-row Contract rule shared
 with the quarter reader)
 
+**The missing-quarter-config split is intended (owner decision, 2026-09-28).** This issue's own
+fix — degrade the dashboard read instead of raising — is deliberately the OPPOSITE of PP-065
+P1b's rule for the postprocessing side: there, a missing `quarter.json` (`FileNotFoundError`)
+during the derivation/read FAILS rather than degrading, unlike PP-064's
+`_quarter_native_q1_issue_date`, which warns and continues on the same exception set. The two
+layers own different failure modes for the same root cause and are not meant to converge.
+
 ## Problem
 
 `get_long_forecasts_quarter`'s second statement — after resolving the station code, and before
@@ -26,18 +33,19 @@ branch, for the missing-file case.
 
 ## Evidence
 
-- Trunk `28ee535d`: `apps/forecast_dashboard/src/db.py:819` —
+- Trunk (post-#528, current `6a4ecfae`): `apps/forecast_dashboard/src/db.py:857` —
   `code = _resolve_station(station) if station else None` (the function's first statement);
-  `:820` — `resolved_horizon_value = _resolve_quarter_horizon_value(horizon_value)` (the
-  **second** statement, not the first).
-- FD-029 branch (`fix_fd_quarter_card_calendar`, worktree `sapphire-fd029`): the same two
-  statements are now at `:857`/`:858` (station resolve, then the `horizon_value` resolve) — still
-  both well ahead of the degraded-mode handler at `:861-881` (comment at `:861-871` already names
-  this issue; `try`/`except (LongTermHorizonResolverError, FileNotFoundError)` at `:872-881`),
-  which guards only `operational_schedule_for_mode("quarter")` (`:873`).
-- `_resolve_quarter_horizon_value` (trunk `db.py:81-84`; FD-029 branch `db.py:82-85`, one line
-  shifted, unchanged by FD-029) calls `quarter_horizon_value()` whenever no explicit
-  `horizon_value` is passed — true for the card and for all three bulletin call sites.
+  `:858` — `resolved_horizon_value = _resolve_quarter_horizon_value(horizon_value)` (the
+  **second** statement, not the first) — still both well ahead of the degraded-mode handler at
+  `:872-881` (comment at `:861-871` already names this issue: "FD-031 (filed, pre-existing): on
+  the DEFAULT horizon_value path, `_resolve_quarter_horizon_value` above already raises the same
+  errors first, so a missing quarter.json never actually reaches this degraded branch unless
+  `horizon_value` was passed explicitly"; `try`/`except (LongTermHorizonResolverError,
+  FileNotFoundError)` at `:872-881`), which guards only `operational_schedule_for_mode("quarter")`
+  (`:873`). Confirms the defect is still live, unchanged by FD-029's own merge (#528) — its
+  degraded-mode handler wraps the later call only, exactly as this issue describes.
+- `_resolve_quarter_horizon_value` (trunk `db.py:82-85`) calls `quarter_horizon_value()` whenever
+  no explicit `horizon_value` is passed — true for the card and for all three bulletin call sites.
 - `quarter_horizon_value()` → `_horizon_value_for_mode("quarter")`
   (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:68-70, 78-81`) →
   `_ensure_supported_mode("quarter")` (`:172-178`, raises `UnsupportedLongTermModeError` at

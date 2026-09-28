@@ -1,5 +1,20 @@
 ## Quarter skill metrics land at `horizon_value=0` for models whose quarter forecasts start at lead 1 (PP-056)
 
+**Superseded for the seven models by PP-065 (owner decision, 2026-09-25/26; see
+[`high_prio_gi_draft_pp_quarter_derived_models.md`](high_prio_gi_draft_pp_quarter_derived_models.md)
+and DOC-009).**
+- Quarter `horizon_value` = the configured lead (kghm 1, tjhm 0) — the RESOLUTION in
+  `doc/prod/longforecast_quarter_season_hv_convention.md` — so the "open question for the owner"
+  below (which of the two populations is wrong) is resolved: `hv=0` for the seven GBT/MC/SM-family
+  models was the deviation.
+- The kghm `hv=0` quarter skill rows of those seven models are **meant** to be replaced by `hv=1`
+  rows and tombstoned by the recalc (PP-065 § P2), once PP-065 P1b/P1c land and the recalc runs.
+- The acceptance items below for skill landing at leads 1..4, and the "do not drop the `hv=0` rows"
+  contract, no longer apply to the seven models — they are superseded by PP-065's own skill-grouping
+  rule (composition-free, keyed by `(code, quarter_in_year[, hv under flag ON])`).
+- **Month and season are unchanged** by PP-065 and remain this issue's scope for those two horizons,
+  if either shows the same `hv` mismatch (not observed above; recorded defensively).
+
 **Status**: Draft (2026-08-14)
 **Module**: `apps/postprocessing_forecasts` (quarter skill path — `recalculate_skill_metrics.py`,
 `src/aggregation.py`, `src/skill_metrics.py`)
