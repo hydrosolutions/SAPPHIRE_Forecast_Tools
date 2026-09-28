@@ -50,7 +50,7 @@ decision needed before any `long_forecasts` mutation)
 mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-quarter mapping**.
 "Quarter" is a single quarterly product whose hv is just the config lead. (This is about `horizon_value`
 only; the target-window contract, since owner-superseded to calendar quarters, is a separate question --
-see the DOC-009 row-3 note below, "What this corrects from the earlier draft".)
+pending DOC-009 row 3, P1b; needs D4 + owner sign-off.)
 
 - **Month**: hv = month lead. `month_0->0, month_1->1, month_2->2, month_3->3`. (Tajik filenames are
   off by one -- `month_1.json` carries lead 0 -- but the `operational_month_lead_time` value inside
@@ -64,15 +64,8 @@ see the DOC-009 row-3 note below, "What this corrects from the earlier draft".)
 
 - The "quarter is 7 rolling windows / should map to calendar quarters Q1..Q3" reading was **wrong**.
   Quarter is one product; the 7 monthly issue windows in the hindcast CSV all share the deployment's
-  single quarter hv, distinguished by `date`/`valid_from`/`valid_to` in the natural key.
-  - **DOC-009 row-3 note (owner decision, 2026-09-25; added 2026-09-28).** Distinguish the two
-    meanings this bullet conflates: the **hv conclusion above stands** — mapping `horizon_value` to
-    the quarter number was, and remains, wrong; `hv` is the config lead. But **calendar-quarter
-    target windows** (`valid_from`/`valid_to` = the calendar quarter's own bounds) are now the
-    product contract (owner, 2026-09-25 — see `quarter_calendar_product_plan.md`), which this
-    bullet's "one product, distinguished by date/valid_from/valid_to" framing predates. Rolling-window
-    rows (the 7 monthly issue windows) are not product under that contract; they are excluded at read
-    and, since #527, at write too (PP-064 Chunk A) — not deleted, only excluded.
+  single quarter hv, distinguished by `date`/`valid_from`/`valid_to` in the natural key. Pending DOC-009
+  row 3 (P1b; needs D4 + owner sign-off).
 - "Tajik `QUARTER hv0` is an orphan bucket" was **wrong**: for Tajik, hv0 is the **correct** quarter
   bucket. The held Tajik quarter write should be reconsidered (likely proceed).
 - The Tajik `seasonal_april -> SEASON hv0` write already applied was **correct**.

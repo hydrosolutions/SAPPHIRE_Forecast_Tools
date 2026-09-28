@@ -144,7 +144,7 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
     classified as native or not — the native-row rule itself cannot run. P1b then keeps today's unfiltered
     direct LR selection, with **one** WARNING, rather than dropping every LR row. This is an explicit
     exception to native-row precedence, not a contradiction of it — see PP-065's "Degraded native rule,
-    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:424-431) and PP-065's own item 9.
+    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:436-443) and PP-065's own item 9.
 - **R4-merge-is-deploy. Merge = deploy (verified fact).** Every merge to `maxat_sapphire_2` reaches every org whose image
   tags are `latest` within about a day: CI pushes `:latest` (`.github/workflows/deploy_production.yml`);
   Luigi auto-pulls the backend images whenever the digest differs

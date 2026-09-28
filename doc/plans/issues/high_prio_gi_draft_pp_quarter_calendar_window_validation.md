@@ -379,8 +379,9 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1105-1107 — re-measured; an
-  earlier draft's `~:434-436` had drifted to an unrelated section): "a native row, a
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1117-1119 — re-measured
+  2026-09-28 after this sync's own edits shifted the file; an earlier draft's `~:434-436` had drifted to
+  an unrelated section): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
   both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
@@ -615,7 +616,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
      recalc other than the one at step 8, and manual runs — the automatic bimonthly recalc does not need
      pausing beforehand (owner decision R4-recalc-runs). Wait for running jobs to finish before continuing.
   2. **The read-only pre-deploy DB audit** (detail 2 below) and **PP-065's count of rule-A (same-issue
-     monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", "Before the recalc").
+     monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", the "This window follows PP-064
+     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:1798-1800 — done here, at the audit step,
+     not "before the recalc": that heading no longer exists in PP-065 P2).
   3. **Export** (detail 1 below: `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
      rows, kept out of the repo) — this is the SAME export PP-065 P2 refers to; state it once here.
   4. **Merge** `integ_quarter_p1b_p2` into trunk — this merge **is** the postprocessing deploy trigger
@@ -646,9 +649,13 @@ Chunk B no longer edits `data_reader.py` or any other file.
        the same old image, and the creation-date/digest check correctly reports no match, but for a
        different reason than a failed or still-propagating pull. **Before proceeding to step 7**, the
        operator must either promote/retag this run's `:latest` build to the org's pinned tag (and push it),
-       or abort per the "Abort path" below — do not proceed on a pinned org with an unmatched image. **All
-       known orgs use `latest`** (recorded at step 0 / `PP-064.C.step0`'s per-org image-tag read), so this
-       is not expected to trigger today; it is a guard for the next org whose tag is pinned.
+       or abort per the "Abort path" below — do not proceed on a pinned org with an unmatched image.
+       **Presumed: the local copies of the org env files set `latest`; to be recorded per org at step 0
+       (`PP-064.C.step0`)** — this repo's local `.env` copies carry no
+       `ieasyhydroforecast_backend_docker_image_tag` / `..._frontend_docker_image_tag` override, and no
+       per-org read confirming this has been recorded yet, so this is not verified fact. It is not expected
+       to trigger, but confirm at step 0 rather than assume it; it is a guard for the next org whose tag is
+       pinned.
      - **The dashboard needs a re-create, not just a pull.** `docker pull` on its own does not restart or
        re-create the running dashboard containers — a pulled image with no re-create keeps serving the OLD
        code. If this window carries a dashboard-affecting change, follow the pull with the same
@@ -674,34 +681,95 @@ Chunk B no longer edits `data_reader.py` or any other file.
       "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card framing this
       closes.
 
-      **Success criteria (PP-065 § "P2 — rollout" points here rather than restating this).** The wrapper's
-      own exit status proves nothing: `run_container` (`bin/bimonthly_long_term_postprocessing.sh:102-148`)
-      discards the container's exit code at its own two call sites (`:151-162` — the operational block at
-      `:158-161` never captures or checks the function's return value); the Python entry point
-      `sys.exit(0)`s successfully before the quarterly block whenever there is no monthly skill or no recent
-      monthly forecasts (`postprocessing_operational_long_term.py:145-163`); and a failed quarterly API
-      write only logs a WARNING, with the caller's return value unchecked
-      (`file_writer.py:853-861`, called from `postprocessing_operational_long_term.py:227`). The run counts
-      as successful only if **all three** of the following hold, checked per org:
-      1. **The wrapper log shows the container completed, with no exit-code WARNING.** Exact strings from
-         `run_container` (`bin/bimonthly_long_term_postprocessing.sh:138,140`): the success line reads
-         `"postprc-lt-operational completed successfully"`; its absence, or the presence of a line matching
-         `"WARNING: postprc-lt-operational completed with exit code: "`, fails this check.
-      2. **The Python log reached the quarterly block and shows the quarterly save messages.** Verify these
-         exact strings in `postprocessing_operational_long_term.py`/`file_writer.py` before checking the log:
-         `"Quarterly ensembles saved."` (`postprocessing_operational_long_term.py:228`) must appear, AND
-         `"Quarterly forecasts written to API successfully."` (`file_writer.py:855`) must appear — NOT
-         `"Quarterly forecasts API write returned False (disabled, unavailable, or failed)."`
-         (`file_writer.py:858`). None of the following early-exit/skip messages may appear anywhere in the
-         run's log: `"No monthly skill metrics available."` (`:146-149`, followed by `sys.exit(0)` at
-         `:151` — this would end the run before the quarterly block is even reached), `"No recent monthly
-         forecasts available. Exiting."` (`:162`, `sys.exit(0)` at `:163`, same effect), `"No recent
-         quarterly forecasts. Skipping quarterly ensembles."` (`:230`), `"No quarterly skill metrics.
-         Skipping quarterly ensembles."` (`:232`).
-      3. **A per-org aggregate-count read-back (no station codes in the plan or the PR) shows current-quarter
-         Naive Mean and Skilled Mean rows, and rows for the seven derived models, written by this run** —
-         not merely present from an earlier write (compare `id`/timestamp or re-run after a controlled gap
-         if the API does not expose a write timestamp directly).
+      **Success criteria (PP-065 § "P2 — rollout" points here rather than restating this; rewritten
+      2026-09-28 — every check below is independently verified observable, not merely inferred).** The
+      wrapper's own exit status proves nothing: `run_container`
+      (`bin/bimonthly_long_term_postprocessing.sh:102-148`) discards the container's exit code at its own
+      two call sites (`:151-162` — the operational block at `:158-161` never captures or checks the
+      function's return value); the Python entry point `sys.exit(0)`s successfully before the quarterly
+      block whenever there is no monthly skill or no recent monthly forecasts
+      (`postprocessing_operational_long_term.py:145-163`); and a failed quarterly API write only logs a
+      WARNING, with the caller's return value unchecked (`file_writer.py:853-861`, called from
+      `postprocessing_operational_long_term.py:227`).
+
+      **INFO lines from this entry point are not a usable check — do not require their presence or their
+      absence.** `postprocessing_operational_long_term.py` imports `setup_library` (`:24`) before its own
+      `logging.basicConfig(level=logging.DEBUG)` (`:36`); `setup_library.py:44` already calls
+      `logging.basicConfig(level=logging.WARNING)` at import time, and `basicConfig()` is a no-op once the
+      root logger already has handlers, so the later call never raises the level — the root logger for this
+      entry point is capped at WARNING (INFRA-029,
+      [`high_prio_gi_draft_infra_setup_library_root_logger_caps_info.md`](high_prio_gi_draft_infra_setup_library_root_logger_caps_info.md),
+      still Draft). `"Quarterly ensembles saved."` (`:228`), `"Quarterly forecasts written to API
+      successfully."` (`file_writer.py:855`) and the INFO skip messages (`:230`, `:232`) are all
+      `logger.info` and so **never reach the log** for this entry point today; neither their presence nor
+      their absence proves anything until INFRA-029 lands.
+
+      **Skilled Mean is not a required row.** It legitimately does not form when fewer than two models pass
+      the quarter skill gate (`ensemble_calculator.py` ~:802-879); requiring it unconditionally would fail
+      valid runs. Its own read-back below is CONDITIONAL on that gate.
+
+      The run counts as successful only if **both** of the following hold, checked per org:
+      1. **Log checks, WARNING level and wrapper only.**
+         - The wrapper's own `log_message` lines are shell output, not Python logging, and are always
+           present regardless of the root logger's level: require `"postprc-lt-operational completed
+           successfully"` (`bin/bimonthly_long_term_postprocessing.sh:138`); require that `"WARNING:
+           postprc-lt-operational completed with exit code: "` (`:140`) is absent.
+         - Require that the WARNING-level early-exit and failure strings are absent — each verified below as
+           `logger.warning` in the source, so each WOULD reach the WARNING-capped log if it fired:
+           `"No monthly skill metrics available. …Exiting."` (`postprocessing_operational_long_term.py`
+           `logger.warning` at `:146-150`, followed by `sys.exit(0)` at `:151`); `"No recent monthly
+           forecasts available. Exiting."` (`logger.warning` at `:162`, `sys.exit(0)` at `:163`); `"…
+           quarterly forecasts API write returned False (disabled, unavailable, or failed)."`
+           (`file_writer.py:858`, `logger.warning`, called from `:227`). None of these three may appear
+           anywhere in the run's log.
+      2. **Data read-back that distinguishes this run** (aggregate counts only, no station codes in the plan
+         or the PR). `long_forecasts` has no write timestamp exposed via the API, and the upsert (service
+         crud, colleague-managed, `sapphire/services/postprocessing/app/crud.py`) keeps the row `id` and
+         skips unchanged rows — so "rows written by this run" cannot be shown by `id` or timestamp; the
+         checks below use presence/absence and formation-rule counts instead.
+         - The in-window recalc (step 8) writes **no** current-quarter ensemble rows: EM/Naive Mean/Skilled
+           Mean there are built from `merged`, an inner join with observations (`skill_metrics.py`
+           ~:2682-2690 builds `merged`; ~:2807-2832 is where Skilled Mean/Naive Mean are computed from it,
+           each also re-joining `observations`) — a quarter with no observations yet (the current one) never
+           reaches `merged`, so the recalc produces no ensemble row for it.
+         - **Naive Mean's own formation rule** (`ensemble_calculator.py:33-41`, applied at `:915` for
+           quarter/season, grouping columns from `create_quarterly_ensemble_forecasts` `:562-564`): a Naive
+           Mean row forms per `(year, quarter_in_year, code[, horizon_value] under
+           SAPPHIRE_SKILL_LEAD_AWARE)` key only when **at least two distinct raw `model_short` values**
+           contribute a non-null `forecasted_discharge` at that key (`is_multi_model_composition` — the
+           built composition string must contain a comma). **Verified: pre-P1b, current-quarter Naive Mean
+           rows cannot exist.** Before PP-065 P1b, `read_latest_quarterly_forecasts` (the reader this
+           operational run actually calls, `postprocessing_operational_long_term.py:211`) filters raw rows
+           to `AGGREGATED_SUPPORTED_MODELS` (LR only) via `_filter_supported_aggregated_forecast_models`
+           (`src/data_reader.py:98-104`, called at `:3606`; `read_quarterly_forecasts` does the same at
+           `:3310`; see also `high_prio_gi_draft_pp_quarter_derived_models.md` § "What trunk does today"),
+           so at most one raw model ever reaches this grouping and the comma-gate can never pass.
+           **Read-back rule:** after step 10 (writers resumed, before this run), record the per-org count of
+           current-quarter Naive Mean rows — expected **0**. After this run, require count **> 0** at least
+           for the stations/quarters where two or more of the (now P1b-readable) raw models actually have a
+           current-quarter forecast — that is Naive Mean's own formation rule above, not an arbitrary
+           threshold.
+         - **Skilled Mean: CONDITIONAL.** Its gate is stricter than Naive Mean's (`ensemble_calculator.py`
+           ~:802-879): a model enters the weighted pool only if it has a non-null `mae` in the quarter skill
+           passed in, and the same `is_multi_model_composition` check (`:873`) still applies after that
+           filter — so a current-quarter Skilled Mean row forms only where **at least two models both have
+           quarter skill (non-null MAE) and a current-quarter forecast**. Require it only at those keys.
+           **Read-back query shape:** from the per-org quarter skill frame, read as the pipeline reads it
+           (tombstones dropped, `src/data_reader.py:106, 2833`), count distinct non-baseline `model_short`
+           values (excluding EM/Naive Mean/Skilled Mean) per `(code, quarter_in_year[, horizon_value])` with
+           non-null `mae`; the keys with count ≥ 2 are the ones that must show a current-quarter Skilled
+           Mean row after this run.
+         - **Optional supporting evidence, read-only:** the postprocessing service's own `"Created long
+           forecast: …"` / `"Updated long forecast: …"` log lines (`sapphire/services/postprocessing/app/
+           crud.py:137, 146`) around the time of this run. Corroborating only, not required — the service is
+           colleague-managed and this plan does not gate on its log format.
+
+      **The derived seven-model rows for the current quarter are not this step's check — move it to step
+      9.** They are written by the in-window recalc itself (step 8): `joint_forecasts = forecasts.copy()`
+      in `_calculate_aggregated_skill_metrics` (`skill_metrics.py` ~:2741-2742) passes every raw forecast
+      row through regardless of whether it joined an observation, so the current quarter's raw rows survive
+      that pass-through even though no ensemble is computed for them there. See detail 5 below (canonical
+      step 9), not this step.
 
       **Never run this command concurrently** — `run_container` (`bin/bimonthly_long_term_postprocessing.sh:113-117`)
       removes any existing container with the same fixed name (`docker rm -f postprc-lt-operational`) before
@@ -790,6 +858,12 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
      (Problem 8). If K = 10 leaves an org with no quarter skill at all, B5 means no Naive Mean either:
      **escalate to the owner before the hydromet notice** goes out.
    - Freshly written QUARTER rows contain no rolling windows, no LR rows and no EM rows.
+   - **The derived seven-model rows for the current quarter are present, per org** (moved here from step
+     11, 2026-09-28: this recalc, not the operational run, writes them). `joint_forecasts =
+     forecasts.copy()` in `_calculate_aggregated_skill_metrics` (`skill_metrics.py` ~:2741-2742) passes
+     every raw forecast row through regardless of whether it joined an observation, so the current
+     quarter's raw rows survive this recalc's pass-through even though no current-quarter ensemble is
+     computed here (step 11's own read-back covers the ensembles).
    - A persisted-derived-row round trip (write → read) yields the native-rule-selected row.
    - Spot check the #521 station privately (its code is never written to the repo). A plausible value is
      a spot check, not proof.
