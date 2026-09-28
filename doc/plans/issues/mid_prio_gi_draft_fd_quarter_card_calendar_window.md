@@ -248,9 +248,12 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `record_date = date` under that condition regardless of `model_short` (`:1264-1269` on PP-064's
      branch `fix_pp_quarter_calendar_window`, which shifts this from trunk's `:1199-1204`). This is not
      LR-only: postprocessing's own quarterly ensemble aggregation (`ensemble_calculator.py`) carries the
-     `date` column through with `agg("first")` for EM (`_create_aggregated_ensemble_forecasts:758`),
-     Skilled Mean (`_add_skilled_mean_aggregated_ens:865`) and Naive Mean
-     (`_add_naive_mean_aggregated_ens:906`) — so an ensemble row built (today) from a native LR member
+     `date` column through as a per-column `"first"` aggregation spec — not a bare `agg("first")` call,
+     which does not exist: a dict entry (`em_agg[dcol] = "first"`) for EM
+     (`_create_aggregated_ensemble_forecasts:611`), a named-aggregation tuple
+     (`sm_agg[dcol] = (dcol, "first")`) for Skilled Mean (`_add_skilled_mean_aggregated_ens:802`) and a
+     dict entry (`naive_agg[dcol] = "first"`) for Naive Mean (`_add_naive_mean_aggregated_ens:882`) — so
+     an ensemble row built (today) from a native LR member
      inherits that member's native `date`, gets stamped as `record_date` the same way, and is then
      classified native by the `is_native` predicate here. Test 15 already fixes this in place (flag-ON
      fresh `Naive Mean`/`Skilled Mean` rows dated at the issue date, i.e. native-shaped) — this bullet

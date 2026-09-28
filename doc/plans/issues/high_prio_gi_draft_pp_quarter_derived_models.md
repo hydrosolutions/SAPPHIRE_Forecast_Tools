@@ -1811,9 +1811,11 @@ not restated here: the wrapper's own exit status proves nothing (it discards `ru
 Python entry point can `sys.exit(0)` before the quarterly block, and a failed quarterly API write only logs
 a WARNING with its return value unchecked), so the run counts as successful only if (1) the wrapper log
 shows the container completed with no exit-code WARNING, (2) the log reached the quarterly block and shows
-the quarterly save messages with none of the early-exit/skip messages present, and (3) a per-org
-aggregate-count read-back shows current-quarter Naive Mean / Skilled Mean rows and the seven derived-model
-rows written by this run — see PP-064 Chunk C step 11 for the exact log strings to verify.
+the quarterly save messages with none of the early-exit/skip messages present, and (3) a per-org read-back
+shows the seven derived-model rows present for the current quarter and, at those keys, the current-quarter
+Naive Mean / Skilled Mean rows' `composition` including a derived model (not a bare row count — Naive Mean
+rows can already exist pre-P1b from `LR_Base`/`LR_SM` alone) — see PP-064 Chunk C step 11 for the exact
+composition-based rule and log strings to verify.
 
 **Why the operational run, not the recalc, is the blank-card recovery point.** The in-window recalc (step
 8) writes the derived seven-model rows for every quarter, the current one included

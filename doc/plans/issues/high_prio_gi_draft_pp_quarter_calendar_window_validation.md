@@ -737,18 +737,33 @@ Chunk B no longer edits `data_reader.py` or any other file.
            Mean row forms per `(year, quarter_in_year, code[, horizon_value] under
            SAPPHIRE_SKILL_LEAD_AWARE)` key only when **at least two distinct raw `model_short` values**
            contribute a non-null `forecasted_discharge` at that key (`is_multi_model_composition` — the
-           built composition string must contain a comma). **Verified: pre-P1b, current-quarter Naive Mean
-           rows cannot exist.** Before PP-065 P1b, `read_latest_quarterly_forecasts` (the reader this
-           operational run actually calls, `postprocessing_operational_long_term.py:211`) filters raw rows
-           to `AGGREGATED_SUPPORTED_MODELS` (LR only) via `_filter_supported_aggregated_forecast_models`
-           (`src/data_reader.py:98-104`, called at `:3606`; `read_quarterly_forecasts` does the same at
-           `:3310`; see also `high_prio_gi_draft_pp_quarter_derived_models.md` § "What trunk does today"),
-           so at most one raw model ever reaches this grouping and the comma-gate can never pass.
-           **Read-back rule:** after step 10 (writers resumed, before this run), record the per-org count of
-           current-quarter Naive Mean rows — expected **0**. After this run, require count **> 0** at least
-           for the stations/quarters where two or more of the (now P1b-readable) raw models actually have a
-           current-quarter forecast — that is Naive Mean's own formation rule above, not an arbitrary
-           threshold.
+           built composition string must contain a comma). **Corrected 2026-09-28: current-quarter Naive
+           Mean rows can already exist before P1b.** An earlier version of this rule asserted "at most one
+           raw model reaches this grouping" — that is false. `AGGREGATED_EM_RAW_MODELS = {LR_BASE, LR_SM}`
+           (`src/model_names.py:14`) is **two** distinct `model_short` values, and both are already passed
+           through `_filter_supported_aggregated_forecast_models` (`src/data_reader.py:98-104`, filtering to
+           `AGGREGATED_SUPPORTED_MODELS`; called from `read_latest_quarterly_forecasts` — the reader this
+           operational run actually calls, `postprocessing_operational_long_term.py:211` — at `:3606`, and
+           from `read_quarterly_forecasts` at `:3310`) today — so a code/quarter with both an LR_Base and an
+           LR_SM current-quarter forecast already satisfies the comma-gate, with composition
+           `"LR_Base, LR_SM"`, independent of P1b. What P1b changes is not *whether* a current-quarter Naive
+           Mean row can exist, but *which models its composition can draw from*: the seven
+           `QUARTERLY_DERIVED_MODELS` (`src/model_names.py:22-24`, already landed on trunk in P1a) become
+           readable raw contributors once P1b's reader change lands, so composition can widen beyond
+           `LR_Base, LR_SM`.
+           **Read-back rule (composition-based, not a bare row count):** after step 11, per org, for every
+           current-quarter key where at least one derived model has a current-quarter row (checked at step
+           9, detail 5's "derived seven-model rows for the current quarter are present" bullet), require
+           that the Naive Mean row's `composition` includes at least one `QUARTERLY_DERIVED_MODELS` member.
+           Before P1b, `composition` at a Naive Mean key could only ever be built from `LR_Base`/`LR_SM`.
+           Where the key's step-3 export already showed a Naive Mean row, expect its `composition` value to
+           change to include a derived model after this run, unless no derived model has a current-quarter
+           row at that key, in which case `composition` is unchanged. `composition` is a stored,
+           API-readable column on `long_forecasts` (`sapphire/services/postprocessing/app/models.py:66`),
+           returned by `client.read_long_term_forecasts()` (`sapphire_api_client`'s `long_term.py:75`) and
+           passed through unmodified by this app's own normalizers (`data_reader.py`'s
+           `_read_long_forecasts_api` and `_normalize_combined_forecasts` neither drop nor rename it) — read
+           it directly at these keys, not via a row-count substitute.
          - **Skilled Mean: CONDITIONAL.** Its gate is stricter than Naive Mean's (`ensemble_calculator.py`
            ~:802-879): a model enters the weighted pool only if it has a non-null `mae` in the quarter skill
            passed in, and the same `is_multi_model_composition` check (`:873`) still applies after that
@@ -758,7 +773,15 @@ Chunk B no longer edits `data_reader.py` or any other file.
            (tombstones dropped, `src/data_reader.py:106, 2833`), count distinct non-baseline `model_short`
            values (excluding EM/Naive Mean/Skilled Mean) per `(code, quarter_in_year[, horizon_value])` with
            non-null `mae`; the keys with count ≥ 2 are the ones that must show a current-quarter Skilled
-           Mean row after this run.
+           Mean row after this run. Where required, its `composition` likewise reflects the models that pass
+           the gate — apply the same composition-based read-back as Naive Mean's above (does it include a
+           `QUARTERLY_DERIVED_MODELS` member where one passed the skill gate), not a bare count.
+         - **No EM row is written for the current quarter by this run.** PP-065 P1b's writer change stops
+           the quarter EM write (`high_prio_gi_draft_pp_quarter_derived_models.md` item 3, "Writer: stop
+           writing raw LR rows" — the same change also skips `EM`/`ENSEMBLE_MEAN` rows). Any quarter `EM`
+           row a read-back turns up after this run predates P1b's deploy (or is from an old image still
+           running somewhere), not something this run wrote. FD-029 hides these rows on the dashboard card,
+           so their presence is only visible via a direct DB/API read-back, never the card.
          - **Optional supporting evidence, read-only:** the postprocessing service's own `"Created long
            forecast: …"` / `"Updated long forecast: …"` log lines (`sapphire/services/postprocessing/app/
            crud.py:137, 146`) around the time of this run. Corroborating only, not required — the service is
@@ -889,8 +912,12 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    flag-OFF rewrite at the same `(code, model_short, year, quarter_in_year)` key until the old row is
    deleted, because `date` is part of the natural key so the two rows never collide — and that this
    applies to EM/Naive Mean/Skilled Mean rows exactly as it does to LR, since `ensemble_calculator.py`
-   carries the member's `date` through via `agg("first")` (`_create_aggregated_ensemble_forecasts:758`,
-   `_add_skilled_mean_aggregated_ens:865`, `_add_naive_mean_aggregated_ens:906`) and `api_writer.py`'s
+   carries the member's `date` through as a per-column `"first"` aggregation spec — not a bare
+   `agg("first")` call, which does not exist: EM and Naive Mean pass a dict entry
+   (`em_agg[dcol] = "first"` / `naive_agg[dcol] = "first"`) into `.agg(dict)` in
+   `_create_aggregated_ensemble_forecasts` (`:611`) and `_add_naive_mean_aggregated_ens` (`:882`)
+   respectively, while Skilled Mean passes a named-aggregation tuple (`sm_agg[dcol] = (dcol, "first")`)
+   into `.agg(**dict)` in `_add_skilled_mean_aggregated_ens` (`:802`) — and `api_writer.py`'s
    `record_date` logic (`:1264-1269`) stamps that `date` for any `model_short` under flag ON. If a flag
    is ever rolled back to OFF on a deployed org, the rollback runbook must delete the stale flag-ON
    native-shaped LR **and** ensemble rows for the affected quarters (not just LR's), or they keep

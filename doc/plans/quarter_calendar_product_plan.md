@@ -199,8 +199,10 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
 
 **User-visible consequence (supersedes the "after the joint deploy" framing elsewhere in this plan).**
 FD-029 (which hides every quarter `EM` row and every non-native LR row) is live now, while PP-065 P1b
-(which stops writing fresh `EM` rows and starts writing the derived seven-model / Naive Mean / Skilled
-Mean rows) is not — it is held on the integration branch (decision R4-integration-branch). So **on servers now**, any quarter
+(which stops writing fresh `EM` rows, starts writing the derived seven-model rows, and widens Naive
+Mean's/Skilled Mean's composition to draw from them — a Naive Mean/Skilled Mean row built from `LR_Base`/
+`LR_SM` alone can already form pre-P1b) is not — it is held on the integration branch (decision
+R4-integration-branch). So **on servers now**, any quarter
 whose DB rows are only a fresh `EM` row plus a non-native LR row shows a **blank card** — this is the
 current state, not a transient one that begins "once the joint deploy completes". **The true recovery
 point is not the branch merge itself**: the integration-branch merge (`deploy.pp`) only puts the new
@@ -315,7 +317,10 @@ Resolved since rev 2:
      decision F land does tjhm also show no LR row for these quarters, like kghm. The caption still shows
      the scheduled issue date throughout, on both orgs.
    - Seven more models appear in the quarterly outputs once PP-065 P1b lands.
-   - The quarterly ensembles become Naive Mean and Skilled Mean, as for monthly, once PP-065 P1b lands.
+   - **Naive Mean and Skilled Mean already form for quarter today, from `LR_Base`/`LR_SM` alone** — the
+     comma-gate (`is_multi_model_composition`) only needs two distinct raw `model_short` values, and
+     `LR_Base`/`LR_SM` are two. Once PP-065 P1b lands, their `composition` widens to also draw from the
+     seven derived models, matching monthly.
      **No quarterly Ensemble Mean is shown** — FD-029 is **live now** (owner decision R4-merge-is-deploy) and hides every
      quarter `EM` row on the dashboard and in the bulletin input already (both old, persisted rows and any
      fresh ones). Postprocessing itself still **writes** fresh quarter `EM` rows today, since PP-065 P1b
@@ -327,8 +332,9 @@ Resolved since rev 2:
      by the skill-metrics write path.
    - **Current, ongoing consequence (not a transient one): a blank card.** Because FD-029 is live and hides
      both the fresh `EM` rows above and every non-native LR row, while PP-065 P1b (which would start
-     writing the derived seven-model rows and the Naive Mean / Skilled Mean rows that replace them) has not
-     yet merged, **any quarter whose only DB rows are a fresh `EM` row plus a non-native LR row shows a
+     writing the derived seven-model rows and widen the Naive Mean / Skilled Mean composition to draw from
+     them, in place of the `EM` write it stops) has not yet merged, **any quarter whose only DB rows are a
+     fresh `EM` row plus a non-native LR row shows a
      blank card on the dashboard right now**. The true recovery point is **not** the `deploy.pp` merge
      itself, and **not** the in-window skill recalc either — the recalc only writes ensembles for quarters
      with 3-of-3 observations, never the current quarter (see the "User-visible consequence" paragraph
