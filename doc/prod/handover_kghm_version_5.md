@@ -1124,24 +1124,49 @@ bash "$REPO"/bin/handover_healthcheck.sh
 
 Also check your email for alerts, and ask a forecaster whether today's numbers look right.
 
-### 5.2 Try to fix it yourself
+### 5.2 Can you fix it yourself?
 
-1. Note which section reported the problem — Containers, Backups, Disk, and so on.
-2. Find that same section in **Chapter 4** and follow the steps.
-3. Run the health check again to confirm it is gone.
-4. Write down what happened and what fixed it.
+Only the six below. Anything else — go straight to 5.3. This list is deliberately short: each
+entry says exactly when it applies and how you know it worked.
 
-Most problems are solved here. Chapter 4 has one section for every check.
+| If the check says | You may | Check it worked |
+|---|---|---|
+| A service container has exited | Start it: see Chapter 4, "Containers". **Only** the long-running services — never a name containing `-run-`, those are finished pipeline jobs | Health check shows it `Up` |
+| `cron daemon NOT running` | `sudo systemctl start cron && sudo systemctl enable cron` | `systemctl is-active cron` → `active` |
+| The iEasyHydro unit is not running | Restart it: see Chapter 4, "iEasyHydro HF connection". **One attempt** | `curl -s http://localhost:5555/api/v1/` answers anything |
+| `env permissions are 644` | `chmod 600 "$ENV_FILE"` | Re-run the health check |
+| Disk over 80% | `docker builder prune -f` then `docker image prune -f` | `df -h /` below 80% |
+| A monitoring unit is installed but inactive | Restart it: see Chapter 4, "Monitoring" | `systemctl is-active` → `active` |
+
+**Stop and escalate instead — do not attempt these alone:**
+
+- Restoring a database (Chapter 3.1)
+- Changing any password or secret (Chapter 2)
+- Deleting a user account (Chapter 3.2)
+- Restarting Docker itself
+- `docker image prune -a` — it looks like the safe one but removes images the pipeline needs
+- Emptying container log files
+- Anything not named in the table above
+
+> **One attempt each.** If the same problem comes back after you fix it, stop and escalate —
+> something underneath is causing it, and repeating the fix hides that.
+
+Afterwards, re-run the health check and write down what happened — symptom, cause, fix.
 
 ### 5.3 If you cannot fix it — escalate
 
-Send the Provider all five. Without them, the first reply will only ask for them.
+One command. It asks you two questions, collects everything else, and prints one filename:
 
-- What you ran, and the exact error
-- The newest `failure_log_*.txt`
-- The health-check output
-- `docker ps` output
-- What changed recently — an update, a reboot, a config edit
+```bash
+bash "$REPO"/bin/collect_support_bundle.sh
+```
+
+Attach that file to your message to the Provider. It contains the health-check output, the
+container list, the newest failure logs, the systemd unit states, disk usage and the repo
+version — the things the first reply would otherwise have to ask for.
+
+> Passwords and keys are stripped out automatically. The archive **does** contain station codes
+> and discharge values, so send it to the Provider only — do not forward it on.
 
 | Severity | Example | First response |
 |---|---|---|
