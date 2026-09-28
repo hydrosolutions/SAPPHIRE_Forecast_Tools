@@ -782,22 +782,28 @@ Chunk B no longer edits `data_reader.py` or any other file.
            through unmodified by this app's own normalizers (`data_reader.py`'s `_read_long_forecasts_api`
            and `_normalize_combined_forecasts` neither drop nor rename it) — read it directly at the
            target-quarter keys, not via a row-count substitute.
-         - **Loophole: this check alone is not evidence step 11 ran, when the target quarter already
-           counts as observed.** A quarter's last month counts as observed at ≥50% of its days
-           (`data_reader.py` ~:1301-1302); a writer-paused window that falls late in that month (e.g.
-           kghm Dec 17–24) can make the target quarter "observed" before step 11 runs, so step 8's own
-           recalc can already write a target-quarter Naive Mean row with a derived composition (its
-           empty-return paths log no WARNING either: `read_latest_quarterly_forecasts`'s two silent
-           `if combined.empty: return ...` branches, `data_reader.py` ~:3603-3604 and ~:3607-3608, and
-           the resulting skip at `postprocessing_operational_long_term.py:230`/`:232` is `logger.info`,
-           not `logger.warning`, so criterion 1 above would not catch a silently-skipped step 11 either).
+         - **When the target quarter already counts as observed before step 11 runs, the blank-card
+           recovery goal is already met by the recalc — criterion 2 is pre-satisfied.** A quarter's last
+           month counts as observed at ≥50% of its days (`data_reader.py` ~:1301-1302); a writer-paused
+           window that falls late in that month (e.g. kghm Dec 17–24) can make the target quarter
+           "observed" before step 11 runs, so step 8's own recalc can already write a target-quarter
+           Naive Mean row with a derived composition (its empty-return paths log no WARNING either:
+           `read_latest_quarterly_forecasts`'s two silent `if combined.empty: return ...` branches,
+           `data_reader.py` ~:3603-3604 and ~:3607-3608, and the resulting skip at
+           `postprocessing_operational_long_term.py:230`/`:232` is `logger.info`, not `logger.warning`,
+           so criterion 1 above would not catch a silently-skipped step 11 either).
            **Step 9 (detail 5 below) must record whether this row already exists before step 11 runs.**
-           If it does, criterion 2 additionally requires the postprocessing service's own log (read-only,
-           colleague-managed) to show a fresh `"Created long forecast: …"` / `"Updated long forecast: …"`
-           line (`sapphire/services/postprocessing/app/crud.py:137,146`, `logger.info`,
-           `create_long_forecast`) for a Naive Mean row at the target quarter's key, timestamped **after**
-           step 10 (resume writers) — step 8's own writes (if any) all predate that resume, so a
-           post-resume timestamp distinguishes this run's write from the recalc's.
+           If it does, PASS requires only criterion 1 (the wrapper and WARNING-level log checks) above;
+           criterion 2 is recorded as "pre-satisfied at step 9" rather than re-evaluated against step
+           11's own run. The postprocessing service's own log (read-only, colleague-managed) showing a
+           fresh `"Created long forecast: …"` / `"Updated long forecast: …"` line
+           (`sapphire/services/postprocessing/app/crud.py:137,146`, `logger.info`, `create_long_forecast`)
+           for a Naive Mean row at the target quarter's key, timestamped **after** step 10 (resume
+           writers), is OPTIONAL corroboration only that step 11 itself also touched that row — an
+           unchanged row logs only `"Skipped unchanged long forecast: …"` at DEBUG (`crud.py:139`),
+           invisible at the service's default INFO level (`app/logger.py:8`, `settings.log_level`), so
+           its absence does not fail a valid run.
+           If no such row exists after step 9, PASS requires criteria 1 and 2 as stated above, unchanged.
 
       **Informational, not pass/fail** (a lead for investigation, not a required outcome — do not gate the
       run's success on either of these):
@@ -812,10 +818,11 @@ Chunk B no longer edits `data_reader.py` or any other file.
       "recalc (step 8) writes no current-quarter ensemble rows" cross-check: it restated
       `_calculate_aggregated_skill_metrics`'s inner-join behaviour (`skill_metrics.py` ~:2682-2690,
       ~:2807-2832) rather than checking this run's own output, and added a second query without changing
-      the pass/fail outcome. **Not the same as** criterion 2's loophole note above, which is a single
-      aggregate boolean (recorded once at step 9) plus one conditional log check — it changes the
-      pass/fail outcome precisely in the case the dropped cross-check never distinguished (a pre-existing
-      row from step 8 vs. a fresh one from step 11), so it stays.
+      the pass/fail outcome. **Not the same as** criterion 2's step-9 recording above, which is a single
+      aggregate boolean (recorded once at step 9, before step 11 runs) that determines whether the
+      recovery goal is already met — it changes which criteria PASS depends on (criterion 1 alone, with
+      criterion 2 pre-satisfied, vs. both 1 and 2) precisely in the case the dropped cross-check never
+      distinguished (a pre-existing row from step 8 vs. a fresh one from step 11), so it stays.
 
       **Supporting context, not a separate check:**
       - **No EM row is written for the target quarter by this run.** PP-065 P1b's writer change stops the
@@ -937,8 +944,10 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
      a quarter's last month, and so the quarter, "observed" if the writer-paused window falls late in
      that month (e.g. kghm Dec 17–24), and the recalc's own observation join (`skill_metrics.py`
      ~:2682-2690, ~:2806-2831) then writes its ensembles here rather than never. If this row is already
-     present, canonical step 11's PASS criterion 2 needs the additional service-log evidence its own
-     loophole note requires — this is the record that check reads.
+     present, canonical step 11's PASS criterion 2 is already pre-satisfied and criterion 1 (the wrapper
+     and WARNING-level log checks) alone suffices — this is the record that determination reads. The
+     service-log Created/Updated evidence canonical step 11 describes is optional corroboration only, not
+     required for PASS.
    - A persisted-derived-row round trip (write → read) yields the native-rule-selected row.
    - Spot check the #521 station privately (its code is never written to the repo). A plausible value is
      a spot check, not proof.
