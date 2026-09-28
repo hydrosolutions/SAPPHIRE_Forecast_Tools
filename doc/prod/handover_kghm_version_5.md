@@ -531,14 +531,25 @@ curl -s -X POST http://localhost:8000/api/auth/change-password -H "Authorization
 unset TOKEN CUR_PW NEW_PW
 ```
 
-> **Forgotten passwords: you cannot reset them.**
->
-> There is no administrator reset. The supported way back is to **delete the account and
-> create it again** with a new password. The person loses nothing but their old
-> credentials.
->
-> Do **not** try to edit the `hashed_password` column in the database. The format belongs to
-> the login service, and a hand-written value will silently fail to authenticate — leaving an
+**Forgotten password — you set a new one for them.** This does not need their old password,
+and it keeps their account id and any roles:
+
+```bash
+read -rp "User id: " ID; read -rsp "New password (8+ chars): " NEW_PW; echo
+curl -s -X PUT "http://localhost:8000/api/user/users/$ID" -H "X-API-Key: $SAPPHIRE_API_KEY" -H "Content-Type: application/json" -d "{\"password\":\"$NEW_PW\"}" | python3 -m json.tool
+```
+
+Check it worked before telling them, then clear the password from memory:
+
+```bash
+read -rp "Username: " U
+curl -s -X POST http://localhost:8000/api/auth/login --data-urlencode "username=$U" --data-urlencode "password=$NEW_PW" | python3 -c "import sys,json; print('LOGIN OK' if 'access_token' in json.load(sys.stdin) else 'FAILED')"
+unset NEW_PW
+```
+
+> Do **not** delete and recreate the account instead — that loses the account id and any roles
+> attached to it. And do **not** edit the `hashed_password` column directly: the format belongs
+> to the login service, and a hand-written value silently fails to authenticate, leaving an
 > account that looks fine but cannot be used.
 
 ---
