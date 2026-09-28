@@ -13,10 +13,12 @@ Design decisions:
 
 import logging
 import os
+from collections import Counter
 
 import numpy as np
 import pandas as pd
 from skill_lead_aware_flag import skill_lead_aware_enabled
+from src.model_names import canonical_model_short_series
 from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
@@ -281,6 +283,12 @@ def filter_calendar_quarter_windows(df: pd.DataFrame) -> tuple[pd.DataFrame, int
 # Minimum months required per quarter (out of 3)
 QUARTER_MIN_MONTHS = 2
 
+# Minimum DISTINCT calendar months required per quarter for observations
+# (out of 3; PP-065 item 8). Used only by aggregate_monthly_obs_to_quarterly.
+# Unlike QUARTER_MIN_MONTHS (forecasts), this counts distinct months, not
+# non-null rows, so a repeated month never inflates coverage.
+QUARTER_OBS_MIN_MONTHS = 3
+
 # Minimum fraction of season months required
 SEASON_MIN_COVERAGE = 0.5
 
@@ -357,8 +365,27 @@ def aggregate_monthly_obs_to_quarterly(
     df = monthly_obs.copy()
     df["quarter_in_year"] = df["month"].map(MONTH_TO_QUARTER)
 
+    # Count DISTINCT calendar months, not non-null rows: first average per
+    # (code, year, quarter, month) -- skipping NaN, as pandas mean() does by
+    # default -- so a duplicated month collapses to ONE value before the
+    # QUARTER_OBS_MIN_MONTHS coverage check. With the normal one-row-per-month
+    # input, this monthly average is a no-op (mean of a single value is that
+    # value), so discharge_avg and delta below are unchanged from before this
+    # rewrite; only the coverage threshold changed. This equivalence is
+    # EXACT only for input already sorted by (code, year, month), which is
+    # what the only caller (data_reader's quarterly-observation path)
+    # produces -- floating-point summation is order-dependent, so
+    # differently-ordered input can differ from the pre-rewrite mean by
+    # roughly 1e-14 (a reassociation of the same addends), not by anything
+    # a caller should observe in practice.
+    monthly_means = (
+        df.groupby(["code", "year", "quarter_in_year", "month"])["discharge_avg"]
+        .mean()
+        .reset_index()
+    )
+
     grouped = (
-        df.groupby(["code", "year", "quarter_in_year"])
+        monthly_means.groupby(["code", "year", "quarter_in_year"])
         .agg(
             discharge_avg=("discharge_avg", "mean"),
             n_months=("discharge_avg", "count"),
@@ -366,8 +393,8 @@ def aggregate_monthly_obs_to_quarterly(
         .reset_index()
     )
 
-    # Require >= QUARTER_MIN_MONTHS months present
-    grouped = grouped[grouped["n_months"] >= QUARTER_MIN_MONTHS].copy()
+    # Require >= QUARTER_OBS_MIN_MONTHS distinct months present
+    grouped = grouped[grouped["n_months"] >= QUARTER_OBS_MIN_MONTHS].copy()
     grouped = grouped.drop(columns=["n_months"])
 
     if grouped.empty:
@@ -587,3 +614,674 @@ def _season_end_date(season_year: int) -> str:
 
     last_day = calendar.monthrange(end_year, end_month)[1]
     return f"{end_year}-{end_month:02d}-{last_day:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Quarter derived models (PP-065 P1a)
+# ---------------------------------------------------------------------------
+
+# Quarter-start calendar months: Jan, Apr, Jul, Oct.
+_QUARTER_START_MONTHS = frozenset({1, 4, 7, 10})
+
+
+def clamp_issue_day(year: int, month: int, issue_day: int) -> int:
+    """Clamp a configured issue day to the length of the given month.
+
+    Same rule as the producer (``apps/long_term_forecasting/lt_utils.py:170-172
+    nearest_scheduled_issue_date``) and PP-064's ``data_reader.py:3097-3101``:
+    a configured issue day past the end of a short month (e.g. 31 in June)
+    is scheduled/matched on that month's last day instead.
+
+    Args:
+        year: Calendar year of the month.
+        month: Month number (1-12).
+        issue_day: Configured issue day (any positive integer).
+
+    Returns:
+        ``issue_day``, or the month's last day if ``issue_day`` exceeds it.
+    """
+    return min(issue_day, calendar.monthrange(year, month)[1])
+
+
+def clamp_issue_days(dates: pd.Series, issue_day: int) -> pd.Series:
+    """Vectorized form of ``clamp_issue_day`` (PP-065 N5): the SAME clamp
+    rule, applied to a whole column of dates at once via
+    ``Series.dt.days_in_month`` instead of one ``calendar.monthrange``
+    call per row. Public: both this module's own derivation helper and
+    P1b's native-row selection rule use it.
+
+    Args:
+        dates: A datetime64 Series (any unit). Only each row's month
+            length is used -- the day-of-month already in ``dates`` is
+            irrelevant to the clamp itself. A ``NaT`` row's result is NaN,
+            never an exception.
+        issue_day: Configured issue day (any positive integer), broadcast
+            to every row.
+
+    Returns:
+        Clamped issue days, same index as ``dates``. The dtype is NOT
+        fixed: ``int32`` when ``dates`` has no ``NaT`` (there is no NaN to
+        represent), ``float64`` when it does (``Series.dt.days_in_month``
+        itself upcasts to hold NaN for a ``NaT`` row, and ``np.minimum``
+        propagates that). Deliberately left as-is rather than forced to a
+        single dtype: a `Series.dt.day != this` comparison (`derive`'s own
+        call) works correctly either way, and a float64 cast would change
+        that comparison's dtype for the (common) no-``NaT`` case for no
+        behavioural benefit.
+    """
+    return np.minimum(issue_day, dates.dt.days_in_month)
+
+
+def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
+    """Year-aware month addition. Returns (year, month) for month + delta.
+
+    Scalar helper kept for callers that need a single (year, month) pair
+    (e.g. tests, and any future non-bulk caller). The bulk production path
+    uses ``_add_months_vectorized`` below instead of looping over this.
+    """
+    total = (month - 1) + delta
+    return year + total // 12, total % 12 + 1
+
+
+def _add_months_vectorized(year: pd.Series, month: pd.Series, delta) -> tuple[pd.Series, pd.Series]:
+    """Vectorized year-aware month addition (PP-065 F3).
+
+    Same rule as ``_add_months``, applied to whole columns at once via the
+    "months since epoch" trick (``year*12 + (month-1)``) instead of a
+    Python-level loop. ``delta`` may be a scalar int (broadcast, e.g. the
+    quarter lead) or a ``pd.Series`` aligned to ``year``/``month`` by index
+    (e.g. each row's own stored ``horizon_value``).
+
+    Args:
+        year: Integer year values.
+        month: Integer month values (1-12), same index as ``year``.
+        delta: Months to add; scalar or a Series aligned to ``year``.
+
+    Returns:
+        Tuple of (new_year, new_month) Series, same index as ``year``.
+    """
+    total = (month.astype("int64") - 1) + delta
+    new_year = year.astype("int64") + total // 12
+    new_month = total % 12 + 1
+    return new_year, new_month
+
+
+def _window_dedup_key(raw: pd.Series, parsed: pd.Series) -> pd.Series:
+    """Exact-duplicate identity key for one window column (PP-065 J1/K1/L1/M1).
+
+    Deliberately SIMPLE and conservative -- this answers "are these two
+    rows the same window" only for the cases below, each provably safe;
+    it is not a general normal form for arbitrary Python objects.
+    INPUT CONTRACT: a well-formed ``valid_from``/``valid_to`` value is an
+    ISO date/datetime string, a ``date``/``datetime``/``Timestamp``, or
+    null. For any other value, this function classifies it best-effort
+    and never raises -- see the last bullet below.
+
+    Per value ``v`` (with ``ts`` its ``local_calendar_date``-parsed
+    counterpart), in this exact order, and the WHOLE classification
+    wrapped in one ``try``/``except Exception`` (PP-065 M1) so that no
+    step -- including the null check itself -- can ever escape this
+    function:
+
+    - a genuinely null SCALAR -- ``pd.api.types.is_scalar(v) and
+      pd.isna(v)``, which covers ``None``, NaN of any float width
+      (including ``np.float32``), ``pd.NA`` and ``NaT`` of any flavour
+      (``pd.NaT``, ``np.datetime64("NaT")``) -- becomes ``None``, so two
+      nulls always match, however differently spelled (a prior version
+      checked only ``v is None`` and ``isinstance(v, float)``, so e.g. a
+      ``None`` and a ``pd.NA`` on the two rows of an otherwise-identical
+      pair were wrongly treated as DIFFERENT windows);
+    - otherwise, if ``ts`` parsed (is not NaT) -- the parsed local
+      calendar date;
+    - otherwise, if ``v`` is EXACTLY a ``str`` (``type(v) is str``, never
+      ``isinstance``, which would also admit a ``str`` SUBCLASS whose own
+      ``__hash__``/``__eq__`` can raise) -- ``v`` itself, so two equal
+      unparseable strings still collapse (``"garbage" == "garbage"``)
+      and two different ones never do (``"garbage" != "xx"``);
+    - otherwise (any other non-null, unparseable value: a list, dict,
+      ndarray, a ``str`` subclass, a ``Decimal``, or any custom object --
+      possibly one that raises merely from being tested for null, e.g.
+      ``Decimal("sNaN")``, or from ``__str__``/``__hash__``/``__eq__``,
+      none of which ``local_calendar_date`` itself is ever allowed to
+      trigger for ANY input) -- a key unique to THIS row's position, so
+      it is NEVER equal to any other row's key and neither ``str()`` nor
+      ``hash()`` is ever called on the value. This is also the fallback
+      for any exception raised anywhere in the classification above,
+      which makes the "never crashes" guarantee true BY CONSTRUCTION
+      rather than by enumerating known-safe checks (a prior version's
+      null check, ``pd.isna(v)`` alone, already raised on
+      ``Decimal("sNaN")``, whose whole point is to raise on being
+      inspected). A prior version built ``f"{type(v).__name__}|{v!s}"``
+      here, which could itself raise (an exotic ``__str__``) or silently
+      collide (two different objects whose ``str()`` truncates to the
+      same text, e.g. two long arrays). Forcing such rows apart -- a
+      false "ambiguous", never a wrong collapse -- is the safe failure
+      mode.
+
+    Args:
+        raw: The original (unparsed) column, e.g. ``df["valid_from"]``.
+        parsed: ``local_calendar_date(raw)`` -- NaT where unparseable.
+
+    Returns:
+        An object-dtype Series, same index as ``raw``.
+    """
+    keys = []
+    for pos, (v, ts) in enumerate(zip(raw, parsed, strict=True)):
+        try:
+            if pd.api.types.is_scalar(v) and pd.isna(v):
+                keys.append(None)
+                continue
+            if pd.notna(ts):
+                keys.append(ts)
+                continue
+            if type(v) is str:
+                keys.append(v)
+                continue
+        except Exception:
+            pass
+        keys.append(("unparseable-object", pos))
+    return pd.Series(keys, index=raw.index, dtype=object)
+
+
+def derive_quarterly_from_monthly_same_issue(
+    monthly_raw: pd.DataFrame,
+    lead: int,
+    issue_day: int,
+    models: frozenset[str],
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Derive quarterly forecasts from same-issue monthly triplets.
+
+    For each (code, model, issue date ``d``) whose issue month, offset by
+    ``lead`` months (year-aware), lands on a calendar quarter's first month,
+    this averages the model's own monthly point forecasts for leads
+    ``lead``, ``lead + 1`` and ``lead + 2`` -- all issued on that same date
+    ``d`` -- into one quarterly row. This is independent of
+    ``SAPPHIRE_SKILL_LEAD_AWARE``: the output is identical under both flag
+    states, since the flag only affects how OTHER code groups monthly rows,
+    not this derivation.
+
+    INPUT CONTRACT: ``date``/``valid_from``/``valid_to`` are ISO
+    date/datetime strings, ``date``/``datetime``/``Timestamp`` values, or
+    null; ``horizon_value``/``q``/``q50`` are numeric-or-null; ``id`` (when
+    present) is a hashable scalar, per the API's own contract. This
+    function is guaranteed not to raise ONLY within that contract. An
+    out-of-contract value is handled conservatively, not meaningfully, but
+    MAY still raise -- e.g. a ``Decimal("sNaN")`` in ``horizon_value`` or
+    ``q``/``q50`` raises inside ``pd.to_numeric``, and an unhashable ``id``
+    raises inside the ``id``-branch ``pd.concat`` (around line 1140).
+    ``_window_dedup_key`` (below) is the one piece that IS guaranteed never
+    to raise for any ``valid_from``/``valid_to`` value, in or out of
+    contract -- that guarantee is about the helper itself, not about this
+    function as a whole. The DB schema behind
+    ``_read_long_forecasts_api`` (NOT NULL ``code``/``date``/
+    ``model_type``/``horizon_value``/``valid_from``/``valid_to``, an enum
+    ``model_type``, and a matching unique constraint) makes most
+    out-of-contract inputs below unreachable from a live read; the
+    defensive handling stays regardless, since this function is also
+    called with hand-built and test frames. See the plan's amendment
+    history (PP-065 P1a) for how each rule below reached its current form.
+
+    Args:
+        monthly_raw: Raw monthly rows, after the CALLER has renamed
+            ``model_type`` -> ``model_short`` and normalised ``code`` (this
+            helper does neither). ``horizon_value``, ``q`` and ``q50`` may
+            be absent.
+        lead: The configured quarter lead (the target quarter's first
+            month's horizon_value).
+        issue_day: The QUARTER schedule's OWN configured issue day (owner
+            decision: the monthly forecasts this derives from are produced
+            on the quarter's issue date, not on some monthly mode's own
+            issue day) -- unclamped; clamped per row via the vectorized
+            ``clamp_issue_days``.
+        models: Canonical model names to derive (callers pass
+            ``QUARTERLY_DERIVED_MODELS`` or ``QUARTER_NATIVE_RAW_MODELS``
+            from ``src/model_names.py``).
+
+    Returns:
+        Tuple of (derived frame, dict of exclusion counts by reason).
+        Fixed column set: ``code``, ``model_short``, ``year``,
+        ``quarter_in_year``, ``date``, ``horizon_value``, ``valid_from``,
+        ``valid_to``, ``forecasted_discharge``, ``q`` (only if the input
+        had one), and every ``_FC_QUANTILE_COLS`` column (all NaN). Every
+        output column is built fresh, so input-only columns (``id``,
+        ``flag``, ``composition``, ``q_obs``, ``model_type_description``,
+        ``horizon_type``) never leak into the output. ``year``,
+        ``quarter_in_year`` and ``horizon_value`` are int64; the value
+        columns are float64; ``code``/``date``/``valid_from``/
+        ``valid_to`` and every other column are object -- identically
+        whether the result is empty or not. The counts dict is a
+        ``Counter``: a missing key reads as 0.
+
+        Counted exclusions: ``bad_key`` (null ``code``/``model_short``),
+        ``bad_horizon_value``, ``bad_date``, ``wrong_issue_day``,
+        ``ambiguous_duplicate`` (a (code, model, ``d``) group that cannot
+        be resolved to exactly one row per lead), ``missing_lead``,
+        ``non_finite_value``. Silently ignored, NEVER counted -- these are
+        out of scope for THIS call, not a data defect: a model not in
+        ``models``, an in-scope ``horizon_value`` outside
+        ``{lead, lead+1, lead+2}``, or an issue month that is not a
+        quarter start once offset by ``lead``.
+
+        Exact-duplicate identity (one row dropped as a repeated read of
+        another, checked BEFORE the uniqueness rule above): (code,
+        canonical model, ``d``, hv, ``valid_from``, ``valid_to``, ``q``,
+        ``q50``) all match -- windows compared as PARSED local calendar
+        dates where they parse, and via ``_window_dedup_key``'s
+        conservative fallback otherwise (see its own docstring for the
+        exact per-value rule). ``id``, when present, narrows this
+        further -- it keeps rows apart, never merges rows the key above
+        would not. When two duplicate rows differ only in ``model_short``
+        spelling, the lexicographically smallest spelling wins,
+        deterministically.
+    """
+    has_q = "q" in monthly_raw.columns
+    counts: Counter = Counter()
+
+    _INT_COLS = ("year", "quarter_in_year", "horizon_value")
+
+    def output_columns() -> list:
+        cols = [
+            "code",
+            "model_short",
+            "year",
+            "quarter_in_year",
+            "date",
+            "horizon_value",
+            "valid_from",
+            "valid_to",
+            "forecasted_discharge",
+        ]
+        if has_q:
+            cols.append("q")
+        cols += list(_FC_QUANTILE_COLS)
+        return cols
+
+    def _float_cols() -> list:
+        cols = ["forecasted_discharge"]
+        if has_q:
+            cols.append("q")
+        cols += list(_FC_QUANTILE_COLS)
+        return cols
+
+    def empty_result() -> pd.DataFrame:
+        cols = output_columns()
+        float_cols = set(_float_cols())
+        data = {}
+        for c in cols:
+            if c in _INT_COLS:
+                data[c] = pd.Series([], dtype="int64")
+            elif c in float_cols:
+                data[c] = pd.Series([], dtype="float64")
+            else:
+                data[c] = pd.Series([], dtype="object")
+        return pd.DataFrame(data, columns=cols)
+
+    def typed(result: pd.DataFrame) -> pd.DataFrame:
+        """Cast a freshly-built non-empty result to empty_result()'s dtypes."""
+        for c in _INT_COLS:
+            result[c] = result[c].astype("int64")
+        for c in _float_cols():
+            if c in result.columns:
+                result[c] = result[c].astype("float64")
+        # `code` copies the input's dtype (e.g. int64, pandas StringDtype)
+        # via an index level; `date`/`valid_from`/`valid_to` are built as
+        # plain strings already, but are cast too for the same guarantee.
+        # empty_result() always uses object for these (PP-065 G5), so the
+        # two schemas must match regardless of the caller's `code` dtype.
+        for c in ("code", "date", "valid_from", "valid_to"):
+            if c in result.columns:
+                result[c] = result[c].astype("object")
+        return result
+
+    def log_counts() -> None:
+        for key, n in counts.items():
+            level = (
+                logging.WARNING
+                if key in ("invalid_config", "ambiguous_duplicate")
+                else logging.INFO
+            )
+            logger.log(
+                level,
+                "derive_quarterly_from_monthly_same_issue: %s=%d (lead=%s, issue_day=%s)",
+                key,
+                n,
+                lead,
+                issue_day,
+            )
+
+    # Invalid config: no exception, empty schema, ONE warning.
+    if issue_day < 1 or lead < 0:
+        counts["invalid_config"] += 1
+        log_counts()
+        return empty_result(), counts
+
+    missing_required = [c for c in ("code", "model_short", "date") if c not in monthly_raw.columns]
+    if missing_required:
+        for c in missing_required:
+            counts[f"missing_column:{c}"] += 1
+        log_counts()
+        return empty_result(), counts
+
+    if "horizon_value" not in monthly_raw.columns:
+        counts["missing_column:horizon_value"] += 1
+        log_counts()
+        return empty_result(), counts
+
+    df = monthly_raw.copy()
+
+    # A null `code` or `model_short` (PP-065 G4) must be excluded before
+    # anything groups on `code`: a null group key makes pandas groupby
+    # (dropna=True, the default) drop that row from EVERY group's
+    # transform result, which comes back as NaN for a bool column -- and
+    # `~NaN` raises TypeError ("bad operand type for unary ~: 'float'")
+    # at the ambiguity check further down. Counted, not silent: a null
+    # key is a genuine data defect, not an out-of-scope routine row.
+    bad_key = df["code"].isna() | df["model_short"].isna()
+    n_bad_key = int(bad_key.sum())
+    if n_bad_key:
+        counts["bad_key"] = n_bad_key
+    df = df.loc[~bad_key].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    canon_model = canonical_model_short_series(df["model_short"])
+    in_scope = canon_model.isin(models)
+    df = df.loc[in_scope].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+    df["_canon_model"] = canon_model.loc[in_scope]
+
+    # horizon_value validity (counted) then range (silent) run BEFORE any
+    # date-based check (PP-065 F5): a row from a different monthly mode --
+    # in scope for `models`, but the wrong lead for THIS call, e.g. kghm's
+    # day-10 month_0 rows when this call's lead is 1 -- must never reach,
+    # and be miscounted by, the date/issue-day checks below.
+    hv_numeric = pd.to_numeric(df["horizon_value"], errors="coerce")
+    valid_hv = hv_numeric.notna() & np.isfinite(hv_numeric) & hv_numeric.eq(np.round(hv_numeric))
+    n_bad_hv = int((~valid_hv).sum())
+    if n_bad_hv:
+        counts["bad_horizon_value"] = n_bad_hv
+    df = df.loc[valid_hv].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+    df["_hv"] = hv_numeric.loc[valid_hv].round().astype(int)
+
+    # hv outside {lead, lead+1, lead+2}: out of scope, routine -- not counted.
+    leads_needed = (lead, lead + 1, lead + 2)
+    df = df.loc[df["_hv"].isin(leads_needed)].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Parse the issue date via local_calendar_date (NOT
+    # pd.to_datetime(format="mixed"), which raises on mixed tz-aware/naive
+    # strings and would shift the local date under utc=True).
+    df["_d"] = local_calendar_date(df["date"])
+    bad_date = df["_d"].isna()
+    n_bad_date = int(bad_date.sum())
+    if n_bad_date:
+        counts["bad_date"] = n_bad_date
+    df = df.loc[~bad_date].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Quarter-start scope filter: (d.month + lead), year-aware, must land on
+    # a quarter-start month. Out of scope, routine -- never counted.
+    # Vectorized (PP-065 F3): _add_months_vectorized replaces a per-row
+    # Python-level _add_months loop.
+    target_year, target_month = _add_months_vectorized(df["_d"].dt.year, df["_d"].dt.month, lead)
+    df["_target_year"] = target_year
+    df["_target_month"] = target_month
+    df = df.loc[df["_target_month"].isin(_QUARTER_START_MONTHS)].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Issue-day check, clamped to the issue month's length (counted), via
+    # the shared vectorized ``clamp_issue_days`` (PP-065 N5).
+    df["_expected_day"] = clamp_issue_days(df["_d"], issue_day)
+    wrong_day = df["_d"].dt.day != df["_expected_day"]
+    n_wrong_day = int(wrong_day.sum())
+    if n_wrong_day:
+        counts["wrong_issue_day"] = n_wrong_day
+    df = df.loc[~wrong_day].copy()
+    if df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Point value per row: q if present and finite, else q50. Both coerced
+    # numeric and cast to plain float64 (N4): `pd.to_numeric` on a nullable
+    # extension column (e.g. pandas "Float64") returns that SAME extension
+    # dtype, so `_point_value` (and the wide frame it is later pivoted
+    # into, see `complete` below) would stay `Float64` too, with `pd.NA`
+    # as its missing marker. `DataFrame.all(axis=1)` (used on
+    # `np.isfinite(complete)` below to require ALL THREE months finite)
+    # defaults to `skipna=True`, which on a `boolean`-dtype (nullable)
+    # column IGNORES a `pd.NA` cell rather than treating it as `False` --
+    # so a triplet with one genuinely-missing month would wrongly pass
+    # the all-finite check and get silently averaged over the other two
+    # months instead of being excluded as `non_finite_value`. Casting to
+    # plain float64 turns that `pd.NA` into `np.nan`, which IS `False`
+    # under `np.isfinite`, closing the gap.
+    q_val = (
+        pd.to_numeric(df["q"], errors="coerce").astype("float64")
+        if "q" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    q50_val = (
+        pd.to_numeric(df["q50"], errors="coerce").astype("float64")
+        if "q50" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    df["_point_value"] = q_val.where(np.isfinite(q_val), q50_val)
+
+    # Exact duplicates (a repeated read, not an ambiguity): drop BEFORE the
+    # uniqueness rule. A row is an exact duplicate of another only if its
+    # identity key AND its point-value inputs (q, q50; NaN-equal) both
+    # match -- a same-window pair with a DIFFERENT value is never silently
+    # collapsed; it is left for the uniqueness rule, where a missing
+    # valid_from column makes the group unresolvable. Windows are compared
+    # as PARSED local calendar dates where they parse, and via
+    # `_window_dedup_key`'s conservative fallback otherwise -- see its own
+    # docstring for the exact per-value rule (that helper never raises for
+    # ANY value); see this function's own docstring INPUT CONTRACT section
+    # above for what "otherwise" covers, and for why THIS function as a
+    # whole is guaranteed crash-free only within that contract, not for
+    # arbitrary out-of-contract values.
+    has_valid_from_col = "valid_from" in df.columns
+    has_valid_to_col = "valid_to" in df.columns
+    if has_valid_from_col:
+        df["_vf_parsed"] = local_calendar_date(df["valid_from"])
+        df["_vf_dedup_key"] = _window_dedup_key(df["valid_from"], df["_vf_parsed"])
+    if has_valid_to_col:
+        vt_parsed = local_calendar_date(df["valid_to"])
+        df["_vt_dedup_key"] = _window_dedup_key(df["valid_to"], vt_parsed)
+
+    key_cols = ["code", "_canon_model", "_d", "_hv"]
+    if has_valid_from_col:
+        key_cols.append("_vf_dedup_key")
+    if has_valid_to_col:
+        key_cols.append("_vt_dedup_key")
+    value_cols = []
+    if "q" in df.columns:
+        df["_dedup_q"] = q_val
+        value_cols.append("_dedup_q")
+    if "q50" in df.columns:
+        df["_dedup_q50"] = q50_val
+        value_cols.append("_dedup_q50")
+
+    # Deterministic tiebreak (PP-065 H4): when two rows are exact
+    # duplicates in every respect above EXCEPT the raw `model_short`
+    # spelling (they share one canonical model), `drop_duplicates`'s
+    # keep="first" would otherwise keep whichever spelling happened to
+    # sort first in the INPUT, making the output depend on row order.
+    # Sorting by the stored spelling first (a stable sort, so it disturbs
+    # no other tie order) makes the lexicographically smallest spelling
+    # win regardless of input order.
+    df = df.sort_values("model_short", kind="stable")
+
+    if "id" in df.columns:
+        id_notna = df["id"].notna()
+        # A shared non-null id is NOT authoritative on its own: the
+        # window and value are still part of its identity (PP-065 H5),
+        # so `id` never merges rows that key + window + value would not
+        # -- its only effect is to keep rows apart whose ids differ. A
+        # same-id pair with a DIFFERENT value is a genuine conflict, not
+        # a repeated read, so it is NOT collapsed here -- both rows are
+        # kept for the uniqueness rule below, which sees a group of >= 2
+        # and (absent an unambiguous valid_from match) correctly calls it
+        # ambiguous. Deduping on `id` alone (ignoring key+value) would
+        # keep whichever row sorts first, making the OUTPUT depend on row
+        # order.
+        # Scoped by the natural key too, not `id` alone (found via the G3
+        # shuffled-invariance check): a "repeated read" is a repeat of
+        # THIS (code, model, d, hv[, window]) row, not merely a row that
+        # happens to carry the same `id` string as some UNRELATED row --
+        # an id collision across triplets must never merge them.
+        with_id = df.loc[id_notna].drop_duplicates(subset=[*key_cols, "id", *value_cols]).copy()
+        without_id = df.loc[~id_notna].drop_duplicates(subset=key_cols + value_cols).copy()
+        df = pd.concat([with_id, without_id])
+    else:
+        df = df.drop_duplicates(subset=key_cols + value_cols).copy()
+    df = df.drop(columns=[c for c in ("_dedup_q", "_dedup_q50") if c in df.columns])
+
+    # Per-row target (year, month) for the uniqueness rule: d + hv months
+    # (this row's own target month), NOT the triplet's quarter-start target.
+    # Vectorized (PP-065 F3): delta is now the `_hv` COLUMN (per-row), not
+    # a python loop calling the scalar helper once per row.
+    row_target_year, row_target_month = _add_months_vectorized(
+        df["_d"].dt.year, df["_d"].dt.month, df["_hv"]
+    )
+    df["_row_target_year"] = row_target_year
+    df["_row_target_month"] = row_target_month
+
+    if has_valid_from_col:
+        # Reuse `_vf_parsed` (already computed above for the dedup key)
+        # rather than re-parsing `valid_from`.
+        df["_vf_year"] = df["_vf_parsed"].dt.year
+        df["_vf_month"] = df["_vf_parsed"].dt.month
+    else:
+        df["_vf_year"] = np.nan
+        df["_vf_month"] = np.nan
+
+    # Resolve each (code, canonical model, d, hv) group to at most one
+    # winning row. A singleton wins regardless of its valid_from. In a
+    # group of 2+, the unique row whose valid_from (year, month) equals the
+    # target wins; zero or >= 2 matches marks the WHOLE triplet ambiguous.
+    # Vectorized (PP-065 F3) via groupby().transform, replacing a
+    # per-group Python loop with group.iloc access: group SIZE and MATCH
+    # COUNT are both computed for every row in one pass; a row wins if its
+    # group has exactly one row (singleton, unconditional) OR its group
+    # has exactly one match and this row IS that match. A missing
+    # valid_from column makes `_vf_year`/`_vf_month` all-NaN (set just
+    # above), so `is_match` is False for every row and every multi-row
+    # group there is correctly unresolvable (falls through to ambiguous).
+    group_cols = ["code", "_canon_model", "_d", "_hv"]
+    triplet_cols = ["code", "_canon_model", "_d"]
+
+    group_size = df.groupby(group_cols)["_point_value"].transform("size")
+    is_match = (
+        df["_vf_year"].notna()
+        & df["_vf_year"].eq(df["_row_target_year"])
+        & df["_vf_month"].eq(df["_row_target_month"])
+    )
+    df["_is_match"] = is_match
+    match_count = df.groupby(group_cols)["_is_match"].transform("sum")
+
+    is_winner = (group_size == 1) | (is_match & (match_count == 1))
+    is_ambiguous_subgroup = (group_size >= 2) & (match_count != 1)
+    df["_is_ambiguous_subgroup"] = is_ambiguous_subgroup
+    # A single ambiguous hv-subgroup marks the WHOLE (code, model, d)
+    # triplet ambiguous ("skip the whole triplet"): OR-reduce (max of a
+    # bool column) up to the triplet level.
+    triplet_ambiguous = df.groupby(triplet_cols)["_is_ambiguous_subgroup"].transform("max")
+
+    if triplet_ambiguous.any():
+        n_ambiguous = df.loc[triplet_ambiguous, triplet_cols].drop_duplicates().shape[0]
+        if n_ambiguous:
+            counts["ambiguous_duplicate"] = n_ambiguous
+
+    winners_df = df.loc[is_winner & ~triplet_ambiguous].copy()
+    if winners_df.empty:
+        log_counts()
+        return empty_result(), counts
+
+    # Triplet assembly via pivot/unstack on hv (PP-065 F3), replacing a
+    # per-triplet Python loop with group.loc access. `_present` is
+    # unstacked SEPARATELY from `_point_value` so a hv that is genuinely
+    # ABSENT (missing_lead, NaN in `_present_wide`) is never confused with
+    # a hv that IS present but whose point value is non-finite (NaN only
+    # in `_value_wide`, not in `_present_wide`).
+    winners_df["_present"] = True
+    winners_indexed = winners_df.set_index([*triplet_cols, "_hv"])
+    value_wide = winners_indexed["_point_value"].unstack("_hv").reindex(columns=leads_needed)
+    present_wide = winners_indexed["_present"].unstack("_hv").reindex(columns=leads_needed)
+
+    missing_lead_mask = present_wide.isna().any(axis=1)
+    n_missing_lead = int(missing_lead_mask.sum())
+    if n_missing_lead:
+        counts["missing_lead"] = n_missing_lead
+
+    complete = value_wide.loc[~missing_lead_mask]
+    non_finite_mask = ~np.isfinite(complete).all(axis=1)
+    n_non_finite = int(non_finite_mask.sum())
+    if n_non_finite:
+        counts["non_finite_value"] = n_non_finite
+
+    final_values = complete.loc[~non_finite_mask]
+    log_counts()
+    if final_values.empty:
+        return empty_result(), counts
+
+    # Per-triplet metadata: _target_year/_target_month are constant across
+    # a triplet's rows (same `_d`, same `lead`), so any row's value (here,
+    # the hv == lead row's, which also carries the winning `model_short`
+    # spelling) is authoritative.
+    lead_rows = winners_df.loc[winners_df["_hv"] == lead].set_index(triplet_cols)
+    model_short_out = lead_rows["model_short"].reindex(final_values.index)
+    target_year_out = lead_rows["_target_year"].reindex(final_values.index)
+    target_month_out = lead_rows["_target_month"].reindex(final_values.index)
+
+    year_out = target_year_out.astype("int64")
+    quarter_out = target_month_out.map(MONTH_TO_QUARTER).astype("int64")
+    date_out = final_values.index.get_level_values("_d").strftime("%Y-%m-%d")
+    forecasted_discharge_out = final_values.mean(axis=1)
+
+    first_month_out = quarter_out.map({q: months[0] for q, months in QUARTER_MONTHS.items()})
+    valid_from_out = year_out.astype(str) + "-" + first_month_out.astype(str).str.zfill(2) + "-01"
+    # valid_to needs calendar.monthrange (via _quarter_end_date); compute it
+    # only on the handful of DISTINCT (year, quarter) pairs actually
+    # present, then map back -- never one Python call per row.
+    yq_pairs = pd.DataFrame({"year": year_out.to_numpy(), "quarter": quarter_out.to_numpy()})
+    unique_yq = yq_pairs.drop_duplicates()
+    unique_yq = unique_yq.assign(
+        valid_to=[
+            _quarter_end_date(int(y), int(q))
+            for y, q in zip(unique_yq["year"], unique_yq["quarter"], strict=True)
+        ]
+    )
+    valid_to_out = yq_pairs.merge(unique_yq, on=["year", "quarter"], how="left")["valid_to"]
+    valid_to_out.index = final_values.index
+
+    result = pd.DataFrame(
+        {
+            "code": final_values.index.get_level_values("code"),
+            "model_short": model_short_out.to_numpy(),
+            "year": year_out.to_numpy(),
+            "quarter_in_year": quarter_out.to_numpy(),
+            "date": date_out,
+            "horizon_value": lead,
+            "valid_from": valid_from_out.to_numpy(),
+            "valid_to": valid_to_out.to_numpy(),
+            "forecasted_discharge": forecasted_discharge_out.to_numpy(),
+        }
+    )
+    if has_q:
+        result["q"] = result["forecasted_discharge"]
+    for qcol in _FC_QUANTILE_COLS:
+        result[qcol] = np.nan
+    return typed(result[output_columns()]), counts

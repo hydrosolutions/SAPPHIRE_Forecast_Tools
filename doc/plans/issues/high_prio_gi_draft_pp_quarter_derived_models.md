@@ -61,6 +61,24 @@ Paths are relative to `apps/postprocessing_forecasts/`. Citations are to trunk `
 6. **Unchanged:**
    - season (model set, ensembles including season EM);
    - `horizon_value` = the configured quarter lead (kghm 1, tjhm 0).
+7. **P1a amendments approved by the owner (2026-09-28).** A codex plan-conformance check found four
+   P1a amendments (below, in the P1a section) that change the ORIGINAL "Target behaviour" spec's
+   semantics without an owner decision recorded. The owner has approved all four:
+   1. **Parser.** `date`/`valid_from` are parsed with `local_calendar_date`, not
+      `pd.to_datetime(..., format="mixed")` (Target behaviour item 1, marked SUPERSEDED below).
+   2. **Exact duplicates collapse, not ambiguous.** A row that is an exact duplicate of another --
+      same identity key, AND both window ends, AND the point value(s) all match; OR the same `id`
+      plus matching values -- collapses to ONE row, instead of making the whole triplet ambiguous
+      (Target behaviour item 1's original "Duplicates" sentence, marked SUPERSEDED below).
+   3. **Singleton rule scoped to groups of >= 2.** A singleton row at (code, canonical model, `d`,
+      hv) is used WHATEVER its `valid_from` -- including an offset or mislabelled window (decision 1
+      above) -- with no window match required; the uniqueness rule (the original "exactly one
+      matching row" check) applies only within a group of >= 2 rows at that same key (also
+      superseding Target behaviour item 1's original sentence).
+   4. **Observations: average within the month, then require 3 distinct months.** Duplicate rows of
+      one calendar month are averaged together FIRST (skipping NaN); the resulting per-month means
+      are what the `QUARTER_OBS_MIN_MONTHS = 3` distinct-month coverage check counts (Target
+      behaviour item 8, marked as refined below).
 
 ## Feasibility (verified; re-measure per server)
 
@@ -164,9 +182,13 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      - The **caller** renames `model_type` → `model_short` and normalises `code` as the readers do
        (`src/data_reader.py:1493-1498`). It does not call `_normalize_monthly_forecasts`, which fills a
        null hv with 0 (`:1503`) and parses `valid_from` without `format="mixed"` (`:1488`).
-     - The **helper** parses `date` (and `valid_from`) with `pd.to_datetime(..., format="mixed")`, and
-       matches model names canonically, upper-case (`canonical_model_short_series`,
-       `src/model_names.py`).
+     - The **helper** parses `date` (and `valid_from`) with `pd.to_datetime(..., format="mixed")`
+       **[SUPERSEDED by the amendment below (N7): implemented with `local_calendar_date` instead --
+       `format="mixed"` raises `AttributeError` on a subsequent `.dt` access when a column mixes
+       tz-aware and tz-naive strings across rows, which the amendment's "Date parsing" bullet and
+       `src/aggregation.py:102-201`'s own docstring cover in full; this original bullet is kept for
+       history, not as the current contract]**, and matches model names canonically, upper-case
+       (`canonical_model_short_series`, `src/model_names.py`).
      - The output `model_short` keeps the **stored spelling**, so downstream name handling is unchanged.
    - **Scope:** it derives only (code, model, `d`) whose `d.month + L` (year-aware) is a quarter start
      month (1/4/7/10); other issue dates produce nothing.
@@ -186,6 +208,14 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      equals the target (year, month) wins; zero or ≥ 2 matching rows → skip the triplet and count it.
      Evidence: the local DB has 519 tjhm and 38 kghm MONTH groups where two rows match (one calendar and
      one offset window); today these are all ensembles.
+     **[SUPERSEDED by the approved amendments (2) and (3) in "Owner decisions this plan implements"
+     above: an EXACT duplicate (same key, both window ends, and values) collapses to one row instead
+     of making the triplet ambiguous; a SINGLETON at this key is used whatever its `valid_from`, so
+     "zero matching rows" is no longer itself a reason to skip; the uniqueness rule (this sentence's
+     "exactly one row ... wins") applies only within a group of >= 2 rows. This original sentence is
+     kept for history, not as the current contract -- see the P1a section's "Exact-duplicate
+     pre-step and singleton rule" and "A singleton ... is used whatever its `valid_from`" bullets
+     below for the current rule.]**
    - **Point value** per month = `q` if the column exists and the value is finite, else `q50`. All three
      must be finite.
    - **Output row:**
@@ -339,6 +369,10 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
 8. **Observations: 3 of 3 months** (rev-3 PP-064 "B4"). Add `QUARTER_OBS_MIN_MONTHS = 3`, used only at
    `src/aggregation.py:125-126`, unweighted. This also changes δ (`:132-141`), which is computed from the
    surviving years. `QUARTER_MIN_MONTHS` (`:38`) is unchanged.
+   **[Refined by the approved amendment (4) in "Owner decisions this plan implements" above: a
+   DUPLICATE row for one calendar month is averaged together with its own month's other row(s)
+   FIRST, skipping NaN, and it is that per-month mean the "3 of 3" DISTINCT-month count is over --
+   see the P1a section's "Distinct-month observation counting" bullet below for the current rule.]**
 
 ## Plan: four agent phases, then rollout
 
@@ -400,10 +434,12 @@ control flow. Your changes must be purely additive or modify only the specific b
    output `model_short` is `SM_GBT_Norm`; an issue date whose `d.month + L` is not a quarter start derives
    nothing.
 
-**Observation tests:** 2 of 3 months → no quarterly observation; 3 of 3 → one. The existing test edits are
-**exactly** `tests/test_aggregation.py:168` (`test_two_months_passes`), `:199` (`test_multiple_stations`)
-and `:219` (`test_multiple_quarters`), each of which relies on 2 of 3 months (measured).
-`tests/test_aggregation.py:41-42` (`QUARTER_MIN_MONTHS == 2`) is unchanged.
+**Observation tests:** 2 of 3 months → no quarterly observation; 3 of 3 → one. The existing test edits
+were **exactly** `test_two_months_passes` (renamed `test_three_months_passes`,
+`tests/test_aggregation.py:172`), `test_multiple_stations` (`:260`) and `test_multiple_quarters`
+(`:318`), each of which relied on 2 of 3 months (re-measured on this branch's HEAD after the N3
+`test_duplicated_month_is_averaged_not_first_or_max` addition shifted both down from their
+original `:240`/`:298`). `tests/test_aggregation.py:42-43` (`QUARTER_MIN_MONTHS == 2`) is unchanged.
 
 **Mutations to record in the PR:**
 - drop the issue-day check → the wrong-day negative fails;
@@ -416,6 +452,413 @@ and `:219` (`test_multiple_quarters`), each of which relies on 2 of 3 months (me
   pre-existing xfail.
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1a file list.
+
+#### P1a amendments (2026-09-27, readiness review; extended 2026-09-27 after dev-DB validation)
+
+Two independent readiness reviews, and later a real-dev-DB validation run plus a second pair of
+independent reviews (codex + a fresh Claude reviewer), found gaps in the P1a spec above. This
+subsection IS the amended spec (the implementing brief it was drafted from was a scratch file that no
+longer exists; nothing here depends on it):
+
+- **Date parsing** (owner-approved amendment (1), "Owner decisions this plan implements" above,
+  2026-09-28). `date` and `valid_from` are parsed with `local_calendar_date`
+  (`src/aggregation.py:102-201`), not `pd.to_datetime(..., format="mixed")`: the latter raises on
+  mixed tz-aware/naive strings and shifts the local date under `utc=True`.
+- **Return shape.** `derive_quarterly_from_monthly_same_issue` returns `(frame, counts)`, where
+  `counts` is a `dict[str, int]` (a `Counter`) of exclusion counts by reason, not merely a diagnostic
+  log. Ignored-without-counting reasons (model out of scope, no quarter-start, hv outside
+  `{lead, lead+1, lead+2}`) are distinct from counted reasons (`bad_key`, `bad_horizon_value`,
+  `bad_date`, `wrong_issue_day`, `missing_lead`, `non_finite_value`, `ambiguous_duplicate`, plus
+  `missing_column:*` and `invalid_config`).
+- **Exclusion order (2026-09-27 fix, restated 2026-09-27 after round-2 review).** The actual
+  pipeline order is: `bad_key` (G4, below) -> model scope (silent) -> `bad_horizon_value` (counted)
+  -> hv-range (silent) -> `bad_date` (counted) -> quarter-start (silent) -> `wrong_issue_day`
+  (counted) -> the dedup/uniqueness/triplet steps. `bad_horizon_value` and `bad_date` are NOT
+  "ignored-without-counting" checks and are NOT deferred past the scope checks they gate -- each
+  necessarily runs immediately before the scope check that depends on its own column (hv-range needs
+  a valid `horizon_value`; quarter-start needs a valid `date`) and could not run any earlier. What
+  changed is narrower: hv validity+range now run BEFORE the date-based checks (date parse,
+  quarter-start, `wrong_issue_day`), where originally `wrong_issue_day` ran before the hv-range
+  check. That gap let an in-scope-model row from a DIFFERENT monthly mode with a genuinely
+  irrelevant lead (e.g. kghm's day-10 `month_0`, hv 0, when this call's lead is 1) satisfy the
+  quarter-start check by coincidence and then be wrongly counted as `wrong_issue_day` instead of
+  silently ignored. `bad_horizon_value` counts only in-model rows with a non-finite or non-integer
+  `horizon_value`; a valid but out-of-range `horizon_value` is silently ignored, never counted
+  (`src/aggregation.py:996-1017` for the reordered hv checks, before the date parse at `:1022`).
+- **`horizon_value` rule.** `hv = pd.to_numeric(col, errors="coerce")`; a row is eligible only if `hv`
+  is finite and `hv == round(hv)`; cast to `int` only AFTER that filter (real API frames carry `hv` as
+  float64 with NaN).
+- **Output column set.** A FIXED list, never built by copying input rows: `code`, `model_short`,
+  `year`, `quarter_in_year`, `date`, `horizon_value`, `valid_from`, `valid_to`,
+  `forecasted_discharge`, `q` (present only if the input had a `q` column), and every column of
+  `_FC_QUANTILE_COLS` (NaN). Columns like `id`, `flag`, `composition`, `q_obs`,
+  `model_type_description` and `horizon_type` never leak into the output.
+- **Exact-duplicate pre-step and singleton rule (2026-09-27 fix; extended 2026-09-27 after round-2
+  and round-3 review, `src/aggregation.py:1082-1150`; owner-approved amendments (2) and (3), "Owner
+  decisions this plan implements" above, 2026-09-28).** Before the uniqueness rule, a row is an
+  exact duplicate of another only if its identity (code, canonical model, `d`, hv, `valid_from`,
+  `valid_to`) AND its point-value inputs (`q` and `q50`, NaN-equal) BOTH match -- a same-window pair
+  with a DIFFERENT value is never silently collapsed by whichever row happens to sort first; it is
+  left for the uniqueness rule below, where a missing `valid_from` column makes the group
+  unresolvable (ambiguous) and a null `valid_from` never matches. The original version keyed only on
+  identity, so two rows with different values but a null or identical window (or no `valid_from`
+  column at all) silently collapsed to one -- the "no-`valid_from`-column implies ambiguous" branch
+  was consequently unreachable.
+  - **The window is ALWAYS part of this identity** (round-3 finding H2) -- BOTH ends, `valid_from`
+    AND `valid_to` independently, each pinned in ALL THREE dedup partitions: no `id` column at all,
+    `id` present but null on this row, and `id` present and non-null -- not just the no-`id` case. A
+    null-`id` or no-`id` frame drops window from the key exactly as easily as an `id`-present frame
+    would, so the SAME same-window/different-value and different-window/same-value negatives apply
+    everywhere (round-3 finding H1: the "without-`id`" partition must also apply the value check, not
+    only the fully-`id`-less path; round-3 finding J2: BOTH the `id`-present and the
+    `id`-present-but-null partitions needed their own dedicated test for `valid_from`, since each uses
+    its own `drop_duplicates` call with its own subset list -- a mutant dropping window from just one
+    of the three calls passed everything until each partition had its own pin). **This claim was
+    ITSELF wrong for `valid_to` until a follow-up round (finding K2)**: H1/H2/J2's tests all varied
+    `valid_from` only, so `valid_to`'s presence in the key was unpinned in EVERY partition -- four
+    mutants (J1's raw-fallback revert applied to `valid_to` only; dropping `valid_to`'s dedup column
+    from the `id`-present, `id`-present-but-null, and no-`id` subsets) all passed every existing test.
+    Each of the three PARTITION-dependent tests (H2/J2's own `drop_duplicates`-subset-per-partition
+    concern) now has its own `valid_to`-only variant (same `valid_from`, different `valid_to`, same
+    value) alongside its existing `valid_from`-only one. The UNPARSEABLE-string variant is different:
+    there is exactly one `valid_from` version and one `valid_to` version, both in the no-`id`
+    partition -- that is sufficient, because `_window_dedup_key` (the fallback rule itself) runs
+    ONCE per window column, on the whole frame, BEFORE the `id`/no-`id` split; a bug in the fallback
+    rule is not partition-dependent the way the with-`id`/without-`id`/no-`id` `drop_duplicates`
+    SUBSET LISTS are, so one test per column end is enough to pin it (finding K2, below).
+  - **`id`, when present, does NOT make a pair authoritative on its own** (round-3 finding H5 --
+    avoid that word; restated plainly): `id` never merges rows that key + window + value would not.
+    Its only effect is to keep rows APART whose ids differ -- specifically, two null ids are never
+    treated as evidence of a repeat (a genuine risk with a naive `id`-only key), so null-`id` rows
+    fall back to the plain key+window+value rule, exactly as when `id` is absent entirely. A
+    same-`id` pair with a DIFFERENT value or window is a genuine conflict, not a repeated read, so
+    both rows are kept and reach the uniqueness rule as a group of >= 2 (round-2 finding G1) -- the
+    first version of this fix still deduped on `id` alone (ignoring value and window), so the OUTPUT
+    depended on row order, and `_reference_derive` carried the identical bug (the differential test
+    could not catch it, since both sides agreed). The `id`-scoped dedup is additionally keyed on the
+    natural (code, canonical model, `d`, hv, window) key, not `id` alone, so an accidental `id`
+    collision across two UNRELATED triplets (found by the G3 shuffled/duplicated-index invariance
+    check, not by hand) can never merge them. The original version's `drop_duplicates(subset=["id"])`
+    treated every null `id` as equal to every other, so an all-null `id` column silently discarded 2
+    of a triplet's 3 rows regardless of model or lead.
+  - **Windows are compared as PARSED local calendar dates where they parse** (round-3 finding H3),
+    via `local_calendar_date` -- the SAME parsing rule the amendment applies everywhere else -- not
+    as raw strings: `"2027-01-01"` and `"2027-01-01T00:00:00+06:00"` for the same row are the same
+    window and do not block the collapse. The original version compared raw `valid_from`/`valid_to`
+    strings, so two representations of the identical instant were wrongly treated as different
+    windows.
+  - **INPUT CONTRACT.** A well-formed `valid_from`/`valid_to` value is an ISO date/datetime string, a
+    `date`/`datetime`/`Timestamp`, or null. Any OTHER value is out of contract; `_window_dedup_key`
+    (below) itself still classifies it best-effort and never raises, but the specific key it assigns
+    (a key unique to that one row) is a deliberate refusal to reason about it, not a guarantee about
+    its meaning. Separately, `id` (when present) must be a hashable scalar, as the API guarantees;
+    an `id` value that is itself unhashable is out of scope for this helper (it is not a documented
+    input shape, unlike an out-of-contract window value, which upstream data quality issues make a
+    real possibility). `derive_quarterly_from_monthly_same_issue` as a whole is guaranteed not to
+    raise only when its inputs meet this contract (also `horizon_value`/`q`/`q50` numeric-or-null,
+    per the P1 fix below): an out-of-contract window value, e.g. `Decimal("sNaN")`, is still
+    classified safely by `_window_dedup_key` and does not corrupt the result, but MAY still raise
+    later -- confirmed for `Decimal("sNaN")` in `valid_from`/`valid_to` (inside the `id`-present
+    branch's `pd.concat`, `src/aggregation.py:1147`), in `horizon_value` or `q`/`q50` (inside
+    `pd.to_numeric` itself), and for an unhashable `id` (also inside that same `pd.concat`) -- this
+    downstream risk is out of scope, not a gap in `_window_dedup_key` (see the P1 follow-up below).
+  - **Where a window value does NOT parse, the fallback rule is the FINAL, SIMPLE and conservative
+    one in `_window_dedup_key`** (the shared helper, `src/aggregation.py:709-783`; findings J1, K1,
+    L1, M1), applied per value in this exact order, with the WHOLE classification wrapped in one
+    `try`/`except Exception` so that NO step -- including the null check itself -- can ever raise
+    out of `_window_dedup_key` ITSELF (M1; a guarantee about this helper, not about
+    `derive_quarterly_from_monthly_same_issue` as a whole -- see the INPUT CONTRACT bullet above): a
+    genuinely null SCALAR (`pd.api.types.is_scalar(v) and pd.isna(v)` --
+    `None`, NaN of any float width, `pd.NA`, `NaT` of any flavour) -> `None`, so two nulls always
+    match, however differently spelled; else, if the value is EXACTLY a `str` (`type(v) is str`,
+    never `isinstance`, which would also admit a `str` SUBCLASS whose own `__hash__`/`__eq__` can
+    raise) -> the string itself, so `"garbage" == "garbage"` still collapses and `"garbage" != "xx"`
+    never does; else (any other non-null, unparseable value -- a list, dict, ndarray, a `str`
+    subclass, or any value that raises merely from being classified, e.g. `Decimal("sNaN")`, whose
+    whole point is to raise on inspection) -> a key unique to that row's OWN POSITION, so it is never
+    equal to any other row's key and neither `str()` nor `hash()` is ever called on the value. This
+    rule went through four revisions: H3's first version keyed purely on the parsed value, so two
+    DIFFERENT unparseable strings (e.g. `"garbage"` vs `"xx"`) both became `NaT` and therefore
+    compared EQUAL to each other -- silently collapsing a pair the pre-H3 code correctly left
+    ambiguous (J1). J1's fix kept the raw value itself as the fallback, which raised `TypeError:
+    unhashable type` the first time an UNHASHABLE raw value (e.g. a list or dict from malformed
+    upstream data) reached `drop_duplicates` (K1). K1's fix built a type-qualified string
+    (`f"{type(v).__name__}|{v!s}"`), which had its OWN holes: `pd.NA`/`np.datetime64("NaT")`/
+    `np.float32("nan")` are not `None` and not `isinstance(v, float)`, so two copies of an
+    otherwise-identical row differing only in WHICH null flavour they used were wrongly ambiguous;
+    `str(v)` can itself raise on an exotic object; and two different same-type objects can collide if
+    their `str()` representations happen to be equal (e.g. two long `ndarray`s whose default,
+    truncated repr is identical) (L1). L1's own version -- `pd.isna(v)` with no `try`/`except` around
+    it, and `isinstance(v, str)` -- still raised on `Decimal("sNaN")` (a signalling NaN, which raises
+    `decimal.InvalidOperation` merely from being tested for null) and would have let a `str` subclass
+    with a raising `__hash__` reach `drop_duplicates` (M1). The row-position key is deliberately NOT
+    a general normal form for arbitrary objects -- it forces every such case apart (a false
+    "ambiguous", never a wrong collapse), which is the safe failure mode. A genuinely null
+    `valid_from`/`valid_to` still matches another null.
+  - **A deterministic spelling tiebreak** (round-3 finding H4): when two rows are exact duplicates in
+    every respect except the stored `model_short` spelling (they share one canonical model), the rows
+    are sorted by that raw spelling (a stable sort) before the drop, so the lexicographically smallest
+    spelling wins regardless of input row order. The original version left this to whichever row
+    `drop_duplicates(keep="first")` happened to see first.
+  - A singleton at (code, canonical model, `d`, hv) is used whatever its `valid_from`, including
+    missing/NaT.
+- **`bad_key` (2026-09-27, round-2 finding G4).** A null `code` or `model_short` is excluded and
+  counted as `bad_key` BEFORE anything groups on `code` (`src/aggregation.py:972-986`, the first
+  per-row filter in the function, before even the model-scope check). Pandas `groupby` drops a null
+  group key by default, so a null-`code` row's boolean `.transform()` result came back as `NaN`
+  instead of `True`/`False`, and `~NaN` raised `TypeError` at the ambiguity check further down --
+  this made the ENTIRE call crash, not merely mis-handle the one bad row.
+- **`code` (and date/window) output dtype (2026-09-27, round-2 finding G5).** The non-empty result's
+  `code`, `date`, `valid_from` and `valid_to` columns are explicitly cast to `object`
+  (`src/aggregation.py:919-934`, in `typed()`), matching `empty_result()`'s hardcoded object dtype
+  regardless of the input `code` column's own dtype (numeric, pandas `StringDtype`, etc.) -- the
+  original version left `code` at whatever dtype it inherited from the input, so the empty and
+  non-empty schemas could disagree.
+- **Ambiguous-duplicate WARNING.** `ambiguous_duplicate > 0` logs at WARNING (count only, no station
+  codes; it signals mislabelled upstream data, LTF-016). Every other count logs at INFO, except
+  `invalid_config`, which also logs at WARNING.
+- **Invalid-config handling.** `issue_day < 1` or `lead < 0` returns the empty schema with ONE
+  WARNING and `invalid_config` counted -- no exception raised.
+- **Flag independence.** The helper never reads `SAPPHIRE_SKILL_LEAD_AWARE`; its output is byte-identical
+  under both flag states (verified by a parametrized test).
+- **Clamp helper.** `clamp_issue_day(year, month, issue_day)` = `min(issue_day,
+  calendar.monthrange(year, month)[1])`, the same rule as the producer
+  (`apps/long_term_forecasting/lt_utils.py:170-172`) and PP-064's `data_reader.py:3097-3101`.
+  **PP-065 N5:** a public vectorized twin, `clamp_issue_days(dates, issue_day)` (same rule via
+  `Series.dt.days_in_month`, `src/aggregation.py:646-672`), replaced `derive`'s own inline
+  `np.minimum(issue_day, df["_d"].dt.days_in_month)` call and is unit-tested against the scalar
+  helper across mixed month lengths (leap/non-leap Feb, a 30-day month, `NaT`). P1b's native-row
+  rule reuses THIS vectorized helper, not the scalar one, for its own per-row clamp. **P3 fix:** its
+  return dtype is NOT fixed -- `int32` when `dates` has no `NaT`, `float64` when it does (since
+  `Series.dt.days_in_month` itself upcasts to hold NaN for a `NaT` row) -- documented rather than
+  forced to one dtype via an extra cast, since a `Series.dt.day != this` comparison (the only
+  caller) works correctly either way and a float64 cast would needlessly change that comparison's
+  dtype in the common no-`NaT` case.
+- **Distinct-month observation counting** (owner-approved amendment (4), "Owner decisions this plan
+  implements" above, 2026-09-28). `aggregate_monthly_obs_to_quarterly` first averages per
+  (code, year, quarter, month) skipping NaN, then aggregates those monthly means to the quarter
+  (unweighted mean); `n_months` counts DISTINCT months with a non-null monthly mean, not non-null
+  rows. With the normal one-row-per-month input this is unchanged from before; only the coverage
+  threshold (`QUARTER_MIN_MONTHS` -> `QUARTER_OBS_MIN_MONTHS = 3`) changed. This equivalence is EXACT
+  only for input already sorted by (code, year, month), which is what the only caller produces --
+  differently-ordered input can differ by roughly 1e-14 from floating-point summation
+  reassociation, not by anything a caller should observe in practice.
+- **Typed empty schema (2026-09-27 fix).** `empty_result()` returns a schema typed identically to a
+  non-empty result: `year`, `quarter_in_year` and `horizon_value` are int64; `forecasted_discharge`,
+  `q` and the quantile columns are float64; the rest are object. The original version left every
+  empty-schema column as plain object dtype, so e.g. concatenating an empty derived frame with a
+  typed direct-read frame could silently upcast `year` away from int64 (and, once pandas removes the
+  deprecated empty/all-NA exclusion it currently warns about, change the concatenated dtype outright).
+- **Updated line citations** (this branch's HEAD, re-verified 2026-09-27 after round-3 review (H1-H5),
+  the J1-J3 follow-up, the K1-K2/L1-L2 follow-up, the M1-M3 follow-up, the N1-N7 follow-up, AND the
+  P1-P3 follow-up (below) -- re-verify again after any further edit to `src/aggregation.py`, since
+  these drift with every change above them in the file): `local_calendar_date` is at `:102-201`; the
+  observation coverage filter is at `src/aggregation.py:397`; the delta computation is at
+  `:403-409`; `QUARTER_MIN_MONTHS` is defined at `:284` and remains used only by
+  `aggregate_monthly_fc_to_quarterly` (forecast aggregation, unchanged by this phase);
+  `clamp_issue_days` (PP-065 N5's public vectorized clamp) is at `:646-672`; the shared
+  `_window_dedup_key` helper (the SIMPLE, conservative, exception-safe-by-construction
+  unparseable-value fallback, finding M1) is at `:709-783`; the `typed()` function (object-dtype
+  cast included) is at `:919-934`; `bad_key` is at `:972-986` (its own early return, one line after
+  `log_counts()`, not on the same line as the filter itself); the derivation helper's hv-check
+  reorder is at `:996-1017`; the date parse itself is the single line at `:1022`; the
+  exact-duplicate pre-step (window-parsing via `_window_dedup_key` for BOTH `valid_from` and
+  `valid_to`, the spelling-tiebreak sort, and the value- and natural-key-scoped `id` dedup, across
+  all three partitions) is at `:1082-1150` (the `id`-present branch's own `pd.concat` is at
+  `:1147`); the vectorized uniqueness/triplet-assembly rewrite (see "Performance" below) spans
+  `:1152-1287` (the end of the file). Every one of these moved again from the N1-N7 HEAD
+  (`8aff8cc6`): the P1 INPUT CONTRACT rewrite and the P3 `clamp_issue_days` docstring fix both grew
+  the file (net +16 lines by end of file) -- each citation above was re-measured directly on this
+  round's HEAD.
+- **Performance (2026-09-27, PP-065 F3).** The original P1a implementation grouped rows with Python
+  `for key, group in df.groupby(...)` loops for both the uniqueness rule and the final triplet
+  assembly -- correct, but O(rows) in Python, measured at 8.5-38s for a ~200k-row synthetic monthly
+  frame depending on the reviewing environment. It was rewritten to be fully vectorized: group size
+  and match count via `groupby().transform()`, the triplet check and mean via a pivot/unstack on
+  `horizon_value`, and month arithmetic/clamping via integer "months since epoch" arithmetic and
+  `Series.dt.days_in_month` instead of per-row Python calls. Measured on the same 200k-row synthetic
+  frame (same machine): 30.4s -> ~0.65s (about 47x) after the round-2 fixes, ~0.75s after the round-3
+  fixes below (H3's window parsing and H4's sort add a little back), ~0.83-0.84s from the K1/L1
+  rewrite of `_window_dedup_key` onward (unchanged again after M1's try/except wrap, since it only
+  guards checks that were already cheap), still comfortably under the 2s target. A real-data re-run
+  (8 org/mode combinations) landed the same conclusion independently:
+  byte-identical output to the pre-vectorization commit in all 8 runs, 4-13x faster, counts changing
+  only by the intended out-of-scope-row exclusion (F5's month_0-style fix).
+
+  A same-author, deliberately non-vectorized reference copy of the pre-rewrite logic
+  (`_reference_derive` in `tests/test_quarter_derived_models.py`) is checked against the production
+  function by a randomized differential test (300 generated frames, fixed seed). This is an
+  equivalence check for the vectorization, NOT an independent oracle -- both sides were written by
+  the same author from the same spec understanding, so agreement proves the rewrite didn't change
+  behaviour, not that either implementation is correct. The generator draws 1-3 fake
+  station codes (19999/19998/19997, so `code` is exercised in the grouping key -- round-2 finding
+  G2), leads 0-11 (not just 0-2), issue days including 29/30/31 so the day-of-month clamp is
+  exercised end to end in Feb and 30-day months, multiple models, wrong days, exact and ambiguous
+  duplicates, a deliberate "exactly one match in a group of >= 2" case, NaN/float/out-of-range
+  `horizon_value`, a null `code`/`model_short` (`bad_key`), offset windows, mixed-tz date strings and
+  missing `q`/`q50` columns; it asserts the sorted output (dtypes included) and the counts match
+  exactly. Every frame is ALSO re-run shuffled with a non-default, duplicated index, asserting
+  production's own output is unchanged (order/index invariance) -- this caught a real gap round-1
+  testing missed: `id`-based dedup was scoped by `id` alone, so an (unrealistic but not impossible)
+  `id` collision across two UNRELATED triplets could merge them; the fix scopes it by the natural key
+  too. A small set of hand-computed expected results (the Dec-Jan rollover at leads 0/1/2/11, the Feb
+  29 and June 30 clamps, a same-`id` conflict, a single-match-in-a-group win, and -- PP-065 N2 -- two
+  NON-progression-value cases, since every one of the others uses an arithmetic progression where
+  mean, median and the positional middle column all coincide), computed directly from the spec
+  rather than via either implementation, lives in `TestHandComputedSpecDerivedResults` in the same
+  test file. THIS is the actual spec oracle, independent of both implementations -- the differential
+  test above is not. Keep `_reference_derive` UNEDITED except in lockstep with production -- fix
+  production, the reference and the differential test together when they are found to disagree,
+  never edit the reference alone to match a production change.
+
+  **Round-3 review (2026-09-27).** An independent spec-derived oracle (codex) matched production on
+  every frame; a real-data re-run was identical in all 8 runs; a second, spec-only Claude oracle
+  found no production defect beyond one interpretation question (resolved as the plain-language `id`
+  restatement above). It DID find two real test-coverage gaps that a targeted mutant could slip
+  through unnoticed (H1: the value check in the null-`id` partition was unpinned, because
+  `_reference_derive` shared that exact line so the differential test agreed with the bug; H2: the
+  window's presence in the exact-duplicate identity was unpinned in the no-`id` partition) -- both
+  are now covered by a dedicated unit test AND mutation-verified. It also found two real, if minor,
+  production gaps (H3, H4) fixed above.
+
+  **Round-3 follow-up (2026-09-27, J1-J3).** A further confirmation pass (codex's independent
+  spec-derived oracle matched production on every frame again; the real-data re-run was identical in
+  all 8 runs, unchanged order and spellings; a second reviewer found no regression in the H4
+  tiebreak) found three more items. J1 (code, both implementations): H3's parsed-date comparison had
+  its own gap -- two DIFFERENT unparseable `valid_from`/`valid_to` strings (e.g. `"garbage"` vs
+  `"xx"`) both parse to `NaT` and, compared as parsed values only, wrongly counted as the SAME
+  window. Fixed above (the raw-value fallback). J2 (test pins): H2's coverage was, despite the
+  amendment's wording, NOT actually independent of `id` -- it covered only the no-`id` partition; the
+  `id`-present and `id`-present-but-null-on-this-row partitions each have their OWN
+  `drop_duplicates` call with its own subset list, so a mutant dropping window from either one alone
+  passed every existing test. Both now have a dedicated test and are mutation-verified (see the
+  bullet above, now corrected to say "across all three partitions"). J3 (docs): this "Updated line
+  citations" bullet, the exact-duplicate bullet above, the stale inline code comment this bullet
+  used to still carry the pre-G1 "authoritative" wording, and the P1a section body's own test
+  citations below decision 8 were all re-verified/corrected against this branch's HEAD.
+
+  **Round-4/5 follow-up (2026-09-27, K1-K2, L1).** Two further confirmation passes (real-data re-run
+  identical each time; independent codex and Claude reviewers) found three more items, all on the
+  unparseable-window fallback introduced by J1. K1 (codex, code): an UNHASHABLE unparseable value
+  (e.g. a list or dict) was kept as J1's raw fallback key, and `drop_duplicates` requires every key
+  value to be hashable, so it raised `TypeError: unhashable type` the first time such a row appeared.
+  K1's own first fix replaced the raw value with a type-qualified string
+  (`f"{type(v).__name__}|{v!s}"`), which is what the exact-duplicate bullet above described until
+  this round. K2 (Claude, test pins): `valid_to`'s presence in the window key was completely
+  unpinned -- see the corrected coverage claim above. L1 (codex + Claude, code): K1's type-qualified
+  string fallback still had three holes -- `pd.NA`/`np.datetime64("NaT")`/`np.float32("nan")` are
+  not caught by `v is None` or `isinstance(v, float)`, so two copies of the same row differing only
+  in null flavour were wrongly ambiguous; `str(v)` can itself raise on an exotic object (the
+  contract `local_calendar_date` promises never to violate for ANY input); and two different
+  same-type objects can collide if their truncated `str()` happens to match. `_window_dedup_key` was
+  rewritten to be SIMPLE and conservative instead of patched further: null via
+  `pd.api.types.is_scalar(v) and pd.isna(v)` (catches every flavour), an unparseable string compared
+  as itself, and everything else non-null and unparseable given a key unique to its own row position
+  -- never `str()`'d or `hash()`'d. See the exact-duplicate bullet above for the current rule and the
+  "Updated line citations" bullet for its location.
+
+  **Round M1-M3 follow-up (2026-09-27).** Final reviews of L1 (real-data re-run identical again --
+  seven versions of the derivation now agree byte-for-byte; codex and Claude both agreed the L1 rule
+  was right in spirit) still found two gaps, both in exotic-input handling rather than in the
+  documented input contract. M1 (code, both implementations): L1's per-value classification was not
+  wrapped in `try`/`except`, so it could still raise for pathological inputs outside the documented
+  contract -- `pd.isna(Decimal("sNaN"))` raises `decimal.InvalidOperation` (a signaling NaN is
+  designed to raise on inspection), and `isinstance(v, str)` admits a `str` subclass with a
+  deliberately raising `__hash__`, which `drop_duplicates`'s internal hashing then triggers.
+  `_window_dedup_key` now wraps the whole per-value classification in `try`/`except Exception`, uses
+  `type(v) is str` (not `isinstance`, which is exactly what let the raising-`__hash__` subclass
+  through) for the exact-string branch, and on any exception falls back to the same
+  row-position-unique key L1 already used for other unparseable objects -- so the function is
+  exception-safe *by construction*, not by enumerating exotic types. Two new tests pin this:
+  `Decimal("sNaN")` in `valid_from` and a `str` subclass with a raising `__hash__`, in each case
+  asserting the control derives without an exception; mutation-verified (dropping the `try`/`except`
+  makes the `sNaN` test raise `decimal.InvalidOperation`; reverting to `isinstance` makes the
+  str-subclass test raise `RuntimeError` from inside `drop_duplicates`'s hashing). M2 (test pins):
+  two of the three parametrizations of the null-flavour-equivalence test were hollow --
+  constructing a `pd.DataFrame` from a list of tuples silently coerces an all-null-ish column to a
+  uniform `datetime64[ns]` or `float64` dtype, erasing the exact `np.datetime64("NaT")` /
+  `np.float32("nan")` scalar types the test claimed to exercise before `_window_dedup_key` ever saw
+  them, so a mutant that narrowed the null check still passed. Fixed by adding a co-located,
+  non-conflicting row with a parseable string `valid_from` (forcing the whole column to `object`
+  dtype) and asserting the actual per-cell types survive construction before calling derive;
+  mutation-verified (narrowing the null check to `None`/`NaT`/`NA`/`float` makes exactly the
+  `np.datetime64`/`np.float32` parametrizations fail, leaving `pd.NA` passing, which is the precise
+  discriminating signature). Separately, the exact-string fallback branch had no positive test at
+  all -- two new tests assert that two rows sharing the same unparseable string (`valid_from` and
+  `valid_to` variants) collapse to one derived row with no `ambiguous_duplicate`, mutation-verified
+  (replacing the `type(v) is str` branch with `False` makes both fail). M3 (docs): the inline
+  comment above the `_window_dedup_key` call sites and this bullet's own fallback-rule text were
+  rewritten for the final M1 rule (they still described K1's retired type-qualified-string rule); an
+  explicit INPUT CONTRACT was added below to state what a well-formed `valid_from`/`valid_to` value
+  is and that an out-of-contract value is still handled, never raised on by `_window_dedup_key`
+  itself, but its assigned key carries no meaning beyond "don't merge this with anything"; and the
+  `bad_key` citation in the "Updated line citations" bullet was corrected (its own early return is
+  one line after `log_counts()`, not on the same line as the count-only branch above it).
+
+  **Post-M1 final review (2026-09-27, docs-only).** codex found nothing further, the real-data
+  re-run was identical again (eight versions agree), and a Claude reviewer verified the M1 rule,
+  order/index independence, and every M1/M2 mutation -- but flagged that the "never crashes on
+  anything" wording above overreached: `Decimal("sNaN")` in `valid_from`/`valid_to` is still
+  classified safely by `_window_dedup_key` itself (that guarantee holds, and is unchanged), but
+  `derive_quarterly_from_monthly_same_issue` as a whole can still raise on it downstream, inside
+  pandas' own `pd.concat` of the `id`-present/`id`-absent partitions (`src/aggregation.py:1143`),
+  when the frame has an `id` column. This is outside the documented INPUT CONTRACT, so it was never
+  a regression, just imprecise wording. No code or test changed; the derive docstring
+  (`src/aggregation.py` ~:834-850), the call-site comment (~:1077-1089), and the INPUT CONTRACT /
+  fallback-rule bullets above were reworded to scope the "never raises" guarantee to
+  `_window_dedup_key` itself, and to state plainly that `derive`'s own crash-free guarantee holds
+  only for the documented contract (ISO date/datetime `valid_from`/`valid_to` or null; a hashable
+  scalar `id`).
+
+  **P1-P3 follow-up (2026-09-27, confirm-fixes pass on 8aff8cc6).** A fresh, no-history full-branch
+  review (codex: would merge as is; a fresh Claude reviewer: three items) found that the real-data
+  run was identical again and the only logic changes across the whole N1-N7 commit were the
+  intended ones -- but P1 (both reviewers) caught that the N6 trim had, while shortening the
+  docstring, PUT BACK the exact overclaim the Post-M1 fix above had just removed: "An out-of-contract
+  value never crashes this function." Verified false again, now for FOUR inputs, not just the
+  window value: `Decimal("sNaN")` in `valid_from`/`valid_to` (`pd.concat` in the `id`-present
+  branch), in `horizon_value` or `q`/`q50` (inside `pd.to_numeric` -- confirmed directly:
+  `decimal.InvalidOperation` for `horizon_value`, `ValueError: cannot convert signaling NaN to
+  float` for `q50`), and an unhashable `id` (the same `pd.concat`). Restored the narrowed wording
+  with the SAME rule Post-M1 established: `_window_dedup_key` itself never raises for any window
+  value; `derive` as a whole is crash-free only within the documented contract (this docstring's own
+  INPUT CONTRACT text, `src/aggregation.py:803-822`, and the call-site comment's closing pointer at
+  `:1089-1094`). P2 (test): the N4 float64 cast was only
+  ever pinned for `q50` -- added a dedicated `q`-column test (Float64 `pd.NA` in `q`, plain NaN in
+  `q50` for the same month, so there is no finite fallback), mutation-verified (removing only the
+  `q` cast reproduces the exact N4 silent-average bug, from the `q` side this time). P3 (lockstep):
+  applied the identical float64 cast to `_reference_derive`'s own `q`/`q50` handling -- without it,
+  the reference does not silently agree with a stale production bug the way K1/L1's reference gaps
+  once did; it CRASHES instead (`_reference_derive`'s point-value check is a plain Python
+  `all(np.isfinite(v) for v in ...)`, and `bool(pd.NA)` raises `TypeError`, confirmed directly), so
+  the cast is required for the differential test to run at all on such frames, not merely for
+  parity. Extended the differential generator to store `q`/`q50` as pandas nullable `Float64` on
+  ~25-30% of generated frames (confirmed by direct measurement: 53/300 for `q`, 80/300 for `q50`
+  across the fixed-seed run); all 300 frames still pass. Also fixed `clamp_issue_days`'s own
+  docstring, which claimed a fixed float64 return dtype -- confirmed by direct measurement it is
+  `int32` when the input has no `NaT` and `float64` only when it does; documented rather than
+  forced to one dtype via an extra cast, since the one caller's comparison works correctly either
+  way and a cast would needlessly change that comparison's dtype in the common case.
+- **Dev-DB validation (2026-09-27).** On the local dev DB, complete same-issue triplets across the
+  seven derived models (2000-2026) were 30.96k (kghm) / 7.13k (tjhm), and 14.1k / 3.4k over
+  2015-2026; the feasibility section above (~27.8k / ~5.2k) did not state its year window, so these
+  are not directly comparable, just a more precise re-measurement. Separately: kghm currently has no
+  native Q1 LR rows on the 25 Dec issue date, which is expected while LTF-014 P0 is deferred (decision
+  2's forecast_months restriction) -- this is exactly the gap the LR fallback (decision 2) exists to
+  cover.
+- **Rollout note (N7): the 3-of-3 observation rule is the ONLY part of P1a that takes effect at
+  merge**, not gated behind P2's writer changes -- everything else in P1a (the derivation helper,
+  the exact-duplicate/uniqueness rules, the vectorization) is a pure function nothing calls yet.
+  `aggregate_monthly_obs_to_quarterly`'s `QUARTER_OBS_MIN_MONTHS = 3` threshold IS live on merge,
+  reached via `recalculate_skill_metrics.py:385` -> `data_reader.read_quarterly_observations`
+  (`:2976`) -> `aggregate_monthly_obs_to_quarterly`. **Therefore: do NOT run a quarter skill recalc on
+  any server between deploying P1a and P2's writer-paused export window** -- P2's export of the
+  current (pre-P1a) quarterly observation rows must precede any P1a-affected recalc, or the recalc
+  will silently apply the new coverage rule (and the N3 averaging fix) to a comparison baseline P2
+  never captured. Separately, "3 of 3 months" is NOT "a fully observed quarter": a month itself
+  counts as observed at >= 50% of its days (`data_reader.py` ~:1302, `monthly[monthly["non_missing_
+  days"] >= monthly["days_in_month"] * 0.5]`), so a quarter that passes the 3-of-3 threshold can still
+  be built from three half-empty months.
 
 ### P1b — readers, native-row selection, maintenance, writer
 
