@@ -1,6 +1,17 @@
 # PP-065: Seven models for quarter as same-issue monthly averages; quarterly Naive/Skilled Mean as for monthly
 
-**Status**: Draft (2026-09-26, rev 6 after the fourth review round)
+**Status**: P1a **merged to trunk (#530, 2026-09-28)**. P1b and P1c are next (parallel, both depend on P1a),
+then P1d, then rollout (P2). P1b/P1c must **reference** the symbols P1a already put on trunk, not
+re-create them: the `QUARTER_NATIVE_RAW_MODELS` / `QUARTERLY_DERIVED_MODELS` / `QUARTER_SUPPORTED_MODELS`
+constants in `apps/postprocessing_forecasts/src/model_names.py:21-30`, and `clamp_issue_day` /
+`clamp_issue_days` (`src/aggregation.py:627, 646`) and `QUARTER_OBS_MIN_MONTHS` (`src/aggregation.py:290`).
+`derive_quarterly_from_monthly_same_issue` itself **already exists on trunk** since P1a
+(`src/aggregation.py:786-...`, unit-tested in `tests/test_quarter_derived_models.py`), but nothing calls
+it yet: `src/data_reader.py`, `postprocessing_maintenance_long_term.py` and `src/api_writer.py` have no
+reference to it (measured by grep). The two quarter readers still call the old
+`aggregate_monthly_fc_to_quarterly` (`src/data_reader.py:3145, 3499, 3508`). **Wiring the helper into the
+readers/maintenance/writer is P1b's job**, not writing the helper itself. Plan drafted 2026-09-26 (rev 6,
+after the fourth review round).
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High. On the 2026-12-25 critical path (round-2 decision 5): the LR fallback guarantees a kghm
 Q1 even without LTF-014 P0.
@@ -79,6 +90,17 @@ Paths are relative to `apps/postprocessing_forecasts/`. Citations are to trunk `
       one calendar month are averaged together FIRST (skipping NaN); the resulting per-month means
       are what the `QUARTER_OBS_MIN_MONTHS = 3` distinct-month coverage check counts (Target
       behaviour item 8, marked as refined below).
+8. **The missing-quarter-config split is intended** (owner decision, first recorded 2026-09-27, restated
+   2026-09-28). **P1b: missing quarter config -> FAIL.** Unlike PP-064's `_quarter_native_q1_issue_date`
+   (`src/data_reader.py:3072-3083`), which warns and continues (`except
+   (LongTermHorizonResolverError, FileNotFoundError)`) because disabling its one narrow admit rule is
+   safe, PP-065 P1b's own derivation/read path uses a **narrower** exception tuple that deliberately
+   excludes `FileNotFoundError` (`except (UnsupportedLongTermModeError, LongTermHorizonResolverError)`,
+   item 2's "Schedule resolution" bullet): a missing `quarter.json` (`FileNotFoundError`,
+   `long_term_horizon_resolver.py:184`) is a misconfiguration and **propagates** (FAILS the run) under
+   both flags, rather than degrading. This deliberately differs from FD-031's fix on the dashboard side,
+   which degrades on the same missing-file case instead of raising -- the two layers own different
+   failure modes for the same root cause and are not meant to converge (see FD-031's own note).
 
 ## Feasibility (verified; re-measure per server)
 
@@ -225,7 +247,10 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      - `date = d`, `horizon_value = L`;
      - `valid_from`/`valid_to` = Q's calendar bounds;
      - `year`, `quarter_in_year`.
-   - **Logging:** INFO counts per exclusion reason; no station codes.
+   - **Logging:** INFO counts per exclusion reason, except `ambiguous_duplicate` and `invalid_config` at
+     WARNING (P1a amendment; matches trunk `src/aggregation.py:936-956`, `log_counts()`); counts are also
+     returned as a dict (the function's own return value); no station codes. The helper logs its own
+     counts internally — **callers must not re-log them.**
 2. **Readers** (`read_quarterly_forecasts`, `read_latest_quarterly_forecasts`).
    - **Direct rows, native-row selection.** One shared helper, used by both readers under **both** flags:
      it parses `date` (quarter `date` arrives unparsed) and applies PP-064's Contract rule (`date.day` ==
@@ -247,7 +272,43 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      `start_year − 1 … end_year`. In the latest reader, also require issue date ≤ `forecast_date`. Derive
      for the seven models; while the fallback is active, also derive each LR model for (code, year,
      quarter) keys with no selected native row of that model.
-   - **Existing Source 1 (LR aggregation) forecast_date bound, latest reader, both flags — IN scope.**
+     - **Interfaces (reuse trunk's own symbols, do not re-create them).** Resolve the quarter schedule once
+       per reader call via `operational_schedule_for_mode("quarter")` (shared with the native-row rule and
+       `_quarter_native_q1_issue_date`, see "Schedule resolution" below); parse `date`/`valid_from` with
+       `local_calendar_date` (`src/aggregation.py:102`), not `pd.to_datetime`; clamp issue days with
+       `clamp_issue_days` (`src/aggregation.py:646`), not a hand-rolled clamp; call
+       `derived, _counts = derive_quarterly_from_monthly_same_issue(renamed_monthly, schedule.lead_time,
+       schedule.issue_day, QUARTERLY_DERIVED_MODELS)` for the seven models, and the same call with
+       `QUARTER_NATIVE_RAW_MODELS` in place of `QUARTERLY_DERIVED_MODELS` for the decision-G LR fallback.
+       Do **not** re-log `_counts` — the helper already logs its own counts internally (see the Logging
+       bullet above). Treat a resolved `schedule.issue_day < 1` as an additional degraded-native-rule
+       trigger, the same way PP-064 A's `_quarter_native_q1_issue_date` (`src/data_reader.py:3085-3093`)
+       and FD-029 already do — on top of the helper's own internal `invalid_config` handling for that same
+       condition (`src/aggregation.py:952-956`), which only covers calls already reached; the reader-level
+       trigger is what decides whether to call the helper (and the native-row rule) at all.
+     - **Target-year trim scope.** Trim **only** the derived rows (this item's output, both the seven
+       models and the decision-G LR fallback) to `[start_year, end_year]` (the latest reader:
+       `[start_year, end_year + 1]`, matching its existing next-year-Q1 allowance). Do **not** add a new
+       target-year trim to direct rows. Flag OFF: direct rows keep PP-064's own invariant, unchanged by
+       this plan — every direct row with issue year in `[start_year, end_year]` is kept regardless of
+       target year, PLUS only the native, schedule-dated December-issued Q1 of `start_year`
+       (`_quarter_native_q1_issue_date`); a target-year trim on direct rows here would reverse that
+       precedence and is locked against by `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening` and
+       `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim`
+       (`tests/test_quarter_calendar_window.py:995, 1046`) — do not break them. Flag ON: the direct-row
+       target-year trim already exists (`_trim_to_target_year_range`, `src/data_reader.py:3209`, from
+       #527) and is unaffected by this item.
+   - **Existing Source 1 (LR aggregation), latest reader, both flags — SUPERSEDED (owner decision
+     2026-09-28, "PP-065 P1b replaces Source 1").** There is no longer a separate, bounded-but-otherwise-
+     unchanged old LR aggregation path to maintain: `read_latest_quarterly_forecasts`' pre-existing
+     monthly-derived path for LR_Base/LR_SM (`aggregate_monthly_fc_to_quarterly`) is **replaced**, not
+     bounded, by the same "Derived rows" mechanism above — `derive_quarterly_from_monthly_same_issue`
+     called with `QUARTER_NATIVE_RAW_MODELS` as the decision-G fallback. The `forecast_date` bound this
+     bullet originally added to the old path is achieved for free by that unification: "Derived rows"
+     above already reads via `_read_long_forecasts_api` and, in the latest reader, already requires issue
+     `date <= forecast_date`. The two tests below still apply, now to the unified derive-based path, not
+     to `aggregate_monthly_fc_to_quarterly`. **[historical text below, kept for context, not the current
+     contract]**
      `read_latest_quarterly_forecasts`' pre-existing monthly-derived path for LR_Base/LR_SM (unrelated to
      the "Derived rows" step above, which is this plan's new seven-model/fallback mechanism) has no bound
      against `forecast_date` today: flag ON calls `read_monthly_forecasts(codes, start_year, end_year)`
@@ -257,7 +318,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      item, above), so it owns bounding it: filter to issue `date <= forecast_date` (null kept) on the
      rows this reader itself receives — `read_monthly_forecasts`' output under flag ON, the raw rows
      from `_read_long_forecasts_api` under flag OFF — any time **before** they reach
-     `aggregate_monthly_fc_to_quarterly` (unchanged, P1a). `read_monthly_forecasts` itself is **not**
+     `aggregate_monthly_fc_to_quarterly`. `read_monthly_forecasts` itself is **not**
      modified: filtering before or after its internal `select_operational_issuances` call is equivalent
      here, because that call derives the lead from (issue month, target month) and additionally requires
      the configured issue *day* (`data_reader.py:346-354`) — so a fixed (target month, lead) pins the
@@ -265,8 +326,8 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      ineligible reissue on a different day" case for filter placement to matter for.
      - **Test:** `forecast_date = 2026-06-25`; monthly LR rows issued 2026-09-25 and 2026-10-25 (both
        after `forecast_date`) must not produce a Q4 aggregate — under both flags.
-     - **Test:** no row dated after `forecast_date` reaches `aggregate_monthly_fc_to_quarterly` (assert
-       on a spy, or on the rows actually passed to it) — under both flags.
+     - **Test:** no row dated after `forecast_date` reaches the derivation input (assert on a spy, or on
+       the rows actually passed to `derive_quarterly_from_monthly_same_issue`) — under both flags.
    - Trim to the requested **target** years. In the latest reader, target year `today.year + 1` is allowed,
      so a 25 Dec issue yields next year's Q1.
    - **Drop direct rows of the seven models before the sources are combined.** After this, the readers'
@@ -292,6 +353,26 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      - Flag ON: unchanged. An unsupported `quarter` makes the guard return empty (`src/data_reader.py:3100-3109`,
        `:3376-3385`); a missing issue day already raises from `_operational_schedules_for_horizon_type`
        (`:179`) before any native filter could run.
+   - **Schedule resolution, flag OFF.** Resolve the quarter operational schedule (`operational_schedule_for_mode
+     ("quarter")`) **once per reader call** and share the same resolved `schedule` object with the native-row
+     rule, the derivation calls above, and `_quarter_native_q1_issue_date`'s own Problem-7 exception
+     (`src/data_reader.py:3072-3083`) — so the degraded case (schedule unresolvable) logs exactly **one**
+     WARNING per reader call, not one per call site. **Do not** reuse
+     `_quarter_native_q1_issue_date`'s own `except (LongTermHorizonResolverError, FileNotFoundError)` for
+     the derivation calls: that tuple's `FileNotFoundError` branch is specific to the Problem-7
+     native-Q1-date exception (warn-and-continue is safe there because it only disables one admit rule),
+     and does **not** apply to the derivation/read path, where a missing config file FAILS (decision 3,
+     "the missing-quarter-config split is intended" — see the overview's owner decisions). The derivation's
+     own `except (UnsupportedLongTermModeError, LongTermHorizonResolverError)` (above) is a **different,
+     narrower** tuple that deliberately excludes `FileNotFoundError`.
+   - **Model filter.** Both quarter readers currently call `_filter_supported_aggregated_forecast_models`
+     (`src/data_reader.py:98-104`, called at `:3310, 3432, 3606, 3730`) after combining sources, which keeps
+     only rows in `AGGREGATED_SUPPORTED_MODELS` (LR + the three ensemble aggregates,
+     `src/model_names.py:14-16`) — that would silently discard every derived seven-model row this item
+     produces. Change the two **quarter** readers' post-combine filter to keep `QUARTER_SUPPORTED_MODELS`
+     (`src/model_names.py:28-30`) instead of `AGGREGATED_SUPPORTED_MODELS`. The **season** readers keep
+     calling `_filter_supported_aggregated_forecast_models` with `AGGREGATED_SUPPORTED_MODELS` unchanged
+     (season is out of scope, item 6).
 3. **Writer: stop writing raw LR rows (rev-3 PP-064 "B6").**
    - The quarter branch of `_write_aggregated_forecasts_to_api` skips `LR_BASE`/`LR_SM` rows **and
      `EM`/`ENSEMBLE_MEAN` rows** (compare canonically). It keeps writing the seven derived models, Naive Mean
@@ -366,9 +447,13 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      seen.
    - Forecast rows keep their per-year composition.
 7. **K = 10** for quarter (decision 4).
-8. **Observations: 3 of 3 months** (rev-3 PP-064 "B4"). Add `QUARTER_OBS_MIN_MONTHS = 3`, used only at
-   `src/aggregation.py:125-126`, unweighted. This also changes δ (`:132-141`), which is computed from the
-   surviving years. `QUARTER_MIN_MONTHS` (`:38`) is unchanged.
+8. **Observations: 3 of 3 months** (rev-3 PP-064 "B4"). **Merged to trunk (P1a, #530).**
+   `QUARTER_OBS_MIN_MONTHS = 3` is on trunk at `src/aggregation.py:290`, used at `:371, 397`, unweighted
+   (line citations corrected from the original `:125-126`, drifted since this item shipped). This also
+   changes δ (`aggregate_monthly_obs_to_quarterly`, `:403-409`, corrected from the original `:132-141`),
+   which is `0.674 * std(discharge_avg)` computed only from the years that survive the
+   `QUARTER_OBS_MIN_MONTHS` filter. `QUARTER_MIN_MONTHS` (`src/aggregation.py:284`, corrected from the
+   original `:38`) is unchanged, `= 2`.
    **[Refined by the approved amendment (4) in "Owner decisions this plan implements" above: a
    DUPLICATE row for one calendar month is averaged together with its own month's other row(s)
    FIRST, skipping NaN, and it is that per-month mean the "3 of 3" DISTINCT-month count is over --
@@ -859,14 +944,27 @@ longer exists; nothing here depends on it):
   counts as observed at >= 50% of its days (`data_reader.py` ~:1302, `monthly[monthly["non_missing_
   days"] >= monthly["days_in_month"] * 0.5]`), so a quarter that passes the 3-of-3 threshold can still
   be built from three half-empty months.
+  - **Superseded by the broader rollout gate (owner decision, 2026-09-28; see the overview's "Rollout and
+    communication").** N7's own "do not run a quarter skill recalc between P1a deploy and P2's export
+    window" is a narrower statement of the same hazard the rollout gate now closes at the deployment
+    level: trunk (carrying this live 3-of-3 rule) does not go to any server at all until PP-065 P2 is
+    ready, so there is no window in which a server could run P1a alone. N7's reasoning stays correct and
+    is not withdrawn; the rollout gate is the operational control that makes its premise (a server running
+    P1a without P2) not arise in practice.
 
 ### P1b — readers, native-row selection, maintenance, writer
 
 Depends on P1a. It can run in parallel with P1c; the two touch disjoint source files.
 
 **Files:**
-- `src/data_reader.py`: the two quarter readers (item 2), the combined-reader filter, the shared native-row
-  helper, `_quarterly_fc_output_cols`.
+- `src/data_reader.py`: the two quarter readers (item 2) — wiring in the already-on-trunk
+  `derive_quarterly_from_monthly_same_issue` (P1a, `src/aggregation.py:786`) in place of
+  `aggregate_monthly_fc_to_quarterly`, the model filter (switch the two quarter readers' post-combine
+  `_filter_supported_aggregated_forecast_models` call to `QUARTER_SUPPORTED_MODELS`, season unchanged),
+  the target-year trim scope (derived rows only), the combined-reader filter, the shared native-row
+  helper, `_quarterly_fc_output_cols`. Reference the existing `QUARTERLY_DERIVED_MODELS` /
+  `QUARTER_NATIVE_RAW_MODELS` / `QUARTER_SUPPORTED_MODELS` constants (`src/model_names.py:21-30`) and
+  `clamp_issue_days` (`src/aggregation.py:646`) — do not re-create them.
 - `postprocessing_maintenance_long_term.py`: the gap-detector call, the gap universe, the gap-key filter
   and the allowed restructuring (item 4).
 - `src/api_writer.py`: the LR and EM skip (item 3) only.
@@ -884,12 +982,20 @@ lead 0):
   through both readers. **Not** asserted end-to-end through the readers under flag ON here —
   `select_operational_issuances` still matches unclamped and would drop the row regardless of the
   helper's own classification; PP-066's Tests list carries that end-to-end case once its fix lands.
-- **Existing Source 1 forecast_date bound, latest reader, both flags.** `forecast_date = 2026-06-25`;
-  monthly LR rows issued 2026-09-25 and 2026-10-25 (both after `forecast_date`) → no Q4 aggregate is
-  produced, under both flags. Fails on the pre-P1b base (neither flag bounds this path today).
-- **Existing Source 1 forecast_date bound, inputs to the aggregation.** No row dated after
-  `forecast_date` reaches `aggregate_monthly_fc_to_quarterly` (assert on a spy, or on the rows actually
-  passed to it), under both flags.
+- **Existing Source 1 (now unified) forecast_date bound, latest reader, both flags.**
+  `forecast_date = 2026-06-25`; monthly LR rows issued 2026-09-25 and 2026-10-25 (both after
+  `forecast_date`) → no Q4 aggregate is produced, under both flags. Fails on the pre-P1b base (neither
+  flag bounds this path today).
+- **Existing Source 1 (now unified) forecast_date bound, inputs to the derivation.** No row dated after
+  `forecast_date` reaches `derive_quarterly_from_monthly_same_issue` (assert on a spy, or on the rows
+  actually passed to it), under both flags.
+- **Model filter keeps derived-model rows.** A derived row for one of the seven models (e.g. GBT) survives
+  the quarter readers' post-combine filter; a season reader's output for the same model is unaffected
+  (still filtered to `AGGREGATED_SUPPORTED_MODELS`).
+- **Target-year trim scope.** A direct row with target year outside `[start_year, end_year]` but issue year
+  inside it is still returned (flag OFF: the Problem-7 invariant; flag ON: unaffected by this item). A
+  derived row with target year outside `[start_year, end_year]` (latest reader: `[start_year, end_year +
+  1]`) is trimmed.
 - **Fallback (both shapes).** No native row, fallback active → the derived LR row. With a native row
   present, the fallback never overrides it.
 - **Stored leads (flag ON).** A direct LR row with the matching date and window but a wrong stored hv, next
@@ -902,9 +1008,22 @@ lead 0):
 - **Dataset B** — legacy QUARTER rows of the seven models at hv 1–4 with `date = valid_from` — is dropped
   by all three readers.
 - **Output schema.** Under flag OFF, both readers return `date` and `horizon_value`.
-- **Missing quarter config (uzb-like), both flags:** the derivation logs a WARNING and is skipped; flag ON
+- **Mode unsupported (uzb-like: `quarter` not in `ieasyhydroforecast_ml_long_term_supported_modes`), both
+  flags:** `operational_schedule_for_mode("quarter")` raises `UnsupportedLongTermModeError` (a
+  `LongTermHorizonResolverError` subclass) — the derivation logs **one** WARNING and is skipped; flag ON
   returns empty as today, with `tests/test_lead_aware_empty_schedules.py:207, 239` unchanged; flag OFF
-  behaves exactly as trunk (the direct path's `quarter_horizon_value()` raise is unchanged).
+  behaves exactly as trunk (the direct path's `quarter_horizon_value()` raise is unchanged). This is
+  distinct from the case below.
+- **Missing quarter config FILE (the mode IS supported, but its config file is absent — e.g. deleted or a
+  bad deployment), both flags — split per decision 3 ("the missing-quarter-config split is intended",
+  overview owner decisions 2026-09-28):** `_load_long_term_config` raises `FileNotFoundError`
+  (`apps/iEasyHydroForecast/long_term_horizon_resolver.py:184`) for the derivation/read path, and this
+  **propagates** (FAILS the run) under **both** flags — it is not caught by the derivation's own
+  `except (UnsupportedLongTermModeError, LongTermHorizonResolverError)` (a narrower tuple that
+  deliberately excludes `FileNotFoundError`, item 2's "Schedule resolution" bullet). The existing
+  warn-and-disable behaviour for a `FileNotFoundError` stays **only** on `_quarter_native_q1_issue_date`'s
+  own Problem-7 exception (`src/data_reader.py:3072-3083`, flag OFF only) — that narrow admit rule
+  degrades gracefully because disabling it only drops one exception case, not the whole read.
 - **Degraded native rule.** `quarter.json` with the lead only (as the autouse fixture writes it): flag OFF
   → one WARNING, the direct LR rows are returned as on trunk (a non-native rewrite row included), no
   derived rows; flag ON → raises as on trunk.
@@ -948,10 +1067,16 @@ lead 0):
 **Acceptance (P1b):**
 - The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
   unexpected skips; only the pre-existing xfail.
-- `read_latest_quarterly_forecasts`' existing Source 1 (LR aggregation) is bounded by `forecast_date`
-  under **both** flags on the rows it filters itself — both tests above pass, `read_monthly_forecasts`
-  is **not** modified (`git diff` shows no change to it), and `aggregate_monthly_fc_to_quarterly` /
-  `read_quarterly_forecasts` are otherwise untouched (`git diff` shows no change to either).
+- `read_latest_quarterly_forecasts`' former Source 1 (LR aggregation) is now the unified
+  `derive_quarterly_from_monthly_same_issue`-with-`QUARTER_NATIVE_RAW_MODELS` fallback, bounded by
+  `forecast_date` under **both** flags on the rows it filters itself — both tests above pass,
+  `read_monthly_forecasts` is **not** modified (`git diff` shows no change to it). Both readers'
+  `aggregate_monthly_fc_to_quarterly` call sites are **removed**; `git diff` shows them gone from
+  `read_quarterly_forecasts` and `read_latest_quarterly_forecasts` (`src/data_reader.py:3145, 3499, 3508`
+  on the pre-P1b base).
+- Both quarter readers' post-combine model filter keeps `QUARTER_SUPPORTED_MODELS`, not
+  `AGGREGATED_SUPPORTED_MODELS`; the season readers' filter is unchanged (`git diff` shows no change to
+  their call sites).
 - `ruff check` / `ruff format --check` clean on the touched files.
 - `git diff --stat` within the P1b file list.
 

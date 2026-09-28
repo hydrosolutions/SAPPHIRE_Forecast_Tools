@@ -1,7 +1,10 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a prior-year-issued Q1 through
 
-**Status**: Draft (2026-09-26, rev 6 after the fourth review round; updated 2026-09-27 for the
-owner-approved native-Q1 restriction found by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`)
+**Status**: In Progress. **Chunk A merged to trunk (#527, `955bd384`, 2026-09-28).** Deploy is gated on
+PP-065 P2 readiness, not standalone (rollout gate, owner decision 2026-09-28 — see the overview). Remaining:
+Chunk B (the B5 check only, after PP-065 P1d) and Chunk C (ops, rollout and verification). Draft (2026-09-26,
+rev 6 after the fourth review round; updated 2026-09-27 for the owner-approved native-Q1 restriction found
+by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`, both now inside the merged `955bd384`)
 **Module**: `apps/postprocessing_forecasts`
 **Priority**: High.
 - Stored quarterly skill is wrong today: a rolling window is scored against a different quarter's
@@ -72,7 +75,7 @@ step 0 reads the real state per org. Both flag states are in scope.
     prior-year exception — its `date` must equal the quarter mode's own schedule issue date (`valid_from`
     minus `lead_time` months, on `issue_day`, clamped to that month's length; Dec 25 for kghm with
     on-schedule data). If the schedule cannot be resolved, or resolves with `issue_day < 1`, there is no
-    exception at all (owner decision 2026-09-27, `115eb886` on branch `fix_pp_quarter_calendar_window`;
+    exception at all (owner decision 2026-09-27, `115eb886`, now merged to trunk in `955bd384` / #527;
     see the "First-year Q1 (Problem 7)" section below);
   - Chunk A: direct rows dated after `forecast_date` are ignored by the latest reader (Problem 6);
   - Chunk A: the writer drops a calendar `valid_from` with a null `valid_to`.
@@ -81,7 +84,7 @@ step 0 reads the real state per org. Both flag states are in scope.
 - `select_operational_issuances` (`src/data_reader.py:225-398`) is not modified. It only has to receive
   calendar-only rows.
 
-## Mechanism and problems (verified on trunk)
+## Mechanism and problems (verified on pre-#527 trunk `82946683`)
 
 1. **Label.** `_normalize_combined_forecasts` parses `valid_from` (`src/data_reader.py:3748`), then sets
    `quarter_in_year = MONTH_TO_QUARTER[valid_from.month]` (`:3756-3759`). It never checks `valid_to`, so
@@ -165,8 +168,8 @@ step 0 reads the real state per org. Both flag states are in scope.
   broader match also admitted a persisted monthly-derived Q1 row that nulled real values; see "First-year
   Q1 (Problem 7)" below).
 
-**Files (only these may be modified; final shape, branch `fix_pp_quarter_calendar_window`, now
-`18efd261`, incl. the 2026-09-27 native-Q1 restriction `115eb886`/`18efd261` below)**:
+**Files (only these may be modified; final shape merged to trunk as `955bd384` / #527, incl. the
+2026-09-27 native-Q1 restriction `115eb886`/`18efd261` below)**:
 - `apps/postprocessing_forecasts/src/aggregation.py`:
   - new date-parsing core: `_LOCAL_CALENDAR_DATE_LOWER_BOUND = pd.Timestamp("1677-09-22")` (`:38`),
     `_parse_local_calendar_date` (element-wise, `:41-86`), `_local_calendar_date_per_value` (the
@@ -308,13 +311,14 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
 - Read issue years from `start_year − 1` (`:3132-3138`). Keep the `horizon_value` filter unchanged. Do
   **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3148`) here — an earlier version
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
-- **Invariant, revised 2026-09-27 (owner decision, `115eb886` on branch `fix_pp_quarter_calendar_window`
+- **Invariant, revised 2026-09-27 (owner decision, `115eb886`, now merged to trunk in `955bd384` / #527
   — see "Native-only restriction" below for why).** The flag-OFF direct set = trunk's set (every row
   with issue year in `[start_year, end_year]`, any target year) **plus only rows from the schedule-dated
   native issuance**: any prior-year row targeting Q1 of `start_year` whose `date` exactly matches the
   quarter mode's own schedule-computed native issue date (`valid_from` — Jan 1 of `start_year` — minus
-  `lead_time` months, on `issue_day`, clamped to that month's length) — the mask (`data_reader.py:3251-3264`
-  on `18efd261`) is evaluated per row across the whole `direct` frame, so it admits every matching row,
+  `lead_time` months, on `issue_day`, clamped to that month's length) — the mask (`data_reader.py:3247-3265`
+  on current trunk `955bd384`, re-measured; the branch-era citation was `:3251-3264`) is evaluated per row
+  across the whole `direct` frame, so it admits every matching row,
   across stations and models, not a single row overall. If the schedule cannot be resolved, or resolves
   with `issue_day < 1`, there is **no** exception at all — trunk's set only — and one WARNING is logged.
   Nothing else is added, nothing else is removed.
@@ -560,6 +564,15 @@ Chunk B no longer edits `data_reader.py` or any other file.
 ## Chunk C — rollout and verification (ops; mostly no code)
 
 **Order** (as in the overview graph):
+- **Rollout gate (owner decision, 2026-09-28 — see the overview's "Rollout and communication").** Do **not**
+  deploy trunk before PP-065 P2 is ready: Chunk A (this plan) and FD-029, though already merged to trunk
+  (#527, #528), are **not** deployed standalone — no postprocessing or dashboard image built from current
+  trunk goes to a server, and servers must not pull `:latest` images, until PP-065 P1b–P1d and Chunk B are
+  also merged. Chunk A and FD-029 go live **together** with the `deploy.pp` step below. Reason: trunk
+  images already carry PP-065 P1a's 3-of-3 observation rule (live via `recalculate_skill_metrics()` →
+  `read_quarterly_observations()`), and `bin/bimonthly_long_term_skill_metrics_recalculation.sh` runs a
+  QUARTERLY recalc automatically and unconditionally — deploying Chunk A/FD-029 alone would let that
+  recalc run against a mid-migration quarter contract.
 - Chunk A and PP-065 deployed (PP-065 includes the 3-of-3 observation rule; 2-of-3 observations against
   3-of-3 derived forecasts would bias the scores).
 - **One writer-paused window** (ops instruction, no code): deploy PP-065, run the decision-F step (tjhm),
