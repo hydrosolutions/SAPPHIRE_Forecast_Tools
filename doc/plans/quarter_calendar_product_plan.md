@@ -102,7 +102,12 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
    `src/aggregation.py:786`, unit-tested), but neither reader calls it yet — both still call the old
    `aggregate_monthly_fc_to_quarterly` (`src/data_reader.py:3145, 3499, 3508`). Wiring the helper into the
    readers is P1b's job.
-3. **The missing-quarter-config split is intended.** FD-031: the dashboard degrades. PP-065 P1b: the
+3. **The missing-quarter-config split is intended.** FD-031: the dashboard **will** degrade once FD-031
+   lands. **On trunk today, the dashboard quarter card and bulletin RAISE on a missing `quarter.json`**:
+   `get_long_forecasts_quarter`'s own `_resolve_quarter_horizon_value(horizon_value)` call (`db.py:858`)
+   raises first, on the default `horizon_value` path, before the try/except degraded-mode branch further
+   down (`db.py:872-881`) is ever reached — FD-031 (filed, pre-existing) is exactly this gap. PP-065 P1b:
+   the
    postprocessing derivation/read FAILS (propagates `FileNotFoundError`), unlike PP-064's
    `_quarter_native_q1_issue_date` (`src/data_reader.py:3045-3083`), which warns and continues on the
    same `(LongTermHorizonResolverError, FileNotFoundError)` exception (Problem-7 exception, warn-and-continue).
@@ -139,7 +144,7 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
     classified as native or not — the native-row rule itself cannot run. P1b then keeps today's unfiltered
     direct LR selection, with **one** WARNING, rather than dropping every LR row. This is an explicit
     exception to native-row precedence, not a contradiction of it — see PP-065's "Degraded native rule,
-    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:402-407) and PP-065's own item 9.
+    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:424-431) and PP-065's own item 9.
 - **R4-merge-is-deploy. Merge = deploy (verified fact).** Every merge to `maxat_sapphire_2` reaches every org whose image
   tags are `latest` within about a day: CI pushes `:latest` (`.github/workflows/deploy_production.yml`);
   Luigi auto-pulls the backend images whenever the digest differs
@@ -269,7 +274,10 @@ Resolved since rev 2:
    - `ieasyhydroforecast_min_pairs_long_term_quarter`. An explicit 5 on a server would cancel decision C.
 2. **Who executes.** Each PR names who runs the server steps (the owner or hydromet IT). Image pull and
    restart per module follow `doc/prod/update_deployment_checklist.md`.
-3. **Order.** Steps 1–3 are all deployed before 2026-12-25. **Rollout mechanism (owner decisions R4-merge-is-deploy, R4-integration-branch, R4-recalc-runs,
+3. **Order.** Steps 1–2 are already complete/live now; step 3 only merges the remaining work into the
+   integration branch (`integ_quarter_p1b_p2`), it is not itself a deploy. **Step 4 (the writer-paused
+   window, which includes `deploy.pp`) is the deploy, due before 2026-12-25** — the 2026-12-25 deadline in
+   the dependency graph sits on `deploy.pp` and the other `.deploy` nodes, not on step 3's merge. **Rollout mechanism (owner decisions R4-merge-is-deploy, R4-integration-branch, R4-recalc-runs,
    2026-09-28, current):** merge = deploy (decision R4-merge-is-deploy), so PP-064 A, FD-029 P1 and PP-065 P1a are already
    live on both servers (verify per org, `PP-064.C.step0`). The remaining work (PP-065 P1b–P1d, PP-064 B)
    is held on the integration branch `integ_quarter_p1b_p2` (decision R4-integration-branch) instead of being gated at the
@@ -405,12 +413,13 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "PP-065.P1c":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1, "note": "merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), not directly into maxat_sapphire_2" },
     "PP-065.P1d":      { "stage": "merge",  "depends_on": ["PP-065.P1b", "PP-065.P1c"], "parallel_agents": 1, "note": "merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), not directly into maxat_sapphire_2" },
     "PP-064.B":        { "stage": "merge",  "depends_on": ["PP-065.P1d", "D3"], "parallel_agents": 1, "note": "the B5 check only; merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), not directly into maxat_sapphire_2" },
-    "PP-065.P2.ready": { "stage": "ops",    "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a", "PP-064.C.step0"], "note": "P2's code and runbook reviewed on the integration branch, and the writer-paused window scheduled. This is the readiness precondition for deploy.pp (the integration-branch merge to trunk)." },
+    "PP-065.P2.ready": { "stage": "ops",    "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a", "DOC-009.P2a", "PP-064.C.step0"], "note": "P2's code and runbook reviewed on the integration branch, and the writer-paused window scheduled. This is the readiness precondition for deploy.pp (the integration-branch merge to trunk). DOC-009.P2a is included because it rides the same integration branch (its own note: 'reaches trunk only with deploy.pp -- not a standalone trunk merge'), so it must also be merged and reviewed before the window opens." },
     "deploy.pp":       { "stage": "merge", "depends_on": ["PP-065.P2.ready"], "deadline": "2026-12-25", "note": "owner decision R4-integration-branch: this node IS the merge of integ_quarter_p1b_p2 into maxat_sapphire_2, inside the writer-paused window, at canonical step 4 (after the pre-deploy audit + triplet count and the export) -- that merge is the postprocessing deploy trigger. PP-064.A.deploy, FD-029.deploy and PP-065.P1a.deploy are independent, already presumed live (see their own nodes) and are not part of this merge. It does not by itself put the new image on any server -- CI still has to build and push the configured tag (canonical step 5), and each server still has to pull and verify it (canonical step 6); see PP-064 Chunk C 'Order' for those steps and the abort path if either fails." },
     "deploy.pp.pulled": { "stage": "deploy", "depends_on": ["deploy.pp"], "note": "the new image is pulled and verified (creation date/digest) on each server -- PP-064 Chunk C canonical steps 5-6. This is the node on which the code is actually on the servers, distinct from deploy.pp (the merge event)." },
     "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp.pulled"], "note": "decision F (tjhm provenance cleanup), with the service owner, inside the same writer-paused window as deploy.pp -- PP-064 Chunk C canonical step 7" },
     "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp.pulled", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export taken at the start of this same writer-paused window (canonical step 3, before the merge); the export captures calendar-window-era, 3-of-3-era quarter skill (owner decision R4-recalc-runs), not pre-P1a skill. Requires deploy.pp.pulled (the per-org image pull and creation-date/digest verification, canonical step 6) to have completed first -- PP-064 Chunk C canonical step 8." },
-    "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "recalc.1"] },
+    "operational_run.1": { "stage": "ops",  "depends_on": ["recalc.1"], "note": "canonical steps 9-11: post-recalc checks (9), resume the paused writers (10), then run the first operational quarterly postprocessing run promptly and verify it -- do not wait for the next scheduled LT cron day (11, bash bin/bimonthly_long_term_postprocessing.sh <env> operational). Step 11 is the BLANK-CARD RECOVERY POINT: it is what actually writes the derived seven-model rows' Naive Mean / Skilled Mean ensemble rows for the current, unobserved quarter -- recalc.1 alone does not (it only writes ensembles for quarters with 3-of-3 observations). See PP-064 Chunk C canonical step 11 (its own success-criteria bullet) and PP-065 P2's 'Why the operational run, not the recalc, is the blank-card recovery point'." },
+    "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "operational_run.1"] },
     "PP-065.P3.deploy":{ "stage": "deploy", "depends_on": ["PP-065.P3"] },
     "recalc.2":        { "stage": "ops",    "depends_on": ["LTF-014.P2", "PP-065.P3.deploy"] },
     "FD-030":          { "stage": "merge",  "depends_on": ["FD-029", "D6"], "parallel_agents": 1 }

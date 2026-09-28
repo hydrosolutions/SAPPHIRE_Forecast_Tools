@@ -106,7 +106,7 @@ see the DOC-009 row-3 note below, "What this corrects from the earlier draft".)
      calendar-quarter target windows are the product contract and the tjhm QUARTER population needs a
      provenance-filtered cleanup first (PP-064 Chunk C decision F, by provenance -- native rows vs.
      postprocessing aggregates holding LR values). Only the **reviewed decision-F re-import** (PP-064
-     Chunk C step 3, calendar-issue CSV rows only, 04-01/07-01) may write tjhm QUARTER rows in the
+     Chunk C detail 3, canonical step 7 -- calendar-issue CSV rows only, 04-01/07-01) may write tjhm QUARTER rows in the
      interim. Any broader from-file backfill (this item) waits for LTF-014 P2 (the hindcast write set,
      D2) and must itself be calendar-window-filtered, or it would re-introduce the rolling-window rows
      PP-064/FD-029 now exclude at read.

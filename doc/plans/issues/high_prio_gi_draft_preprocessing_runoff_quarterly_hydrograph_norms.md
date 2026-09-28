@@ -167,7 +167,7 @@ behaviour.
    `test_src.py`.)*
 8. `doc/data_flow_long_term.md` reflects the QUARTER aggregation step and the join contract.
    *(⚠️ commit `8a27768` added the aggregation-step description, but its "Consumer join contract" note
-   (`doc/data_flow_long_term.md:269-274`) still tells consumers to join on period keys including
+   (`doc/data_flow_long_term.md:270-275`) still tells consumers to join on period keys including
    `horizon_value` — the exact hv-keyed contract this issue's own "Consumer / join contract" section
    below found wrong and corrected. The aggregation-step half of this criterion is met; the join-contract
    half is NOT. Fix is owned by DOC-009 row 10, not this issue — see `mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md`.)*
@@ -177,7 +177,7 @@ behaviour.
 ## Consumer / join contract (for the deferred dashboard work) — CORRECTED 2026-09-28
 
 **The original join-on-`horizon_value` contract (in this issue's earlier revision, and still the text
-currently published in `doc/data_flow_long_term.md:269-274` — see acceptance item 8 above) was wrong; it
+currently published in `doc/data_flow_long_term.md:270-275` — see acceptance item 8 above) was wrong; it
 does not hold.** Verified against trunk
 `apps/postprocessing_forecasts/src/api_writer.py:1160-1176` (the current location of the quarter
 write branch; the file has grown since this issue's original `:1043-1051` citation): for
@@ -196,7 +196,7 @@ row's actual target quarter. Under flag ON the writer passes each row's own lead
 there too, just differently — not by uniformly landing on Q1.
 
 A future dashboard join must instead use two different keys for the two hydrograph fields, per
-DOC-009 row 10 (`mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md:141`):
+DOC-009 row 10 (`mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md:152`):
 
 - **Climatology `norm`:** join on `code` + the calendar quarter number, derived from
   `long_forecasts.valid_from` (or its `quarter_in_year` column, where present), matched against the

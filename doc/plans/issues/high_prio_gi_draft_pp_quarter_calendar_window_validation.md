@@ -379,7 +379,8 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:434-436): "a native row, a
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1105-1107 — re-measured; an
+  earlier draft's `~:434-436` had drifted to an unrelated section): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
   both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
@@ -565,7 +566,7 @@ stable.)
 - **B4 (3-of-3 observation months)** → PP-065 P1a.
 - **B6 (stop writing raw LR rows)** → PP-065 P1b.
 - **B3 (persisted (b)/(c) rows):** accepted. PP-065's native-row rule never selects them. Deleting them is
-  D8; tjhm is handled by decision F (Chunk C step 3).
+  D8; tjhm is handled by decision F (Chunk C detail 3, canonical step 7).
 
 Chunk B no longer edits `data_reader.py` or any other file.
 
@@ -595,8 +596,14 @@ Chunk B no longer edits `data_reader.py` or any other file.
   interaction between live Chunk A (postprocessing) and the live FD-029 dashboard, while PP-065 P1b has not
   merged, is exactly the current-state blank-card consequence documented in the overview's EM-interim
   paragraph — check it is understood correctly in the P1b readiness review.
-- Chunk A and PP-065 deployed (PP-065 includes the 3-of-3 observation rule; 2-of-3 observations against
-  3-of-3 derived forecasts would bias the scores).
+- **Chunk A and PP-065 P1a live (presumed, verify at step 0); P1b–P1d reach servers only at canonical steps
+  4-6.** (An earlier draft of this bullet said "Chunk A and PP-065 deployed", which contradicts the
+  canonical sequence below — P1b–P1d are not deployed at this point in the runbook, they merge into trunk
+  at step 4 and are pulled/verified on each server at step 6.) The precondition this bullet actually needs
+  — that the recalc scores against 3-of-3 observations, not the old 2-of-3 rule — is already satisfied by
+  P1a alone, which is live now (owner decision R4-merge-is-deploy, verify per org at step 0): 2-of-3
+  observations against 3-of-3 derived forecasts would bias the scores, and P1a's 3-of-3 observation rule
+  prevents that regardless of whether P1b–P1d have reached this server yet.
 - **Pre-window step** (before the writer-paused window opens, no code): merge trunk into
   `integ_quarter_p1b_p2` and run `SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` (and
   `forecast_dashboard` if a dashboard-affecting change is also in this window) on that exact tree. CI does
@@ -614,7 +621,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
   4. **Merge** `integ_quarter_p1b_p2` into trunk — this merge **is** the postprocessing deploy trigger
      (`deploy.pp` in the overview's dependency graph).
   5. **Wait for the CI run on the merge commit to succeed** (`.github/workflows/deploy_production.yml`) —
-     the merge only builds and pushes the configured-tag image; it does not by itself put anything on a
+     the merge builds and pushes the image. **Production CI pushes only the `:latest` tag**
+     (`.github/workflows/deploy_production.yml:4`, `env.IMAGE_TAG: latest`, unconditional) — it does not
+     build or push any org's separately configured tag. This step does not by itself put anything on a
      server. **If CI fails: keep writers paused, and revert the merge or fix forward before resuming** — see
      "Abort path" below; do not proceed to step 6.
   6. **On each server, pull the new image and verify it**: `docker pull
@@ -631,6 +640,23 @@ Chunk B no longer edits `data_reader.py` or any other file.
      locally at all — so without this explicit pull, steps 7-9 below would silently run against the OLD
      image. **If the pull or the verification fails or does not match: keep writers paused, do not
      proceed** — see "Abort path" below.
+     - **Pinned tags (both images).** Since step 5 only builds and pushes `:latest`, an org whose configured
+       tag (`ieasyhydroforecast_backend_docker_image_tag` / `..._frontend_docker_image_tag`) is **not**
+       `latest` (e.g. a version pin) has **no new build matching that tag** — the pull in this step returns
+       the same old image, and the creation-date/digest check correctly reports no match, but for a
+       different reason than a failed or still-propagating pull. **Before proceeding to step 7**, the
+       operator must either promote/retag this run's `:latest` build to the org's pinned tag (and push it),
+       or abort per the "Abort path" below — do not proceed on a pinned org with an unmatched image. **All
+       known orgs use `latest`** (recorded at step 0 / `PP-064.C.step0`'s per-org image-tag read), so this
+       is not expected to trigger today; it is a guard for the next org whose tag is pinned.
+     - **The dashboard needs a re-create, not just a pull.** `docker pull` on its own does not restart or
+       re-create the running dashboard containers — a pulled image with no re-create keeps serving the OLD
+       code. If this window carries a dashboard-affecting change, follow the pull with the same
+       stop/pull/recreate sequence `bin/daily_update_sapphire_frontend.sh` uses
+       (`:59` `docker compose -f bin/docker-compose-dashboards.yml down`, `:68` the pull already covered
+       above, `:76` `start_docker_compose_dashboards`, which runs `docker compose -f sapphire/docker-compose.yml
+       up -d` — `bin/utils/common_functions.sh:607-616`) — or run that script directly instead of a bare
+       `docker pull`, then still perform this step's own creation-date/digest verification.
   7. **Decision F (tjhm)**, inside the window, before the recalc — detail 3 below.
   8. **Recalc** per org — detail 4 below.
   9. **Post-recalc checks** — detail 5 below.
@@ -647,6 +673,44 @@ Chunk B no longer edits `data_reader.py` or any other file.
       existing skill plus the latest derived forecasts, with no observation requirement. See the overview's
       "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card framing this
       closes.
+
+      **Success criteria (PP-065 § "P2 — rollout" points here rather than restating this).** The wrapper's
+      own exit status proves nothing: `run_container` (`bin/bimonthly_long_term_postprocessing.sh:102-148`)
+      discards the container's exit code at its own two call sites (`:151-162` — the operational block at
+      `:158-161` never captures or checks the function's return value); the Python entry point
+      `sys.exit(0)`s successfully before the quarterly block whenever there is no monthly skill or no recent
+      monthly forecasts (`postprocessing_operational_long_term.py:145-163`); and a failed quarterly API
+      write only logs a WARNING, with the caller's return value unchecked
+      (`file_writer.py:853-861`, called from `postprocessing_operational_long_term.py:227`). The run counts
+      as successful only if **all three** of the following hold, checked per org:
+      1. **The wrapper log shows the container completed, with no exit-code WARNING.** Exact strings from
+         `run_container` (`bin/bimonthly_long_term_postprocessing.sh:138,140`): the success line reads
+         `"postprc-lt-operational completed successfully"`; its absence, or the presence of a line matching
+         `"WARNING: postprc-lt-operational completed with exit code: "`, fails this check.
+      2. **The Python log reached the quarterly block and shows the quarterly save messages.** Verify these
+         exact strings in `postprocessing_operational_long_term.py`/`file_writer.py` before checking the log:
+         `"Quarterly ensembles saved."` (`postprocessing_operational_long_term.py:228`) must appear, AND
+         `"Quarterly forecasts written to API successfully."` (`file_writer.py:855`) must appear — NOT
+         `"Quarterly forecasts API write returned False (disabled, unavailable, or failed)."`
+         (`file_writer.py:858`). None of the following early-exit/skip messages may appear anywhere in the
+         run's log: `"No monthly skill metrics available."` (`:146-149`, followed by `sys.exit(0)` at
+         `:151` — this would end the run before the quarterly block is even reached), `"No recent monthly
+         forecasts available. Exiting."` (`:162`, `sys.exit(0)` at `:163`, same effect), `"No recent
+         quarterly forecasts. Skipping quarterly ensembles."` (`:230`), `"No quarterly skill metrics.
+         Skipping quarterly ensembles."` (`:232`).
+      3. **A per-org aggregate-count read-back (no station codes in the plan or the PR) shows current-quarter
+         Naive Mean and Skilled Mean rows, and rows for the seven derived models, written by this run** —
+         not merely present from an earlier write (compare `id`/timestamp or re-run after a controlled gap
+         if the API does not expose a write timestamp directly).
+
+      **Never run this command concurrently** — `run_container` (`bin/bimonthly_long_term_postprocessing.sh:113-117`)
+      removes any existing container with the same fixed name (`docker rm -f postprc-lt-operational`) before
+      starting; a second, overlapping invocation (another operator, or an overlapping cron/maintenance run)
+      would kill this run's still-in-progress container. Note also that this wrapper is marked "kept on
+      origin for manual / debugging use only" in the deployment checklist
+      (`doc/prod/update_deployment_checklist.md:846-847`), superseded for the normal schedule by
+      `run_periodic_maintenance.sh long_term`; using it here, for a one-off out-of-band run right after the
+      writer-paused window, is deliberate, not an oversight.
 
   **Abort path.** If CI (step 5) or the pull/verify step (step 6) fails after the merge: keep writers
   paused, and revert the merge or fix forward before resuming — do not leave a merged-but-unverified
@@ -739,7 +803,8 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    - **Rolling-windowed rows (raw and EM), inert after Chunk A.** Local count (dev DB, 2026-09-27):
      31,282 kghm rolling-window quarter rows. Chunk A (this plan) and FD-029 stop *reading and writing*
      them from their own deploy onward (Mechanism item 1; FD-029 "Problem 2") — neither deletes any row.
-     Their removal is owned by decision F (the tjhm-specific provenance predicate, step 3 above) for the
+     Their removal is owned by decision F (the tjhm-specific provenance predicate, detail 3 above,
+     canonical step 7) for the
      population it covers, and by D8 / PP-041 (the stale-rows decision) for the rest; it is not automatic
      on deploy.
    - Old EM, Naive Mean and Skilled Mean rows at keys the recalc no longer emits (accepted, round-2

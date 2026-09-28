@@ -536,11 +536,17 @@ new `EM` row.
 - `git diff --stat` is limited to the listed files.
 
 **Deploy.** Merged (#528) and **presumed already live on both servers** via the dashboard's own daily
-frontend auto-pull (owner decision R4-merge-is-deploy; verify per org, PP-064 Chunk C step 0). PP-064 A is presumed live the
-same way, independently. PP-065 P1b–P1d are still held on the integration branch (owner decision R4-integration-branch) — this
+frontend auto-pull (owner decision R4-merge-is-deploy; verify per org, PP-064 Chunk C step 0). **PP-064 A
+is presumed live independently too, but via a different mechanism**: it is a postprocessing (backend)
+change, so it reaches servers via Luigi's own backend auto-pull whenever the Docker Hub digest differs
+(`apps/pipeline/pipeline_docker.py:296-304`), not via the dashboard's frontend pull this card's own deploy
+uses. Verify each per org separately: the postprocessing image for PP-064 A, the dashboard image for
+FD-029 (PP-064 Chunk C step 0 records both). PP-065 P1b–P1d are still held on the integration branch (owner decision R4-integration-branch) — this
 card is already reading calendar-window PP-064-shaped rows, but the seven derived models and the Naive
 Mean / Skilled Mean rows PP-065 P1b writes are not there yet, and neither are P1b's fixes for degraded-mode
-schedule handling. Precondition for P1b's own merge (the writer-paused window / `deploy.pp`): PP-064 Chunk
+schedule handling. Precondition for the in-window merge of `integ_quarter_p1b_p2` into trunk (the
+writer-paused window / `deploy.pp` — P1b itself merges into the integration branch earlier, as its own PR,
+not directly into trunk at this point): PP-064 Chunk
 C step 0's per-org `quarter.json`/`issue_day` read (see item 3's accepted limitation above) — confirm both
 orgs' schedule config resolves, so this card does not silently run in degraded mode once the derived rows
 start arriving. To check: the card exists only on the month horizon, for reservoir stations.
