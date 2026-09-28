@@ -15,11 +15,41 @@
 # =============================================================================
 set -uo pipefail
 
+# Scratch space for this run. Unique per invocation (mktemp) so two concurrent
+# runs never overwrite each other's files, and removed on any exit — normal
+# completion or early exit — via the trap.
+HC_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/sapphire_healthcheck.XXXXXX" 2>/dev/null) || HC_TMPDIR="/tmp/sapphire_healthcheck.$$"
+trap 'rm -rf "$HC_TMPDIR"' EXIT
+
 PASS=0; WARN=0; FAIL=0
 ok()   { printf '  \033[32m[ OK ]\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 warn() { printf '  \033[33m[WARN]\033[0m %s\n' "$*"; WARN=$((WARN+1)); }
 bad()  { printf '  \033[31m[FAIL]\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 head_() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
+
+# Dispatch machine-readable verdict lines ("LEVEL<TAB>message", LEVEL one of
+# OK/WARN/FAIL) emitted by a python helper into the shell's ok/warn/bad
+# counters, so a [FAIL] printed by python still flips the exit code.
+#
+# Read from a FILE (`done < "$1"`), never from a pipe (`cmd | while read`):
+# a pipe puts the loop body in a subshell, so PASS/WARN/FAIL increments
+# there are lost the moment the subshell exits and the counters silently
+# stay at zero. Sets the global VERDICT_COUNT (not a return value piped
+# through command substitution, which would reintroduce the same subshell
+# trap) so the caller can detect "python produced nothing".
+dispatch_verdicts() {
+    VERDICT_COUNT=0
+    while IFS=$'\t' read -r level msg || [ -n "$level" ]; do
+        [ -z "$level" ] && continue
+        VERDICT_COUNT=$((VERDICT_COUNT+1))
+        case "$level" in
+            OK)   ok   "$msg" ;;
+            WARN) warn "$msg" ;;
+            FAIL) bad  "$msg" ;;
+            *)    bad  "unrecognized verdict line from freshness check: $level $msg" ;;
+        esac
+    done < "$1"
+}
 
 ENV_FILE=""
 [ "${1:-}" = "--env-file" ] && ENV_FILE="${2:-}"
@@ -117,10 +147,21 @@ if curl -sf --max-time 5 http://localhost:8000/health/ready >/dev/null 2>&1; the
     # rows, and max(date) over it is meaningless. Always bound by start_date so
     # only recent rows can come back.
     SINCE=$(date -d '45 days ago' +%F 2>/dev/null || date -v-45d +%F 2>/dev/null)
-    curl -s --max-time 30 "http://localhost:8003/lr-forecast/?start_date=${SINCE}&limit=5000" 2>/dev/null > /tmp/_hc_lrf.json
-    curl -s --max-time 30 "http://localhost:8002/runoff/?start_date=${SINCE}&limit=20000"     2>/dev/null > /tmp/_hc_ro.json
-    python3 - << 'PY'
-import json, collections, datetime, sys
+    LRF_JSON="$HC_TMPDIR/lrf.json"
+    RO_JSON="$HC_TMPDIR/ro.json"
+    VERDICTS_ST="$HC_TMPDIR/verdicts_st"
+    ERR_ST="$HC_TMPDIR/err_st"
+    curl -s --max-time 30 "http://localhost:8003/lr-forecast/?start_date=${SINCE}&limit=5000" 2>/dev/null > "$LRF_JSON"
+    curl -s --max-time 30 "http://localhost:8002/runoff/?start_date=${SINCE}&limit=20000"     2>/dev/null > "$RO_JSON"
+    # This block used to print the coloured [ OK ]/[WARN]/[FAIL] labels itself
+    # with print(), which never touched the shell's ok/warn/bad counters — a
+    # [FAIL] printed here left FAIL=0 and the script exited 0. It now emits
+    # machine-readable "LEVEL<TAB>message" lines to a file; the shell reads
+    # that file (not a pipe — see dispatch_verdicts) and calls ok/warn/bad
+    # itself, so the visible output is byte-identical but the counters (and
+    # exit code) are now correct.
+    HC_LRF_JSON="$LRF_JSON" HC_RO_JSON="$RO_JSON" python3 - > "$VERDICTS_ST" 2>"$ERR_ST" << 'PY'
+import json, collections, datetime, os
 def load(p):
     try: return json.load(open(p))
     except Exception: return []
@@ -128,19 +169,20 @@ today = datetime.date.today()
 def age(ds):
     try: return (today - datetime.date.fromisoformat(ds[:10])).days
     except Exception: return None
-lrf = load("/tmp/_hc_lrf.json")
+def emit(level, msg): print(f"{level}\t{msg}")
+lrf = load(os.environ["HC_LRF_JSON"])
 if not lrf:
-    print("  \033[31m[FAIL]\033[0m no forecasts in the last 45 days — the pipeline has stopped publishing")
+    emit("FAIL", "no forecasts in the last 45 days — the pipeline has stopped publishing")
 else:
     m = collections.defaultdict(list)
     for r in lrf: m[r.get("horizon_type","?")].append(r.get("date",""))
     for k, v in sorted(m.items()):
         latest = max(v); a = age(latest)
-        tag = "\033[32m[ OK ]\033[0m" if a is not None and a <= 11 else "\033[33m[WARN]\033[0m"
-        print(f"  {tag} {k} forecasts: latest {latest} ({a} days old)")
-ro = load("/tmp/_hc_ro.json")
+        level = "OK" if a is not None and a <= 11 else "WARN"
+        emit(level, f"{k} forecasts: latest {latest} ({a} days old)")
+ro = load(os.environ["HC_RO_JSON"])
 if not ro:
-    print("  \033[33m[WARN]\033[0m no discharge data in the last 45 days — check the iEasyHydro connection")
+    emit("WARN", "no discharge data in the last 45 days — check the iEasyHydro connection")
 if ro:
     m = collections.defaultdict(list)
     for r in ro:
@@ -150,11 +192,18 @@ if ro:
         a = age(max(m[k]))
         if a is not None and a > 7: stale.append(f"{k} ({a}d)")
     if stale:
-        print(f"  \033[33m[WARN]\033[0m discharge data stale for: {', '.join(stale)} — check the iEasyHydro tunnel")
+        emit("WARN", f"discharge data stale for: {', '.join(stale)} — check the iEasyHydro tunnel")
     else:
-        print(f"  \033[32m[ OK ]\033[0m discharge data current for all {len(m)} stations")
+        emit("OK", f"discharge data current for all {len(m)} stations")
 PY
-    rm -f /tmp/_hc_lrf.json /tmp/_hc_ro.json
+    RC_ST=$?
+    if [ "$RC_ST" -ne 0 ]; then
+        bad "data freshness (short-term forecasts/discharge) check crashed — python exited $RC_ST: $(head -1 "$ERR_ST" 2>/dev/null)"
+    fi
+    dispatch_verdicts "$VERDICTS_ST"
+    if [ "$RC_ST" -eq 0 ] && [ "$VERDICT_COUNT" -eq 0 ]; then
+        bad "data freshness (short-term forecasts/discharge) check produced no output — could not be evaluated"
+    fi
 
     # Long-term (monthly/seasonal) forecasting is optional per deployment, so
     # detect it before judging it — otherwise a deployment that never runs
@@ -179,9 +228,15 @@ PY
         # look back 120 days and warn only past 45 days old, so a normal
         # monthly/seasonal gap is never reported as a problem.
         LT_SINCE=$(date -d '120 days ago' +%F 2>/dev/null || date -v-120d +%F 2>/dev/null)
-        curl -s --max-time 30 "http://localhost:8003/long-forecast/?start_date=${LT_SINCE}&limit=5000" 2>/dev/null > /tmp/_hc_ltf.json
-        python3 - << 'PY'
-import json, datetime
+        LTF_JSON="$HC_TMPDIR/ltf.json"
+        VERDICTS_LT="$HC_TMPDIR/verdicts_lt"
+        ERR_LT="$HC_TMPDIR/err_lt"
+        curl -s --max-time 30 "http://localhost:8003/long-forecast/?start_date=${LT_SINCE}&limit=5000" 2>/dev/null > "$LTF_JSON"
+        # Same fix as the short-term block above: emit "LEVEL<TAB>message"
+        # instead of printing the coloured label directly, so the verdict
+        # flows through ok/warn/bad and the exit code stays authoritative.
+        HC_LTF_JSON="$LTF_JSON" python3 - > "$VERDICTS_LT" 2>"$ERR_LT" << 'PY'
+import json, datetime, os
 def load(p):
     try: return json.load(open(p))
     except Exception: return []
@@ -189,16 +244,23 @@ today = datetime.date.today()
 def age(ds):
     try: return (today - datetime.date.fromisoformat(ds[:10])).days
     except Exception: return None
-ltf = load("/tmp/_hc_ltf.json")
+ltf = load(os.environ["HC_LTF_JSON"])
 if not ltf:
-    print("  \033[33m[WARN]\033[0m no long-term forecasts in the last 120 days — long-term forecasting is configured but appears to have stopped publishing")
+    print("WARN\tno long-term forecasts in the last 120 days — long-term forecasting is configured but appears to have stopped publishing")
 else:
     latest = max(r.get("date", "") for r in ltf)
     a = age(latest)
-    tag = "\033[32m[ OK ]\033[0m" if a is not None and a <= 45 else "\033[33m[WARN]\033[0m"
-    print(f"  {tag} long-term forecasts: latest {latest} ({a} days old)")
+    level = "OK" if a is not None and a <= 45 else "WARN"
+    print(f"{level}\tlong-term forecasts: latest {latest} ({a} days old)")
 PY
-        rm -f /tmp/_hc_ltf.json
+        RC_LT=$?
+        if [ "$RC_LT" -ne 0 ]; then
+            bad "data freshness (long-term forecasts) check crashed — python exited $RC_LT: $(head -1 "$ERR_LT" 2>/dev/null)"
+        fi
+        dispatch_verdicts "$VERDICTS_LT"
+        if [ "$RC_LT" -eq 0 ] && [ "$VERDICT_COUNT" -eq 0 ]; then
+            bad "data freshness (long-term forecasts) check produced no output — could not be evaluated"
+        fi
     else
         skip "long-term forecasting not configured on this deployment (ieasyhydroforecast_ml_long_term_configuration not set in env)"
     fi
