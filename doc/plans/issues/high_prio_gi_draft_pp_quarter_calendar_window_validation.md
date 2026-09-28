@@ -379,9 +379,9 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1117-1119 — re-measured
-  2026-09-28 after this sync's own edits shifted the file; an earlier draft's `~:434-436` had drifted to
-  an unrelated section): "a native row, a
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1132-1134 — re-measured
+  2026-09-29 after this sync's own edits shifted the file again; earlier drafts' `~:434-436` and
+  `~:1117-1119` had both drifted): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
   both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
@@ -606,9 +606,12 @@ Chunk B no longer edits `data_reader.py` or any other file.
   observations against 3-of-3 derived forecasts would bias the scores, and P1a's 3-of-3 observation rule
   prevents that regardless of whether P1b–P1d have reached this server yet.
 - **Pre-window step** (before the writer-paused window opens, no code): merge trunk into
-  `integ_quarter_p1b_p2` and run `SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` (and
+  `integ_quarter_p1b_p2`, **record the trunk commit hash just merged**, and run `cd apps &&
+  SAPPHIRE_TEST_ENV=True bash run_tests.sh postprocessing_forecasts` (`run_tests.sh` lives in `apps/`; and
   `forecast_dashboard` if a dashboard-affecting change is also in this window) on that exact tree. CI does
-  not test these modules (INFRA-059), so this local run is the only test gate before the merge below.
+  not test these modules (INFRA-059: `.github/workflows/build_test.yml`'s `test_postprocessing` job,
+  `:452-472`, only `uv sync`s and verifies imports, no pytest), so this local run is the only test gate
+  before the merge below — and step 4's guard checks trunk `HEAD` against the commit hash recorded here.
 - **One writer-paused window** (ops instruction, no code). This is the **canonical in-window sequence** —
   PP-065 § "P2 — rollout" and the overview's rollout step 3.4 reference this list rather than restating it:
   1. **Pause every writer**, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
@@ -617,12 +620,19 @@ Chunk B no longer edits `data_reader.py` or any other file.
      pausing beforehand (owner decision R4-recalc-runs). Wait for running jobs to finish before continuing.
   2. **The read-only pre-deploy DB audit** (detail 2 below) and **PP-065's count of rule-A (same-issue
      monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", the "This window follows PP-064
-     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:1798-1800 — done here, at the audit step,
+     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:1864-1868 — done here, at the audit step,
      not "before the recalc": that heading no longer exists in PP-065 P2).
   3. **Export** (detail 1 below: `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
      rows, kept out of the repo) — this is the SAME export PP-065 P2 refers to; state it once here.
   4. **Merge** `integ_quarter_p1b_p2` into trunk — this merge **is** the postprocessing deploy trigger
-     (`deploy.pp` in the overview's dependency graph).
+     (`deploy.pp` in the overview's dependency graph). **Guard: trunk must not have moved since the
+     pre-window step's test run.** Before merging, confirm trunk `HEAD` still equals the trunk commit
+     recorded when it was merged into `integ_quarter_p1b_p2` at the pre-window step below. If trunk has
+     advanced (e.g. another PR landed on `maxat_sapphire_2` in the meantime), merge trunk into
+     `integ_quarter_p1b_p2` again and re-run `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh
+     postprocessing_forecasts` (and `forecast_dashboard` if applicable) on the updated tree before
+     proceeding — this merge gets no CI pytest gate either (see the pre-window step below), so this
+     re-run is the only test gate against the newly-merged trunk commits.
   5. **Wait for the CI run on the merge commit to succeed** (`.github/workflows/deploy_production.yml`) —
      the merge builds and pushes the image. **Production CI pushes only the `:latest` tag**
      (`.github/workflows/deploy_production.yml:4`, `env.IMAGE_TAG: latest`, unconditional) — it does not
@@ -672,14 +682,18 @@ Chunk B no longer edits `data_reader.py` or any other file.
       the next scheduled LT cron day. Exact command, per org: `bash
       bin/bimonthly_long_term_postprocessing.sh <env_file_path> operational`. This invokes
       `postprocessing_operational_long_term.py`, which has no quarter-only mode — the same run also
-      processes monthly and seasonal ensembles. This is what actually writes the derived seven-model rows'
-      Naive Mean / Skilled Mean ensemble rows for the CURRENT (unobserved) quarter: the in-window recalc
-      (step 8) only writes ensembles for quarters with 3-of-3 observations (`src/skill_metrics.py`
-      ~:2682-2690, ~:2806-2831, an inner join with observations), never the current one; only this
-      operational run's quarterly block (`postprocessing_operational_long_term.py` ~:207-232) does, from
-      existing skill plus the latest derived forecasts, with no observation requirement. See the overview's
-      "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card framing this
-      closes.
+      processes monthly and seasonal ensembles. This is what always writes the derived seven-model rows'
+      Naive Mean / Skilled Mean ensemble rows for the CURRENT quarter, whether or not that quarter is
+      observed: the in-window recalc (step 8) only writes ensembles where its own inner join against
+      observations matches (`src/skill_metrics.py` ~:2682-2690, ~:2806-2831) — usually not the current
+      quarter, **but not guaranteed never**: a quarter's last month counts as observed at ≥50% of its
+      days (`data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g.
+      kghm Dec 17–24) can make the current quarter "observed" before step 8 runs, and step 8 then writes
+      its ensembles too — see PASS criterion 2's loophole note below. Only this operational run's
+      quarterly block (`postprocessing_operational_long_term.py` ~:207-232) writes them unconditionally,
+      from existing skill plus the latest derived forecasts, with no observation requirement. See the
+      overview's "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card
+      framing this closes.
 
       **Success criteria (PP-065 § "P2 — rollout" points here rather than restating this; simplified
       2026-09-28, replacing the earlier "rewritten 2026-09-28" version — two review rounds found that its
@@ -725,13 +739,18 @@ Chunk B no longer edits `data_reader.py` or any other file.
       runs — its absence is informational, not a failure (see below).
 
       The run counts as successful only if **both** of the following hold, checked per org:
-      1. **Log checks, WARNING level and wrapper only.**
-         - The wrapper's own `log_message` lines are shell output, not Python logging, and are always
-           present regardless of the root logger's level: require `"postprc-lt-operational completed
-           successfully"` (`bin/bimonthly_long_term_postprocessing.sh:138`); require that `"WARNING:
-           postprc-lt-operational completed with exit code: "` (`:140`) is absent.
-         - Require that the WARNING-level early-exit and failure strings are absent — each verified below as
-           `logger.warning` in the source, so each WOULD reach the WARNING-capped log if it fired:
+      1. **Log checks, WARNING level, across two named files.**
+         - **Wrapper log** (`${LOG_DIR}/run_${TIMESTAMP}.log` — `log_file`,
+           `bin/bimonthly_long_term_postprocessing.sh:57`; every `log_message` line is `tee -a`'d there,
+           `:61`): the wrapper's own `log_message` lines are shell output, not Python logging, and are
+           always present regardless of the root logger's level: require `"postprc-lt-operational
+           completed successfully"` (`:138`); require that `"WARNING: postprc-lt-operational completed
+           with exit code: "` (`:140`) is absent.
+         - **Per-container service log** (`${LOG_DIR}/postprc-lt-operational_${TIMESTAMP}.log` —
+           `SERVICE_LOG`, `:108`; the container's stdout/stderr is `tee`'d there, `:133`; the wrapper
+           prints its path as `"  Service log: $SERVICE_LOG"`, `:111`): require that the WARNING-level
+           early-exit and failure strings are absent — each verified below as `logger.warning` in the
+           source, so each WOULD reach this WARNING-capped file if it fired:
            `"No monthly skill metrics available. …Exiting."` (`postprocessing_operational_long_term.py`
            `logger.warning` at `:146-150`, followed by `sys.exit(0)` at `:151`); `"No recent monthly
            forecasts available. Exiting."` (`logger.warning` at `:162`, `sys.exit(0)` at `:163`); `"…
@@ -740,7 +759,7 @@ Chunk B no longer edits `data_reader.py` or any other file.
            available"` (`data_reader.py:2837`, `logger.warning`, `read_quarterly_skill_metrics`); `"No
            quarterly forecast data available"` (`data_reader.py:3588`, `logger.warning`,
            `read_quarterly_forecasts`/`read_latest_quarterly_forecasts`). None of these five strings may
-           appear anywhere in the run's log.
+           appear anywhere in this file.
       2. **At least one Naive Mean row for the target quarter whose `composition` includes at least one
          `QUARTERLY_DERIVED_MODELS` member** (`src/model_names.py:22-24`), per org (aggregate counts only,
          no station codes in the plan or the PR).
@@ -758,11 +777,27 @@ Chunk B no longer edits `data_reader.py` or any other file.
            observable proof that this run actually used the new derivation path, not an inference from
            logs.
          - `composition` is a stored, API-readable column on `long_forecasts`
-           (`sapphire/services/postprocessing/app/models.py:66`), returned by
+           (`sapphire/services/postprocessing/app/models.py:165`, `LongForecast.composition`), returned by
            `client.read_long_term_forecasts()` (`sapphire_api_client`'s `long_term.py:75`) and passed
            through unmodified by this app's own normalizers (`data_reader.py`'s `_read_long_forecasts_api`
            and `_normalize_combined_forecasts` neither drop nor rename it) — read it directly at the
            target-quarter keys, not via a row-count substitute.
+         - **Loophole: this check alone is not evidence step 11 ran, when the target quarter already
+           counts as observed.** A quarter's last month counts as observed at ≥50% of its days
+           (`data_reader.py` ~:1301-1302); a writer-paused window that falls late in that month (e.g.
+           kghm Dec 17–24) can make the target quarter "observed" before step 11 runs, so step 8's own
+           recalc can already write a target-quarter Naive Mean row with a derived composition (its
+           empty-return paths log no WARNING either: `read_latest_quarterly_forecasts`'s two silent
+           `if combined.empty: return ...` branches, `data_reader.py` ~:3603-3604 and ~:3607-3608, and
+           the resulting skip at `postprocessing_operational_long_term.py:230`/`:232` is `logger.info`,
+           not `logger.warning`, so criterion 1 above would not catch a silently-skipped step 11 either).
+           **Step 9 (detail 5 below) must record whether this row already exists before step 11 runs.**
+           If it does, criterion 2 additionally requires the postprocessing service's own log (read-only,
+           colleague-managed) to show a fresh `"Created long forecast: …"` / `"Updated long forecast: …"`
+           line (`sapphire/services/postprocessing/app/crud.py:137,146`, `logger.info`,
+           `create_long_forecast`) for a Naive Mean row at the target quarter's key, timestamped **after**
+           step 10 (resume writers) — step 8's own writes (if any) all predate that resume, so a
+           post-resume timestamp distinguishes this run's write from the recalc's.
 
       **Informational, not pass/fail** (a lead for investigation, not a required outcome — do not gate the
       run's success on either of these):
@@ -777,7 +812,10 @@ Chunk B no longer edits `data_reader.py` or any other file.
       "recalc (step 8) writes no current-quarter ensemble rows" cross-check: it restated
       `_calculate_aggregated_skill_metrics`'s inner-join behaviour (`skill_metrics.py` ~:2682-2690,
       ~:2807-2832) rather than checking this run's own output, and added a second query without changing
-      the pass/fail outcome.
+      the pass/fail outcome. **Not the same as** criterion 2's loophole note above, which is a single
+      aggregate boolean (recorded once at step 9) plus one conditional log check — it changes the
+      pass/fail outcome precisely in the case the dropped cross-check never distinguished (a pre-existing
+      row from step 8 vs. a fresh one from step 11), so it stays.
 
       **Supporting context, not a separate check:**
       - **No EM row is written for the target quarter by this run.** PP-065 P1b's writer change stops the
@@ -891,8 +929,16 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
      returns for this run's `forecast_date`). `joint_forecasts = forecasts.copy()` in
      `_calculate_aggregated_skill_metrics` (`skill_metrics.py` ~:2741-2742) passes every raw forecast row
      through regardless of whether it joined an observation, so the target quarter's raw rows survive this
-     recalc's pass-through even though no target-quarter ensemble is computed here (step 11's own read-back
-     covers the ensembles).
+     recalc's pass-through — independently of whether a target-quarter ensemble also happens to be
+     computed here (usually not, but see the next bullet).
+   - **Record whether a target-quarter Naive Mean row with a `QUARTERLY_DERIVED_MODELS` composition
+     already exists after this recalc.** This happens whenever the target quarter already counts as
+     observed before step 11 runs — the ≥50%-days-per-month rule (`data_reader.py` ~:1301-1302) can make
+     a quarter's last month, and so the quarter, "observed" if the writer-paused window falls late in
+     that month (e.g. kghm Dec 17–24), and the recalc's own observation join (`skill_metrics.py`
+     ~:2682-2690, ~:2806-2831) then writes its ensembles here rather than never. If this row is already
+     present, canonical step 11's PASS criterion 2 needs the additional service-log evidence its own
+     loophole note requires — this is the record that check reads.
    - A persisted-derived-row round trip (write → read) yields the native-rule-selected row.
    - Spot check the #521 station privately (its code is never written to the repo). A plausible value is
      a spot check, not proof.
@@ -921,9 +967,9 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    carries the member's `date` through as a per-column `"first"` aggregation spec — not a bare
    `agg("first")` call, which does not exist: EM and Naive Mean pass a dict entry
    (`em_agg[dcol] = "first"` / `naive_agg[dcol] = "first"`) into `.agg(dict)` in
-   `_create_aggregated_ensemble_forecasts` (`:611`) and `_add_naive_mean_aggregated_ens` (`:882`)
+   `_create_aggregated_ensemble_forecasts` (`:758`) and `_add_naive_mean_aggregated_ens` (`:906`)
    respectively, while Skilled Mean passes a named-aggregation tuple (`sm_agg[dcol] = (dcol, "first")`)
-   into `.agg(**dict)` in `_add_skilled_mean_aggregated_ens` (`:802`) — and `api_writer.py`'s
+   into `.agg(**dict)` in `_add_skilled_mean_aggregated_ens` (`:865`) — and `api_writer.py`'s
    `record_date` logic (`:1264-1269`) stamps that `date` for any `model_short` under flag ON. If a flag
    is ever rolled back to OFF on a deployed org, the rollback runbook must delete the stale flag-ON
    native-shaped LR **and** ensemble rows for the affected quarters (not just LR's), or they keep

@@ -1884,9 +1884,13 @@ reach this entry point's WARNING-capped log (INFRA-029) regardless of what actua
 8) writes the derived seven-model rows for every quarter, the current one included
 (`src/skill_metrics.py` ~:2741, `joint_forecasts = forecasts.copy()`), but EM/Skilled Mean/Naive Mean are
 built from `merged`, an **inner join with observations** (~:2682-2690, ~:2806-2831) — so the recalc writes
-**no** ensemble rows for the current, unobserved quarter. Only the quarterly block of
-`postprocessing_operational_long_term.py` (~:207-232) writes them, from existing skill plus the latest
-derived forecasts, with no observation requirement. Until that operational run executes, the narrower
+ensembles for the current quarter only where that join happens to match, which is usually not the current
+quarter but is not guaranteed never: a quarter's last month counts as observed at ≥50% of its days
+(`src/data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g. kghm
+Dec 17–24) can make the current quarter "observed" before this recalc runs (see PP-064 Chunk C canonical
+step 11's PASS criterion 2 loophole note for the resulting read-back caveat). Only the quarterly block of
+`postprocessing_operational_long_term.py` (~:207-232) writes them unconditionally, from existing skill plus
+the latest derived forecasts, with no observation requirement. Until that operational run executes, the narrower
 blank-card population the overview's "User-visible consequence" paragraph now defines (a key where at
 most one of `LR_Base`/`LR_SM` has a non-null target-quarter forecast, so neither EM nor Naive Mean forms,
 and its one surviving row, if any, is non-native — **not** simply "a fresh EM row plus a non-native LR

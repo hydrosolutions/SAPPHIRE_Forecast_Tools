@@ -217,9 +217,15 @@ point is not the branch merge itself**: the integration-branch merge (`deploy.pp
 derivation code on the servers — it writes no rows. Nor is it the in-window skill recalc alone: verified in
 `src/skill_metrics.py` (~:2682-2690, ~:2806-2831), EM/Skilled Mean/Naive Mean are built from an **inner
 join with observations**, so the recalc writes the derived seven-model rows for every quarter, the current
-one included (~:2741, `joint_forecasts = forecasts.copy()`), but writes **no ensemble rows for the current,
-unobserved quarter** — only the quarterly block of `postprocessing_operational_long_term.py` (~:207-232)
-does that, from existing skill plus the latest derived forecasts, with no observation requirement. The
+one included (~:2741, `joint_forecasts = forecasts.copy()`), but the ensembles themselves (EM/Skilled
+Mean/Naive Mean) form only where that inner join finds an observation — **usually not the current
+quarter, but not never**: a quarter's last month counts as observed at ≥50% of its days
+(`data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g. kghm
+Dec 17–24) can make the current quarter "observed" before this recalc runs, and the recalc then writes
+its ensembles too. Only the quarterly block of `postprocessing_operational_long_term.py` (~:207-232)
+is guaranteed to write them regardless, from existing skill plus the latest derived forecasts, with no
+observation requirement — see PP-064 Chunk C canonical step 11's PASS criterion 2 for the resulting
+loophole (a pre-existing derived-composition Naive Mean row is not by itself evidence step 11 ran). The
 blank card clears only once that **operational** quarterly postprocessing run has executed on the new
 image and its output has been verified (PP-064 Chunk C canonical step 11 / PP-065 P2's post-checks) — see
 PP-064 Chunk C § "Order" for the exact command, and PP-065 § "P2 — rollout" for the same step in context —
@@ -284,8 +290,12 @@ Resolved since rev 2:
    - `ieasyhydroforecast_min_pairs_long_term_quarter`. An explicit 5 on a server would cancel decision C.
 2. **Who executes.** Each PR names who runs the server steps (the owner or hydromet IT). Image pull and
    restart per module follow `doc/prod/update_deployment_checklist.md`.
-3. **Order.** Steps 1–2 are already complete/live now; step 3 only merges the remaining work into the
-   integration branch (`integ_quarter_p1b_p2`), it is not itself a deploy. **Step 4 (the writer-paused
+3. **Order.** Step 1 (PP-064 A, FD-029 P1, PP-065 P1a) is presumed live now (verify per org). **Step 2
+   (DOC-009 P1a) is still pending** — it is Draft, not yet merged (`mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md`).
+   It gates `PP-065.P2.ready`, which gates `deploy.pp` (the graph below), so it must land before step 4's
+   writer-paused window opens — it does **not** gate step 3, which has no dependency on it. Step 3 only
+   merges the remaining work into the integration branch (`integ_quarter_p1b_p2`), it is not itself a
+   deploy. **Step 4 (the writer-paused
    window, which includes `deploy.pp`) is the deploy, due before 2026-12-25** — the 2026-12-25 deadline in
    the dependency graph sits on `deploy.pp` and the other `.deploy` nodes, not on step 3's merge. **Rollout mechanism (owner decisions R4-merge-is-deploy, R4-integration-branch, R4-recalc-runs,
    2026-09-28, current):** merge = deploy (decision R4-merge-is-deploy), so PP-064 A, FD-029 P1 and PP-065 P1a are already
@@ -346,8 +356,9 @@ Resolved since rev 2:
      population (narrower than "EM plus a non-native LR row": a fresh EM row always has a paired, visible
      Naive Mean row today, since both share the same `LR_Base`+`LR_SM` gate pre-P1b). The true recovery point is **not** the `deploy.pp` merge
      itself, and **not** the in-window skill recalc either — the recalc only writes ensembles for quarters
-     with 3-of-3 observations, never the current quarter (see the "User-visible consequence" paragraph
-     above). It is the **first successful operational quarterly postprocessing run on the new image**
+     with an observation match, usually not the current quarter but not guaranteed (see the "User-visible
+     consequence" paragraph above for the loophole where it is). Only the operational run is guaranteed to.
+     It is the **first successful operational quarterly postprocessing run on the new image**
      (PP-064 Chunk C canonical step 11), verified. See the PP-064 Chunk C runbook
      (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout and verification")
      for the exact command, and PP-065 § "P2 — rollout" for the same step in context, so the blank-card
@@ -433,7 +444,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "deploy.pp.pulled": { "stage": "deploy", "depends_on": ["deploy.pp"], "note": "the new image is pulled and verified (creation date/digest) on each server -- PP-064 Chunk C canonical steps 5-6. This is the node on which the code is actually on the servers, distinct from deploy.pp (the merge event)." },
     "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp.pulled"], "note": "decision F (tjhm provenance cleanup), with the service owner, inside the same writer-paused window as deploy.pp -- PP-064 Chunk C canonical step 7" },
     "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp.pulled", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export taken at the start of this same writer-paused window (canonical step 3, before the merge); the export captures calendar-window-era, 3-of-3-era quarter skill (owner decision R4-recalc-runs), not pre-P1a skill. Requires deploy.pp.pulled (the per-org image pull and creation-date/digest verification, canonical step 6) to have completed first -- PP-064 Chunk C canonical step 8." },
-    "operational_run.1": { "stage": "ops",  "depends_on": ["recalc.1"], "note": "canonical steps 9-11: post-recalc checks (9), resume the paused writers (10), then run the first operational quarterly postprocessing run promptly and verify it -- do not wait for the next scheduled LT cron day (11, bash bin/bimonthly_long_term_postprocessing.sh <env> operational). Step 11 is the BLANK-CARD RECOVERY POINT: it is what actually writes the derived seven-model rows' Naive Mean / Skilled Mean ensemble rows for the current, unobserved quarter -- recalc.1 alone does not (it only writes ensembles for quarters with 3-of-3 observations). See PP-064 Chunk C canonical step 11 (its own success-criteria bullet) and PP-065 P2's 'Why the operational run, not the recalc, is the blank-card recovery point'." },
+    "operational_run.1": { "stage": "ops",  "depends_on": ["recalc.1"], "note": "canonical steps 9-11: post-recalc checks (9), resume the paused writers (10), then run the first operational quarterly postprocessing run promptly and verify it -- do not wait for the next scheduled LT cron day (11, bash bin/bimonthly_long_term_postprocessing.sh <env> operational). Step 11 is the BLANK-CARD RECOVERY POINT: it is what always writes the derived seven-model rows' Naive Mean / Skilled Mean ensemble rows for the current quarter, whether or not that quarter is observed -- recalc.1 only writes them when its own observation join happens to match, which is usually not the current quarter but is not guaranteed never (see PP-064 Chunk C canonical step 11's PASS criterion 2 loophole note). See PP-064 Chunk C canonical step 11 (its own success-criteria bullet) and PP-065 P2's 'Why the operational run, not the recalc, is the blank-card recovery point'." },
     "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "operational_run.1"] },
     "PP-065.P3.deploy":{ "stage": "deploy", "depends_on": ["PP-065.P3"] },
     "recalc.2":        { "stage": "ops",    "depends_on": ["LTF-014.P2", "PP-065.P3.deploy"] },
