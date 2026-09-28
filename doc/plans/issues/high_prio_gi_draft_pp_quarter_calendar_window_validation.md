@@ -307,17 +307,18 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   - **Drop count logged at INFO** when nonzero (`:3484-3490`), naming whether it may be a back-dated run
     or a flag-OFF row dated at the quarter start.
 
-**First-year Q1 (Problem 7), flag OFF only**
-- Read issue years from `start_year − 1` (`:3132-3138`). Keep the `horizon_value` filter unchanged. Do
-  **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3148`) here — an earlier version
+**First-year Q1 (Problem 7), flag OFF only** (line numbers re-measured on current trunk `6a4ecfae`)
+- Read issue years from `start_year − 1` (`:3193-3199`). Keep the `horizon_value` filter unchanged. Do
+  **not** mirror flag ON's `_trim_to_target_year_range(..., end_year)` (`:3209`) here — an earlier version
   of this fix did, and an out-of-loop review found it silently reversed direct-source precedence (below).
 - **Invariant, revised 2026-09-27 (owner decision, `115eb886`, now merged to trunk in `955bd384` / #527
   — see "Native-only restriction" below for why).** The flag-OFF direct set = trunk's set (every row
   with issue year in `[start_year, end_year]`, any target year) **plus only rows from the schedule-dated
   native issuance**: any prior-year row targeting Q1 of `start_year` whose `date` exactly matches the
   quarter mode's own schedule-computed native issue date (`valid_from` — Jan 1 of `start_year` — minus
-  `lead_time` months, on `issue_day`, clamped to that month's length) — the mask (`data_reader.py:3247-3265`
-  on current trunk `955bd384`, re-measured; the branch-era citation was `:3251-3264`) is evaluated per row
+  `lead_time` months, on `issue_day`, clamped to that month's length) — the mask (`data_reader.py:3247-3265`,
+  re-measured on current trunk `6a4ecfae` — unchanged since `955bd384`; the branch-era citation was
+  `:3251-3264`) is evaluated per row
   across the whole `direct` frame, so it admits every matching row,
   across stations and models, not a single row overall. If the schedule cannot be resolved, or resolves
   with `issue_day < 1`, there is **no** exception at all — trunk's set only — and one WARNING is logged.
@@ -332,8 +333,8 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   LR values were nulled and 7 stations lost their Q1-2026 ensembles.** The mask now computes the native
   issue date via `_quarter_native_q1_issue_date(start_year)` and requires an exact match on `date`, not
   merely on target year and quarter. `horizon_value` is still a stored data attribute the API filters on
-  (`:3132-3138`), unchanged; `select_operational_issuances`, which validates `date` against the schedule
-  under flag ON, still runs only under flag ON (`:3141`), never in this branch — the new date check
+  (`:3193-3199`), unchanged; `select_operational_issuances`, which validates `date` against the schedule
+  under flag ON, still runs only under flag ON (`:3203`), never in this branch — the new date check
   replicates just enough of that validation for the flag-OFF exception. With **on-schedule data** — the
   only kind LTF-015 allows to exist — this still reduces in practice to: kghm lead 1 → the Dec 25 issue of
   `start_year − 1`; tjhm lead 0 → issued Jan 1 of `start_year` itself, already inside

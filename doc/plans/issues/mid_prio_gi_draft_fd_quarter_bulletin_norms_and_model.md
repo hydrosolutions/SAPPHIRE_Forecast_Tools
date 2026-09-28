@@ -153,7 +153,7 @@ flow. Your changes must be purely additive or modify only the specific behavior 
        hv-0 row at all; concatenate hv-0 rows ahead of the fallback rows, then dedup to one row per key
        with `_dedup_quarter_skill_by_priority` (`:1277-1304`, first-in-frame-order wins, so the hv-0/
        fallback concat order IS the priority). Flag-OFF quarter skill is grouped without hv
-       (`apps/postprocessing_forecasts/src/skill_metrics.py:2641-2646`) and written at hv 0
+       (`apps/postprocessing_forecasts/src/skill_metrics.py:2642-2647`) and written at hv 0
        (`apps/postprocessing_forecasts/src/api_writer.py:661-669`), so filtering to the config lead (1 on
        kghm) alone would find nothing on a DB with no live hv-0 row;
      - if the `horizon_value` column is absent, keep all rows; if `quarter_horizon_value()` raises, log a

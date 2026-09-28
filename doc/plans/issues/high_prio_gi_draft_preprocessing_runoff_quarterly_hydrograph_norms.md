@@ -171,21 +171,28 @@ live in the writer (`horizon_value = int(row["horizon_value"])` under the flag, 
 `horizon_value = quarter_horizon_value()`). Preprocessing `hydrographs` QUARTER rows, by contrast, use
 `horizon_value` 1–4 as the **quarter number** itself (this issue's own "QUARTER row shape" table
 above). The two tables' `horizon_value` columns hold different quantities with the same name; joining
-on it directly (`hydrographs.horizon_value = long_forecasts.horizon_value`) would silently pair EVERY
-kghm `long_forecasts` row — whatever its actual target quarter — with the hydrograph's **Q1** norm
-(`horizon_value=1`, the quarter number), because every kghm `long_forecasts` QUARTER row carries
-`horizon_value=1` (the configured lead), not its target quarter; the Q2/Q3/Q4 hydrograph norms
-(`horizon_value=2/3/4`) would match no `long_forecasts` row at all.
+on it directly (`hydrographs.horizon_value = long_forecasts.horizon_value`) would silently mis-pair:
+under flag OFF, every kghm `long_forecasts` QUARTER row written by the current writer carries
+`horizon_value=1` (the configured lead), so an hv join pairs it with the Q1 norm regardless of the
+row's actual target quarter. Under flag ON the writer passes each row's own lead through
+(`api_writer.py:1173-1176`), and legacy QUARTER rows at hv 1-4 also exist. So an hv join mis-pairs
+there too, just differently — not by uniformly landing on Q1.
 
-A future dashboard join between preprocessing QUARTER hydrograph norms and postprocessing
-`long_forecasts` QUARTER rows must instead join on **`code` + the calendar quarter number derived
-from `long_forecasts.valid_from` (or its `quarter_in_year` column, where present) + the target
-year**, matched against the hydrograph row's own `horizon_value` (1–4, the quarter number) and `date`
-year — **not** on `long_forecasts.horizon_value` (the lead) and **not** on hydrograph `date`/
-`day_of_year` alone either: hydrograph norm rows are written for the current target year only (no
-historical backfill), while `long_forecasts` span many years, so a bare `date` match would miss every
-year but the current one. A translation layer (deriving the quarter number from `long_forecasts`) is
-needed; the original "no translation layer is needed" claim does not hold.
+A future dashboard join must instead use two different keys for the two hydrograph fields, per
+DOC-009 row 10 (`mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md:136`):
+
+- **Climatology `norm`:** join on `code` + the calendar quarter number, derived from
+  `long_forecasts.valid_from` (or its `quarter_in_year` column, where present), matched against the
+  hydrograph row's own `horizon_value` (1–4, the quarter number). Which snapshot year's norm row to
+  use for a given target quarter (e.g. for a December-issued Q1) is overview decision D6 / FD-030's
+  D6c — say so here and do not decide it in this issue.
+- **Year-specific `previous`/`current`:** join on `code` + calendar quarter + the target year. Only
+  years that have a hydrograph snapshot will match; hydrograph norm rows are written for the current
+  target year only (no historical backfill), so `long_forecasts` rows targeting other years will not
+  find a `previous`/`current` match.
+- **Never** join on `long_forecasts.horizon_value` for either field — it is the configured lead, not
+  the quarter number. A translation layer (deriving the quarter number from `long_forecasts`) is
+  needed; the original "no translation layer is needed" claim does not hold.
 
 ---
 
@@ -243,9 +250,10 @@ psql -d preprocessing_db -c \
 - `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py` — SEASON/MONTH/QUARTER aggregation.
 - `sapphire/services/preprocessing/app/models.py` — `HorizonType` (QUARTER present, commit `2be58f7`).
 - `sapphire/services/preprocessing/alembic/versions/d4e5f6a7b8c9_add_quarter_to_horizontype.py`.
-- `sapphire_api_client/validators.py:12` — `VALID_HORIZONS` (needs `"quarter"`).
-- `apps/postprocessing_forecasts/src/aggregation.py:217-282` — `QUARTER_MONTHS`.
-- `apps/postprocessing_forecasts/src/api_writer.py:1043-1051` — QUARTER date/horizon_value convention.
+- `sapphire_api_client/validators.py:12` — `VALID_HORIZONS` (done, pinned client — includes `"quarter"`).
+- `apps/postprocessing_forecasts/src/aggregation.py:30` — `QUARTER_MONTHS`.
+- `apps/postprocessing_forecasts/src/api_writer.py:1160-1176` — QUARTER date/horizon_value convention.
 - `apps/forecast_dashboard/src/db.py` — hydrograph reads via the api-client (`_read_data`).
-- `doc/data_flow_long_term.md` — long-horizon hydrograph norm aggregation + join contract.
+- `doc/data_flow_long_term.md` — long-horizon hydrograph norm aggregation + join contract. Still states
+  the old hv-keyed contract (`:240-242`, `:270-275`); DOC-009 row 10 owns that edit.
 - `bin/yearly_runoff_hydrograph_aggregation.sh` — annual job entry point.

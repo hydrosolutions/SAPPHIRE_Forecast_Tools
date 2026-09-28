@@ -1,6 +1,6 @@
 # Quarter forecast = calendar Q1–Q4: overview plan
 
-**Status**: Plans rev 6, 2026-09-26, after five review rounds plus confirm passes. The latest round (after the P0 deferral) covered codex, consistency and implementation readiness. **Code status 2026-09-28**: PP-064.A (#527), FD-029 P1 (#528) and PP-065.P1a (#530) are **merged to trunk**; **none is deployed to a server yet** (rollout gate, decision below). Remaining: PP-065 P1b–P1d, PP-064 B/C, FD-030, DOC-009, LTF-014/015/016/017.
+**Status**: In progress. Plans rev 6, 2026-09-26, after five review rounds plus confirm passes. The latest round (after the P0 deferral) covered codex, consistency and implementation readiness. **Code status 2026-09-28**: PP-064.A (#527), FD-029 P1 (#528) and PP-065.P1a (#530) are **merged to trunk**; **none is deployed to a server yet** (rollout gate, decision below). Remaining: PP-065 P1b–P1d, PP-064 B/C, FD-030, DOC-009, LTF-014/015/016/017.
 **This file owns the decisions and the dependency graph.** Child plans refer to it.
 **Trigger**: GitHub #521 (quarterly target-window matching). The bug is real. This plan set replaces the code
 approach of branch `sandro_sapphire_2_quaterly_agg`.
@@ -107,6 +107,15 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
    postprocessing derivation/read FAILS (propagates `FileNotFoundError`), unlike PP-064's
    `_quarter_native_q1_issue_date` (`src/data_reader.py:3045-3083`), which warns and continues on the
    same `(LongTermHorizonResolverError, FileNotFoundError)` exception (Problem-7 exception, warn-and-continue).
+   That warn-and-continue branch is not the whole flag-OFF story: on a missing `quarter.json`,
+   postprocessing already fails today regardless. Under flag OFF, `quarter_horizon_value()`
+   (`src/data_reader.py:3198`) raises `FileNotFoundError` before the helper's only call site (`:3251`)
+   is ever reached, so a fully-missing config already propagates uncaught, upstream of the helper. The
+   helper's own `operational_schedule_for_mode("quarter")` lookup (`:3073`) loads the same file and
+   re-requires the same `operational_month_lead_time` field `quarter_horizon_value()` already
+   validated, so by the time the helper runs the only new failure it can hit is a missing/non-integer
+   `operational_issue_day` — a `LongTermHorizonResolverError`. The warn branch is therefore effective
+   only for that case, never for `FileNotFoundError`.
 
 ## What is wrong today
 
@@ -203,8 +212,14 @@ Resolved since rev 2:
      skill-metrics write path. PP-065 P1b is what stops this write. This write is live on trunk only, not
      on any server today: under the 2026-09-28 rollout gate, PP-064 A, FD-029 and PP-065 P1b deploy
      together in the same window, so there is no server-visible interval where a quarter whose only rows
-     are `EM` plus a non-native LR row shows **nothing** on the card — that describes trunk code before
-     P1b lands.
+     are a **fresh** `EM` row plus a non-native LR row shows **nothing** on the card — that describes
+     trunk code before P1b lands. This holds only for fresh EM writes. Quarters whose DB rows are only
+     `EM` plus a non-native LR row **because old images wrote them** (pre-deploy, before P1b/FD-029 exist
+     on that server) do show a blank card, for the interval right after the joint deploy: FD-029 hides
+     the old EM row and the non-native LR row immediately, but P1b's own replacement rows are not written
+     until the recalc that runs inside the writer-paused window. See the PP-065 P2 runbook
+     (`high_prio_gi_draft_pp_quarter_derived_models.md` § "P2 — rollout") for scheduling the first
+     postprocessing run promptly after the deploy.
    - **tjhm interim, accepted:** until PP-065 P1b and the decision-F cleanup land, tjhm's monthly-derived
      LR_Base/LR_SM rows are shown as native LR (round 4, decision 1 above) — kghm is unaffected.
    - Bounds for models without quantiles are ±δ on the dashboard. Until FD-030 lands, the bulletin range
@@ -267,18 +282,18 @@ Stages:
     "LTF-017":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A":        { "stage": "merge",  "depends_on": [], "status": "MERGED #527", "parallel_agents": 1 },
     "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A", "PP-065.P2.ready"], "deadline": "2026-12-25", "note": "gated on PP-065 P2 readiness (rollout gate, decision 2026-09-28): PP-064 A, FD-029 and deploy.pp (PP-065 P2) all deploy TOGETHER in the same window, not standalone and not staged one after another" },
-    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). Read-only; also FD-029.deploy's own precondition (its degraded-mode limitation)" },
+    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). Read-only; a precondition of the joint deploy via PP-065.P2.ready (its degraded-mode limitation)" },
     "FD-029":          { "stage": "merge",  "depends_on": [], "status": "MERGED #528 (P1)", "parallel_agents": 1 },
-    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029", "PP-064.C.step0", "PP-065.P2.ready"], "deadline": "2026-12-25", "note": "restart the dashboard container; gated on PP-065 P2 readiness (rollout gate, decision 2026-09-28), deploys TOGETHER with PP-064.A.deploy and deploy.pp, same as PP-064.A.deploy" },
+    "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029", "PP-065.P2.ready"], "deadline": "2026-12-25", "note": "restart the dashboard container; gated on PP-065 P2 readiness (rollout gate, decision 2026-09-28), deploys TOGETHER with PP-064.A.deploy and deploy.pp, same as PP-064.A.deploy" },
     "PP-065.P1a":      { "stage": "merge",  "depends_on": ["PP-064.A"], "status": "MERGED #530", "parallel_agents": 1 },
     "PP-065.P1b":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
     "PP-065.P1c":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1 },
     "PP-065.P1d":      { "stage": "merge",  "depends_on": ["PP-065.P1b", "PP-065.P1c"], "parallel_agents": 1 },
     "PP-064.B":        { "stage": "merge",  "depends_on": ["PP-065.P1d", "D3"], "parallel_agents": 1, "note": "the B5 check only" },
-    "PP-065.P2.ready": { "stage": "ops",    "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a"], "note": "P2's code and runbook reviewed and the writer-paused window scheduled. deploy.pp, PP-064.A.deploy and FD-029.deploy all gate on this single node and execute TOGETHER in one window -- this node exists so none of the three is ordered strictly after another in the graph" },
+    "PP-065.P2.ready": { "stage": "ops",    "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a", "PP-064.C.step0"], "note": "P2's code and runbook reviewed and the writer-paused window scheduled. deploy.pp, PP-064.A.deploy and FD-029.deploy all gate on this single node and execute TOGETHER in one window -- this node exists so none of the three is ordered strictly after another in the graph" },
     "deploy.pp":       { "stage": "deploy", "depends_on": ["PP-065.P2.ready"], "deadline": "2026-12-25", "note": "no postprocessing or dashboard image from current trunk goes to a server before this (rollout gate, decision 2026-09-28); deploys TOGETHER with PP-064.A.deploy and FD-029.deploy in the same window" },
-    "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp"], "note": "decision F, with the service owner" },
-    "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export" },
+    "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp", "PP-064.A.deploy", "FD-029.deploy"], "note": "decision F, with the service owner" },
+    "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp", "PP-064.A.deploy", "FD-029.deploy", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export" },
     "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "recalc.1"] },
     "PP-065.P3.deploy":{ "stage": "deploy", "depends_on": ["PP-065.P3"] },
     "recalc.2":        { "stage": "ops",    "depends_on": ["LTF-014.P2", "PP-065.P3.deploy"] },

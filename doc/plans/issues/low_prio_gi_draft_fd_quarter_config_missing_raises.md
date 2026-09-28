@@ -13,6 +13,16 @@ P1b's rule for the postprocessing side: there, a missing `quarter.json` (`FileNo
 during the derivation/read FAILS rather than degrading, unlike PP-064's
 `_quarter_native_q1_issue_date`, which warns and continues on the same exception set. The two
 layers own different failure modes for the same root cause and are not meant to converge.
+On the postprocessing side, that warn-and-continue branch is not the whole flag-OFF story: on a
+missing `quarter.json`, postprocessing already fails today regardless. Under flag OFF,
+`quarter_horizon_value()` (`apps/postprocessing_forecasts/src/data_reader.py:3198`) raises
+`FileNotFoundError` before the helper's only call site (`:3251`) is ever reached, so a
+fully-missing config already propagates uncaught, upstream of the helper. The helper's own
+`operational_schedule_for_mode("quarter")` lookup re-requires the same
+`operational_month_lead_time` field `quarter_horizon_value()` already validated, so by the time
+the helper runs the only new failure it can hit is a missing/non-integer `operational_issue_day`
+— a `LongTermHorizonResolverError`. The warn branch is therefore effective only for that case,
+never for `FileNotFoundError`.
 
 ## Problem
 

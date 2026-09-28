@@ -308,7 +308,11 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        (`_quarter_native_q1_issue_date`); a target-year trim on direct rows here would reverse that
        precedence and is locked against by `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening` and
        `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim`
-       (`tests/test_quarter_calendar_window.py:995, 1046`) — do not break them. Flag ON: the direct-row
+       (`tests/test_quarter_calendar_window.py:995, 1046`) — do not break them. This invariant, the
+       Problem-7 `start_year - 1` widened read, and the native-Q1 exception exist **only** in
+       `read_quarterly_forecasts`. `read_latest_quarterly_forecasts` under flag OFF reads from
+       `start_year` with no Problem-7 branch (`src/data_reader.py:3545-3552`). P1b must **not** add the
+       widening or the native-Q1 exception to the latest reader. Flag ON: the direct-row
        target-year trim already exists (`_trim_to_target_year_range`, `src/data_reader.py:3209`) and is
        unaffected by this item. That `:3209` trim **predates #527** (it is from the earlier M1 P1
        config-driven operational-issuance selection work); #527 is what added the latest reader's own
@@ -377,7 +381,13 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      ("quarter")`) **once per reader call** and share the same resolved `schedule` object with the native-row
      rule, the derivation calls above, and `_quarter_native_q1_issue_date`'s own Problem-7 exception
      (`src/data_reader.py:3072-3083`) — so the degraded case (schedule unresolvable) logs exactly **one**
-     WARNING per reader call, not one per call site. **Do not** reuse
+     WARNING per reader call, not one per call site. `_quarter_native_q1_issue_date(start_year)`
+     (`src/data_reader.py:3045`) currently resolves the schedule itself (`:3073`), and its only call site
+     is `:3251` in `read_quarterly_forecasts`. Sharing the resolved schedule with it therefore needs one
+     additive change to its signature, and only this one: an optional keyword-only parameter (e.g.
+     `schedule=None`) — when passed, the helper uses it instead of re-resolving; when omitted, behaviour
+     is unchanged and the existing tests keep calling it without the parameter. This is the one permitted
+     signature change in P1b. **Do not** reuse
      `_quarter_native_q1_issue_date`'s own `except (LongTermHorizonResolverError, FileNotFoundError)` for
      the derivation calls: that tuple's `FileNotFoundError` branch is specific to the Problem-7
      native-Q1-date exception (warn-and-continue is safe there because it only disables one admit rule),
@@ -992,7 +1002,10 @@ Depends on P1a. It can run in parallel with P1c; the two touch disjoint source f
   the target-year trim scope (derived rows only), the combined-reader filter, the shared native-row
   helper, `_quarterly_fc_output_cols`. Reference the existing `QUARTERLY_DERIVED_MODELS` /
   `QUARTER_NATIVE_RAW_MODELS` / `QUARTER_SUPPORTED_MODELS` constants (`src/model_names.py:21-30`) and
-  `clamp_issue_days` (`src/aggregation.py:646`) — do not re-create them.
+  `clamp_issue_days` (`src/aggregation.py:646`) — do not re-create them. One permitted signature change:
+  `_quarter_native_q1_issue_date(start_year)` (`:3045`) gains an optional keyword-only `schedule=None`
+  parameter so the shared-schedule resolution above can pass its already-resolved `OperationalSchedule`
+  in; omitted, behaviour and the existing call without it are unchanged.
 - `postprocessing_maintenance_long_term.py`: the gap-detector call, the gap universe, the gap-key filter
   and the allowed restructuring (item 4).
 - `src/api_writer.py`: the LR and EM skip (item 3) only.

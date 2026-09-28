@@ -11,7 +11,13 @@ the postprocessing *service* (sapphire/services) needs no change
 > (1-4) for quarter and hardcoded `1` for season (`api_writer.py:1043-1067`, at the time of this audit),
 > contradicting the config-lead convention. This **was** the source of the `QUARTER hv1-4` / `SEASON hv1`
 > rows -- P-PIPE (below) has since fixed the writer, so existing `QUARTER hv1-4` rows in the DB are
-> legacy, not currently being added to. Decision: **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is
+> legacy, not currently being added to. **Qualify "legacy":** under flag OFF the writer emits
+> `hv = quarter_horizon_value()` (the configured lead); under flag ON it passes each row's own
+> `horizon_value` through (`api_writer.py:1173-1174`), and the flag-ON reader can legitimately emit
+> several leads for the same quarter (`tests/test_quarterly_data_reader.py`
+> `test_monthly_aggregated_two_leads_survive`). So "legacy" means the pre-P-PIPE quarter-number rows
+> specifically -- it does **not** mean every row with `hv != config-lead` is legacy; a flag-ON multi-lead
+> row can have `hv != config-lead` and still be current. Decision: **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is
 > a hard prerequisite (phase P-PIPE) for the data cleanup, which would otherwise be regenerated. P-PIPE
 > gets its own planner+reviewer pass.
 >
