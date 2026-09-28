@@ -1,14 +1,18 @@
 # FD-029: Quarterly card shows the latest calendar quarter, fetched with a year-safe window
 
-**Status**: P1 **merged to trunk (#528, 2026-09-28)**. Not deployed standalone: under the 2026-09-28
-rollout gate, **narrowed the same day** (see the overview's "Rollout and communication"), it deploys
-together with PP-065 P2, in the same writer-paused window. PP-064 A is **not** part of this joint window —
-it is presumed already deployed separately, via Luigi's automatic `:latest` pull (verify per org).
+**Status**: P1 **merged to trunk (#528, 2026-09-28), presumed already live on both servers** via the
+dashboard's own daily frontend auto-pull (owner decision E, 2026-09-28; `bin/daily_update_sapphire_frontend.sh`,
+run from the 19:00 UTC cron entry — verify per org, image creation date). This means FD-029 is already
+hiding every quarter `EM` row and every non-native LR row on the dashboard, while PP-065 P1b (which stops
+writing fresh `EM` rows and starts writing the replacement derived/ensemble rows) is still held on the
+integration branch `integ_quarter_p1b_p2` (owner decision F) — so a quarter whose only DB rows are a fresh
+`EM` row plus a non-native LR row shows a **blank card right now**, not only once a future joint deploy
+happens (see the overview's EM-interim paragraph).
 **Module**: `apps/forecast_dashboard`
-**Priority**: Medium. **Deploy before 2026-12-25**, when the first kghm calendar Q1 is issued: on Dec 25–31
-its flag-OFF derived and ensemble rows, dated 2027-01-01, fall outside the fetch window (Problem 1). This
-deploy is gated on the PP-065 P2 rollout window — see the overview's dependency graph (`FD-029.deploy`
-depends on `PP-065.P2.ready`).
+**Priority**: Medium. The first kghm calendar Q1 is issued around 2026-12-25; by then PP-065 P1b (still
+held on the integration branch) must have merged to trunk — that merge is the postprocessing deploy
+(`deploy.pp`) — so the derived and ensemble rows it writes are dated correctly and fetched within this
+card's window (Problem 1). See the overview's dependency graph.
 **Labels**: `forecast_dashboard`, `long-term`, `quarter`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
 graph lives there only. Overview decision D5 (caption issue date) is **resolved here** by the
@@ -530,14 +534,15 @@ new `EM` row.
   `skipif` (`TEST_PENTAD`/`TEST_DECAD`/`TEST_LOCAL`).
 - `git diff --stat` is limited to the listed files.
 
-**Deploy.** Merged (#528); deploy only together with PP-065 P2, in the same writer-paused
-window (the 2026-09-28 rollout gate, narrowed the same day) — not standalone. PP-064 A is **not** part of
-this window; it is presumed already deployed separately via auto-pull (verify per org). Precondition:
-PP-064 Chunk C step 0's per-org
-`quarter.json`/`issue_day` read (see item 3's accepted limitation above) — confirm both orgs' schedule
-config resolves before deploying, so this card does not silently run in degraded mode. Rebuild the
-dashboard image, redeploy it and restart the dashboard container on kghm and tjhm **before 2026-12-25**,
-as part of that same window. To check: the card exists only on the month horizon, for reservoir stations.
+**Deploy.** Merged (#528) and **presumed already live on both servers** via the dashboard's own daily
+frontend auto-pull (owner decision E; verify per org, PP-064 Chunk C step 0). PP-064 A is presumed live the
+same way, independently. PP-065 P1b–P1d are still held on the integration branch (owner decision F) — this
+card is already reading calendar-window PP-064-shaped rows, but the seven derived models and the Naive
+Mean / Skilled Mean rows PP-065 P1b writes are not there yet, and neither are P1b's fixes for degraded-mode
+schedule handling. Precondition for P1b's own merge (the writer-paused window / `deploy.pp`): PP-064 Chunk
+C step 0's per-org `quarter.json`/`issue_day` read (see item 3's accepted limitation above) — confirm both
+orgs' schedule config resolves, so this card does not silently run in degraded mode once the derived rows
+start arriving. To check: the card exists only on the month horizon, for reservoir stations.
 
 ## Out of scope
 

@@ -190,7 +190,7 @@ row's actual target quarter. Under flag ON the writer passes each row's own lead
 there too, just differently — not by uniformly landing on Q1.
 
 A future dashboard join must instead use two different keys for the two hydrograph fields, per
-DOC-009 row 10 (`mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md:136`):
+DOC-009 row 10 (`mid_prio_gi_draft_doc_quarter_calendar_contract_amendments.md:141`):
 
 - **Climatology `norm`:** join on `code` + the calendar quarter number, derived from
   `long_forecasts.valid_from` (or its `quarter_in_year` column, where present), matched against the

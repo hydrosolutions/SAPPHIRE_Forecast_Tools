@@ -1,7 +1,11 @@
 # PP-065: Seven models for quarter as same-issue monthly averages; quarterly Naive/Skilled Mean as for monthly
 
-**Status**: P1a **merged to trunk (#530, 2026-09-28)**. P1b and P1c are next (parallel, both depend on P1a),
-then P1d, then rollout (P2). P1b/P1c must **reference** the symbols P1a already put on trunk, not
+**Status**: P1a **merged to trunk (#530, 2026-09-28)**, presumed already live on both servers via auto-pull
+(owner decision E, 2026-09-28; verify per org, `PP-064.C.step0`). P1b and P1c are next (parallel, both
+depend on P1a), then P1d, then rollout (P2). **P1b–P1d merge into the integration branch
+`integ_quarter_p1b_p2` (owner decision F, 2026-09-28), not directly into `maxat_sapphire_2`** — that branch
+merges to trunk only in the P2 window, and that merge is the postprocessing deploy. P1b/P1c must
+**reference** the symbols P1a already put on trunk, not
 re-create them: the `QUARTER_NATIVE_RAW_MODELS` / `QUARTERLY_DERIVED_MODELS` / `QUARTER_SUPPORTED_MODELS`
 constants in `apps/postprocessing_forecasts/src/model_names.py:21-30`, and `clamp_issue_day` /
 `clamp_issue_days` (`src/aggregation.py:627, 646`) and `QUARTER_OBS_MIN_MONTHS` (`src/aggregation.py:290`).
@@ -442,24 +446,21 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        have landed (decision F runs after `deploy.pp` in the overview's dependency graph, i.e. inside the
        same writer-paused window, not automatically the moment P1b merges) — see the round-4 tjhm interim
        decision. LR still enters the ensembles and skill regardless of visibility.
-     - **EM interim. [NARROWED 2026-09-28: corrects "live on trunk only" below — see the overview's
-       decision 1 sub-bullet.]** PP-064 A is merged to trunk (#527); under the narrowed 2026-09-28 rollout
-       gate it is **presumed already live on servers** via auto-pull (verify per org), separately from
-       FD-029 and this item (P1b), which still deploy together in the same writer-paused window. The EM
-       write this bullet describes **predates PP-064 A** (`api_writer.py:1157-1158` is "unchanged from the
-       pre-#527 branch"), so it is not trunk-only either — it writes fresh quarter `EM` rows on servers
-       today, by both old and auto-pulled images alike: `ensemble_calculator.py` sets `model_short = "EM"`
-       directly in the quarter aggregation path (`_create_aggregated_ensemble_forecasts:765`), and
-       `api_writer.py`'s quarter-write loop (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s
-       identity `"EM": "EM"` entry (`api_writer.py:30`), not the `"ENSEMBLE_MEAN": "EM"` entry (line 50,
-       which serves the skill-metrics write path only). FD-029, which hides every quarter EM row it reads
-       on the dashboard side, is **not yet on servers** — it reaches them only with the P2 window. So the
-       old "no server-visible window where a quarter's only rows are a fresh EM row plus a non-native LR
-       row shows nothing" claim assumed the broad, now-superseded gate; it no longer holds unconditionally
-       while PP-064 A may already be live and FD-029/this item are not — see the overview's open,
-       unverified item (the interaction between live PP-064 A and the OLD dashboard image, checked in the
-       P1b readiness review). Once FD-029 and this item deploy together, the original reasoning applies
-       again: FD-029 drops the EM row and the non-native LR row immediately.
+     - **EM interim (current state, owner decisions E/F, 2026-09-28).** The EM write this bullet describes
+       **predates PP-064 A** (`api_writer.py:1157-1158` is unchanged from the pre-#527 branch), so it is not
+       trunk-only: `ensemble_calculator.py` sets `model_short = "EM"` directly in the quarter aggregation
+       path (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py`'s quarter-write loop
+       (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry
+       (`api_writer.py:30`), not the `"ENSEMBLE_MEAN": "EM"` entry (line 50, which serves the skill-metrics
+       write path only). This write is live on servers today, and will keep running until this item (P1b)
+       merges. **FD-029, which hides every quarter EM row it reads on the dashboard side, is also live on
+       servers today** (owner decision E: it deploys via the dashboard's own daily frontend auto-pull, not
+       only with PP-065 P2). So right now, a quarter whose only DB rows are a fresh `EM` row plus a
+       non-native LR row shows a **blank card** — this is the current, ongoing state (owner decision F: P1b
+       is held on the integration branch, not yet merged to trunk), not a transient window that starts only
+       once "FD-029 and this item deploy together". It lasts until the integration branch merges to trunk
+       in the P2 window, at which point this item stops the EM write and the derived/ensemble rows take
+       over.
    - **Log** one aggregated skip count per call.
 4. **Combined reader and maintenance.**
    - `read_quarterly_combined_forecasts` drops direct rows of the seven models. It stays **filter only**,
@@ -993,31 +994,21 @@ longer exists; nothing here depends on it):
   the exact-duplicate/uniqueness rules, the vectorization) is a pure function nothing calls yet.
   `aggregate_monthly_obs_to_quarterly`'s `QUARTER_OBS_MIN_MONTHS = 3` threshold IS live on merge,
   reached via `recalculate_skill_metrics.py:385` -> `data_reader.read_quarterly_observations`
-  (`:2976`) -> `aggregate_monthly_obs_to_quarterly`. **Therefore: do NOT run a quarter skill recalc on
-  any server between deploying P1a and P2's writer-paused export window** -- P2's export of the
-  current (pre-P1a) quarterly observation rows must precede any P1a-affected recalc, or the recalc
-  will silently apply the new coverage rule (and the N3 averaging fix) to a comparison baseline P2
-  never captured. Separately, "3 of 3 months" is NOT "a fully observed quarter": a month itself
-  counts as observed at >= 50% of its days (`data_reader.py` ~:1302, `monthly[monthly["non_missing_
-  days"] >= monthly["days_in_month"] * 0.5]`), so a quarter that passes the 3-of-3 threshold can still
-  be built from three half-empty months.
-  - **[NARROWED 2026-09-28, same day — N7's original warning is ACTIVE again, not superseded.]** The
-    broader rollout gate was believed to close this hazard at the deployment level ("trunk does not go to
-    any server until PP-065 P2 is ready"), but the rollout gate itself was narrowed the same day: trunk
-    postprocessing images (carrying this live 3-of-3 rule) are **presumed already on servers** via Luigi's
-    automatic `:latest` pull (owner decision 2026-09-28, see the overview's decision 1), independent of
-    P2 readiness. So a server **can** run P1a's 3-of-3 rule without P2's export having happened — N7's
-    original instruction is the live constraint again: **do NOT run a quarter skill recalc on any server
-    before P2's writer-paused export window**, whether that recalc is manual or the automatic bimonthly
-    one (`bin/bimonthly_long_term_skill_metrics_recalculation.sh`, which runs a QUARTERLY recalc
-    unconditionally). This is exactly why the overview's `PP-064.C.step0` node now carries an explicit
-    open owner action to review, per org, whether that automatic recalc must be paused before P2.
-  - **Concrete instructions.** PP-064 A is presumed already deployed (verify per org). FD-029 (restart the
-    dashboard container) and PP-065 (P1b–P1d, P2) deploy together, in one writer-paused window. Servers
-    must not pull `:latest` **dashboard** images, and no MANUAL quarterly recalc runs, before that window;
-    per the point above, the **automatic** bimonthly recalc needs a separate, explicit per-org decision
-    (paused or not) before P2, since it is not covered by an image-pull ban. P2 is on the 2026-12-25
-    critical path.
+  (`:2976`) -> `aggregate_monthly_obs_to_quarterly`, and, per owner decision E (merge = deploy), it is
+  presumed already live on both servers since 2026-09-27/28 via auto-pull. Separately, "3 of 3 months" is
+  NOT "a fully observed quarter": a month itself counts as observed at >= 50% of its days
+  (`data_reader.py` ~:1302, `monthly[monthly["non_missing_days"] >= monthly["days_in_month"] * 0.5]`), so a
+  quarter that passes the 3-of-3 threshold can still be built from three half-empty months.
+  - **N7's original ban is [LIFTED 2026-09-28 by owner decision G].** N7 originally read: "do NOT run a
+    quarter skill recalc on any server between deploying P1a and P2's writer-paused export window" --
+    the concern was that the automatic bimonthly recalc
+    (`bin/bimonthly_long_term_skill_metrics_recalculation.sh`, which runs a QUARTERLY recalc
+    unconditionally) would apply the new 3-of-3 rule to a comparison baseline P2's export never captured.
+    The owner accepts this: the automatic recalc is **allowed to run** before P2, with no per-org pause
+    decision needed. Consequence for P2 (see "P2 -- rollout" below): P2's own export, taken at the start
+    of its writer-paused window, now captures **3-of-3-era** quarter skill -- whatever the automatic cron
+    has already produced under P1a's rule by then -- not the original pre-P1a skill; P2's runbook states
+    this rather than treating the export as the pre-P1a baseline.
 
 ### P1b — readers, native-row selection, maintenance, writer
 
@@ -1133,70 +1124,102 @@ lead 0):
     (`record_date = valid_from` = the issue date, also native-shaped).
 
 **Existing tests expected to change** (list each in the PR, with before/after):
-- `tests/test_quarterly_data_reader.py:134, 245, 407, 443, 654, 718, 985, 1015`, where they assert the old
-  mixed-issue or 2-of-3 monthly aggregation, or the flag-OFF output columns.
+- `tests/test_quarterly_data_reader.py:134, 245, 407, 654, 718, 985, 1015`, where they assert the old
+  mixed-issue or 2-of-3 monthly aggregation, or the flag-OFF output columns. (`:443` moved to its own
+  bullet below — it needs more than a one-line note.)
 - Keep the direct-row exclusion assertions for the seven models (e.g. `:293-337`, `:765-810`).
-- **Also `tests/test_quarterly_data_reader.py:196, 293, 765`** (not in the list above — found while
-  enumerating owner decision B's impact, below): their `direct_api`/`raw_quarter` fixtures carry
-  `LR_BASE`/`LR_SM`/`LR_Base`/`LR_SM` rows with **no `date` column at all**. Once the native-row rule
-  applies to LR rows under both flags (decision B), a direct LR row with no issue date cannot be
-  classified as native and is dropped — `test_direct_preferred_over_aggregated` (`:196`,
-  `TestReadQuarterlyForecasts`) would lose the row it asserts wins; `test_filter_accepts_db_form_lr_and_ensemble_names`
-  (`:293`, same class) and `test_latest_accepts_db_form_lr_and_ensemble_names` (`:765`,
-  `TestReadLatestQuarterlyForecasts`) would lose `LR_BASE`/`LR_SM` from their asserted output sets. Fix:
-  add a `date` column with a native issue date (matching each test's quarter config, default kghm
-  day 25 / lead 1 unless overridden) to the LR rows in all three fixtures.
+- **`tests/test_quarterly_data_reader.py:196, 293, 765` — corrected: flag OFF, LEAD-ONLY (degraded)
+  config, mostly NOT a fix.** All three rely on the class-level autouse fixture (`:30-49`), which writes
+  `quarter.json` with `operational_month_lead_time` only, no `operational_issue_day` — neither test
+  overrides it. `operational_schedule_for_mode("quarter")` therefore raises
+  `LongTermHorizonResolverError`, and the plan's own "Degraded native rule, flag OFF" rule (above) applies:
+  log one WARNING and keep today's direct-LR selection, with **no native filter**. So a missing `date`
+  column does not matter here, unlike a resolvable-schedule case.
+  - `:293` (`test_filter_accepts_db_form_lr_and_ensemble_names`) and `:765`
+    (`test_latest_accepts_db_form_lr_and_ensemble_names`) are **unchanged**. Their direct rows of the seven
+    models (e.g. `GBT`, `SM_GBT_NORM`, `MC_ALD`) are still absent from the output, but now because P1b
+    unconditionally drops DIRECT rows of the seven models before combining sources (item 2 above), not
+    because of the old `AGGREGATED_SUPPORTED_MODELS` filter — the assertion is the same, the reason
+    changed.
+  - `:196` (`test_direct_preferred_over_aggregated`) still numerically passes (its direct LR row, q50=99,
+    still wins) but becomes **vacuous**: under P1b, `read_quarterly_forecasts`' old Source 1 call site
+    (`read_monthly_forecasts` -> `aggregate_monthly_fc_to_quarterly`) is removed, so this test's
+    "aggregated" monthly mock is dead code, and the degraded config also skips the new derivation (same
+    shared-resolution failure) — there is nothing left to "win over". Retarget it to assert "direct LR is
+    kept unconditionally in degraded mode, no aggregated/derived row is produced", or list it for removal
+    as redundant with the degraded-mode coverage elsewhere.
 
 **Owner decision B — native LR precedence, full enumeration** (`tests/test_quarter_calendar_window.py`;
 line numbers verified against this branch's HEAD):
 - `TestRegressionDirectPrecedenceSurvivesLowerBoundWidening::test_direct_next_year_q1_wins_over_monthly_derived`
   (class `:995`, test `:1024`). **Why:** its direct row (issued `2025-12-25`) is already kghm's native Q1
   issue date (day 25 of the month before Q1, lead 1) — it was already native-shaped before this decision.
-  **Change:** none to the fixture or assertion; only the class's framing changes, from "survives the
-  lower-bound-widened read" to "wins because it is native" — reword the docstring/comment so it states the
-  decision-B rule, not the superseded window-widening one.
+  Its `_monthly_rows` fixture (two months, `horizon_value` fixed at 1 for both) additionally produces **no**
+  derived row under the 3-lead `derive_quarterly_from_monthly_same_issue` (missing leads 2/3 trips the
+  `missing_lead` exclusion, `src/aggregation.py:1224-1227`), so under P1b there is no derived row to "win"
+  against at all. **Change:** none to the fixture or assertion values; reword the docstring/comment — the
+  test now locks native-row selection (and the Problem-7 exception it already exercised), not "wins over a
+  monthly-derived competitor"; there is no competitor left.
 - `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (class `:1046`), both
   `test_direct_prior_year_backfill_wins_over_monthly_derived` (`:1076`) and
-  `test_direct_prior_year_backfill_returned_without_monthly_source` (`:1087`). **Why:** their direct rows
-  are issued `2025-01-10` targeting Q4 2024 — this is *exactly* the backfill-shaped example decision B
-  names (native Q4-2024 issue date is `2024-09-25`; `2025-01-10` is not it), so under decision B these
-  rows must now be **dropped**, not kept. **Change:** re-date the direct-row fixture to a genuine native
-  issue date for Q4 2024 (e.g. `2024-09-25`) so the class keeps proving what decision B actually locks —
-  a native direct row beats a derived row for the same key — instead of the old backfill/trunk-set
-  precedent. With that re-date, both tests' existing assertions (the direct values 100.0/120.0 win, and
-  are returned even with no monthly source) still hold, now for the new reason.
+  `test_direct_prior_year_backfill_returned_without_monthly_source` (`:1087`). **Corrected — the proposed
+  fix in an earlier draft of this list does not work.** The read is
+  `read_quarterly_forecasts([CODE], 2025, 2025)`, i.e. `start_year = end_year = 2025`. Re-dating the direct
+  row to `2024-09-25` (a genuine native Q4-2024 issue date) does **not** make it survive: the flag-OFF
+  issue-year mask (`src/data_reader.py` ~:3247-3261) drops any row with `issue_year < start_year` UNLESS it
+  is the December-issued Q1-of-`start_year` exception (quarter 1 only) — `2024-09-25` has issue year 2024
+  `< 2025` and targets Q4, so it is dropped there, before native-row selection ever runs. The ORIGINAL date
+  (`2025-01-10`, issue year 2025, survives the mask) is not native either (native Q4-2024 is `2024-09-25`),
+  so decision B drops it too, for the native-row reason. **The row is dropped either way.** Its monthly
+  fixture is also 2 months at hv fixed = 1, so no derived row is produced either (`missing_lead`).
+  **New expected result: the Q4 2024 slice is empty for both tests.** The tests now lock decision B (no
+  direct row without a native issue date survives, regardless of the lower-bound trim they were originally
+  written to guard). Drop the "the direct value wins" claim and the "tests precedence" framing; rewrite the
+  class docstring to say so.
 - `TestRegressionIssueYearMaskTooPermissive` (class `:1142`):
-  - `test_stale_out_of_window_row_does_not_beat_monthly_derived` (`:1160`). **Why:** its direct row
-    (issued `2024-12-25`, targeting Q2 2025, native issue date `2025-03-25`) is non-native and was already
-    dropped under the old F1 fix; decision B drops it too, for the native-row reason instead. **Change:**
-    assertion unchanged (monthly-derived 200.0 wins); only the class-level comment block (`:1130-1139`),
-    which states the now-superseded invariant "the flag-OFF direct set = trunk's set ... + ONLY the
-    December-issued Q1 of `start_year`", must be rewritten to state the native-row invariant instead.
-  - `test_stale_row_does_not_clobber_in_window_direct_row_regardless_of_api_order` (`:1178`). **Why:**
-    this one is a real semantic change, not just reframing — its "in-window" direct row is issued
-    `2025-05-25`, also targeting Q2 2025 (native issue date `2025-03-25`). Under the OLD rule it won
-    simply for having an issue year in range; under decision B it is **also non-native** and would now be
-    dropped, which would flip the asserted winner from the direct value (300.0) to the monthly-derived
-    value (200.0) — silently changing what the test proves. **Change:** re-date this row to the true
-    native issue date `2025-03-25` so the test keeps demonstrating its stated intent (the correct direct
-    row beats the stale one, regardless of API order) with the same assertion (300.0 wins).
+  - `test_stale_out_of_window_row_does_not_beat_monthly_derived` (`:1160`). **Corrected — the "assertion
+    unchanged" claim in an earlier draft of this list is wrong.** Its `_monthly_q2_2025` fixture
+    (`:1143-1157`) is 2 months (April, May) at hv fixed = 1 — this is `missing_lead` under
+    `derive_quarterly_from_monthly_same_issue` (no lead 3), so it produces **no** derived row; with the
+    direct row also dropped (non-native, issued `2024-12-25` for a Q2-2025 target whose native issue date
+    is `2025-03-25`), the result would be **empty**, not the monthly-derived `200.0` currently asserted.
+    **Fix:** extend `_monthly_q2_2025` to a full same-issue triplet — months 4, 5, 6 at hv 1, 2, 3, all
+    issued `2025-03-25` (kghm's native Q2-2025 issue date). Verified against `derive`'s semantics: with all
+    three leads present at the same issue date, decision G's LR fallback derives Q2 2025 = 200.0 (average
+    of 200/200/200), so the assertion (200.0 wins) still holds — now via the fallback derivation, not the
+    old `aggregate_monthly_fc_to_quarterly` aggregation. Also rewrite the class-level comment block
+    (`:1130-1139`), which states the now-superseded invariant "the flag-OFF direct set = trunk's set ... +
+    ONLY the December-issued Q1 of `start_year`", to state the native-row invariant instead.
+  - `test_stale_row_does_not_clobber_in_window_direct_row_regardless_of_api_order` (`:1178`). **Why:** its
+    "in-window" direct row is issued `2025-05-25`, also targeting Q2 2025 (native issue date
+    `2025-03-25`). Under the OLD rule it won simply for having an issue year in range; under decision B it
+    is **also non-native** and would now be dropped too. **Change:** re-date this row to the true native
+    issue date `2025-03-25` so the test keeps demonstrating its stated intent (the correct direct row beats
+    the stale one, regardless of API order) with the same assertion (300.0 wins) — **with no derived row
+    involved**: the re-dated native row wins directly against the other, non-native direct row.
 - `TestPP064aNativeQ1IssuanceRestriction` (class `:2098`; `_monthly_q1_2026_rows` fixture function
-  `:2070`). The fixture function itself needs **no** change (it still exercises the combine +
-  `drop_duplicates` step as documented). Two of its five tests do:
+  `:2070`). **Correcting an earlier draft of this list: the fixture function's own docstring claim needs
+  fixing too, not just the two affected tests'.** `_monthly_q1_2026_rows` is 2 months (Jan, Feb 2026) at hv
+  fixed = 1 — under P1b this produces **no** derived row (`missing_lead`), so it no longer "exercises the
+  concat + drop_duplicates(keep='last') combine" the way its docstring (`:2070-2079`) claims; the combine
+  it feeds has nothing on the derived side to combine against. Remove that claim from the docstring when
+  P1b touches this file. Two of its five tests change:
   - `test_persisted_monthly_derived_dec1_q1_row_does_not_clobber_jan1_rewrite` (`:2101`) and
     `test_persisted_monthly_derived_dec1_q1_row_with_real_value_still_loses` (`:2124`). **Why:** both
     fixtures pit a "Jan-1 rewrite" row (issued `2026-01-01`) against a Dec-1 backdated row (issued
     `2025-12-01`) — **neither is native** (kghm's native Q1 issue date is `2025-12-25`). Under the OLD
     rule the Jan-1 rewrite won simply for being an ordinary in-year direct row; under decision B, with no
-    native row present, **both would now be dropped**. This is also exactly the case PP-065 P1b's own
+    native row present, **both would now be dropped**, and (per the fixture correction above) no derived
+    row exists either, so the result would be **empty**. This is also exactly the case PP-065 P1b's own
     Tests list (item 2, "Native-row selection (kghm shape)") already specifies: "A native row, a rewrite
     (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row wins."
     **Change:** add a genuine native-dated direct row (issued `2025-12-25`) to each fixture; the new
-    expected winner is that native row's value, not the Jan-1 rewrite's.
+    expected winner is that native row's value, not the Jan-1 rewrite's — decided purely among the three
+    direct rows, with no derived row in play.
   - The other three tests in the class —
     `test_native_issue_day_clamped_to_short_month_is_still_admitted` (`:2142`),
     `test_unresolvable_schedule_drops_prior_year_q1_and_logs_one_warning` (`:2178`) and
-    `test_invalid_issue_day_drops_prior_year_q1_and_logs_one_warning` (`:2209`) — exercise the Problem-7
+    `test_invalid_issue_day_drops_prior_year_q1_and_logs_one_warning` (`:2210`) — exercise the Problem-7
     exception's own admission logic (clamping, degraded-schedule handling), which decision B leaves
     **unchanged** (it "stays in `read_quarterly_forecasts` only, unchanged"). **Not affected.**
 - **A-6** = `TestA6GapDetectorThroughReader` (`:345`). **Not a decision-B consequence** — listed here only
@@ -1208,8 +1231,84 @@ line numbers verified against this branch's HEAD):
   rows and supply only a single raw model per key; once the caller keys on Naive Mean (and item 4's
   two-raw-model prefilter applies), both fixtures need a second eligible raw model and an assertion on
   `"Naive Mean"` gaps instead of `"EM"`.
-- PP-064's `tests/test_quarter_calendar_window.py` — for any other class not named above, grep for direct
-  `LR_Base`/`LR_SM`/`LR_BASE` rows built without a native `date` and list them too before P1b starts.
+- **Missing from earlier drafts of this list — add these:**
+  - `TestUnparseableIssueDateKeptRegardlessOfTargetYear::test_unparseable_date_backfill_row_is_kept`
+    (class `:1109`, test `:1110`). **Why:** its LR_Base direct row has an unparseable issue date
+    (`"not-a-date"`), targeting Q2 2024, read window `(2025, 2025)`. PP-064's own year-mask keeps a
+    null/unparseable issue date unconditionally (`src/data_reader.py` ~:3242-3243) — but decision B's
+    native-row classification for LR rows requires a schedule-computed issue date to match exactly, which
+    an unparseable date can never do. **Change:** the row is now **dropped** (counted under a named
+    exclusion reason, e.g. `unparseable_issue_date`), flipping the assertion from `len(q2_2024) == 1` /
+    value `100.0` to `len(q2_2024) == 0`. Note for the code: the `src/data_reader.py` ~:3242-3243
+    "a null/unparseable issue date is kept" comment still correctly describes PP-064's year-mask, but it no
+    longer describes the final outcome for LR rows once decision B's native-row filter runs afterward —
+    replace/annotate it so it does not read as the whole story for LR models.
+  - `TestRegressionMixedTimezoneIssueDate::test_read_quarterly_forecasts_flag_off_no_exception` (class
+    `:1214`, test `:1215`). **Why:** its Q1-2025 row is issued `2025-01-10` — not native (kghm's native Q1
+    issue date is `2024-12-25`) — so under decision B it is dropped and
+    `q1_2025["forecasted_discharge"].iloc[0]` raises `IndexError` on an empty frame. **Change:** re-date it
+    to `2024-12-25`. That issue year (2024) is `< start_year` (2025), but it targets Q1 of `start_year`, so
+    it is admitted by the Problem-7 December-Q1-of-`start_year` exception (`src/data_reader.py`
+    ~:3253-3258) AND matches the native schedule date exactly, so it is also classified native. **New
+    expected result:** Q1 2025 = `100.0` (same value, now via the re-dated row). The Q2 2025 row (issued
+    `2025-03-25T00:00:00+06:00`) is already native for Q2 2025 (March 25) — no change needed there.
+  - `tests/test_quarterly_data_reader.py:361` (`test_direct_quarter_horizon_value_survives`,
+    `TestReadQuarterlyForecastsLeadAware`) and `:852`
+    (`test_prior_year_operational_issuance_selected_and_backfill_dropped`,
+    `TestReadLatestQuarterlyForecastsLeadAware`) — flag ON, stored `horizon_value = 99`. **Correcting an
+    earlier draft's "degraded mode" framing: it does not apply to either test.** Both write their OWN full
+    `quarter.json` (`operational_month_lead_time: 1, operational_issue_day: 25`) before running, overriding
+    the class's lead-only autouse default — so neither is in degraded mode; `operational_schedule_for_mode`
+    resolves cleanly (lead = 1) for both. The real cause is P1b's new "Stored leads (flag ON)" rule (item 2
+    above): "before `select_operational_issuances`, drop and count direct rows whose stored
+    `horizon_value` differs from the derived lead." Both rows are native-dated (`2023-12-25`, the native Q1
+    2024 issue date) but carry a stale stored `horizon_value = 99 != 1`, so P1b drops them **before**
+    `select_operational_issuances` runs, regardless of the native-row rule or the degraded-mode question.
+    - `:361`: this test's whole purpose was demonstrating that a genuine operational row's stored
+      `horizon_value` (however garbled) is normalized to the derived lead in the output, not stripped.
+      Under P1b it is dropped instead. **Chosen fix:** flip the assertions to expect the row **dropped**
+      (`len(result) == 0`) — more honest than setting the stored hv to `1`, which would stop testing the
+      mismatched-hv scenario the test was written for.
+    - `:852`: the class's real purpose is that the operational issuance (day 25) beats a same-lead backfill
+      (day 10) via `select_operational_issuances` — a distinction the stored-lead pre-filter would
+      otherwise make moot, since both rows carry hv 99 and would both be dropped before that distinction is
+      reached. **Chosen fix:** change BOTH fixture rows' stored `horizon_value` from `99` to `1` (matching
+      the derived lead) so both pass the new pre-filter and `select_operational_issuances`'s issue-day
+      matching is what actually distinguishes them; assertions are unchanged (operational row wins, hv = 1,
+      value = 100.0).
+    These two different fixes (drop vs. correct-the-stored-lead) are deliberate, not arbitrary: `:361`'s
+    test purpose is specifically about a mismatched stored lead, while `:852`'s is about issue-day
+    selection — dropping both rows in `:852` would silently remove its entire reason to exist.
+  - `tests/test_quarterly_data_reader.py:443` (`test_dedup_keeps_distinct_leads_after_combining_sources`,
+    same `TestReadQuarterlyForecastsLeadAware` class). Its "monthly" fixture (hv 0, two months) is dead
+    code under P1b: `read_monthly_forecasts`'s call site inside `read_quarterly_forecasts` is removed, so
+    this mock is never invoked, and the raw-API mock it also supplies returns empty for
+    `horizon_type="month"`, so the new derivation produces nothing either. Its one direct row (native-dated
+    `2023-12-25`, stored hv 99) is dropped by the Stored-leads filter (same mechanism as `:361`/`:852`
+    above). **New expected result: empty (`len(result) == 0`)**, not the two-row `{0, 1}` hv set currently
+    asserted. The test's premise — two rows differing only by `horizon_value` both surviving the combine —
+    is **obsolete** under decision B: only one native lead is admitted per (code, year, quarter, model) key
+    now. Repurpose it (e.g. to demonstrate the Stored-leads drop directly) or remove it.
+- PP-064's `tests/test_quarter_calendar_window.py` — **completed enumeration** (every class in the file
+  checked for direct `LR_Base`/`LR_SM`/`LR_BASE` rows, replacing the earlier "grep before P1b starts"
+  placeholder). Besides the classes listed above, `TestA1CalendarWindowReader` (`:145`),
+  `TestA2ValidToEnforcement` (`:209`), `TestA3MalformedInput` (`:252`), `TestA5DecemberQ1FlagOn` (`:322`),
+  `TestA7WriterGuard` (`:408`), `TestS2ReaderWriterYear2262Agreement` (`:837`), `TestA8SeasonUnchanged`
+  (`:856`), `TestA9BackDatedRun` (`:880`), `TestA10FirstYearQ1FlagOff` (`:913`),
+  `TestRegressionMixedTimezoneValidTo` (`:1307`), `TestRegressionAllNullValidFromColumnDropped` (`:1372`),
+  `TestR5Observability` (`:1476`), `TestP1LocalCalendarDateParsing` (`:1572`) and
+  `TestRegressionOutOfRangeDatesDoNotCrash` (`:1941`) are **not affected** by decision B, because their
+  direct LR rows already carry native-shaped issue dates (e.g. `TestA1`'s kept row, `2024-03-25` for Q2
+  2024; the valid rows in `TestA5`/`TestA9`/`TestRegressionMixedTimezoneValidTo`/
+  `TestRegressionOutOfRangeDatesDoNotCrash`), or they exercise a code path decision B's native-row rule
+  does not touch (`TestA7`'s writer guard has no LR rows; `TestA3`/`TestA6`/
+  `TestRegressionMixedTimezoneValidTo`'s combined-client tests use `read_quarterly_combined_forecasts`,
+  which stays filter-only per item 4 above; `TestA8` is season; `TestP1LocalCalendarDateParsing` is a
+  unit-level `local_calendar_date` test with no reader involved), or their non-native rows are already
+  dropped today for an independent reason whose outcome coincides with decision B
+  (`TestA10FirstYearQ1FlagOff::test_widened_window_still_trims_target_years_below_start_year`,
+  `TestR5Observability`'s first and third tests). Re-verify this list against the actual P1b base before
+  merging — tests may be added to the file between this enumeration and implementation.
 - In `tests/test_quarterly_api_writer.py`, only `:285` writes a raw LR row through the quarter forecast
   writer; `:64` and `:89` are skill-writer tests and are unaffected. Grep the other files that call the
   quarter forecast writer (`test_aggregated_nan_guard.py`, `test_lead_aware_writer_reader_round_trip.py`,
@@ -1315,28 +1414,33 @@ Depends on P1b and P1c. Tests only.
 
 ### P2 — rollout (with PP-064 Chunk C)
 
-**One writer-paused window** (ops instruction, no code): deploy PP-065 together with FD-029 (restart the
-dashboard container) — servers must not pull `:latest` **dashboard** images before this window;
-**[NARROWED 2026-09-28]** PP-064 A is presumed already deployed separately, via auto-pull (verify per
-org), so it is not part of this joint image-pull ban — but the **automatic bimonthly QUARTERLY recalc**
-must still be explicitly paused per org before this window (see `PP-064.C.step0` in the overview's
-dependency graph), since it is not stopped by any image-pull ban. P2 is on the 2026-12-25 critical path —
-run PP-064 Chunk C step 3 (decision F, tjhm), then the recalc per org. Between deploy and recalc the gates
-would run on the old, contaminated quarter skill.
+**One writer-paused window** (ops instruction, no code): merge the integration branch
+`integ_quarter_p1b_p2` (PP-065 P1b–P1d, PP-064 B) into `maxat_sapphire_2` — that merge **is** the
+postprocessing deploy (owner decision F; `deploy.pp` in the overview's dependency graph). PP-064 A, FD-029
+P1 and PP-065 P1a are already live separately (owner decision E; verify per org, `PP-064.C.step0`) and are
+not part of this merge. **The automatic bimonthly QUARTERLY recalc is allowed to run before this window and
+does not need to be paused** (owner decision G, 2026-09-28 — see N7 above): it already applies P1a's 3-of-3
+rule on servers today. P2 is on the 2026-12-25 critical path — run PP-064 Chunk C step 3 (decision F,
+tjhm), then the recalc per org. Between the merge and the recalc, the gates would run on stale (pre-P1b)
+quarter forecasts, not "contaminated" skill (G already let the skill side catch up).
 - Pause **every** writer, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
   maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`), any
-  other recalc, and manual runs.
-- Wait for running jobs to finish. Then export, mutate, recalc and verify; only then resume.
+  other recalc, and manual runs — for this window only; the automatic bimonthly recalc does not need
+  pausing beforehand (G).
+- Wait for running jobs to finish. Then export, merge the integration branch, mutate, recalc and verify;
+  only then resume.
 - **After resuming, run the quarterly operational postprocessing job manually, promptly** — do not wait
   for the next scheduled LT cron day (kghm 10/25; tjhm 1). This is what actually writes P1b's derived
-  seven-model rows and the Naive Mean / Skilled Mean rows; until it runs, a quarter whose only pre-deploy
-  rows were a fresh `EM` row plus a non-native LR row shows a **blank card** for the whole gap (FD-029
-  hides both of those immediately on deploy, but nothing has written a replacement yet — see the
-  overview's EM-interim paragraph). This closes that gap instead of leaving it open until the next
-  natural cron day.
+  seven-model rows and the Naive Mean / Skilled Mean rows; until it runs, a quarter whose only pre-merge
+  rows were a fresh `EM` row plus a non-native LR row keeps showing the **blank card** that is already the
+  current state (FD-029 already hides both of those today — see the overview's EM-interim paragraph;
+  owner decisions E/F). This closes that gap instead of leaving it open until the next natural cron day.
 
 **Before the recalc**, per org:
-- a private export of the QUARTER `long_forecasts` and `skill_metrics` rows;
+- a private export of the QUARTER `long_forecasts` and `skill_metrics` rows — **this now captures
+  3-of-3-era quarter skill** (whatever the automatic bimonthly recalc has already produced under P1a's rule
+  since it merged, owner decision G), not the original pre-P1a skill; treat it as such when comparing
+  before/after;
 - a count of rule-A triplets per model × quarter.
 
 **After the recalc**, check and report per org (aggregate counts only):

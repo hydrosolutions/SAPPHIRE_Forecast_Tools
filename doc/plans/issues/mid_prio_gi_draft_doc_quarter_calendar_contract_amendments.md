@@ -123,15 +123,17 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 
 ### P2a — released with the PP-065 deploy (rows 10 and 12)
 
-**Merged-vs-deployed note (added 2026-09-28, tied to the overview's rollout gate, decision 1; [NARROWED
-2026-09-28, same day]).** Row 12's content is not entirely future work: its "quarterly observations need
-3 of 3 months" sentence (`QUARTER_OBS_MIN_MONTHS = 3`) is **already live on trunk since #530** (PP-065
-P1a's own "Rollout note (N7)": the 3-of-3 rule takes effect at merge, not gated behind P2's writer
-changes) — and, under the narrowed rollout gate, it is **presumed already live on servers today**, via
-Luigi's automatic `:latest` pull (verify per org), not merely "not live until the P2 deploy" as originally
-written here. "Released with the PP-065 deploy" therefore still describes correctly when the **rest** of
-row 12 (the seven-model derivation, the LR fallback, the writer/ensemble changes — all still P1b–P1d) ships
-to *readers of a deployed system*; the 3-of-3 sentence specifically is ahead of that and should be called
+**Merged-vs-deployed note (added 2026-09-28; tied to the overview's owner decisions E/F/G, 2026-09-28).**
+Row 12's content is not entirely future work: its "quarterly observations need 3 of 3 months" sentence
+(`QUARTER_OBS_MIN_MONTHS = 3`) is **already live on trunk since #530** (PP-065 P1a's own "Rollout note
+(N7)": the 3-of-3 rule takes effect at merge, not gated behind P2's writer changes) — and, per owner
+decision E (merge = deploy), it is **presumed already live on servers today**, via auto-pull (verify per
+org). N7's original ban on recalcing before P2's export is lifted (owner decision G) — the automatic
+bimonthly quarterly recalc is allowed to apply this rule now. "Released with the PP-065 deploy" therefore
+still describes correctly when the **rest** of row 12 (the seven-model derivation, the LR fallback, the
+writer/ensemble changes — all still P1b–P1d) ships: that work is held on the integration branch
+`integ_quarter_p1b_p2` (owner decision F) and reaches *readers of a deployed system* only when that branch
+merges to trunk in the P2 window; the 3-of-3 sentence specifically is ahead of that and should be called
 out as already-live when this row is edited.
 
 | # | File:line | Depends on | Edit |
