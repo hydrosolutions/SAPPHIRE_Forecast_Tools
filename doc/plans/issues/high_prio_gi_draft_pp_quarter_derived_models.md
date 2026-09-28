@@ -326,7 +326,11 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      WARNING `"Flag-OFF quarterly issue-year filter skipped: direct rows missing column(s) %s"`) green: if
      the native-row helper ran first and dropped these same rows on its own, the mask's own
      drop-count/missing-column log line would never fire, and both tests would see zero matching log
-     records instead of one.
+     records instead of one. **`read_latest_quarterly_forecasts` has no Problem-7 mask to order against**
+     (`src/data_reader.py:3545-3552`, no such branch) — it has its own, unrelated Problem-6 `forecast_date`
+     bound (~:3555-3571). Put this item's native-row helper **after** that bound in this reader too, so its
+     existing INFO drop-count (`TestR5Observability::test_read_latest_quarterly_forecasts_logs_dropped_future_issue_count`)
+     is unchanged by this item.
    - **Stored leads (flag ON).** Before `select_operational_issuances`, drop and count direct rows whose
      stored `horizon_value` differs from the derived lead, then call it with `lead_output_cols=()` so the
      stored value is preserved. `select_operational_issuances` itself is not modified — it keeps matching
@@ -532,10 +536,21 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        write path only). This write is live on servers today, and will keep running until this item (P1b)
        merges. **FD-029, which hides every quarter EM row it reads on the dashboard side, is also live on
        servers today** (owner decision R4-merge-is-deploy: it deploys via the dashboard's own daily
-       frontend auto-pull, not only with PP-065 P2). So right now, a quarter whose only DB rows are a
-       fresh `EM` row plus a non-native LR row shows a **blank card** — this is the current, ongoing state
-       (owner decision R4-integration-branch: P1b is held on the integration branch, not yet merged to
-       trunk), not a transient window that starts only once "FD-029 and this item deploy together". **The
+       frontend auto-pull, not only with PP-065 P2). **Corrected 2026-09-28 (factual, not a decision
+       change): "a fresh EM row plus a non-native LR row" cannot be the whole story.** EM's own gate
+       (`ensemble_calculator.py` `n_models > 1` at ~:744-746) and Naive Mean's gate
+       (`is_multi_model_composition` at `:915`) are, pre-P1b, the identical condition — both require
+       `LR_Base` **and** `LR_SM` present with a non-null `forecasted_discharge` at the key, because those
+       two are the only non-baseline models the pipeline reads for quarter today. So any key with a
+       *fresh* EM row from this pipeline also got a fresh Naive Mean row in the same run, and FD-029 does
+       not hide Naive Mean — that key is not blank. The actual blank-card population is narrower: a key
+       where **at most one** of `LR_Base`/`LR_SM` has a non-null target-quarter forecast (neither gate
+       fires, so there is no EM and no Naive Mean), and the one row that does exist, if any, is
+       non-native. (A search for keys with an EM row but no paired Naive Mean row from a stale/historical
+       write found none: `_add_naive_mean_aggregated_ens` has existed since the same commit that first
+       added quarter aggregation at all, `abfa78fe`, 2026-03-04 — Naive Mean has never been absent from
+       this pipeline for quarter.) Confirm the precise count at the pre-deploy DB audit (PP-064 Chunk C
+       detail 2), not by assumption. **The
        recovery point is not the branch merge itself** — merging `integ_quarter_p1b_p2` to trunk
        (`deploy.pp`) only puts this item's code on the servers, it writes no rows. The blank card clears
        only once the **first successful quarterly postprocessing run on the new image**, in the P2 window
@@ -1647,12 +1662,24 @@ line numbers verified against this branch's HEAD):
   unit-level `local_calendar_date` test with no reader involved), or their non-native rows are already
   dropped today for an independent reason whose outcome coincides with decision R4-native-lr-precedence
   (`TestA10FirstYearQ1FlagOff::test_widened_window_still_trims_target_years_below_start_year`,
-  `TestR5Observability`'s first and third tests — `test_read_quarterly_forecasts_logs_dropped_issue_year_count`
-  and `test_read_latest_quarterly_forecasts_logs_dropped_future_issue_count` — **unaffected precisely
-  because item 2's "Order (flag OFF)" bullet above requires the Problem-7 mask to run BEFORE the native-row
-  helper**, so the mask's own drop-count log line still fires on these rows regardless of what the
-  native-row helper would separately do to them). Re-verify this list against the actual P1b base before
-  merging — tests may be added to the file between this enumeration and implementation.
+  `TestR5Observability`'s first and third tests — two different readers, two different reasons, corrected
+  2026-09-28 (the earlier version wrongly gave both the same Problem-7 justification):
+  - `test_read_quarterly_forecasts_logs_dropped_issue_year_count` (`read_quarterly_forecasts`) —
+    **unaffected precisely because item 2's "Order (flag OFF)" bullet above requires the Problem-7 mask to
+    run BEFORE the native-row helper**, so the mask's own drop-count log line still fires on this row
+    regardless of what the native-row helper would separately do to it.
+  - `test_read_latest_quarterly_forecasts_logs_dropped_future_issue_count`
+    (`read_latest_quarterly_forecasts`) — **unaffected for an unrelated reason: this reader has no
+    Problem-7 mask at all.** Its dropped row comes from the Problem-6 `forecast_date` bound
+    (`src/data_reader.py` ~:3555-3571, `logger.info("Dropped %d quarterly direct forecast row(s) dated
+    after forecast_date …")`, matched by the test's `"dated after forecast_date"` substring — not the
+    Problem-7 "issued before the requested year range" message the other test above matches), which runs
+    regardless of the native-row helper's position. The dropped row is also native anyway (issued
+    2026-12-25 for kghm's lead-1/day-25 schedule, the correct native issuance for Q1 2027) — so even if the
+    native-row helper ran on it, it would not drop it either. See the "Order (flag OFF)" bullet's own note
+    on this reader's ordering.
+  Re-verify this list against the actual P1b base before merging — tests may be added to the file between
+  this enumeration and implementation.
   - **`TestR5Observability::test_read_quarterly_forecasts_warns_when_mask_columns_missing` (`:1510-1536`)
     — missing from the enumeration above; added here.** Its one row is `model_type: "LR_Base"` with `q50`
     set but **no `"date"` key at all**, so the `direct` frame built from it has no `date` column (this
@@ -1679,9 +1706,51 @@ line numbers verified against this branch's HEAD):
     unclassifiable, not merely unfiltered-by-year as PP-064's own "skip the mask" wording might suggest in
     isolation) — assert `len(result) == 0`, in addition to the existing WARNING assertions.
 - In `tests/test_quarterly_api_writer.py`, only `:285` writes a raw LR row through the quarter forecast
-  writer; `:64` and `:89` are skill-writer tests and are unaffected. Grep the other files that call the
-  quarter forecast writer (`test_aggregated_nan_guard.py`, `test_lead_aware_writer_reader_round_trip.py`,
-  `test_recalc_workflow.py`, `test_wiring_integration.py`) and list any raw-LR write they assert.
+  writer; `:64` and `:89` are skill-writer tests and are unaffected. **Grep of the other files completed
+  (2026-09-28):** `test_aggregated_nan_guard.py`, `test_recalc_workflow.py` and `test_wiring_integration.py`
+  assert no raw-LR write through the quarter forecast writer. `test_lead_aware_writer_reader_round_trip.py`
+  does use `model_short: ["LR_Base", ...]` at `:262` and `:306`, but through `_write_skill_metrics_to_api`
+  (the **skill** writer, in `TestAggregatedSkillPerLeadRoundTrip`) — a different function from this item's
+  quarter **forecast** writer change, so those two are unaffected and the "only `:285`" claim stands as
+  scoped (this item touches the forecast writer only).
+- **Writer EM tests (this item skips `EM`/`ENSEMBLE_MEAN` rows; add to the enumeration above).** Every test
+  below currently writes an `"EM"` (or, for the round-trip class, no second model) row through
+  `_write_quarterly_ensemble_to_api` and asserts on the resulting record count/fields — after this item,
+  an all-`EM` input writes **zero** records (same as `test_empty_data_returns_false`). For every test whose
+  purpose is not EM itself, the fix is to switch the fixture's `model_short` from `"EM"` to `"Naive Mean"`
+  (a generic groupby key with no EM-specific handling anywhere in the write path), which keeps testing what
+  each test actually exists to test:
+  - `test_quarterly_api_writer.py::TestQuarterlyEnsembleWriter`:
+    - `test_writes_ensemble_rows` (`:212`): input is `["EM", "Naive Mean"]` — **new expected result:**
+      `len(records) == 1` (the EM row is skipped; only Naive Mean survives). This test's own purpose (that
+      both baseline aggregates are written) changes with the writer's behaviour, so its assertion changes
+      too, not just its fixture.
+    - `test_valid_from_valid_to` (`:233`): single `"EM"` row — switch to `"Naive Mean"`; date/horizon
+      assertions unchanged (purpose is the date/lead computation, not EM).
+    - `test_horizon_value_uses_resolver_config_lead` (`:254`): `["EM", "EM"]` — switch both to
+      `"Naive Mean"`; assertions unchanged (purpose is lead resolution across two quarters).
+    - `test_flag_on_row_without_own_horizon_value_falls_back` (`:312`): single `"EM"` row — switch to
+      `"Naive Mean"`; assertions unchanged (purpose is the flag-ON fallback-to-config-lead behaviour).
+    - `test_flag_on_aggregation_computed_date_round_trips_to_lead` (`:337`): monthly input
+      `["EM", "EM"]` fed through `aggregate_monthly_fc_to_quarterly` — switch to `"Naive Mean"`;
+      `aggregate_monthly_fc_to_quarterly`'s `groupby` (`src/aggregation.py` group_cols) has no model-specific
+      logic, so this preserves the test's purpose (the FIX-6 date/lead round trip).
+  - `test_aggregated_nan_guard.py::TestAggregatedNanGuardQuarterly` (all four rows built from `_make_quarterly_data`
+    or an inline frame with `model_short: ["EM", ...]`) — switch every row to `"Naive Mean"`; each test's
+    NaN-guard assertion (row count survives/drops on NaN `year`/`quarter_in_year`, WARNING presence) is
+    otherwise unchanged:
+    - `test_nan_year_only` (`:71`): unchanged assertions (`len(records) == 2`).
+    - `test_nan_quarter_only` (`:85`): unchanged assertions (`len(records) == 2`, "Dropped" in log).
+    - `test_all_valid_no_warning` (`:99`): unchanged assertions (`len(records) == 3`, no "Dropped").
+    - `test_nan_forecasted_discharge_not_dropped` (`:140`): unchanged assertions (`len(records) == 3`).
+    - (`test_all_nan_returns_false`, `:121`, is **not** listed: every row is dropped by the NaN-year guard
+      before the model filter runs, so `result is False` either way — no fixture change needed.)
+  - `test_lead_aware_writer_reader_round_trip.py::TestQuarterEnsembleFlagBehaviour` (`:387-434`,
+    `test_flag_on_uses_row_horizon_value` and `test_flag_off_uses_configured_quarter_lead`): both build
+    `self._quarter_df(...)` with `model_short: ["EM"]` (`:398`) and assert `len(fake_api.long_records) == 1`
+    — switch to `"Naive Mean"`; horizon_value assertions (flag ON: the row's own lead; flag OFF: the
+    configured lead) are otherwise unchanged, since this class's purpose is the flag-gated horizon_value
+    seam, not EM.
 - `tests/test_maintenance_long_term.py:541-574`, `:616` (quarterly dedup, lead-aware) **changes**: its
   `q_combined` and `q_fc` hold one raw model, so the new two-model prefilter excludes the key and nothing
   is saved. Give the fixture two eligible raw models. Any other maintenance test that asserts the run ends
@@ -1806,16 +1875,10 @@ bin/bimonthly_long_term_postprocessing.sh <env_file_path> operational` (this als
 seasonal ensembles — there is no quarter-only mode).
 
 **Success criteria for this run** are stated once, in PP-064 Chunk C canonical step 11
-(`../high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout and verification"),
-not restated here: the wrapper's own exit status proves nothing (it discards `run_container`'s status, the
-Python entry point can `sys.exit(0)` before the quarterly block, and a failed quarterly API write only logs
-a WARNING with its return value unchecked), so the run counts as successful only if (1) the wrapper log
-shows the container completed with no exit-code WARNING, (2) the log reached the quarterly block and shows
-the quarterly save messages with none of the early-exit/skip messages present, and (3) a per-org read-back
-shows the seven derived-model rows present for the current quarter and, at those keys, the current-quarter
-Naive Mean / Skilled Mean rows' `composition` including a derived model (not a bare row count — Naive Mean
-rows can already exist pre-P1b from `LR_Base`/`LR_SM` alone) — see PP-064 Chunk C step 11 for the exact
-composition-based rule and log strings to verify.
+(`../high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout and verification") —
+point there, do not restate the checks here. In particular, do **not** require the presence or absence of
+any INFO-level log line (the quarterly-block/save/skip messages): canonical step 11 establishes they never
+reach this entry point's WARNING-capped log (INFRA-029) regardless of what actually happened.
 
 **Why the operational run, not the recalc, is the blank-card recovery point.** The in-window recalc (step
 8) writes the derived seven-model rows for every quarter, the current one included
@@ -1823,10 +1886,11 @@ composition-based rule and log strings to verify.
 built from `merged`, an **inner join with observations** (~:2682-2690, ~:2806-2831) — so the recalc writes
 **no** ensemble rows for the current, unobserved quarter. Only the quarterly block of
 `postprocessing_operational_long_term.py` (~:207-232) writes them, from existing skill plus the latest
-derived forecasts, with no observation requirement. Until that operational run executes, a quarter whose
-only pre-merge rows were a fresh `EM` row plus a non-native LR row keeps showing the **blank card** that is
-already the current state (FD-029 already hides both of those today — see the overview's "User-visible
-consequence" paragraph; owner decisions R4-merge-is-deploy/R4-integration-branch). This manual run,
+derived forecasts, with no observation requirement. Until that operational run executes, the narrower
+blank-card population the overview's "User-visible consequence" paragraph now defines (a key where at
+most one of `LR_Base`/`LR_SM` has a non-null target-quarter forecast, so neither EM nor Naive Mean forms,
+and its one surviving row, if any, is non-native — **not** simply "a fresh EM row plus a non-native LR
+row", which also gets a fresh, visible Naive Mean row today) keeps showing a **blank card**. This manual run,
 verified, is the actual recovery point for the blank card — not the merge, and not the recalc alone — and
 closes the gap instead of leaving it open until the next natural cron day.
 

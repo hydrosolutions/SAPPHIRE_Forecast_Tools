@@ -681,9 +681,19 @@ Chunk B no longer edits `data_reader.py` or any other file.
       "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card framing this
       closes.
 
-      **Success criteria (PP-065 § "P2 — rollout" points here rather than restating this; rewritten
-      2026-09-28 — every check below is independently verified observable, not merely inferred).** The
-      wrapper's own exit status proves nothing: `run_container`
+      **Success criteria (PP-065 § "P2 — rollout" points here rather than restating this; simplified
+      2026-09-28, replacing the earlier "rewritten 2026-09-28" version — two review rounds found that its
+      per-key read-back rules kept diverging from the real ensemble-formation rules in
+      `ensemble_calculator.py`; this version states only what the formation rules actually guarantee).**
+
+      **Scope: "the target quarter"** = the single `(year, quarter_in_year)` that
+      `read_latest_quarterly_forecasts` returns for this run's `forecast_date` — operationally, the latest
+      quarter for which the API holds forecast rows (or, in the step-3 export, the latest quarter present
+      there), not a calendar computation the operator does separately: the reader combines the aggregated
+      and direct sources, then keeps only the max `year`/`quarter_in_year` pair (`data_reader.py`
+      ~:3618-3623).
+
+      The wrapper's own exit status proves nothing: `run_container`
       (`bin/bimonthly_long_term_postprocessing.sh:102-148`) discards the container's exit code at its own
       two call sites (`:151-162` — the operational block at `:158-161` never captures or checks the
       function's return value); the Python entry point `sys.exit(0)`s successfully before the quarterly
@@ -704,9 +714,15 @@ Chunk B no longer edits `data_reader.py` or any other file.
       `logger.info` and so **never reach the log** for this entry point today; neither their presence nor
       their absence proves anything until INFRA-029 lands.
 
-      **Skilled Mean is not a required row.** It legitimately does not form when fewer than two models pass
-      the quarter skill gate (`ensemble_calculator.py` ~:802-879); requiring it unconditionally would fail
-      valid runs. Its own read-back below is CONDITIONAL on that gate.
+      **Skilled Mean is not a required row.** It legitimately does not form unless at least two models
+      both (a) pass `filter_for_highly_skilled_forecasts` with the long-term NSE>0 override and the
+      quarter min-pairs floor K (`skill_metrics.py` `_long_term_threshold_overrides` ~:168-193,
+      `_long_term_min_pairs("QUARTER")` ~:208-227, default K = 5, overridable via
+      `ieasyhydroforecast_min_pairs_long_term_quarter`; decision C sets K = 10) and (b) survive the
+      subsequent inner merge against non-null current-quarter forecasts (`ensemble_calculator.py`
+      `_add_skilled_mean_aggregated_ens` ~:802-879, `how="inner"` at `:834` then
+      `dropna(subset=["forecasted_discharge"])` at `:836`). Requiring it unconditionally would fail valid
+      runs — its absence is informational, not a failure (see below).
 
       The run counts as successful only if **both** of the following hold, checked per org:
       1. **Log checks, WARNING level and wrapper only.**
@@ -720,79 +736,67 @@ Chunk B no longer edits `data_reader.py` or any other file.
            `logger.warning` at `:146-150`, followed by `sys.exit(0)` at `:151`); `"No recent monthly
            forecasts available. Exiting."` (`logger.warning` at `:162`, `sys.exit(0)` at `:163`); `"…
            quarterly forecasts API write returned False (disabled, unavailable, or failed)."`
-           (`file_writer.py:858`, `logger.warning`, called from `:227`). None of these three may appear
-           anywhere in the run's log.
-      2. **Data read-back that distinguishes this run** (aggregate counts only, no station codes in the plan
-         or the PR). `long_forecasts` has no write timestamp exposed via the API, and the upsert (service
-         crud, colleague-managed, `sapphire/services/postprocessing/app/crud.py`) keeps the row `id` and
-         skips unchanged rows — so "rows written by this run" cannot be shown by `id` or timestamp; the
-         checks below use presence/absence and formation-rule counts instead.
-         - The in-window recalc (step 8) writes **no** current-quarter ensemble rows: EM/Naive Mean/Skilled
-           Mean there are built from `merged`, an inner join with observations (`skill_metrics.py`
-           ~:2682-2690 builds `merged`; ~:2807-2832 is where Skilled Mean/Naive Mean are computed from it,
-           each also re-joining `observations`) — a quarter with no observations yet (the current one) never
-           reaches `merged`, so the recalc produces no ensemble row for it.
-         - **Naive Mean's own formation rule** (`ensemble_calculator.py:33-41`, applied at `:915` for
-           quarter/season, grouping columns from `create_quarterly_ensemble_forecasts` `:562-564`): a Naive
-           Mean row forms per `(year, quarter_in_year, code[, horizon_value] under
-           SAPPHIRE_SKILL_LEAD_AWARE)` key only when **at least two distinct raw `model_short` values**
-           contribute a non-null `forecasted_discharge` at that key (`is_multi_model_composition` — the
-           built composition string must contain a comma). **Corrected 2026-09-28: current-quarter Naive
-           Mean rows can already exist before P1b.** An earlier version of this rule asserted "at most one
-           raw model reaches this grouping" — that is false. `AGGREGATED_EM_RAW_MODELS = {LR_BASE, LR_SM}`
-           (`src/model_names.py:14`) is **two** distinct `model_short` values, and both are already passed
-           through `_filter_supported_aggregated_forecast_models` (`src/data_reader.py:98-104`, filtering to
-           `AGGREGATED_SUPPORTED_MODELS`; called from `read_latest_quarterly_forecasts` — the reader this
-           operational run actually calls, `postprocessing_operational_long_term.py:211` — at `:3606`, and
-           from `read_quarterly_forecasts` at `:3310`) today — so a code/quarter with both an LR_Base and an
-           LR_SM current-quarter forecast already satisfies the comma-gate, with composition
-           `"LR_Base, LR_SM"`, independent of P1b. What P1b changes is not *whether* a current-quarter Naive
-           Mean row can exist, but *which models its composition can draw from*: the seven
-           `QUARTERLY_DERIVED_MODELS` (`src/model_names.py:22-24`, already landed on trunk in P1a) become
-           readable raw contributors once P1b's reader change lands, so composition can widen beyond
-           `LR_Base, LR_SM`.
-           **Read-back rule (composition-based, not a bare row count):** after step 11, per org, for every
-           current-quarter key where at least one derived model has a current-quarter row (checked at step
-           9, detail 5's "derived seven-model rows for the current quarter are present" bullet), require
-           that the Naive Mean row's `composition` includes at least one `QUARTERLY_DERIVED_MODELS` member.
-           Before P1b, `composition` at a Naive Mean key could only ever be built from `LR_Base`/`LR_SM`.
-           Where the key's step-3 export already showed a Naive Mean row, expect its `composition` value to
-           change to include a derived model after this run, unless no derived model has a current-quarter
-           row at that key, in which case `composition` is unchanged. `composition` is a stored,
-           API-readable column on `long_forecasts` (`sapphire/services/postprocessing/app/models.py:66`),
-           returned by `client.read_long_term_forecasts()` (`sapphire_api_client`'s `long_term.py:75`) and
-           passed through unmodified by this app's own normalizers (`data_reader.py`'s
-           `_read_long_forecasts_api` and `_normalize_combined_forecasts` neither drop nor rename it) — read
-           it directly at these keys, not via a row-count substitute.
-         - **Skilled Mean: CONDITIONAL.** Its gate is stricter than Naive Mean's (`ensemble_calculator.py`
-           ~:802-879): a model enters the weighted pool only if it has a non-null `mae` in the quarter skill
-           passed in, and the same `is_multi_model_composition` check (`:873`) still applies after that
-           filter — so a current-quarter Skilled Mean row forms only where **at least two models both have
-           quarter skill (non-null MAE) and a current-quarter forecast**. Require it only at those keys.
-           **Read-back query shape:** from the per-org quarter skill frame, read as the pipeline reads it
-           (tombstones dropped, `src/data_reader.py:106, 2833`), count distinct non-baseline `model_short`
-           values (excluding EM/Naive Mean/Skilled Mean) per `(code, quarter_in_year[, horizon_value])` with
-           non-null `mae`; the keys with count ≥ 2 are the ones that must show a current-quarter Skilled
-           Mean row after this run. Where required, its `composition` likewise reflects the models that pass
-           the gate — apply the same composition-based read-back as Naive Mean's above (does it include a
-           `QUARTERLY_DERIVED_MODELS` member where one passed the skill gate), not a bare count.
-         - **No EM row is written for the current quarter by this run.** PP-065 P1b's writer change stops
-           the quarter EM write (`high_prio_gi_draft_pp_quarter_derived_models.md` item 3, "Writer: stop
-           writing raw LR rows" — the same change also skips `EM`/`ENSEMBLE_MEAN` rows). Any quarter `EM`
-           row a read-back turns up after this run predates P1b's deploy (or is from an old image still
-           running somewhere), not something this run wrote. FD-029 hides these rows on the dashboard card,
-           so their presence is only visible via a direct DB/API read-back, never the card.
-         - **Optional supporting evidence, read-only:** the postprocessing service's own `"Created long
-           forecast: …"` / `"Updated long forecast: …"` log lines (`sapphire/services/postprocessing/app/
-           crud.py:137, 146`) around the time of this run. Corroborating only, not required — the service is
-           colleague-managed and this plan does not gate on its log format.
+           (`file_writer.py:858`, `logger.warning`, called from `:227`); `"No quarterly skill metrics
+           available"` (`data_reader.py:2837`, `logger.warning`, `read_quarterly_skill_metrics`); `"No
+           quarterly forecast data available"` (`data_reader.py:3588`, `logger.warning`,
+           `read_quarterly_forecasts`/`read_latest_quarterly_forecasts`). None of these five strings may
+           appear anywhere in the run's log.
+      2. **At least one Naive Mean row for the target quarter whose `composition` includes at least one
+         `QUARTERLY_DERIVED_MODELS` member** (`src/model_names.py:22-24`), per org (aggregate counts only,
+         no station codes in the plan or the PR).
+         - **Why this is the one required data check.** Naive Mean's formation rule
+           (`ensemble_calculator.py:33-41`, applied at `:915` for quarter/season) requires only **two
+           distinct raw `model_short` values** contributing a non-null `forecasted_discharge` at a
+           `(year, quarter_in_year, code[, horizon_value])` key (`is_multi_model_composition` — the
+           composition string contains a comma) — no skill gate, unlike Skilled Mean. Pre-P1b,
+           `AGGREGATED_EM_RAW_MODELS = {LR_BASE, LR_SM}` (`src/model_names.py:14`) are the only two
+           non-baseline models the pipeline reads for quarter, so a Naive Mean row with composition
+           `"LR_Base, LR_SM"` can already exist today, independent of P1b. What P1b changes is *which*
+           models the composition can draw from: the seven `QUARTERLY_DERIVED_MODELS`
+           (`src/model_names.py:22-24`, landed in P1a) become readable contributors once P1b's reader
+           change lands, so a target-quarter Naive Mean whose composition includes one of them is
+           observable proof that this run actually used the new derivation path, not an inference from
+           logs.
+         - `composition` is a stored, API-readable column on `long_forecasts`
+           (`sapphire/services/postprocessing/app/models.py:66`), returned by
+           `client.read_long_term_forecasts()` (`sapphire_api_client`'s `long_term.py:75`) and passed
+           through unmodified by this app's own normalizers (`data_reader.py`'s `_read_long_forecasts_api`
+           and `_normalize_combined_forecasts` neither drop nor rename it) — read it directly at the
+           target-quarter keys, not via a row-count substitute.
 
-      **The derived seven-model rows for the current quarter are not this step's check — move it to step
+      **Informational, not pass/fail** (a lead for investigation, not a required outcome — do not gate the
+      run's success on either of these):
+      - The count of target-quarter keys where the derived seven-model rows are present (step 9, detail
+        5's own check) but the key's Naive Mean `composition` is still `LR_Base`/`LR_SM`-only. A non-zero
+        count is worth investigating (e.g. a derived model's forecast was null at that key), not a failure.
+      - Skilled Mean's own presence and `composition` at the target quarter. Its absence is not a
+        failure — see "Skilled Mean is not a required row" above; where it is present, the same
+        composition check applies (does it include a `QUARTERLY_DERIVED_MODELS` member).
+
+      Aside from these two checks, this success criteria list intentionally drops the earlier per-key
+      "recalc (step 8) writes no current-quarter ensemble rows" cross-check: it restated
+      `_calculate_aggregated_skill_metrics`'s inner-join behaviour (`skill_metrics.py` ~:2682-2690,
+      ~:2807-2832) rather than checking this run's own output, and added a second query without changing
+      the pass/fail outcome.
+
+      **Supporting context, not a separate check:**
+      - **No EM row is written for the target quarter by this run.** PP-065 P1b's writer change stops the
+        quarter EM write (`high_prio_gi_draft_pp_quarter_derived_models.md` item 3, "Writer: stop writing
+        raw LR rows" — the same change also skips `EM`/`ENSEMBLE_MEAN` rows). Any quarter `EM` row a
+        read-back turns up after this run predates P1b's deploy (or is from an old image still running
+        somewhere), not something this run wrote. FD-029 hides these rows on the dashboard card, so their
+        presence is only visible via a direct DB/API read-back, never the card.
+      - **Optional supporting evidence, read-only:** the postprocessing service's own `"Created long
+        forecast: …"` / `"Updated long forecast: …"` log lines (`sapphire/services/postprocessing/app/
+        crud.py:137, 146`) around the time of this run. Corroborating only, not required — the service is
+        colleague-managed and this plan does not gate on its log format.
+
+      **The derived seven-model rows for the target quarter are not this step's check — move it to step
       9.** They are written by the in-window recalc itself (step 8): `joint_forecasts = forecasts.copy()`
       in `_calculate_aggregated_skill_metrics` (`skill_metrics.py` ~:2741-2742) passes every raw forecast
-      row through regardless of whether it joined an observation, so the current quarter's raw rows survive
+      row through regardless of whether it joined an observation, so the target quarter's raw rows survive
       that pass-through even though no ensemble is computed for them there. See detail 5 below (canonical
-      step 9), not this step.
+      step 9), not this step — same scope, "the target quarter" as defined above, for consistency.
 
       **Never run this command concurrently** — `run_container` (`bin/bimonthly_long_term_postprocessing.sh:113-117`)
       removes any existing container with the same fixed name (`docker rm -f postprc-lt-operational`) before
@@ -881,12 +885,14 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
      (Problem 8). If K = 10 leaves an org with no quarter skill at all, B5 means no Naive Mean either:
      **escalate to the owner before the hydromet notice** goes out.
    - Freshly written QUARTER rows contain no rolling windows, no LR rows and no EM rows.
-   - **The derived seven-model rows for the current quarter are present, per org** (moved here from step
-     11, 2026-09-28: this recalc, not the operational run, writes them). `joint_forecasts =
-     forecasts.copy()` in `_calculate_aggregated_skill_metrics` (`skill_metrics.py` ~:2741-2742) passes
-     every raw forecast row through regardless of whether it joined an observation, so the current
-     quarter's raw rows survive this recalc's pass-through even though no current-quarter ensemble is
-     computed here (step 11's own read-back covers the ensembles).
+   - **The derived seven-model rows for the target quarter are present, per org** (moved here from step
+     11, 2026-09-28: this recalc, not the operational run, writes them; "the target quarter" is the same
+     scope canonical step 11 defines — the single `(year, quarter_in_year)` `read_latest_quarterly_forecasts`
+     returns for this run's `forecast_date`). `joint_forecasts = forecasts.copy()` in
+     `_calculate_aggregated_skill_metrics` (`skill_metrics.py` ~:2741-2742) passes every raw forecast row
+     through regardless of whether it joined an observation, so the target quarter's raw rows survive this
+     recalc's pass-through even though no target-quarter ensemble is computed here (step 11's own read-back
+     covers the ensembles).
    - A persisted-derived-row round trip (write → read) yields the native-rule-selected row.
    - Spot check the #521 station privately (its code is never written to the repo). A plausible value is
      a spot check, not proof.

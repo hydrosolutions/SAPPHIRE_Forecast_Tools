@@ -6,9 +6,11 @@ dashboard's own daily frontend auto-pull (owner decision R4-merge-is-deploy, 202
 creation date). This means FD-029 is already
 hiding every quarter `EM` row and every non-native LR row on the dashboard, while PP-065 P1b (which stops
 writing fresh `EM` rows and starts writing the replacement derived/ensemble rows) is still held on the
-integration branch `integ_quarter_p1b_p2` (owner decision R4-integration-branch) — so a quarter whose only DB rows are a fresh
-`EM` row plus a non-native LR row shows a **blank card right now**, not only once a future joint deploy
-happens (see the overview's EM-interim paragraph).
+integration branch `integ_quarter_p1b_p2` (owner decision R4-integration-branch) — so some quarters show a
+**blank card right now**, not only once a future joint deploy happens. **The population is narrower than
+"EM plus a non-native LR row"**: pre-P1b, EM's and Naive Mean's formation gates are identical (both need
+`LR_Base` and `LR_SM` present), so a fresh EM row always has a paired, visible Naive Mean row today — see
+the overview's "User-visible consequence" paragraph for the precise, corrected population.
 **Module**: `apps/forecast_dashboard`
 **Priority**: Medium. The first kghm calendar Q1 is issued around 2026-12-25; by then PP-065 P1b (still
 held on the integration branch) must have merged to trunk — that merge is the postprocessing deploy
@@ -221,9 +223,16 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      the `"ENSEMBLE_MEAN": "EM"` entry (line 50), which is a separate mapping used only by the
      skill-metrics write path, not the quarter forecast write path. This plan's dedup above already drops
      every quarter EM row it reads, consistent with the owner decision of no quarterly EM, but PP-065 P1b
-     is what stops the write. Until P1b ships, a quarter whose only rows are a fresh EM row plus a
-     non-native LR row shows **nothing** on the card: the EM row is dropped here and the LR row is dropped
-     by the native-only rule below.
+     is what stops the write. **Corrected 2026-09-28: "EM plus a non-native LR row, nothing else" is not
+     the population this leaves blank.** EM's own gate (`ensemble_calculator.py` `n_models > 1` ~:744-746)
+     and Naive Mean's gate (`is_multi_model_composition` at `:915`) are, pre-P1b, the identical condition —
+     both need `LR_Base` and `LR_SM` present with a non-null forecast at the key, the only two non-baseline
+     models the pipeline reads for quarter today — so a fresh EM row always has a paired, visible Naive
+     Mean row from the same run, and this dedup does not drop Naive Mean. Until P1b ships, the card shows
+     **nothing** only at a key where at most one of `LR_Base`/`LR_SM` has a non-null forecast (so neither
+     EM nor Naive Mean forms) and the one row that exists, if any, is non-native (dropped by the
+     native-only rule below) — see the overview's "User-visible consequence" paragraph for the precise
+     population.
    - A row is **native** iff `date.day == issue_day` **, clamped to the issue month's length** (item 4
      already computes `quarter_issue_date` with this clamp — `clamped_issue_day =
      np.minimum(int(schedule.issue_day), days_in_issue_month)`; mirrors the producer,
