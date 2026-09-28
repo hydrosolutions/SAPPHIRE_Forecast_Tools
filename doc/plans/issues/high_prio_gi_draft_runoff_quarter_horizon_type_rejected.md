@@ -122,11 +122,16 @@ were never ticked; verified against trunk before annotating):
   above: confirmed locally, server confirmation still pending.
 - [x] `sapphire-api-client` write-path Literals are consistent for `quarter` (verified 2026-09-28,
   INFRA-019 resolved, PR #373). `HorizonTypeLiteral`/`VALID_HORIZONS` (`sapphire_api_client/validators.py:14-19`)
-  now include `"quarter"` and every validating module (`preprocessing.py`, `postprocessing.py`,
-  `short_term.py`) derives from that one shared set — the `postprocessing_base.py` vs.
-  `postprocessing.py`/`short_term.py` inconsistency this issue's root-cause analysis originally found is
-  gone. Every `apps/*/pyproject.toml` is re-pinned to `4fd543e852f1eb0c834d8ab649a849a0a56d4e9b` (verified:
-  all 8 apps consistent).
+  now include `"quarter"`. `preprocessing.py` (`read_hydrograph`, `:181`) and `short_term.py` (`:72, 189`)
+  validate directly against `VALID_HORIZONS`; the postprocessing read path validates in
+  `postprocessing_base.py` (`:65`) against `VALID_SKILL_METRIC_HORIZONS`
+  (`VALID_HORIZONS | VALID_LONG_FORECAST_HORIZONS`, a superset that still includes `"quarter"`) —
+  `postprocessing.py` itself imports `HorizonTypeLiteral` for type hints only and validates nothing.
+  Every one of these sets now derives from the one shared `HorizonTypeLiteral`, so the
+  `postprocessing_base.py` vs. `postprocessing.py`/`short_term.py` inconsistency this issue's root-cause
+  analysis originally found is gone, even though the validating sets themselves still differ. Every
+  `apps/*/pyproject.toml` is re-pinned to `4fd543e852f1eb0c834d8ab649a849a0a56d4e9b` (verified: all 8 apps
+  consistent).
 - [x] Regression test added and passing under `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff`.
   `apps/preprocessing_runoff/test/test_sync_long_horizon_hydrograph.py` covers `build_quarterly_records`'
   `horizon_type == "quarter"` contract and the write orchestration (e.g.

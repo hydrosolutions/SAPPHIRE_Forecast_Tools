@@ -1,8 +1,9 @@
 # FD-029: Quarterly card shows the latest calendar quarter, fetched with a year-safe window
 
 **Status**: P1 **merged to trunk (#528, 2026-09-28)**. Not deployed standalone: under the 2026-09-28
-rollout gate (see the overview's "Rollout and communication"), it deploys only together with PP-064 A and
-PP-065 P2, in the same writer-paused window.
+rollout gate, **narrowed the same day** (see the overview's "Rollout and communication"), it deploys
+together with PP-065 P2, in the same writer-paused window. PP-064 A is **not** part of this joint window —
+it is presumed already deployed separately, via Luigi's automatic `:latest` pull (verify per org).
 **Module**: `apps/forecast_dashboard`
 **Priority**: Medium. **Deploy before 2026-12-25**, when the first kghm calendar Q1 is issued: on Dec 25–31
 its flag-OFF derived and ensemble rows, dated 2027-01-01, fall outside the fetch window (Problem 1). This
@@ -529,8 +530,10 @@ new `EM` row.
   `skipif` (`TEST_PENTAD`/`TEST_DECAD`/`TEST_LOCAL`).
 - `git diff --stat` is limited to the listed files.
 
-**Deploy.** Merged (#528); deploy only together with PP-064 A and PP-065 P2, in the same writer-paused
-window (the 2026-09-28 rollout gate) — not standalone. Precondition: PP-064 Chunk C step 0's per-org
+**Deploy.** Merged (#528); deploy only together with PP-065 P2, in the same writer-paused
+window (the 2026-09-28 rollout gate, narrowed the same day) — not standalone. PP-064 A is **not** part of
+this window; it is presumed already deployed separately via auto-pull (verify per org). Precondition:
+PP-064 Chunk C step 0's per-org
 `quarter.json`/`issue_day` read (see item 3's accepted limitation above) — confirm both orgs' schedule
 config resolves before deploying, so this card does not silently run in degraded mode. Rebuild the
 dashboard image, redeploy it and restart the dashboard container on kghm and tjhm **before 2026-12-25**,

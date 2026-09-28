@@ -21,10 +21,12 @@ the postprocessing *service* (sapphire/services) needs no change
 > a hard prerequisite (phase P-PIPE) for the data cleanup, which would otherwise be regenerated. P-PIPE
 > gets its own planner+reviewer pass.
 >
-> **P-PIPE has landed (verified 2026-09-28).** The writer now emits `horizon_value` = the configured
-> lead **for quarter**: `apps/postprocessing_forecasts/src/api_writer.py:1174`
-> (`horizon_value = int(row["horizon_value"])` when the flag is on and a per-row value is present) /
-> `:1176` (else `horizon_value = quarter_horizon_value()`). **Season is different**: `:1192`
+> **P-PIPE has landed (verified 2026-09-28).** **Flag OFF**, the writer now emits `horizon_value` = the
+> configured lead **for quarter**: `apps/postprocessing_forecasts/src/api_writer.py:1176`
+> (`horizon_value = quarter_horizon_value()`). **Flag ON**, it instead passes each row's own per-lead
+> `horizon_value` through when present (`:1173-1174`, `horizon_value = int(row["horizon_value"])`),
+> falling back to the configured lead only when the row has none (`:1176`) -- consistent with the
+> flag-ON/flag-OFF distinction already drawn above (~:14-20). **Season is different**: `:1192`
 > (`horizon_value = int(row[period_col])`) passes through the stored row's own `horizon_value`, with a
 > fallback of `1` only if that column is absent (`src/data_reader.py:3977-3981` --
 > `df["season_in_year"] = lead.astype(...)` when `"horizon_value"` is present, else `df["season_in_year"]

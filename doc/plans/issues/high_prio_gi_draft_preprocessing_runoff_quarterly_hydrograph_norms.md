@@ -12,8 +12,14 @@ is done**: `sapphire-api-client` is pinned at `4fd543e852f1eb0c834d8ab649a849a0a
 in every `apps/*/pyproject.toml` (verified: all 8 apps consistent). Per the pinned `sapphire-api-client`
 (not in this repo; pin `4fd543e8` verified in `apps/*/pyproject.toml`), its `VALID_HORIZONS` (derived from
 a single `HorizonTypeLiteral`, `sapphire_api_client/validators.py:14-19`) includes `"quarter"`, so
-`read_hydrograph` and the postprocessing modules' own `validate_enum_param` calls all validate against the
-same set now — the Literal-inconsistency root cause (INFRA-019) is resolved for those paths.
+`read_hydrograph` (`preprocessing.py:181`, against `VALID_HORIZONS` directly) and the postprocessing
+read path's own `validate_enum_param` call (`postprocessing_base.py:65`, against
+`VALID_SKILL_METRIC_HORIZONS = VALID_HORIZONS | VALID_LONG_FORECAST_HORIZONS`, a superset that still
+includes `"quarter"`) both now derive from the one shared `HorizonTypeLiteral` — the Literal-inconsistency
+root cause (INFRA-019) is resolved for those paths, even though the two validate against different (but
+both `"quarter"`-inclusive) sets, not literally the same set. `postprocessing.py` itself (as opposed to
+`postprocessing_base.py`) imports `HorizonTypeLiteral` only for type hints (e.g.
+`prepare_forecast_records`'s `horizon_type` parameter) and calls no `validate_enum_param`.
 `write_hydrograph` does **not** validate client-side at all (it posts records straight through, no
 `validate_enum_param` call) — its `"quarter"` support is enforced only server-side, by the deployed
 Postgres enum (rejected with a 422 if absent). **Remaining: end-to-end verification on a real deployment**
@@ -72,11 +78,16 @@ can be verified end-to-end.**
 ### Owner B — `sapphire-api-client` (upstream library, external git repo) — ✅ DONE (verified 2026-09-28)
 - `"quarter"` is in `HorizonTypeLiteral` / `VALID_HORIZONS` in the pinned `sapphire_api_client/validators.py`
   (`HorizonTypeLiteral = Literal["day", "pentad", "decade", "month", "quarter", "season", "year"]`,
-  `VALID_HORIZONS = set(get_args(HorizonTypeLiteral))`, `:14-19`). `read_hydrograph` (`preprocessing.py`)
-  validates against this same `VALID_HORIZONS`, as do the other API modules' read paths
-  (`postprocessing.py`, `short_term.py`) — the write-path Literal inconsistency the original PREPQ-008
-  root-cause analysis found (`postprocessing_base.py` vs. `postprocessing.py`/`short_term.py`) is resolved
-  for those paths by deriving every module's set from the one shared `HorizonTypeLiteral` (INFRA-019).
+  `VALID_HORIZONS = set(get_args(HorizonTypeLiteral))`, `:14-19`). `read_hydrograph`
+  (`preprocessing.py:181`) and `short_term.py`'s read paths (`:72, 189`) validate against this same
+  `VALID_HORIZONS`. The postprocessing read path's validation lives in `postprocessing_base.py:65`
+  (`validate_enum_param(horizon, VALID_SKILL_METRIC_HORIZONS, "horizon")`, a superset:
+  `VALID_HORIZONS | VALID_LONG_FORECAST_HORIZONS`) — `postprocessing.py` itself imports
+  `HorizonTypeLiteral` for type hints only and validates nothing. All of these sets still include
+  `"quarter"`. The write-path Literal inconsistency the original PREPQ-008 root-cause analysis found
+  (`postprocessing_base.py` vs. `postprocessing.py`/`short_term.py`) is resolved for those paths by
+  deriving every module's validation set from the one shared `HorizonTypeLiteral` (INFRA-019), even
+  though the sets themselves differ (`VALID_HORIZONS` vs. `VALID_SKILL_METRIC_HORIZONS`).
   `write_hydrograph` itself calls no `validate_enum_param` at all (per the pinned `sapphire-api-client`,
   not in this repo) — it posts records straight through, so its `"quarter"` support is gated server-side
   only, by the deployed Postgres enum (a 422 on rejection).
@@ -250,7 +261,9 @@ psql -d preprocessing_db -c \
 - `apps/preprocessing_runoff/sync_long_horizon_hydrograph.py` — SEASON/MONTH/QUARTER aggregation.
 - `sapphire/services/preprocessing/app/models.py` — `HorizonType` (QUARTER present, commit `2be58f7`).
 - `sapphire/services/preprocessing/alembic/versions/d4e5f6a7b8c9_add_quarter_to_horizontype.py`.
-- `sapphire_api_client/validators.py:12` — `VALID_HORIZONS` (done, pinned client — includes `"quarter"`).
+- `sapphire_api_client/validators.py:14-19` — `HorizonTypeLiteral` / `VALID_HORIZONS` (done, pinned client
+  — includes `"quarter"`). Client source, not in this repo; verified against a checkout of the pinned
+  commit `4fd543e8`.
 - `apps/postprocessing_forecasts/src/aggregation.py:30` — `QUARTER_MONTHS`.
 - `apps/postprocessing_forecasts/src/api_writer.py:1160-1176` — QUARTER date/horizon_value convention.
 - `apps/forecast_dashboard/src/db.py` — hydrograph reads via the api-client (`_read_data`).

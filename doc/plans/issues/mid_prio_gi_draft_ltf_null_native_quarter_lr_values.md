@@ -8,12 +8,14 @@ an otherwise-correct row, not a row hidden by the calendar-window fixes.
 **Related**: PP-064 (calendar-window validation), PP-065 (derived models, native-row selection), PP-061
 (flag stamping on aggregated writer paths — **do not duplicate**, cross-reference only).
 
-**Priority re-check (2026-09-28).** PP-064 (#527) and FD-029 (#528) are merged to trunk, but the overview's
-rollout gate (owner decision 2026-09-28: do not deploy trunk before PP-065 P2) means neither is live on any
-server yet — deployment is symmetric with the observation below. Severity is unchanged, not increased: the
-underlying null-`q` defect is a separate root cause (LT producer write, the importer, or postprocessing's
-aggregated-writer rewrite — still not localized) that PP-064/FD-029 do not touch, so the fix in this issue
-is unaffected by their merge. Kept at Medium.
+**Priority re-check (2026-09-28).** PP-064 (#527) and FD-029 (#528) are merged to trunk. **[NARROWED
+2026-09-28, same day]** the overview's rollout gate no longer treats these symmetrically: PP-064 A
+(the postprocessing reader's exclusion) is **presumed already live on servers** via Luigi's automatic
+`:latest` pull (verify per org) — FD-029 (the dashboard's own exclusion) is **not**; it stays gated on the
+PP-065 P2 window. See the observation below for what that asymmetry means for each population. Severity is
+unchanged, not increased: the underlying null-`q` defect is a separate root cause (LT producer write, the
+importer, or postprocessing's aggregated-writer rewrite — still not localized) that PP-064/FD-029 do not
+touch, so the fix in this issue is unaffected by their merge or deploy state. Kept at Medium.
 
 ## Observation (dev DB, 2026-09-27, read-only; no station codes)
 
@@ -26,7 +28,11 @@ is unaffected by their merge. Kept at Medium.
   otherwise have fallen back on a rolling-window row, so on trunk today these stations already show **no**
   LR value at all for that quarter. This is not a future prediction; it is the present-tense state of
   `apps/postprocessing_forecasts/tests/test_quarter_calendar_window.py` and
-  `apps/forecast_dashboard/src/db.py` on trunk, pending only the rollout gate (deployment, not code).
+  `apps/forecast_dashboard/src/db.py` on trunk. **[NARROWED 2026-09-28]** the two halves are no longer
+  pending on the same gate: the postprocessing reader's exclusion (`data_reader.py`, PP-064 A) is
+  **presumed already live** on servers via auto-pull (verify per org), so a null-`q` row it excludes may
+  already show as no-LR-value in the API response today; the dashboard's own exclusion
+  (`apps/forecast_dashboard/src/db.py`, FD-029) is still pending the PP-065 P2 window.
 
 Also observed, in the same read-only pass: the postprocessing writer hardcodes `flag: 0` on quarter LR
 rows regardless of the value's actual provenance — it rewrote roughly 3,970 kghm rows from flag 1 to 0 in

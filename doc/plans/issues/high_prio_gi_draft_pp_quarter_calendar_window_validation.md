@@ -1,7 +1,9 @@
 # PP-064: Score and ensemble only exact calendar-quarter windows, and carry a prior-year-issued Q1 through
 
-**Status**: In Progress. **Chunk A merged to trunk (#527, `955bd384`, 2026-09-28).** Deploy is gated on
-PP-065 P2 readiness, not standalone (rollout gate, owner decision 2026-09-28 — see the overview). Remaining:
+**Status**: In Progress. **Chunk A merged to trunk (#527, `955bd384`, 2026-09-28).** **[NARROWED 2026-09-28]**
+Deploy is **presumed already done** via Luigi's automatic `:latest` pull (verify per org) — it is no longer
+gated on PP-065 P2 readiness; only FD-029's dashboard deploy and any MANUAL quarterly recalc stay gated on
+that readiness (rollout gate, owner decision 2026-09-28 — see the overview). Remaining:
 Chunk B (the B5 check only, after PP-065 P1d) and Chunk C (ops, rollout and verification). Draft (2026-09-26,
 rev 6 after the fourth review round; updated 2026-09-27 for the owner-approved native-Q1 restriction found
 by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`, both now inside the merged `955bd384`)
@@ -10,7 +12,8 @@ by an end-to-end dev-DB cross-check, `115eb886`/`18efd261`, both now inside the 
 - Stored quarterly skill is wrong today: a rolling window is scored against a different quarter's
   observations. With `SAPPHIRE_SKILL_LEAD_AWARE=true` the wrong window is picked deterministically
   (#521: NSE ≈ −75 → +0.1 after correction).
-- Chunk A must be deployed **before 2026-12-25**, as the prerequisite of PP-065. LTF-014 P0 is deferred
+- Chunk A must be deployed **before 2026-12-25**, as the prerequisite of PP-065 — **[NARROWED 2026-09-28]
+  presumed already satisfied** via auto-pull (verify per org). LTF-014 P0 is deferred
   (configs stay `forecast_months [3..9]`), so no native kghm LR row is issued on Dec 25. The first kghm
   Q1 comes from PP-065's derived path (the seven models plus decision G's LR fallback), which needs the
   same next-year target (PP-065 item 2); under flag OFF its derived and ensemble rows are persisted
@@ -565,16 +568,22 @@ Chunk B no longer edits `data_reader.py` or any other file.
 ## Chunk C — rollout and verification (ops; mostly no code)
 
 **Order** (as in the overview graph):
-- **Rollout gate (owner decision, 2026-09-28 — see the overview's "Rollout and communication").** Do **not**
-  deploy trunk before PP-065 P2 is ready: Chunk A (this plan) and FD-029, though already merged to trunk
-  (#527, #528), are **not** deployed standalone — no postprocessing or dashboard image built from current
-  trunk goes to a server, and servers must not pull `:latest` **postprocessing or dashboard** images,
-  until PP-065 P1b–P1d and Chunk B are also merged. Chunk A and FD-029 go live **together** with the
-  `deploy.pp` step below. Reason: trunk images already carry PP-065 P1a's 3-of-3 observation rule (live
-  via `recalculate_skill_metrics()` → `read_quarterly_observations()`), and
-  `bin/bimonthly_long_term_skill_metrics_recalculation.sh` runs a QUARTERLY recalc automatically and
-  unconditionally — deploying Chunk A/FD-029 alone would let that recalc run against a mid-migration
-  quarter contract. Consequently, PP-065 P2 (and this deploy step) is on the 2026-12-25 critical path.
+- **Rollout gate (owner decision, 2026-09-28; [NARROWED 2026-09-28, same day] — see the overview's
+  "Rollout and communication").** Chunk A (this plan) and FD-029 are both merged to trunk (#527, #528).
+  **Chunk A is presumed already deployed**, via Luigi's automatic `:latest` pull whenever the Docker Hub
+  digest differs (`apps/pipeline/pipeline_docker.py:296-304`) — verify per org (image tag, postprocessing
+  image creation date). **FD-029 is not** — no dashboard image pull or container re-create, and no MANUAL
+  quarterly recalc, before PP-065 P1b–P1d and Chunk B are also merged and PP-065 P2 is ready. FD-029 goes
+  live **together** with the `deploy.pp` step below; Chunk A does not wait for that window. Reason: trunk
+  images already carry PP-065 P1a's 3-of-3 observation rule (live via `recalculate_skill_metrics()` →
+  `read_quarterly_observations()`), reached by **any** auto-pulled postprocessing image regardless of
+  Chunk A/FD-029, and `bin/bimonthly_long_term_skill_metrics_recalculation.sh` runs a QUARTERLY recalc
+  automatically and unconditionally against whatever postprocessing image is already present locally
+  (`:78-79`) — deploying the dashboard (FD-029) before PP-065 is ready would let it read a mid-migration
+  quarter contract that a stale dashboard cannot correctly present. Consequently, PP-065 P2 (and the
+  FD-029 deploy step) is on the 2026-12-25 critical path. **Open, unverified:** the interaction between
+  the presumed-live Chunk A and the OLD dashboard image is not yet checked — check it in the P1b readiness
+  review.
 - Chunk A and PP-065 deployed (PP-065 includes the 3-of-3 observation rule; 2-of-3 observations against
   3-of-3 derived forecasts would bias the scores).
 - **One writer-paused window** (ops instruction, no code): deploy PP-065, run the decision-F step (tjhm),
