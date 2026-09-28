@@ -101,7 +101,7 @@ read -rp "New account username: " ACCT
 sudo adduser "$ACCT"
 sudo usermod -aG sudo,docker "$ACCT"
 sudo mkdir -p /home/"$ACCT"/.ssh && sudo chmod 700 /home/"$ACCT"/.ssh
-sudo tee /home/"$ACCT"/.ssh/authorized_keys > /dev/null    # paste their public key
+sudo tee /home/"$ACCT"/.ssh/authorized_keys > /dev/null    # paste their public key, then Enter, then Ctrl-D
 sudo chmod 600 /home/"$ACCT"/.ssh/authorized_keys
 sudo chown -R "$ACCT": /home/"$ACCT"/.ssh
 ```
@@ -180,11 +180,27 @@ If anything fails: `cp "$E.pre-handover" "$E"` and restart. That is why the copy
 
 ---
 
-## Chapter 3 — What KGHM IT must be able to do
+## Chapter 3 — Procedures
 
 > Reconnected since **Set these first**? Re-run that block before anything below.
 
+Two procedures, and they carry very different risk.
+
+**User management (3.2) is routine** — create an account, reset a password, deactivate someone
+who has left. Do it whenever you need to. Only *deleting* an account is irreversible, and 5.2
+lists that as escalate-first.
+
+**Restoring a database (3.1) is not routine.** It deletes live data before putting the backup
+back, and 5.2 says to escalate rather than attempt it alone. It is written out in full here
+so you can follow it *with* the Provider on the call, and so the quarterly practice run at the
+end of 3.1 is something you can do safely by yourself.
+
 ### 3.1 Restore a database
+
+> **Call the Provider before you start**, unless you are doing the practice run at the end of
+> this section. This is the one procedure in the guide that destroys data before it restores
+> it, and a wrong dump or a missed step is not recoverable from inside the procedure. 5.2 lists
+> it as escalate-first for that reason.
 
 Read the whole section before typing anything. Restoring **deletes the current database**
 before putting the backup back.
@@ -424,8 +440,6 @@ the Linux server accounts from Chapter 2.
 **There is no screen for this.** Everything is done with `curl` commands on the server. Every
 command below is a single line — paste one at a time.
 
-Throughout, `<data_dir>` is the deployment's data directory.
-
 ---
 
 #### Before you start
@@ -537,13 +551,23 @@ curl -s -X POST http://localhost:8000/api/auth/login --data-urlencode "username=
 Expect an error, not a token. If you do not know their password, skip this step and trust the
 `is_active: false` in step 2.
 
+> **This test does not prove their access has ended.** It proves they cannot start a *new*
+> session. Someone already signed in keeps working: the token-refresh and token-verify paths do
+> not re-check whether the account is still active, so an open dashboard survives until its
+> token expires. For a departure that matters — a dispute, a security concern — tell the
+> Provider, and treat the account as still live until they confirm the session is gone.
+
 To bring someone back, repeat step 2 with `true`.
 
 ---
 
 #### Delete an account permanently
 
-Only when you are sure. This removes the record entirely.
+> **Escalate before doing this.** It is the one irreversible action in this section, and 5.2
+> lists it as stop-and-call. Deactivating (above) blocks the login and can be undone — prefer
+> it unless the Provider has agreed a deletion is needed.
+
+This removes the record entirely.
 
 ```bash
 read -rp "User id: " ID
@@ -724,7 +748,15 @@ Start the missing one — note `read_configuration` first:
 cd "$REPO"
 source bin/utils/common_functions.sh
 read_configuration "$ENV_FILE"
-read -rp "Service name (from the list above): " SVC
+docker compose -f sapphire/docker-compose.yml config --services
+```
+
+> The list above is **container** names (`sapphire-preprocessing-api`); the command below wants
+> the **service** name from this second list (`preprocessing-api`). They are not always the
+> container name minus the prefix, so read it from here rather than guessing.
+
+```bash
+read -rp "Service name (from the second list): " SVC
 docker compose -f sapphire/docker-compose.yml up -d "$SVC"
 ```
 
@@ -869,6 +901,12 @@ settings file is missing the variable that switches this check on:
 grep -n "ml_long_term" "$ENV_FILE"
 ```
 
+**`[WARN] no discharge data in the last 45 days`**
+
+No river measurements have arrived at all — not merely stale, absent. Almost always the
+iEasyHydro connection (see that section below). If the connection is healthy, the far end has
+stopped sending: contact the iEasyHydro operators, and tell them it is blocking forecasts.
+
 **`[WARN] skipped — API gateway is down`**
 
 Not a data problem — fix the gateway first (see Service endpoints), then re-run the check.
@@ -943,11 +981,17 @@ installed (`which msmtp`).
 
 **`[FAIL] <unit> is installed but inactive`**
 
-It is there but stopped. Find out why before restarting:
+It is there but stopped. Use the unit name the check printed — it may be either of the two:
 
 ```bash
-sudo journalctl -u docker-monitor.service -n 30 --no-pager
-sudo systemctl restart docker-monitor.service
+read -rp "Unit name from the message: " MUNIT
+sudo journalctl -u "$MUNIT" -n 30 --no-pager
+```
+
+Find out why before restarting, then:
+
+```bash
+sudo systemctl restart "$MUNIT" && systemctl is-active "$MUNIT"
 ```
 
 **`[WARN] SMTP variables missing: …`**
