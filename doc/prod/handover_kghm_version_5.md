@@ -80,11 +80,12 @@ cat ~/handover_snapshot.txt
 
 > Reconnected since **Set these first**? Re-run that block before anything below.
 
-Take a backup first:
+Take a backup first. `-r 0` keeps every dump — the scheduled job's `-r 30` would delete
+anything older than 30 days, and it prunes even when the backup itself failed:
 
 ```bash
 cd "$REPO"
-bash bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 30 -e "$ENV_FILE"
+bash bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 0 -e "$ENV_FILE"
 echo "Exit: $?"     # must be 0 before continuing
 ```
 
@@ -216,12 +217,18 @@ step 2 using the table above.
 
 #### Before you start
 
+Confirm backups exist at all:
+
 ```bash
 ls -lth /var/backups/sapphire/*.dump | head -8
 ```
 
-Pick the dump you want and note its full name. It must be a `.dump` file — anything ending
-`.FAILED` is unusable.
+All four databases write into this one directory, named
+`<database>_<date>_<time>.dump`. **You must pick a dump whose name matches the database you
+are restoring** — `pg_restore` will not warn you if you hand it the wrong one. Step 2 filters
+the list for you.
+
+Anything ending `.FAILED` is unusable.
 
 Tell the forecasters the tool will be unavailable for a few minutes.
 
@@ -233,11 +240,28 @@ Even a damaged database is worth keeping. If the restore goes wrong, this is you
 
 ```bash
 cd "$REPO"
-bash bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 30 -e "$ENV_FILE"
+bash bin/backup_sapphire_db.sh -d /var/backups/sapphire -r 0 -e "$ENV_FILE"
 echo "Exit: $?"
 ```
 
-**Do not continue unless this prints `Exit: 0`.**
+> `-r 0` means **keep every dump**. Do not use the `-r 30` from the scheduled job here: it
+> deletes dumps older than 30 days, and it runs even when the backup itself failed. If you are
+> restoring from an older dump, that is the file you are about to destroy.
+
+**If this prints `Exit: 0`,** continue to Step 2.
+
+**If it fails because a database container is not running,** you have hit the case this
+procedure exists for — the backup needs the container up, and you are here because it is not.
+Do not stop, and do not skip the protection:
+
+```bash
+docker ps -a --filter name=sapphire- --format "{{.Names}}\t{{.Status}}"
+```
+
+- **Other databases are up** — their dumps succeeded; only the broken one is missing. That is
+  expected. Continue, and rely on the copy you make in Step 2.
+- **Nothing is running** — take no backup, and rely entirely on the Step 2 copy. Tell the
+  Provider before you continue; restoring with no safety copy is a one-way step.
 
 #### Step 2 — Set the four values you will reuse
 
@@ -247,13 +271,27 @@ set -a; source "$ENV_FILE"; set +a
 CONTAINER=sapphire-preprocessing-db      # from the table above
 TARGET_DB="${PREPROCESSING_DB}"          # from the table above
 SERVICE=preprocessing-api                # from the table above
+```
+
+Now list only the dumps for **that** database, so you cannot pick another one's by mistake:
+
+```bash
+ls -lth /var/backups/sapphire/"${TARGET_DB}"_*.dump | head -8
+```
+
+```bash
 read -rp "Dump filename, exactly as listed above (ends in .dump): " DUMPNAME
 DUMP_FILE="/var/backups/sapphire/$DUMPNAME"
-
 ls -l "$DUMP_FILE" && echo "Restoring $TARGET_DB from $DUMP_FILE"
 ```
 
 If `ls` cannot find the file, fix the name now — later steps assume it exists.
+
+**Copy it somewhere nothing prunes.** This is the file the whole restore depends on:
+
+```bash
+mkdir -p ~/restore_safe && cp "$DUMP_FILE" ~/restore_safe/ && ls -l ~/restore_safe/
+```
 
 #### Step 3 — Stop only the service that uses this database
 
@@ -329,8 +367,16 @@ Open the dashboard and confirm a known station shows data.
 
 #### If it went wrong
 
-You still have the backup from step 1. Repeat steps 4 and 5 using **that** file instead —
-it puts the database back to how it was before you started.
+**First stop the service again** — Step 6 restarted it, and Step 4 cannot drop a database
+something is connected to:
+
+```bash
+docker compose -f sapphire/docker-compose.yml stop "$SERVICE"
+```
+
+Then repeat Steps 4 and 5 using the dump taken in Step 1, which is the state you started from.
+If Step 1 could not run because the container was down, use your Step 2 copy in
+`~/restore_safe/` — that is why you made it.
 
 If that also fails, stop and escalate. Send: which database, which dump file, the exact error,
 and the output of `docker ps`.
