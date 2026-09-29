@@ -86,6 +86,258 @@ def _read_station_codes():
     return codes
 
 
+def _run_monthly_gap_fill(
+    codes: list[str],
+    lookback: int,
+    errors: list[str],
+) -> tuple[bool, pd.DataFrame]:
+    """Run the monthly ensemble gap-fill pipeline.
+
+    Reads monthly combined forecasts, detects missing ensemble rows,
+    creates them from pre-calculated skill metrics, merges them into
+    the existing combined forecasts, and saves the result.
+
+    Args:
+        codes: Station codes to process.
+        lookback: Monthly gap-fill lookback window, in months.
+        errors: Mutable list of error messages accumulated by the
+            caller; a save failure appends to it in place.
+
+    Returns:
+        A tuple ``(completed, gaps)``. ``completed`` is True only if
+        the pipeline ran through to its final save step; False if it
+        stopped early because there was nothing to do (empty combined
+        forecasts, no gaps, no skill metrics, no forecast data for the
+        gap years, no forecast rows matching the gap tuples, or no new
+        ensemble rows created). ``gaps`` is the detected monthly gaps
+        DataFrame once step 2 has run (used by the caller's
+        audit-trail logging when ``completed`` is True), and an empty
+        DataFrame if step 2 never ran.
+    """
+    # 1. Read monthly combined forecasts for gap detection
+    with timer(timing_stats, "reading monthly combined forecasts"):
+        logger.info("\n\n------ Reading monthly combined forecasts ---------")
+        combined = data_reader.read_monthly_combined_forecasts(codes=codes)
+
+    if combined.empty:
+        logger.info("No monthly combined forecasts found. Skipping gap detection.")
+        return False, pd.DataFrame()
+
+    # 2. Detect missing ensemble rows
+    with timer(timing_stats, "detecting monthly gaps"):
+        gaps = gap_detector.detect_missing_monthly_ensembles(
+            combined,
+            lookback,
+            ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
+        )
+
+    if gaps.empty:
+        logger.info("No monthly ensemble gaps found. Nothing to fill.")
+        return False, gaps
+
+    logger.info(
+        "Found %d (year, month, code, model_short) gaps needing gap-fill",
+        len(gaps),
+    )
+
+    # 3. Read skill metrics
+    with timer(timing_stats, "reading monthly skill metrics"):
+        logger.info("\n\n------ Reading pre-calculated monthly skill metrics -----")
+        skill_stats = data_reader.read_skill_metrics("month", codes=codes)
+
+    if skill_stats.empty:
+        logger.warning("No monthly skill metrics available. Cannot create ensembles.")
+        return False, gaps
+
+    # 4. Read forecasts for gap periods from API
+    gap_years = gaps["year"].unique()
+    start_year = int(gap_years.min())
+    end_year = int(gap_years.max())
+
+    with timer(timing_stats, "reading monthly forecasts for gaps"):
+        logger.info("\n\n------ Reading monthly forecasts for gap-fill ----")
+        all_forecasts = data_reader.read_monthly_forecasts(
+            codes,
+            start_year,
+            end_year,
+        )
+
+    if all_forecasts.empty:
+        logger.warning("No monthly forecast data available for gap years. Cannot fill gaps.")
+        return False, gaps
+
+    # Filter to gap (year, month, code) tuples (deduplicated,
+    # since gaps may have multiple model_short per triple)
+    gap_set = set(
+        gaps[["year", "month", "code"]].drop_duplicates().itertuples(index=False, name=None)
+    )
+    # Ensure year/month are numeric for comparison
+    all_forecasts["year"] = pd.to_numeric(all_forecasts["year"], errors="coerce").astype("Int64")
+    all_forecasts["month"] = pd.to_numeric(all_forecasts["month"], errors="coerce").astype("Int64")
+
+    filtered = all_forecasts[
+        all_forecasts.apply(
+            lambda r: (r["year"], r["month"], str(r["code"])) in gap_set,
+            axis=1,
+        )
+    ].copy()
+
+    if filtered.empty:
+        logger.warning("No forecast data matches gap tuples. Cannot fill gaps.")
+        return False, gaps
+
+    # Ensure month_in_year and forecasted_discharge exist
+    if "month_in_year" not in filtered.columns and "month" in filtered.columns:
+        filtered["month_in_year"] = filtered["month"]
+    if "forecasted_discharge" not in filtered.columns and "q50" in filtered.columns:
+        filtered["forecasted_discharge"] = filtered["q50"].astype(float)
+
+    # 5. Create ensemble forecasts for gap periods
+    with timer(timing_stats, "creating monthly gap-fill ensembles"):
+        logger.info("\n\n------ Creating monthly ensemble forecasts for gaps ---")
+        joint = ensemble_calculator.create_monthly_ensemble_forecasts(
+            filtered,
+            skill_stats,
+        )
+
+    # Extract only ensemble rows that match actual gap tuples.
+    # create_monthly_ensemble_forecasts creates all 3 types for
+    # every period, but we only want those that were actually
+    # missing (per the gap detector).
+    ensemble_models = {"EM", "Skilled Mean", "Naive Mean"}
+    new_ensemble = joint[joint["model_short"].isin(ensemble_models)].copy()
+    # Under SAPPHIRE_SKILL_LEAD_AWARE, key the gap filter per-lead --
+    # mirroring the quarterly block's q_gap_keys -- so a regenerated
+    # ensemble row for a lead that was NEVER a gap does not survive the
+    # filter (and, via keep="last" in the merge dedup, silently overwrite
+    # an existing non-gap ensemble at that lead). The gap detector emits
+    # per-lead gaps under the flag and create_monthly_ensemble_forecasts
+    # stamps each ensemble row with its own horizon_value, so restricting
+    # to the actual missing (year, month, code, model, lead) keys also
+    # guarantees each gap-filled row keeps the lead it was detected
+    # missing at. Flag OFF: unchanged (period-only key, no lead).
+    if (
+        skill_lead_aware_enabled()
+        and "horizon_value" in gaps.columns
+        and "horizon_value" in new_ensemble.columns
+    ):
+        gap_key_cols = ["year", "month", "code", "model_short", "horizon_value"]
+        gap_keys = set(
+            gaps[gap_key_cols]
+            .assign(code=lambda d: d["code"].astype(str))
+            .itertuples(index=False, name=None)
+        )
+        new_ensemble = new_ensemble[
+            new_ensemble.apply(
+                lambda r, _keys=gap_keys, _cols=gap_key_cols: (
+                    tuple(str(r[c]) if c == "code" else r[c] for c in _cols) in _keys
+                ),
+                axis=1,
+            )
+        ]
+    else:
+        gap_keys = set(
+            gaps[["year", "month", "code", "model_short"]].itertuples(index=False, name=None)
+        )
+        new_ensemble = new_ensemble[
+            new_ensemble.apply(
+                lambda r: (
+                    (
+                        r["year"],
+                        r["month"],
+                        str(r["code"]),
+                        r["model_short"],
+                    )
+                    in gap_keys
+                ),
+                axis=1,
+            )
+        ]
+
+    if new_ensemble.empty:
+        logger.info("No new monthly ensemble rows created. Nothing to save.")
+        return False, gaps
+
+    # 6. Merge into existing combined forecasts
+    merged = pd.concat(
+        [combined, new_ensemble],
+        ignore_index=True,
+    )
+    # Deduplicate on (year, month, code, model_short, horizon_value)
+    dedup_cols = ["year", "month", "code", "model_short", "horizon_value"]
+    available_dedup = [c for c in dedup_cols if c in merged.columns]
+    merged = merged.drop_duplicates(
+        subset=available_dedup,
+        keep="last",
+    )
+
+    logger.info(
+        "Merged %d new ensemble rows into %d existing rows -> %d total",
+        len(new_ensemble),
+        len(combined),
+        len(merged),
+    )
+
+    # 7. Save
+    with timer(timing_stats, "saving monthly gap-fill results"):
+        logger.info("\n\n------ Saving monthly gap-fill results -----------")
+        ret = file_writer.save_monthly_forecast_data(merged)
+        if ret is None:
+            logger.info("Monthly gap-fill results saved successfully.")
+        else:
+            logger.error(f"Error saving monthly gap-fill results: {ret}")
+            errors.append(f"Monthly gap-fill save failed: {ret}")
+
+    pt.log_most_recent_forecasts_monthly(merged)
+
+    return True, gaps
+
+
+_QUARTER_RAW_MODELS = {"LR_Base", "LR_SM"}
+
+
+def _filter_quarterly_gap_universe(universe: pd.DataFrame) -> pd.DataFrame:
+    """Drop quarterly gap-universe keys with fewer than two raw models.
+
+    Quarter no longer produces an EM row (PP-065 P1b item 3), so gap
+    detection keys on Naive Mean instead. A (year, quarter_in_year,
+    code) key needs BOTH raw quarter models (LR_Base, LR_SM) present
+    somewhere in the universe to ever form a Naive Mean ensemble; a
+    single-model key would otherwise surface as a perpetual,
+    unfillable gap.
+
+    Args:
+        universe: Concatenated quarterly combined-forecast rows and
+            raw per-model quarterly forecast rows (see caller).
+
+    Returns:
+        The subset of ``universe`` whose (year, quarter_in_year, code)
+        key has at least two distinct raw models present. Empty on
+        empty input, or on input missing a required column.
+    """
+    key_cols = ["year", "quarter_in_year", "code"]
+    required = {*key_cols, "model_short"}
+    if universe.empty or not required.issubset(universe.columns):
+        return universe.iloc[0:0]
+
+    df = universe.copy()
+    df["code"] = df["code"].astype(str)
+    raw_rows = df[df["model_short"].isin(_QUARTER_RAW_MODELS)]
+    if raw_rows.empty:
+        return df.iloc[0:0]
+
+    distinct_counts = raw_rows.groupby(key_cols)["model_short"].nunique()
+    eligible_keys = set(distinct_counts[distinct_counts >= 2].index)
+    if not eligible_keys:
+        return df.iloc[0:0]
+
+    mask = df.apply(
+        lambda r, _keys=eligible_keys, _cols=key_cols: (tuple(r[c] for c in _cols) in _keys),
+        axis=1,
+    )
+    return df[mask].copy()
+
+
 def postprocessing_maintenance_long_term():
     global timing_stats
 
@@ -96,208 +348,47 @@ def postprocessing_maintenance_long_term():
     lookback = int(os.getenv("POSTPROCESSING_GAPFILL_WINDOW_MONTHS", "3"))
     logger.info(f"Monthly gap-fill lookback window: {lookback} months")
 
+    # The Forecast Date Rule: capture once at the entry point, pass as
+    # a parameter to anything that needs it (the quarterly gap-universe
+    # read below).
+    forecast_date = dt.date.today()
+
     with timer(timing_stats, "total execution"):
         with timer(timing_stats, "setup"):
             logger.info("\n\n------ Setting up --------------------------------")
             sl.load_environment()
             codes = _read_station_codes()
 
-        # 1. Read monthly combined forecasts for gap detection
-        with timer(timing_stats, "reading monthly combined forecasts"):
-            logger.info("\n\n------ Reading monthly combined forecasts ---------")
-            combined = data_reader.read_monthly_combined_forecasts(codes=codes)
-
-        if combined.empty:
-            logger.info("No monthly combined forecasts found. Skipping gap detection.")
-            _print_timing()
-            sys.exit(0)
-
-        # 2. Detect missing ensemble rows
-        with timer(timing_stats, "detecting monthly gaps"):
-            gaps = gap_detector.detect_missing_monthly_ensembles(
-                combined,
-                lookback,
-                ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
-            )
-
-        if gaps.empty:
-            logger.info("No monthly ensemble gaps found. Nothing to fill.")
-            _print_timing()
-            sys.exit(0)
-
-        logger.info(
-            "Found %d (year, month, code, model_short) gaps needing gap-fill",
-            len(gaps),
-        )
-
-        # 3. Read skill metrics
-        with timer(timing_stats, "reading monthly skill metrics"):
-            logger.info("\n\n------ Reading pre-calculated monthly skill metrics -----")
-            skill_stats = data_reader.read_skill_metrics("month", codes=codes)
-
-        if skill_stats.empty:
-            logger.warning("No monthly skill metrics available. Cannot create ensembles.")
-            _print_timing()
-            sys.exit(0)
-
-        # 4. Read forecasts for gap periods from API
-        gap_years = gaps["year"].unique()
-        start_year = int(gap_years.min())
-        end_year = int(gap_years.max())
-
-        with timer(timing_stats, "reading monthly forecasts for gaps"):
-            logger.info("\n\n------ Reading monthly forecasts for gap-fill ----")
-            all_forecasts = data_reader.read_monthly_forecasts(
-                codes,
-                start_year,
-                end_year,
-            )
-
-        if all_forecasts.empty:
-            logger.warning("No monthly forecast data available for gap years. Cannot fill gaps.")
-            _print_timing()
-            sys.exit(0)
-
-        # Filter to gap (year, month, code) tuples (deduplicated,
-        # since gaps may have multiple model_short per triple)
-        gap_set = set(
-            gaps[["year", "month", "code"]].drop_duplicates().itertuples(index=False, name=None)
-        )
-        # Ensure year/month are numeric for comparison
-        all_forecasts["year"] = pd.to_numeric(all_forecasts["year"], errors="coerce").astype(
-            "Int64"
-        )
-        all_forecasts["month"] = pd.to_numeric(all_forecasts["month"], errors="coerce").astype(
-            "Int64"
-        )
-
-        filtered = all_forecasts[
-            all_forecasts.apply(
-                lambda r: (r["year"], r["month"], str(r["code"])) in gap_set,
-                axis=1,
-            )
-        ].copy()
-
-        if filtered.empty:
-            logger.warning("No forecast data matches gap tuples. Cannot fill gaps.")
-            _print_timing()
-            sys.exit(0)
-
-        # Ensure month_in_year and forecasted_discharge exist
-        if "month_in_year" not in filtered.columns and "month" in filtered.columns:
-            filtered["month_in_year"] = filtered["month"]
-        if "forecasted_discharge" not in filtered.columns and "q50" in filtered.columns:
-            filtered["forecasted_discharge"] = filtered["q50"].astype(float)
-
-        # 5. Create ensemble forecasts for gap periods
-        with timer(timing_stats, "creating monthly gap-fill ensembles"):
-            logger.info("\n\n------ Creating monthly ensemble forecasts for gaps ---")
-            joint = ensemble_calculator.create_monthly_ensemble_forecasts(
-                filtered,
-                skill_stats,
-            )
-
-        # Extract only ensemble rows that match actual gap tuples.
-        # create_monthly_ensemble_forecasts creates all 3 types for
-        # every period, but we only want those that were actually
-        # missing (per the gap detector).
-        ensemble_models = {"EM", "Skilled Mean", "Naive Mean"}
-        new_ensemble = joint[joint["model_short"].isin(ensemble_models)].copy()
-        # Under SAPPHIRE_SKILL_LEAD_AWARE, key the gap filter per-lead --
-        # mirroring the quarterly block's q_gap_keys -- so a regenerated
-        # ensemble row for a lead that was NEVER a gap does not survive the
-        # filter (and, via keep="last" in the merge dedup, silently overwrite
-        # an existing non-gap ensemble at that lead). The gap detector emits
-        # per-lead gaps under the flag and create_monthly_ensemble_forecasts
-        # stamps each ensemble row with its own horizon_value, so restricting
-        # to the actual missing (year, month, code, model, lead) keys also
-        # guarantees each gap-filled row keeps the lead it was detected
-        # missing at. Flag OFF: unchanged (period-only key, no lead).
-        if (
-            skill_lead_aware_enabled()
-            and "horizon_value" in gaps.columns
-            and "horizon_value" in new_ensemble.columns
-        ):
-            gap_key_cols = ["year", "month", "code", "model_short", "horizon_value"]
-            gap_keys = set(
-                gaps[gap_key_cols]
-                .assign(code=lambda d: d["code"].astype(str))
-                .itertuples(index=False, name=None)
-            )
-            new_ensemble = new_ensemble[
-                new_ensemble.apply(
-                    lambda r, _keys=gap_keys, _cols=gap_key_cols: (
-                        tuple(str(r[c]) if c == "code" else r[c] for c in _cols) in _keys
-                    ),
-                    axis=1,
-                )
-            ]
-        else:
-            gap_keys = set(
-                gaps[["year", "month", "code", "model_short"]].itertuples(index=False, name=None)
-            )
-            new_ensemble = new_ensemble[
-                new_ensemble.apply(
-                    lambda r: (
-                        (
-                            r["year"],
-                            r["month"],
-                            str(r["code"]),
-                            r["model_short"],
-                        )
-                        in gap_keys
-                    ),
-                    axis=1,
-                )
-            ]
-
-        if new_ensemble.empty:
-            logger.info("No new monthly ensemble rows created. Nothing to save.")
-            _print_timing()
-            sys.exit(0)
-
-        # 6. Merge into existing combined forecasts
-        merged = pd.concat(
-            [combined, new_ensemble],
-            ignore_index=True,
-        )
-        # Deduplicate on (year, month, code, model_short, horizon_value)
-        dedup_cols = ["year", "month", "code", "model_short", "horizon_value"]
-        available_dedup = [c for c in dedup_cols if c in merged.columns]
-        merged = merged.drop_duplicates(
-            subset=available_dedup,
-            keep="last",
-        )
-
-        logger.info(
-            "Merged %d new ensemble rows into %d existing rows -> %d total",
-            len(new_ensemble),
-            len(combined),
-            len(merged),
-        )
-
-        # 7. Save
-        with timer(timing_stats, "saving monthly gap-fill results"):
-            logger.info("\n\n------ Saving monthly gap-fill results -----------")
-            ret = file_writer.save_monthly_forecast_data(merged)
-            if ret is None:
-                logger.info("Monthly gap-fill results saved successfully.")
-            else:
-                logger.error(f"Error saving monthly gap-fill results: {ret}")
-                errors.append(f"Monthly gap-fill save failed: {ret}")
-
-        pt.log_most_recent_forecasts_monthly(merged)
+        monthly_completed, gaps = _run_monthly_gap_fill(codes, lookback, errors)
 
         # ----- QUARTERLY GAP-FILL -----
         with timer(timing_stats, "quarterly gap-fill"):
             logger.info("\n\n------ Quarterly gap-fill -------------------------")
             lookback_q = int(os.getenv("POSTPROCESSING_GAPFILL_WINDOW_QUARTERS", "2"))
             q_combined = data_reader.read_quarterly_combined_forecasts(codes=codes)
-            if not q_combined.empty:
+            # Gap universe (PP-065 P1b item 4): quarter no longer produces
+            # EM (see _filter_quarterly_gap_universe), so gap detection
+            # below keys on Naive Mean instead of EM. Concatenate the raw
+            # per-model rows from read_quarterly_forecasts (forecast_date's
+            # year, +/-1 -- the +1 covers a December-issued Q1) with
+            # q_combined, then drop keys with fewer than two distinct raw
+            # models before ever calling the gap detector: a single-model
+            # key can never form a Naive Mean and would otherwise surface
+            # as a perpetual, unfillable gap.
+            q_universe_year = forecast_date.year
+            q_universe_raw = data_reader.read_quarterly_forecasts(
+                codes,
+                q_universe_year - 1,
+                q_universe_year + 1,
+            )
+            q_universe = _filter_quarterly_gap_universe(
+                pd.concat([q_combined, q_universe_raw], ignore_index=True)
+            )
+            if not q_universe.empty:
                 q_gaps = gap_detector.detect_missing_quarterly_ensembles(
-                    q_combined,
+                    q_universe,
                     lookback_q,
-                    ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
+                    ensemble_models={"Naive Mean"},
                 )
                 if not q_gaps.empty:
                     q_skill = data_reader.read_skill_metrics("quarter", codes=codes)
@@ -323,17 +414,25 @@ def postprocessing_maintenance_long_term():
                             # freshly-generated ensemble rows to the ACTUAL
                             # missing gap keys before merge -- mirroring the
                             # seasonal block's s_gap_keys filter -- so a
-                            # non-gap (year, quarter, code, model[, lead])
-                            # ensemble row already present in q_combined is
-                            # not silently overwritten (keep="last") by a
-                            # regenerated row for a lead that was never a gap.
-                            # Flag OFF: unchanged (no q_new filtering).
+                            # non-gap (year, quarter, code[, lead]) ensemble
+                            # row already present in q_combined is not
+                            # silently overwritten (keep="last") by a
+                            # regenerated row for a lead that was never a
+                            # gap. model_short is deliberately left OUT of
+                            # this key (unlike the monthly/seasonal
+                            # equivalents): gap detection above only checks
+                            # Naive Mean (quarter no longer produces EM), so
+                            # a Naive Mean gap must admit BOTH freshly
+                            # formed ensembles -- Naive Mean and Skilled
+                            # Mean -- for that (code, year, quarter[, lead])
+                            # key, not just the one model the gap detector
+                            # reported. Flag OFF: unchanged (no q_new
+                            # filtering).
                             if skill_lead_aware_enabled() and not q_new.empty:
                                 q_key_cols = [
                                     "year",
                                     "quarter_in_year",
                                     "code",
-                                    "model_short",
                                 ]
                                 if (
                                     "horizon_value" in q_gaps.columns
@@ -385,7 +484,20 @@ def postprocessing_maintenance_long_term():
                 else:
                     logger.info("No quarterly gaps found.")
             else:
-                logger.info("No quarterly combined data. Skipping quarterly gap-fill.")
+                logger.info(
+                    "No quarterly gap universe (no data, or no key has both "
+                    "raw quarter models). Skipping quarterly gap-fill."
+                )
+
+        # The monthly block did not complete (one of its six early-exit
+        # conditions in _run_monthly_gap_fill fired). Quarterly gap-fill
+        # still ran above; seasonal gap-fill and the audit-trail section
+        # below (which reports on the monthly `gaps`) are reached only
+        # when the monthly block actually completed its fill, so exit
+        # here rather than falling through to them.
+        if not monthly_completed:
+            _print_timing()
+            sys.exit(0)
 
         # ----- SEASONAL GAP-FILL -----
         with timer(timing_stats, "seasonal gap-fill"):

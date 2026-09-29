@@ -64,6 +64,25 @@ def _make_skill():
     )
 
 
+def _default_empty_quarterly_readers(mock_data_reader):
+    """Default the quarterly gap-universe readers to empty DataFrames.
+
+    postprocessing_maintenance_long_term always builds a quarterly
+    gap-fill universe from BOTH ``read_quarterly_combined_forecasts``
+    and ``read_quarterly_forecasts`` now (PP-065 P1b item 4), so an
+    unconfigured MagicMock return value (which is truthy, and whose
+    ``.empty`` is also a truthy MagicMock, unlike an empty DataFrame)
+    would make ``pd.concat`` raise instead of yielding an empty
+    universe. Only fills in a default when the test hasn't already set
+    a real return value, so individual tests can still override either
+    reader.
+    """
+    if isinstance(mock_data_reader.read_quarterly_combined_forecasts.return_value, MagicMock):
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = pd.DataFrame()
+    if isinstance(mock_data_reader.read_quarterly_forecasts.return_value, MagicMock):
+        mock_data_reader.read_quarterly_forecasts.return_value = pd.DataFrame()
+
+
 def _import_module(mocks_dict):
     """Set up sys.modules mocks and import the entry-point module.
 
@@ -77,6 +96,8 @@ def _import_module(mocks_dict):
     mock_ensemble_calc = mocks_dict.get("ensemble_calc", MagicMock())
     mock_gap_detector = mocks_dict.get("gap_detector", MagicMock())
     mock_file_writer = mocks_dict.get("file_writer", MagicMock())
+
+    _default_empty_quarterly_readers(mock_data_reader)
 
     # TimingStats and timer must be usable at module level
     mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
@@ -215,10 +236,16 @@ class TestMaintenanceLongTerm:
     """Tests for postprocessing_maintenance_long_term() entry point."""
 
     def test_no_combined_forecasts_exits_zero(self):
-        """Empty combined forecasts -> logs info, sys.exit(0)."""
+        """Empty combined forecasts -> monthly block skips gap detection.
+
+        The monthly block does not complete, so quarterly gap-fill still
+        runs (finds nothing, since both quarterly readers default to
+        empty), and the script exits 0 right after -- before seasonal.
+        """
         mock_sl = MagicMock()
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
+        mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
         mock_data_reader.read_monthly_combined_forecasts.return_value = pd.DataFrame()
@@ -229,6 +256,7 @@ class TestMaintenanceLongTerm:
                     "sl": mock_sl,
                     "data_reader": mock_data_reader,
                     "gap_detector": mock_gap_detector,
+                    "file_writer": mock_file_writer,
                 }
             )
             # Bypass _read_station_codes (needs real config file)
@@ -241,13 +269,20 @@ class TestMaintenanceLongTerm:
             mock_data_reader.read_monthly_combined_forecasts.assert_called_once()
             # Gap detection should never be reached
             mock_gap_detector.detect_missing_monthly_ensembles.assert_not_called()
+            mock_file_writer.save_quarterly_forecast_data.assert_not_called()
+            mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
     def test_no_gaps_found_exits_zero(self, combined_with_models):
-        """Gap detector returns empty -> sys.exit(0), no ensemble work."""
+        """Gap detector returns empty -> monthly block does not complete.
+
+        Quarterly gap-fill still runs (finds nothing), and the script
+        exits 0 right after -- before seasonal.
+        """
         mock_sl = MagicMock()
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
         mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
         mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
@@ -262,6 +297,7 @@ class TestMaintenanceLongTerm:
                     "data_reader": mock_data_reader,
                     "gap_detector": mock_gap_detector,
                     "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
                 }
             )
             module._read_station_codes = MagicMock(return_value=["10001", "10002"])
@@ -284,6 +320,8 @@ class TestMaintenanceLongTerm:
             # No skill read, no ensemble creation
             mock_data_reader.read_skill_metrics.assert_not_called()
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_not_called()
+            mock_file_writer.save_quarterly_forecast_data.assert_not_called()
+            mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
     def test_gaps_found_creates_and_saves_ensembles(
         self,
@@ -565,13 +603,17 @@ class TestMaintenanceLongTerm:
                 "nse": [0.8],
             }
         )
+        # Two eligible raw models (LR_Base, LR_SM) at the gap key so the
+        # two-raw-model gap-universe prefilter admits it (PP-065 P1b
+        # item 4) -- a single-model key can never form a Naive Mean and
+        # would otherwise be dropped before gap detection even runs.
         q_fc = pd.DataFrame(
             {
-                "year": [2025],
-                "quarter_in_year": [1],
-                "code": ["19999"],
-                "model_short": ["LR_Base"],
-                "forecasted_discharge": [100.0],
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "forecasted_discharge": [100.0, 100.0],
             }
         )
         q_joint = pd.DataFrame(
@@ -661,24 +703,26 @@ class TestMaintenanceLongTerm:
         mock_file_writer.save_monthly_forecast_data.return_value = None
         mock_file_writer.save_quarterly_forecast_data.return_value = None
 
-        # Existing lead-0 EM (NOT a gap) with a distinctive discharge.
+        # Existing lead-0 Naive Mean (NOT a gap) with a distinctive
+        # discharge. Quarter no longer produces EM (PP-065 P1b item 3),
+        # so gap detection keys on Naive Mean instead.
         q_combined = pd.DataFrame(
             {
                 "year": [2025],
                 "quarter_in_year": [1],
                 "code": ["19999"],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "horizon_value": [0],
                 "forecasted_discharge": [100.0],
             }
         )
-        # ONLY the lead-1 EM is reported missing.
+        # ONLY the lead-1 Naive Mean is reported missing.
         q_gaps = pd.DataFrame(
             {
                 "year": [2025],
                 "quarter_in_year": [1],
                 "code": ["19999"],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "horizon_value": [1],
             }
         )
@@ -691,24 +735,27 @@ class TestMaintenanceLongTerm:
                 "nse": [0.8],
             }
         )
+        # Two eligible raw models (LR_Base, LR_SM) so the two-raw-model
+        # gap-universe prefilter admits the key (PP-065 P1b item 4).
         q_fc = pd.DataFrame(
             {
-                "year": [2025],
-                "quarter_in_year": [1],
-                "code": ["19999"],
-                "model_short": ["LR_Base"],
-                "horizon_value": [1],
-                "forecasted_discharge": [100.0],
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "horizon_value": [1, 1],
+                "forecasted_discharge": [100.0, 100.0],
             }
         )
-        # Ensemble output regenerates EM for BOTH leads; the lead-0 EM has
-        # a DIFFERENT discharge (999) so an overwrite would be observable.
+        # Ensemble output regenerates Naive Mean for BOTH leads; the
+        # lead-0 row has a DIFFERENT discharge (999) so an overwrite
+        # would be observable.
         q_joint = pd.DataFrame(
             {
                 "year": [2025, 2025],
                 "quarter_in_year": [1, 1],
                 "code": ["19999", "19999"],
-                "model_short": ["EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean"],
                 "horizon_value": [0, 1],
                 "forecasted_discharge": [999.0, 111.0],
             }
@@ -745,10 +792,10 @@ class TestMaintenanceLongTerm:
 
             mock_file_writer.save_quarterly_forecast_data.assert_called_once()
             saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
-            em_rows = saved[saved["model_short"] == "EM"]
+            em_rows = saved[saved["model_short"] == "Naive Mean"]
 
             if flag_on:
-                # Both leads present, and the NON-gap lead-0 EM keeps its
+                # Both leads present, and the NON-gap lead-0 row keeps its
                 # ORIGINAL discharge (100), NOT the regenerated 999.
                 assert set(em_rows["horizon_value"]) == {0, 1}
                 lead0 = em_rows[em_rows["horizon_value"] == 0]
@@ -759,7 +806,7 @@ class TestMaintenanceLongTerm:
                 assert float(lead1.iloc[0]["forecasted_discharge"]) == 111.0
             else:
                 # Flag OFF: today's behavior -- leads collapse (no
-                # horizon_value in dedup key), one EM row kept.
+                # horizon_value in dedup key), one row kept.
                 assert len(em_rows) == 1
 
     @pytest.mark.parametrize("flag_on", [True, False])
@@ -1076,10 +1123,16 @@ class TestMaintenanceLongTerm:
             assert len(detail_msgs) == 1, "Expected one detail line per gap tuple"
 
     def test_lookback_env_var_respected(self, combined_with_models):
-        """POSTPROCESSING_GAPFILL_WINDOW_MONTHS controls lookback."""
+        """POSTPROCESSING_GAPFILL_WINDOW_MONTHS controls lookback.
+
+        The monthly block does not complete (no gaps), so quarterly
+        gap-fill still runs (finds nothing), and the script exits 0
+        right after -- before seasonal.
+        """
         mock_sl = MagicMock()
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
+        mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
         mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
@@ -1094,6 +1147,7 @@ class TestMaintenanceLongTerm:
                         "sl": mock_sl,
                         "data_reader": mock_data_reader,
                         "gap_detector": mock_gap_detector,
+                        "file_writer": mock_file_writer,
                     }
                 )
                 module._read_station_codes = MagicMock(return_value=["10001"])
@@ -1105,17 +1159,24 @@ class TestMaintenanceLongTerm:
                 call_args = mock_gap_detector.detect_missing_monthly_ensembles.call_args
                 # Second positional arg is lookback
                 assert call_args[0][1] == 6, f"Expected lookback=6, got {call_args[0][1]}"
+                mock_file_writer.save_quarterly_forecast_data.assert_not_called()
+                mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
     def test_empty_skill_metrics_exits_zero(
         self,
         combined_with_models,
         gap_tuples,
     ):
-        """No skill metrics available -> exits 0, no ensembles created."""
+        """No skill metrics -> monthly block does not complete.
+
+        No ensembles are created. Quarterly gap-fill still runs (finds
+        nothing), and the script exits 0 right after -- before seasonal.
+        """
         mock_sl = MagicMock()
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
         mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
         mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
@@ -1129,6 +1190,7 @@ class TestMaintenanceLongTerm:
                     "data_reader": mock_data_reader,
                     "gap_detector": mock_gap_detector,
                     "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
                 }
             )
             module._read_station_codes = MagicMock(return_value=["10001", "10002"])
@@ -1141,6 +1203,8 @@ class TestMaintenanceLongTerm:
                 "month", codes=["10001", "10002"]
             )
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_not_called()
+            mock_file_writer.save_quarterly_forecast_data.assert_not_called()
+            mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
     def test_empty_forecasts_for_gaps_exits_zero(
         self,
@@ -1148,11 +1212,16 @@ class TestMaintenanceLongTerm:
         gap_tuples,
         skill_stats,
     ):
-        """No forecast data for gap years -> exits 0."""
+        """No forecast data for gap years -> monthly block does not complete.
+
+        Quarterly gap-fill still runs (finds nothing), and the script
+        exits 0 right after -- before seasonal.
+        """
         mock_sl = MagicMock()
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
         mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
         mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
@@ -1167,6 +1236,7 @@ class TestMaintenanceLongTerm:
                     "data_reader": mock_data_reader,
                     "gap_detector": mock_gap_detector,
                     "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
                 }
             )
             module._read_station_codes = MagicMock(return_value=["10001", "10002"])
@@ -1181,6 +1251,8 @@ class TestMaintenanceLongTerm:
                 2025,
             )
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_not_called()
+            mock_file_writer.save_quarterly_forecast_data.assert_not_called()
+            mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
     def test_no_matching_forecast_rows_exits_zero(
         self,
@@ -1188,7 +1260,12 @@ class TestMaintenanceLongTerm:
         gap_tuples,
         skill_stats,
     ):
-        """Forecasts exist but none match gap tuples -> exits 0."""
+        """Forecasts exist but none match gap tuples.
+
+        The monthly block does not complete. Quarterly gap-fill still
+        runs (finds nothing), and the script exits 0 right after --
+        before seasonal.
+        """
         # Forecasts are for a different month (month=6) than the gap (month=1)
         non_matching_forecasts = _make_forecasts(
             [
@@ -1212,6 +1289,7 @@ class TestMaintenanceLongTerm:
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
         mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
         mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
@@ -1226,6 +1304,7 @@ class TestMaintenanceLongTerm:
                     "data_reader": mock_data_reader,
                     "gap_detector": mock_gap_detector,
                     "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
                 }
             )
             module._read_station_codes = MagicMock(return_value=["10001", "10002"])
@@ -1235,6 +1314,8 @@ class TestMaintenanceLongTerm:
 
             assert exc_info.value.code == 0
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_not_called()
+            mock_file_writer.save_quarterly_forecast_data.assert_not_called()
+            mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
     def test_ensemble_returns_no_em_rows_exits_zero(
         self,
@@ -1243,7 +1324,12 @@ class TestMaintenanceLongTerm:
         forecasts_for_gaps,
         skill_stats,
     ):
-        """Ensemble calculator returns rows but none are EM -> exits 0."""
+        """Ensemble calculator returns rows but none are EM.
+
+        The monthly block does not complete. Quarterly gap-fill still
+        runs (finds nothing), and the script exits 0 right after --
+        before seasonal.
+        """
         # Return only base model rows, no ensemble models
         base_only = forecasts_for_gaps.copy()
 
@@ -1280,6 +1366,8 @@ class TestMaintenanceLongTerm:
 
             assert exc_info.value.code == 0
             mock_file_writer.save_monthly_forecast_data.assert_not_called()
+            mock_file_writer.save_quarterly_forecast_data.assert_not_called()
+            mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
     def test_save_error_causes_exit_one(
         self,
