@@ -145,7 +145,7 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
     classified as native or not — the native-row rule itself cannot run. P1b then keeps today's unfiltered
     direct LR selection, with **one** WARNING, rather than dropping every LR row. This is an explicit
     exception to native-row precedence, not a contradiction of it — see PP-065's "Degraded native rule,
-    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:461) and PP-065's own item 9.
+    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:465) and PP-065's own item 9.
     **Under flag ON there is no carve-out: a missing `operational_issue_day` already raises
     `LongTermHorizonResolverError`, uncaught, as on trunk today**, at both unguarded call sites of
     `_operational_schedules_for_horizon_type("quarter")` — `apps/postprocessing_forecasts/src/data_reader.py:3162`

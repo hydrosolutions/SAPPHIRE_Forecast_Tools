@@ -137,7 +137,7 @@ added or corrected on 2026-09-28 are to trunk `6a4ecfae`.
      no LR row can be
      classified as native or not — the native-row rule cannot run at all. P1b then keeps today's unfiltered
      direct LR selection, with **one** WARNING, instead of dropping every LR row. This is an explicit
-     exception to native-row precedence: see "Degraded native rule, flag OFF" below (~:461). **Under
+     exception to native-row precedence: see "Degraded native rule, flag OFF" below (~:465). **Under
      flag ON a missing `operational_issue_day` raises `LongTermHorizonResolverError`, uncaught, as on
      trunk today**, at both unguarded call sites of
      `_operational_schedules_for_horizon_type("quarter")` — `src/data_reader.py:3162`
@@ -425,10 +425,14 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      the configured issue *day* (`data_reader.py:346-354`) — so a fixed (target month, lead) pins the
      candidate issue date to one exact calendar date, leaving no same-unit "earlier eligible vs. later
      ineligible reissue on a different day" case for filter placement to matter for.
-     - **Test:** `forecast_date = 2026-06-25`; monthly LR rows issued 2026-09-25 and 2026-10-25 (both
-       after `forecast_date`) must not produce a Q4 aggregate — under both flags.
+     - **Test:** see the Tests list's "Existing Source 1 (now unified) forecast_date bound, latest reader,
+       both flags" (two separate cases, full hv 1/2/3 triplets issued 2026-09-25 and 2026-12-25
+       respectively) — the current fixtures for this bound, superseding the single-row 2026-09-25/
+       2026-10-25 shape this bullet used before the derive-based unification.
      - **Test:** no row dated after `forecast_date` reaches the derivation input (assert on a spy, or on
-       the rows actually passed to `derive_quarterly_from_monthly_same_issue`) — under both flags.
+       the rows actually passed to `derive_quarterly_from_monthly_same_issue`) — under both flags. See
+       also the Tests list's "Existing Source 1 (now unified) forecast_date bound, inputs to the
+       derivation" bullet.
    - **[SUPERSEDED by the "Target-year trim scope" bullet above.]** ~~Trim to the requested **target**
      years. In the latest reader, target year `today.year + 1` is allowed, so a 25 Dec issue yields next
      year's Q1.~~ As originally written this applied the trim to ALL rows; the current contract restricts
@@ -1172,23 +1176,32 @@ lead 0):
   through both readers. **Not** asserted end-to-end through the readers under flag ON here —
   `select_operational_issuances` still matches unclamped and would drop the row regardless of the
   helper's own classification; PP-066's Tests list carries that end-to-end case once its fix lands.
-- **Existing Source 1 (now unified) forecast_date bound, latest reader, both flags.**
-  `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplets (q50 set), one issued
-  2026-09-25 and another issued 2026-12-25** (both dates after `forecast_date`) → no Q4-2026 aggregate is
-  produced from the first triplet and no Q1-2027 aggregate from the second, under both flags. Both issue
-  dates are otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits the hv 1/2/3 triplet
-  (`aggregation.py:1013`), and the quarter-start scope filter (`:1033-1041`, `d.month + lead` via
-  `_add_months_vectorized` checked against `_QUARTER_START_MONTHS`) is satisfied by both: 9 + 1 = 10
-  (October, Q4 2026) and 12 + 1 = 13 → year + 1, month 1 (January 2027, Q1 2027) — so neither is excluded
-  by that filter; only the `forecast_date` bound can explain the absence. (A candidate issued 2026-10-25
-  would NOT work here: 10 + 1 = 11, November, not a quarter-start month, so it is dropped by the scope
-  filter regardless of the bound and would not exercise it.) A single
-  monthly row per issue date is not a sufficient fixture here: with only one of the three required leads
-  present, `derive_quarterly_from_monthly_same_issue` already produces no aggregate for the
-  incomplete-triplet reason alone, so the test would pass even with the `forecast_date` bound entirely
-  missing — it would not detect the bug it names. Giving each issue date a full, otherwise-derivable
-  triplet, and asserting it is absent, means the bound is the only thing that can explain the absence.
-  Fails on the pre-P1b base (neither flag bounds this path today).
+- **Existing Source 1 (now unified) forecast_date bound, latest reader, both flags — two separate cases,
+  each triplet alone in its own fixture.** Putting both triplets in one fixture makes the Q4-2026
+  assertion non-diagnostic: `read_latest_quarterly_forecasts` keeps only the most recent `(year,
+  quarter_in_year)` (`src/data_reader.py:3618-3623`), so even with the `forecast_date` bound missing
+  entirely, the more recent Q1-2027 aggregate would win that filter and the Q4-2026 aggregate would be
+  dropped anyway — its absence would not detect the bug. Two separate cases, each alone in its fixture,
+  keep each assertion diagnostic:
+  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
+    2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced, under both flags. The issue
+    date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits the hv 1/2/3 triplet
+    (`aggregation.py:1013`), and the quarter-start scope filter (`:1033-1041`, `d.month + lead` via
+    `_add_months_vectorized` checked against `_QUARTER_START_MONTHS`) is satisfied: 9 + 1 = 10 (October,
+    Q4 2026) — not excluded by that filter — so only the `forecast_date` bound can explain the absence. A
+    single monthly row (not a full triplet) is not a sufficient fixture here: with only one of the three
+    required leads present, `derive_quarterly_from_monthly_same_issue` already produces no aggregate for
+    the incomplete-triplet reason alone, so the test would pass even with the bound entirely missing — it
+    would not detect the bug it names. Fails on the pre-P1b base (neither flag bounds this path today).
+  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
+    2026-12-25** (after `forecast_date`) → no Q1-2027 aggregate is produced, under both flags. 12 + 1 = 13
+    → year + 1, month 1 (January 2027, Q1 2027) — not excluded by the scope filter — so only the
+    `forecast_date` bound can explain the absence. Same full-triplet requirement and pre-P1b-base failure
+    as above.
+
+  (A candidate issued 2026-10-25 would NOT work for either case: 10 + 1 = 11, November, not a
+  quarter-start month, so it is dropped by the scope filter regardless of the bound and would not exercise
+  it.)
 - **Existing Source 1 (now unified) forecast_date bound, inputs to the derivation.** No row dated after
   `forecast_date` reaches `derive_quarterly_from_monthly_same_issue` (assert on a spy, or on the rows
   actually passed to it), under both flags.
