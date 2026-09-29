@@ -3337,8 +3337,20 @@ def _drop_stored_lead_mismatches(direct: pd.DataFrame) -> pd.DataFrame:
     if direct.empty or "horizon_value" not in direct.columns:
         return direct
 
-    date_parsed = pd.to_datetime(direct.get("date"), errors="coerce")
-    valid_from_parsed = pd.to_datetime(direct.get("valid_from"), errors="coerce")
+    # A `date` or `valid_from` column entirely absent (e.g. an all-null
+    # column already dropped upstream by _read_long_forecasts_api) must
+    # never raise here (out-of-loop review finding:
+    # pd.to_datetime(None, errors="coerce") returns a bare `None`, not an
+    # empty/NaT Series, and `.dt` on that raises AttributeError) -- treat
+    # it the same as a column full of unparseable/null values.
+    if "date" in direct.columns:
+        date_parsed = pd.to_datetime(direct["date"], errors="coerce")
+    else:
+        date_parsed = pd.Series(pd.NaT, index=direct.index)
+    if "valid_from" in direct.columns:
+        valid_from_parsed = pd.to_datetime(direct["valid_from"], errors="coerce")
+    else:
+        valid_from_parsed = pd.Series(pd.NaT, index=direct.index)
     derived_lead = (valid_from_parsed.dt.year - date_parsed.dt.year) * 12 + (
         valid_from_parsed.dt.month - date_parsed.dt.month
     )
@@ -3588,6 +3600,21 @@ def read_quarterly_forecasts(
             horizon_type="quarter",
             horizon_value=quarter_horizon_value(),
         )
+    # PP-065 P1b: the LR rows that PASSED native-row selection, captured
+    # BEFORE any later step (stored-leads pre-filter, select_operational_
+    # issuances) can drop one for a reason unrelated to nativity itself.
+    # Used ONLY to decide which decision-G fallback keys to suppress below
+    # -- out-of-loop review finding, round 2: select_operational_issuances
+    # still matches the UNCLAMPED issue day (PP-066's own gap, not
+    # modified here), so a clamped-day-valid native row can be dropped
+    # from the FINAL `direct` under flag ON for a reason that has nothing
+    # to do with whether it is native. Basing suppression on the final
+    # `direct` in that case would let the fallback silently substitute a
+    # different, wrong value in place of what should simply be "no row"
+    # for that key (matching this same gap's existing behaviour with the
+    # fallback mechanism absent) -- never a value native-row selection
+    # itself disagrees with.
+    native_direct_for_suppression = pd.DataFrame()
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
         # PP-065 P1b: drop direct rows of the seven derived-eligible
@@ -3599,6 +3626,7 @@ def read_quarterly_forecasts(
             # Order (flag ON): native-row helper -> stored-leads
             # pre-filter -> select_operational_issuances.
             direct = _select_native_quarter_lr_rows(direct, single_schedule)
+            native_direct_for_suppression = direct
             direct = _drop_stored_lead_mismatches(direct)
             if not direct.empty:
                 direct = select_operational_issuances(
@@ -3685,6 +3713,7 @@ def read_quarterly_forecasts(
                     dropped_issue_year_rows,
                 )
             direct = _select_native_quarter_lr_rows(direct, single_schedule)
+            native_direct_for_suppression = direct
         elif not lead_aware and not direct.empty:
             # The mask above needs quarter_in_year and date to tell a
             # genuine December-issued Q1 of start_year apart from any
@@ -3702,6 +3731,7 @@ def read_quarterly_forecasts(
                     missing_cols,
                 )
             direct = _select_native_quarter_lr_rows(direct, single_schedule)
+            native_direct_for_suppression = direct
     else:
         direct = pd.DataFrame()
 
@@ -3715,13 +3745,27 @@ def read_quarterly_forecasts(
     # finding: a mismatched window let an unread-but-present native row's
     # fallback go unsuppressed).
     derivation_start_year = q_start_year if (lead_aware and quarter_schedules) else start_year - 1
+    # Skip the derivation entirely (rather than let it run and immediately
+    # hit its own internal invalid_config guard, src/aggregation.py) when
+    # the schedule is invalid -- out-of-loop review finding: calling it
+    # twice (once per model set) with a bad schedule logged the SAME
+    # invalid_config WARNING twice, under flag ON, where nothing upstream
+    # already validated issue_day/lead_time (flag OFF's shared resolution
+    # already rejects both before single_schedule is ever set).
+    schedule_valid = (
+        single_schedule is not None
+        and single_schedule.issue_day >= 1
+        and single_schedule.lead_time >= 0
+    )
     derived_seven = pd.DataFrame()
     derived_lr_fallback = pd.DataFrame()
-    if single_schedule is not None and single_schedule.issue_day >= 1:
+    if schedule_valid:
         derived_seven, derived_lr = _derive_quarterly_rows(
             codes, derivation_start_year, end_year, single_schedule
         )
-        derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(derived_lr, direct)
+        derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(
+            derived_lr, native_direct_for_suppression
+        )
         derived_seven = _trim_to_target_year_range(derived_seven, "year", start_year, end_year)
         derived_lr_fallback = _trim_to_target_year_range(
             derived_lr_fallback, "year", start_year, end_year
@@ -4006,6 +4050,13 @@ def read_latest_quarterly_forecasts(
         # native-row helper runs right after the forecast_date bound
         # above, under both flags.
         direct = _select_native_quarter_lr_rows(direct, single_schedule)
+        # Captured HERE, before select_operational_issuances gets a chance
+        # to drop a clamped-day-valid native row for an unrelated reason
+        # (out-of-loop review finding, round 2 -- see
+        # read_quarterly_forecasts' identical comment for the full
+        # rationale: PP-066's own gap must not surface as a wrong
+        # fallback value in place of a correctly-classified native row).
+        native_direct_for_suppression = direct
         if lead_aware and quarter_schedules and not direct.empty:
             direct = _drop_stored_lead_mismatches(direct)
             if not direct.empty:
@@ -4022,6 +4073,7 @@ def read_latest_quarterly_forecasts(
                 direct = _trim_to_target_year_range(direct, "year", start_year, end_year + 1)
     else:
         direct = pd.DataFrame()
+        native_direct_for_suppression = pd.DataFrame()
 
     # PP-065 P1b: derived rows (both flags), only when the shared schedule
     # resolved. The derivation's own issue-year read window must match
@@ -4036,13 +4088,23 @@ def read_latest_quarterly_forecasts(
     # crossed a year boundary). Bounded by forecast_date (Problem 6, for
     # free via _derive_quarterly_rows).
     derivation_start_year = q_start_year if (lead_aware and quarter_schedules) else start_year
+    # See read_quarterly_forecasts' identical guard for why lead_time is
+    # checked here too (out-of-loop review finding, round 2): a negative
+    # lead_time hits the same double-WARNING gap as an invalid issue_day.
+    schedule_valid = (
+        single_schedule is not None
+        and single_schedule.issue_day >= 1
+        and single_schedule.lead_time >= 0
+    )
     derived_seven = pd.DataFrame()
     derived_lr_fallback = pd.DataFrame()
-    if single_schedule is not None and single_schedule.issue_day >= 1:
+    if schedule_valid:
         derived_seven, derived_lr = _derive_quarterly_rows(
             codes, derivation_start_year, end_year, single_schedule, forecast_date=today
         )
-        derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(derived_lr, direct)
+        derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(
+            derived_lr, native_direct_for_suppression
+        )
         derived_seven = _trim_to_target_year_range(derived_seven, "year", start_year, end_year + 1)
         derived_lr_fallback = _trim_to_target_year_range(
             derived_lr_fallback, "year", start_year, end_year + 1
