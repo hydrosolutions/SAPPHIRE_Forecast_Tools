@@ -2840,6 +2840,168 @@ class TestDerivationWindowMatchesDirectWindow:
         assert 310.0 not in set(aged_out["forecasted_discharge"])
 
 
+class TestStoredLeadMismatchNoDateColumnNoException:
+    """Out-of-loop review finding, round 2: a direct EM/ensemble row with
+
+    horizon_value set but no `date` column at all (e.g. an all-null `date`
+    already dropped upstream) must not crash
+    `_drop_stored_lead_mismatches` -- `pd.to_datetime(None, errors=
+    "coerce")` returns a bare `None`, not an empty/NaT Series, and a naive
+    `.dt` access on that raises AttributeError. The native-row helper
+    leaves non-LR rows (EM here) untouched, so this row reaches the
+    stored-leads filter regardless of nativity.
+    """
+
+    def test_read_quarterly_forecasts_flag_on_no_exception(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        row = {
+            "horizon_type": "quarter",
+            "horizon_value": 1,
+            "code": CODE,
+            "model_type": "EM",
+            "valid_from": "2026-01-01",
+            "valid_to": "2026-03-31",
+            "q50": 100.0,
+            # no "date" column at all.
+        }
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame([row])
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        # No exception; the EM row's own fate is not this test's concern.
+        assert isinstance(result, pd.DataFrame)
+
+    def test_read_latest_quarterly_forecasts_flag_on_no_exception(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        row = {
+            "horizon_type": "quarter",
+            "horizon_value": 1,
+            "code": CODE,
+            "model_type": "EM",
+            "valid_from": "2026-01-01",
+            "valid_to": "2026-03-31",
+            "q50": 100.0,
+            # no "date" column at all.
+        }
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame([row])
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert isinstance(result, pd.DataFrame)
+
+
+class TestClampedNativeRowNeverLosesToWrongFallbackValue:
+    """Out-of-loop review finding, round 2: under flag ON,
+
+    `select_operational_issuances` still matches the UNCLAMPED issue day
+    (PP-066's own, not-modified-here gap) -- so a native row valid only
+    via the producer's clamp (e.g. issue_day=31 in a 30-day month) is
+    correctly classified native by the shared helper, but then dropped by
+    `select_operational_issuances` anyway. The suppression fix (round 2)
+    must still prevent a competing decision-G fallback from silently
+    substituting a DIFFERENT, wrong value in that case -- the correct,
+    documented outcome (unchanged by this fix, and unchanged until
+    PP-066 lands) is that the key produces NO row at all, not the
+    fallback's average.
+    """
+
+    def test_read_quarterly_forecasts(self, monkeypatch, kghm_quarter_config):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 31})
+        )
+        # Native issuance clamped to June 30 (June has 30 days); a
+        # competing same-issue-day-31 monthly triplet elsewhere would
+        # derive a DIFFERENT value than the native row's own 100.0.
+        direct_rows = [
+            _quarter_row_with_horizon_value(
+                "2026-07-01", "2026-09-30", "2026-06-30", 1, model="LR_Base", q=100.0
+            )
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2026-06-30", 1, "LR_Base", [300.0, 310.0, 320.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q3_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 3)]
+        lr_base = q3_2026[q3_2026["model_short"] == "LR_Base"]
+        # PP-066 not yet fixed: the native row itself does not survive
+        # select_operational_issuances' unclamped comparison. The
+        # assertion under test is narrower: whatever the outcome, it must
+        # never be the fallback's 310.0.
+        assert 310.0 not in set(lr_base["forecasted_discharge"])
+
+    def test_read_latest_quarterly_forecasts(self, monkeypatch, kghm_quarter_config):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 31})
+        )
+        direct_rows = [
+            _quarter_row_with_horizon_value(
+                "2026-07-01", "2026-09-30", "2026-06-30", 1, model="LR_Base", q=100.0
+            )
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2026-06-30", 1, "LR_Base", [300.0, 310.0, 320.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 7, 15)
+            )
+
+        lr_base = result[result["model_short"] == "LR_Base"]
+        assert 310.0 not in set(lr_base["forecasted_discharge"])
+
+
+class TestNegativeLeadTimeNoDuplicateWarning:
+    """Out-of-loop review finding, round 2: a resolvable schedule with a
+
+    NEGATIVE `operational_month_lead_time` hits the same invalid-config
+    condition `derive_quarterly_from_monthly_same_issue` guards against
+    internally (`issue_day < 1 or lead < 0`) as an invalid `issue_day` --
+    the derivation must be skipped entirely (not called twice, once per
+    model set) so no duplicate WARNING is logged, matching the
+    issue_day < 1 case round 1 already fixed.
+    """
+
+    def test_read_quarterly_forecasts_flag_on_skips_derivation(
+        self, monkeypatch, kghm_quarter_config
+    ):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": -1, "operational_issue_day": 25})
+        )
+        monthly_rows = _quarter_derivation_rows(
+            "2026-03-25", -1, "LR_Base", [100.0, 105.0, 110.0], code=CODE
+        )
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with patch(
+            "src.aggregation.derive_quarterly_from_monthly_same_issue",
+            wraps=aggregation.derive_quarterly_from_monthly_same_issue,
+        ) as spy:
+            with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+                data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        spy.assert_not_called()
+
+
 class TestMissingQuarterConfigFilePropagates:
     """A missing quarter.json (the mode IS supported, but its config file
 
