@@ -593,10 +593,12 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        (`deploy.pp`) only puts this item's code on the servers, it writes no rows. **Correction: the
        in-window recalc's own step-8 raw derived-model rows can already make a previously blank card
        displayable, before the first operational run** — see "Why the operational run, not the recalc, is
-       the target-quarter ensemble's recovery point" in § "P2 — rollout" below for the mechanism. What
-       clears only once the **first successful quarterly postprocessing run on the new image** (P2 window,
-       § "P2 — rollout" below) has run and is verified is the target quarter's own **Naive Mean / Skilled
-       Mean ensemble rows** specifically — at which point this item's stopped EM write and the
+       the target-quarter ensemble's recovery point" in § "P2 — rollout" below for the mechanism. The
+       recalc itself only forms the target quarter's own **Naive Mean / Skilled Mean ensemble rows** when
+       its own observation join happens to match — usually not the current quarter, but not guaranteed
+       never (see the loophole note in that same P2 section). What **reliably** clears those rows,
+       independent of that loophole, is the **first successful quarterly postprocessing run on the new
+       image** (P2 window, § "P2 — rollout" below) — at which point this item's stopped EM write and the
        derived/ensemble rows take over.
    - **Log** one aggregated skip count per call.
 4. **Combined reader and maintenance.**
@@ -619,7 +621,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      existing reader function, not a new `data_reader` entry point.
    - **Allowed restructuring:** the `q_combined.empty` guard (`:296`) becomes "the universe is empty", and
      the quarterly block is reached when the monthly block has nothing to do. **Control-flow rule (the one
-     design; the maintenance test inventory below, ~:1975, follows it):** each of the six monthly-only
+     design; the maintenance test inventory below, ~:1977, follows it):** each of the six monthly-only
      `sys.exit(0)` guards — `combined.empty` (`:113`), `gaps.empty` (`:126`), `skill_stats.empty` (`:141`),
      `all_forecasts.empty` (`:159`), `filtered.empty` (`:184`) and `new_ensemble.empty` (`:257`) — stops
      exiting there and instead skips forward to the quarterly block. **After the quarterly block, if the
@@ -1267,8 +1269,8 @@ lead 0):
     own — so post-P1b, this case's expected "no Q1-2027 aggregate" result can only come from the
     `forecast_date` (issue-date) bound correctly dropping a triplet issued after `forecast_date`. It does
     **not** prove the wide trim itself admits an already-issued prior-year Q1 — that is the separate,
-    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1314-1316, re-measured 2026-09-29,
-    plan-sync round 12h), whose own mutation note
+    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1316-1318, re-measured 2026-09-29,
+    plan-sync round 12i), whose own mutation note
     ("removing the target-year extension makes the flag-ON case fail") is what proves the wide trim. Write
     this case as a P1b-only regression guard for the `forecast_date` bound under the widened trim, not as
     a case that "fails on the pre-P1b base" and not as proof of the wide trim.
@@ -1277,7 +1279,7 @@ lead 0):
   quarter-start month, so it is dropped by the scope filter regardless of the bound and would not exercise
   it.)
 - **P3 interaction: add a `GBT` variant of both cases above, alongside the `LR_Base`/`LR_SM` one.** P3
-  removes the decision-G LR fallback entirely (§ "P3 — remove the LR fallback" ~:2231-2247), so once P3
+  removes the decision-G LR fallback entirely (§ "P3 — remove the LR fallback" ~:2236-2254), so once P3
   lands an LR-only monthly triplet derives nothing at all through this path — both cases above would then
   pass even with the `forecast_date` bound deleted, and stop detecting the bug they name. `GBT`'s
   derivation (`QUARTERLY_DERIVED_MODELS`, unconditional) is untouched by P3, so write a `GBT`-model variant
@@ -2210,16 +2212,18 @@ does), not the original pre-P1a skill; treat it as such when comparing before/af
 - the Dataset B rows overwritten by fresh derived rows with the same key under flag OFF. This upsert is
   irreversible, which is why the export is taken first.
 
-**Operationally:** these two things become visible at different points, and only one of them waits for
-step 11. **The derived seven-model raw rows are written by the step-8 recalc itself** (see step 9's own
-check, above: `joint_forecasts = forecasts.copy()` in `_calculate_aggregated_skill_metrics` passes every
-raw forecast row through regardless of whether it joined an observation) — they are visible, with δ
-bounds (FD-029), after step 8/9, before step 11 has even run. **Only the target quarter's own Naive Mean
-and Skilled Mean ensemble rows wait for step 11.** Step 11 writes the Naive Mean row wherever a
+**Operationally:** these two things become visible at different points, and step 11 is the RELIABLE
+point for only one of them. **The derived seven-model raw rows are written by the step-8 recalc
+itself** (see step 9's own check, above: `joint_forecasts = forecasts.copy()` in
+`_calculate_aggregated_skill_metrics` passes every raw forecast row through regardless of whether it
+joined an observation) — they are visible, with δ bounds (FD-029), after step 8/9, before step 11 has
+even run. **Step 11 reliably supplies the target quarter's own Naive Mean and Skilled Mean ensemble
+rows** — step 8's own recalc can occasionally form them first, via the observation-match loophole
+below, but that is not guaranteed. Step 11 writes the Naive Mean row wherever a
 target-quarter key can form a derived-composition Naive Mean — two or more non-null contributors (see
 PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none can) — and, separately, the Skilled
 Mean row for that same key only where its own skill gate also passes — see PP-064's "Skilled Mean is not a
-required row" paragraph (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` ~:781-789) for the
+required row" paragraph (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` ~:783-791) for the
 two conditions; a key can form a Naive Mean without forming a Skilled Mean. Step 8's recalc forms either
 ensemble only where its own inner join with observations matches, usually not the current quarter (see PP-064 Chunk C
 canonical step 11's PASS criterion 2 and its pre-satisfied-branch note above for the exception). Do
@@ -2240,9 +2244,9 @@ Only after LTF-014 P0 and P2 are deployed on both orgs. **Blocked** while P0 is 
   the other row-12 file.
 
 **Tests:** drop the `LR_Base`/`LR_SM` variant of the P1b Tests list's "Existing Source 1 (now unified)
-forecast_date bound, latest reader, both flags" cases (~:1196-1293) — once the fallback is gone, an
+forecast_date bound, latest reader, both flags" cases (~:1198-1295) — once the fallback is gone, an
 LR-only monthly triplet derives nothing at all through this path, so that variant would pass trivially
-whether or not the bound still works. Keep the `GBT` variant P1b adds alongside it (same entry, ~:1279-1293);
+whether or not the bound still works. Keep the `GBT` variant P1b adds alongside it (same entry, ~:1281-1295);
 it exercises the same bound through the unconditional `QUARTERLY_DERIVED_MODELS` derivation, which this
 phase does not touch.
 

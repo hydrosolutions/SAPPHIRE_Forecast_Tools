@@ -379,8 +379,8 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1186-1187 — re-measured
-  2026-09-29 (plan-sync round 12h) after this fix round's edits shifted the file again; earlier drafts'
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1188-1189 — re-measured
+  2026-09-29 (plan-sync round 12i) after this fix round's edits shifted the file again; earlier drafts'
   `~:434-436`, `~:1117-1119`, `~:1132-1134`, `~:1162-1164`, `~:1165-1168`, `~:1169-1172` and `~:1170-1173`
   had each drifted): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
@@ -643,9 +643,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
      pausing beforehand (owner decision R4-recalc-runs). Wait for running jobs to finish before continuing.
   2. **The read-only pre-deploy DB audit** (detail 2 below) and **PP-065's count of rule-A (same-issue
      monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", the "This window follows PP-064
-     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:2140-2144 (the rule-A sentence is the
-     "pause writers → the pre-deploy DB audit and PP-065's own count of rule-A ..." line, ~:2143) —
-     re-measured 2026-09-29 (plan-sync round 12h), done here, at the audit step,
+     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:2143-2148 (the rule-A sentence is the
+     "pause writers → the pre-deploy DB audit and PP-065's own count of rule-A ..." line, ~:2146) —
+     re-measured 2026-09-29 (plan-sync round 12i), done here, at the audit step,
      not "before the recalc": that heading no longer exists in PP-065 P2).
   3. **Export** (detail 1 below: `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
      rows, kept out of the repo) — this is the SAME export PP-065 P2 refers to; state it once here.
