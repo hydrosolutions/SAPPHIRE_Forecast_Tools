@@ -161,8 +161,8 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
   (`:66-80`) pulls `mabesa/sapphire-dashboard:$ieasyhydroforecast_frontend_docker_image_tag` and re-creates
   the dashboard containers (`doc/prod/update_deployment_checklist.md:835-842`). **Three conditions this
   chain actually depends on (round 12, verified in code — none of them break the mechanism, but each is a
-  place it can fail to fire for a given org, so step 0 must confirm all three, not just the image dates):**
-  1. **An unset tag defaults to `local`, not `latest`.** `read_configuration`
+  place it can fail to fire for a given org, so step 0 must confirm all three):**
+  1. **The tag value, as the org's `.env` resolves it.** `read_configuration`
      (`bin/utils/common_functions.sh:103-109`) sets an unset `ieasyhydroforecast_backend_docker_image_tag`
      / `..._frontend_docker_image_tag` to `"local"` (with a WARNING) before exporting it, and
      `bin/docker-compose-luigi.yml`'s `pipeline-base` service passes that shell value straight into the
@@ -173,13 +173,20 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
      runs (and always sets *some* value) before `docker compose run` (e.g.
      `bin/run_pentadal_forecasts.sh:14` then `:91`). An org whose env file never sets these two variables
      auto-pulls nothing from trunk — it keeps running whatever `local` image already exists.
-  2. **The frontend pull is gated, not unconditional.** `bin/daily_update_sapphire_frontend.sh:55` runs
+  2. **Whether `validate_dashboard_origins` passes.** `bin/daily_update_sapphire_frontend.sh:55` runs
      `validate_dashboard_origins || exit 1` before the `docker pull` at `:66-68`; a malformed
      `ieasyhydroforecast_url_pentad` / `_decad` value aborts the script before the pull, so that day's
      dashboard auto-update does not happen.
-  3. **The repo's own template env file sets both tags to `latest`** (`apps/config/.env:136-137`) — a
-     demo/template file, not a per-org server `.env`, so it shows intent, not what an org's actual deployed
-     `.env` contains; each org's real value is still unverified until step 0 reads it.
+  3. **The image creation dates.** `docker image inspect
+     mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format
+     '{{.Created}}'` (same for `sapphire-dashboard` with `ieasyhydroforecast_frontend_docker_image_tag` —
+     use the org's *configured* tag, not a hardcoded `:latest`) is the direct evidence that conditions 1
+     and 2 actually resulted in a fresh image on this server, not just that neither condition is currently
+     blocking it.
+
+  **Note:** the repo's own template env file sets both tags to `latest` (`apps/config/.env:136-137`) — a
+  demo/template file, not a per-org server `.env`, so it shows intent, not what an org's actual deployed
+  `.env` contains; each org's real value is still unverified until step 0 reads it.
 
   **Consequence: #527 (PP-064 A), #528 (FD-029 P1) and #530 (PP-065 P1a) are all presumed LIVE on the
   servers since 2026-09-27/28** — this covers FD-029 P1 too, via the daily frontend pull, not only PP-064
@@ -356,8 +363,8 @@ Resolved since rev 2:
       auditing/exporting only one org before merging would leave the other org's writers unprotected**; see
       PP-064 Chunk C's own "Both orgs, one window" note for why and for the window-placement example, not
       restated here. **Step 11 (the first operational run) runs promptly after step 10 resumes the
-      writers, so it is after the window closes, not inside it** — see PP-064 Chunk C's own "Window
-      placement" note (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout
+      writers, so it is after the window closes, not inside it** — see PP-064 Chunk C's own "Both orgs,
+      one window" note (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout
       and verification"). This window follows PP-064
       Chunk C's canonical **"Order"** sequence (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md`
       § "Chunk C — rollout and verification"); it is stated once there and referenced here, not restated:
@@ -472,7 +479,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
   "phases": {
     "DOC-009.P1a":     { "stage": "merge",  "depends_on": [] },
     "DOC-009.P1b":     { "stage": "merge",  "depends_on": ["D4"] },
-    "DOC-009.P2a-10":  { "stage": "merge",  "depends_on": [], "note": "row 10 (the long_forecasts join-key contract: horizon_value = lead, not the quarter number) describes trunk behaviour already true today -- horizon_value = quarter_horizon_value() is set unconditionally in api_writer.py's quarter-write loop, but that assignment predates PP-064 Chunk A: it was introduced by the earlier P-PIPE commit 18580271 ('P-PIPE PP4: config-lead ensemble writers + four independent seasonal products', 2026-06-23), not by #527. Under flag ON the writer actually prefers the row's own per-lead horizon_value over that unconditional assignment (api_writer.py:1173-1176) -- flag ON's horizon_value is therefore also already the lead, just sourced from the row. Either way this is not post-P1b behaviour, so it is a standalone trunk merge, independent of the integration branch and of PP-065.P1d. Route corrected 2026-09-29 (plan-sync round 12); split out of the former single DOC-009.P2a node, which incorrectly gated it on PP-065.P1d" },
+    "DOC-009.P2a-10":  { "stage": "merge",  "depends_on": [], "note": "row 10 (the long_forecasts join-key contract: horizon_value = lead, not the quarter number) describes trunk behaviour already true today -- horizon_value is already the lead on trunk in both branches of api_writer.py's quarter-write loop (:1173-1176): the flag-OFF branch (and flag ON with no row value) assigns quarter_horizon_value() (the config lead), introduced by the earlier P-PIPE commit 18580271 ('P-PIPE PP4: config-lead ensemble writers + four independent seasonal products', 2026-06-23); flag ON with a non-null row value instead uses the row's own per-lead horizon_value, introduced by commit 16712227 ('M1 P1b: quarter lead carry-through (flag-gated)', 2026-07-10). Both commits predate #527 (2026-09-27), so this is not post-P1b behaviour, so it is a standalone trunk merge, independent of the integration branch and of PP-065.P1d. Route corrected 2026-09-29 (plan-sync round 12); split out of the former single DOC-009.P2a node, which incorrectly gated it on PP-065.P1d" },
     "DOC-009.P2a-12":  { "stage": "merge",  "depends_on": ["PP-065.P1d"], "note": "row 12 describes post-P1b behaviour, so P2a-12 merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), alongside PP-065 P1b-P1d, and reaches trunk only with deploy.pp -- not a standalone trunk merge. The PP-065 P1a 3-of-3 observation content it documents is on trunk since #530 AND presumed already LIVE on servers via auto-pull (owner decision R4-merge-is-deploy, verify per org)" },
     "DOC-009.P2b":     { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm"], "note": "row 11 (LT readme schedule); deferred with P0" },
     "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
@@ -487,7 +494,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "LTF-017":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A":        { "stage": "merge",  "depends_on": [], "status": "MERGED #527", "parallel_agents": 1 },
     "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A"], "deadline": "2026-12-25", "status": "presumed live via auto-pull since 2026-09-27/28 (owner decision R4-merge-is-deploy); verify per org (PP-064.C.step0)", "note": "not gated on the integration-branch merge (deploy.pp): its own deploy already happened via auto-pull, independent of PP-065/FD-029" },
-    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). This is decision R4-merge-is-deploy's per-org verification, and must record all three conditions that decision depends on (R4-merge-is-deploy above, ~:164-182), not only image dates: (1) the tag value, read from the org's .env (or via read_configuration, bin/utils/common_functions.sh:102-112, which resolves an unset tag to 'local' with a WARNING, never to 'latest'); (2) whether validate_dashboard_origins passes for this org (bin/daily_update_sapphire_frontend.sh:55) -- e.g. the last daily_update_sapphire_frontend log shows the pull actually ran, not an early exit 1; and (3) the postprocessing/dashboard image creation dates (docker image inspect mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format '{{.Created}}', same for sapphire-dashboard with ieasyhydroforecast_frontend_docker_image_tag -- use the org's configured tag, not a hardcoded :latest), to confirm Chunk A and FD-029 are actually live. The automatic bimonthly QUARTERLY recalc is allowed to run and is NOT paused (owner decision R4-recalc-runs, 2026-09-28)." },
+    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). This is decision R4-merge-is-deploy's per-org verification, and must record all three conditions that decision depends on (R4-merge-is-deploy above, ~:164-185), not only image dates: (1) the tag value, read from the org's .env (or via read_configuration, bin/utils/common_functions.sh:102-112, which resolves an unset tag to 'local' with a WARNING, never to 'latest'); (2) whether validate_dashboard_origins passes for this org (bin/daily_update_sapphire_frontend.sh:55) -- e.g. the last daily_update_sapphire_frontend log shows the pull actually ran, not an early exit 1; and (3) the postprocessing/dashboard image creation dates (docker image inspect mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format '{{.Created}}', same for sapphire-dashboard with ieasyhydroforecast_frontend_docker_image_tag -- use the org's configured tag, not a hardcoded :latest), to confirm Chunk A and FD-029 are actually live. The automatic bimonthly QUARTERLY recalc is allowed to run and is NOT paused (owner decision R4-recalc-runs, 2026-09-28)." },
     "FD-029":          { "stage": "merge",  "depends_on": [], "status": "MERGED #528 (P1)", "parallel_agents": 1 },
     "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029"], "deadline": "2026-12-25", "status": "presumed live via auto-pull since 2026-09-27/28 (owner decision R4-merge-is-deploy: the dashboard's own daily frontend cron pull, independent of Luigi); verify per org (PP-064.C.step0)", "note": "not gated on the integration-branch merge (deploy.pp): its own deploy already happened, independent of PP-065 P1b-P1d" },
     "PP-065.P1a":      { "stage": "merge",  "depends_on": ["PP-064.A"], "status": "MERGED #530", "parallel_agents": 1 },

@@ -612,7 +612,8 @@ Chunk B no longer edits `data_reader.py` or any other file.
   not test these modules (INFRA-059: `.github/workflows/build_test.yml`'s `test_postprocessing` job,
   `:452-472`, only `uv sync`s and verifies imports, no pytest), so this local run is the only test gate
   before the merge below — and step 4's guard checks trunk `HEAD` against the commit hash recorded here.
-- **One writer-paused window** (ops instruction, no code). This is the **canonical in-window sequence** —
+- **One writer-paused window** (ops instruction, no code). This is the **canonical rollout sequence: steps
+  1-10 inside the writer-paused window, step 11 after it** —
   PP-065 § "P2 — rollout" and the overview's rollout step 3.4 reference this list rather than restating it:
   **Both orgs, one window.** Step 4 below (the `integ_quarter_p1b_p2` → trunk merge, `deploy.pp`) deploys
   P1b to **every** org whose image tag is `latest` at once (R4-merge-is-deploy) — there is no per-org merge
@@ -769,7 +770,8 @@ Chunk B no longer edits `data_reader.py` or any other file.
       runs — its absence is informational, not a failure (see below).
 
       **Step 11 outcomes, per org (round 12c: replaces the earlier three-outcome "criterion 2 not
-      applicable" framing with a simpler rule — see check (iii)'s removal in detail 5 below for why).**
+      applicable" framing with a simpler rule: the recalc and step 11 use different readers and trims, so
+      a per-key applicability test cannot be made exact; the operator investigates instead).**
       - **PASS** = criterion 1 (below) and criterion 2 (below) both hold.
       - **PASS (pre-satisfied)** = the existing late-quarter branch below: the derived-composition Naive
         Mean already exists after step 9 → criterion 1 alone. Keep its own text and documented limitation.
@@ -777,7 +779,7 @@ Chunk B no longer edits `data_reader.py` or any other file.
         operator determines and records either a defect, or the reason no key could form a
         derived-composition Naive Mean (e.g. no target-quarter key with two or more contributors, one of
         them derived; Naive Mean needs two or more distinct raw `model_short` values,
-        `ensemble_calculator.py` ~:887-915). The window is closed only after the investigation is
+        `ensemble_calculator.py` ~:887-915). The rollout is complete only after the investigation is
         recorded.
       - **FAIL** = criterion 1 fails.
 
@@ -876,9 +878,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
       ~:2807-2832) rather than checking this run's own output, and added a second query without changing
       the pass/fail outcome. **Not the same as** criterion 2's step-9 recording above, which is a single
       aggregate boolean (recorded once at step 9, before step 11 runs) that determines whether the
-      recovery goal is already met — it changes which outcome applies (PASS pre-satisfied, criterion 1
-      alone; PASS, both criteria 1 and 2; or INVESTIGATE, criterion 1 alone with criterion 2 unmet — three
-      outcomes, not two) precisely in the case the dropped cross-check never distinguished (a pre-existing
+      recovery goal is already met — the step-9 record only decides whether the pre-satisfied branch
+      applies; PASS / INVESTIGATE / FAIL are decided by step 11's own criteria (four outcomes in total,
+      listed above) precisely in the case the dropped cross-check never distinguished (a pre-existing
       row from step 8 vs. a fresh one from step 11), so it stays.
 
       **Supporting context, not a separate check:**
@@ -958,7 +960,7 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    OFF, PP-065 then skips the derivation and the native-row filter with one WARNING; under flag ON the
    quarter readers raise, as on trunk (`long_term_horizon_resolver.py:84-111` notes taj-style configs that
    omit it). **R4-merge-is-deploy's per-org verification (2026-09-28):** record all three conditions that
-   decision depends on (overview § R4-merge-is-deploy, ~:164-182), not only the image dates: (1) **the
+   decision depends on (overview § R4-merge-is-deploy, ~:164-185), not only the image dates: (1) **the
    tag value** — read the org's actual configured tag from its `.env` file (or via `read_configuration`,
    `bin/utils/common_functions.sh:102-112`, which resolves an unset tag to `local` with a WARNING, never
    to `latest`); an org whose `.env` never sets these variables auto-pulls nothing from trunk and this

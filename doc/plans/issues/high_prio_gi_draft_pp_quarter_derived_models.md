@@ -2060,8 +2060,11 @@ quarter but is not guaranteed never: a quarter's last month counts as observed a
 (`src/data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g. kghm
 Dec 17–24) can make the current quarter "observed" before this recalc runs (see PP-064 Chunk C canonical
 step 11's PASS criterion 2 loophole note for the resulting read-back caveat). Only the quarterly block of
-`postprocessing_operational_long_term.py` (~:207-232) writes them unconditionally, from existing skill plus
-the latest derived forecasts, with no observation requirement. Until that operational run executes, the narrower
+`postprocessing_operational_long_term.py` (~:207-232) writes them wherever a target-quarter key can form
+them (non-empty quarter skill, `postprocessing_operational_long_term.py:210`; two or more non-null
+contributors, `ensemble_calculator.py` ~:915) — see PP-064 step 11's INVESTIGATE outcome for when no key
+can form them — from existing skill plus the latest derived forecasts, with no observation requirement.
+Until that operational run executes, the narrower
 blank-card population the overview's "User-visible consequence" paragraph now defines (a key where at
 most one of `LR_Base`/`LR_SM` has a non-null target-quarter forecast, so neither EM nor Naive Mean forms,
 and its one surviving row, if any, is non-native — **not** simply "a fresh EM row plus a non-native LR

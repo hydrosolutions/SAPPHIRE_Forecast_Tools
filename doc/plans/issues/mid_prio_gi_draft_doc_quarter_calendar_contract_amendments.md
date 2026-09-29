@@ -131,20 +131,19 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 **Route (corrected 2026-09-29, plan-sync round 12; supersedes the original 2026-09-28 route below for row
 10 only).** Row 10 documents the `long_forecasts` join-key contract — `horizon_value` is the lead, not the
 quarter number, and the actuals/climatology joins key on the calendar quarter, not on `horizon_value`. This
-is **not post-P1b behaviour**: `horizon_value = quarter_horizon_value()` (the lead) is set unconditionally
-in `api_writer.py`'s quarter-write loop. **Corrected 2026-09-29 (plan-sync round 12): the citation was
-wrong.** This assignment predates PP-064 Chunk A — it was introduced by the earlier P-PIPE commit
-`18580271` ("P-PIPE PP4: config-lead ensemble writers + four independent seasonal products",
-2026-06-23), verified with `git log -S'horizon_value = quarter_horizon_value()' --oneline` against
-`api_writer.py`, not by `#527` (2026-09-27). Under flag ON the writer actually prefers the row's own
-per-lead `horizon_value` over this unconditional assignment
-(`api_writer.py:1173-1176`: `if skill_lead_aware_enabled() and pd.notna(row.get("horizon_value")):
-horizon_value = int(row["horizon_value"]) else: horizon_value = quarter_horizon_value()`) — flag ON's
-`horizon_value` is therefore also already the lead, just sourced from the row rather than from the
-unconditional call. Either way, the calendar-quarter windows row 10's actuals join describes are PP-064
-A's own calendar-window guard (`#527`), not anything PP-065 P1b–P1d adds — **the conclusion is unchanged: the
-behaviour row 10 describes is already true on trunk**, just via an older commit than previously cited (plus
-the flag-ON row-level override above). This row merges **directly into `maxat_sapphire_2`**, as soon as it
+is **not post-P1b behaviour**: `horizon_value` is already the lead on trunk in both branches of
+`api_writer.py`'s quarter-write loop (`:1173-1176`: `if skill_lead_aware_enabled() and
+pd.notna(row.get("horizon_value")): horizon_value = int(row["horizon_value"]) else: horizon_value =
+quarter_horizon_value()`) — the flag-OFF branch (and flag ON with no row value) assigns
+`quarter_horizon_value()` (the config lead), introduced by the earlier P-PIPE commit `18580271`
+("P-PIPE PP4: config-lead ensemble writers + four independent seasonal products", 2026-06-23, verified
+with `git log -S'horizon_value = quarter_horizon_value()' --oneline` against `api_writer.py`); flag ON
+with a non-null row value instead uses the row's own per-lead `horizon_value`, introduced by commit
+`16712227` ("M1 P1b: quarter lead carry-through (flag-gated)", 2026-07-10). Both commits predate `#527`
+(2026-09-27), so row 10 already describes trunk behaviour either way. The calendar-quarter windows row 10's
+actuals join describes are PP-064 A's own calendar-window guard (`#527`), not anything PP-065 P1b–P1d
+adds — **the conclusion is unchanged: the behaviour row 10 describes is already true on trunk**, just via
+older commits than previously cited. This row merges **directly into `maxat_sapphire_2`**, as soon as it
 is reviewed, independent of the integration branch and of the PP-065 deploy — it does not wait for PP-065
 P1d. See the overview's `DOC-009.P2a-10` graph node for the matching dependency-graph statement.
 
