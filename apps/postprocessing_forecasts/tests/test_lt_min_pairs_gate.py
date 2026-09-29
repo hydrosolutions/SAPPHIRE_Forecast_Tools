@@ -12,8 +12,9 @@ Locked invariants:
 - Short-term gate/skill calls receive no min_pairs (behaviour unchanged).
 - NM membership stays ungated (all models enter the pool regardless of n_pairs);
   NM *output* rows < K are dropped by the shared output floor.
-- Quarter/season EM membership is fixed-LR (AGGREGATED_EM_RAW_MODELS) and is
-  NOT skill-gated; only the output floor applies.
+- Season EM membership is fixed-LR (AGGREGATED_EM_RAW_MODELS) and is NOT
+  skill-gated; only the output floor applies. Quarter never forms EM at all
+  (PP-065 P1c decision 3), regardless of membership or n_pairs.
 - Env var parsing: default (unset) → 4/5; override is honoured; invalid → error.
 
 Placeholder station code: ``19999`` throughout (never a real code).
@@ -39,9 +40,13 @@ from src.skill_metrics import (
 STATION = "19999"
 QUANTILE_COLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
 
-# K values at defaults (MONTH=4, QUARTER=5, SEASON=5)
+# K values at defaults (MONTH=4, QUARTER=10, SEASON=5)
 K_MONTH = 4
-K_QS = 5
+K_QUARTER = 10
+K_SEASON = 5
+# Backward-compat alias for the (few) call sites shared identically by
+# quarter and season fixtures that don't care which K they're using.
+K_QS = K_SEASON
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +160,10 @@ class TestLongTermMinPairsHelper:
         monkeypatch.delenv("ieasyhydroforecast_min_pairs_long_term", raising=False)
         assert _long_term_min_pairs("MONTH") == 4
 
-    def test_default_quarter_is_5(self, monkeypatch):
-        """Unset env → QUARTER K=5."""
+    def test_default_quarter_is_10(self, monkeypatch):
+        """Unset env → QUARTER K=10 (PP-065 P1c decision 4)."""
         monkeypatch.delenv("ieasyhydroforecast_min_pairs_long_term_quarter", raising=False)
-        assert _long_term_min_pairs("QUARTER") == 5
+        assert _long_term_min_pairs("QUARTER") == 10
 
     def test_default_season_is_5(self, monkeypatch):
         """Unset env → SEASON K=5."""
@@ -524,8 +529,8 @@ class TestAggregatedOutputFloor:
     """Quarterly and seasonal output rows with n_pairs < K=5 must not be emitted."""
 
     def test_quarterly_k_minus_1_produces_no_rows(self):
-        """K-1=4 years → all quarterly rows have n_pairs=4 < K=5 → dropped."""
-        n = K_QS - 1
+        """K-1=9 years → all quarterly rows have n_pairs=9 < K=10 → dropped."""
+        n = K_QUARTER - 1
         obs_rows = [(STATION, 2010 + i, 1, 100.0 + i * 2) for i in range(n)]
         fcst_rows = [(STATION, 2010 + i, 1, "LR_Base", 102.0 + i) for i in range(n)] + [
             (STATION, 2010 + i, 1, "LR_SM", 98.0 + i) for i in range(n)
@@ -533,15 +538,15 @@ class TestAggregatedOutputFloor:
         obs = _make_quarterly_obs(obs_rows)
         fcst = _make_quarterly_fcst(fcst_rows)
         skill_out, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
-        bad = skill_out[skill_out["n_pairs"].fillna(0) < K_QS]
+        bad = skill_out[skill_out["n_pairs"].fillna(0) < K_QUARTER]
         assert bad.empty, (
-            f"Quarterly rows with n_pairs < {K_QS} survived: "
+            f"Quarterly rows with n_pairs < {K_QUARTER} survived: "
             f"{bad[['model_short', 'n_pairs']].to_dict('records')}"
         )
 
     def test_quarterly_k_pairs_produces_rows(self):
-        """K=5 quarters → n_pairs=5 >= K → rows are retained."""
-        n = K_QS
+        """K=10 quarters → n_pairs=10 >= K → rows are retained."""
+        n = K_QUARTER
         obs_rows = [(STATION, 2010 + i, 1, 100.0 + i * 2) for i in range(n)]
         fcst_rows = [(STATION, 2010 + i, 1, "LR_Base", 102.0 + i) for i in range(n)] + [
             (STATION, 2010 + i, 1, "LR_SM", 98.0 + i) for i in range(n)
@@ -550,8 +555,8 @@ class TestAggregatedOutputFloor:
         fcst = _make_quarterly_fcst(fcst_rows)
         skill_out, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
         raw_rows = skill_out[skill_out["model_short"] == "LR_Base"]
-        assert not raw_rows.empty, f"LR_Base rows must be present at n_pairs=K={K_QS}"
-        assert (raw_rows["n_pairs"] >= K_QS).all()
+        assert not raw_rows.empty, f"LR_Base rows must be present at n_pairs=K={K_QUARTER}"
+        assert (raw_rows["n_pairs"] >= K_QUARTER).all()
 
     def test_seasonal_k_minus_1_produces_no_rows(self):
         """K-1=4 seasonal years → n_pairs=4 < K=5 → dropped."""
@@ -590,21 +595,22 @@ class TestAggregatedOutputFloor:
 
 
 class TestAggregatedEMFixedMembership:
-    """Quarter/season EM derives from AGGREGATED_EM_RAW_MODELS, not a skill gate.
+    """Season EM derives from AGGREGATED_EM_RAW_MODELS, not a skill gate.
 
-    The output floor still applies to the EM row, but membership is NOT gated
-    by skill thresholds or n_pairs.
+    The output floor still applies to the season EM row, but membership is
+    NOT gated by skill thresholds or n_pairs. Quarter never forms EM at all
+    (PP-065 P1c decision 3), regardless of n_pairs or membership — the two
+    tests below (both quarter) lock that removal; season is covered
+    elsewhere in this module and in test_quarterly_ensemble_creation.py's
+    TestSeasonalEnsembleEM.
     """
 
-    def test_quarterly_em_present_when_two_lr_models_available(self):
-        """EM is built from LR_Base + LR_SM regardless of their skill/n_pairs,
-        as long as the resulting n_pairs >= K (output floor)."""
-        n = K_QS  # enough pairs to survive the output floor
+    def test_quarterly_em_absent_even_with_two_qualifying_lr_models(self):
+        """Quarter never forms EM, even when both fixed-LR models would
+        otherwise qualify by AGGREGATED_EM_RAW_MODELS membership and have
+        n_pairs >= K (output floor)."""
+        n = K_QUARTER  # enough pairs to survive the output floor
         obs_rows = [(STATION, 2010 + i, 2, 100.0 + i * 2) for i in range(n)]
-        # Use very poor NSE values that would fail the skill gate — but EM must
-        # still be formed from the two LR models (membership is fixed-LR).
-        # We set forecast values close to obs so the EM itself has decent NSE,
-        # even if hypothetically we were gating on it (which we are not for EM).
         fcst_rows = [(STATION, 2010 + i, 2, "LR_Base", 102.0 + i) for i in range(n)] + [
             (STATION, 2010 + i, 2, "LR_SM", 98.0 + i) for i in range(n)
         ]
@@ -612,11 +618,11 @@ class TestAggregatedEMFixedMembership:
         fcst = _make_quarterly_fcst(fcst_rows)
         skill_out, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
         em_rows = skill_out[skill_out["model_short"] == "EM"]
-        assert not em_rows.empty, "Quarter EM must be present when both LR models have n_pairs >= K"
+        assert em_rows.empty, "Quarter must never form EM (PP-065 P1c decision 3)"
 
-    def test_quarterly_em_output_floor_still_applies(self):
-        """EM output row with n_pairs < K is dropped by the output floor."""
-        n = K_QS - 1  # not enough pairs
+    def test_quarterly_em_absent_below_output_floor_too(self):
+        """Quarter EM stays absent below the output floor as well (n_pairs=K-1)."""
+        n = K_QUARTER - 1  # not enough pairs
         obs_rows = [(STATION, 2010 + i, 2, 100.0 + i * 2) for i in range(n)]
         fcst_rows = [(STATION, 2010 + i, 2, "LR_Base", 102.0 + i) for i in range(n)] + [
             (STATION, 2010 + i, 2, "LR_SM", 98.0 + i) for i in range(n)
@@ -625,7 +631,7 @@ class TestAggregatedEMFixedMembership:
         fcst = _make_quarterly_fcst(fcst_rows)
         skill_out, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
         em_rows = skill_out[skill_out["model_short"] == "EM"]
-        assert em_rows.empty, "EM output row with n_pairs=K-1 must be dropped by the output floor"
+        assert em_rows.empty, "Quarter EM must remain absent regardless of n_pairs"
 
 
 # ---------------------------------------------------------------------------

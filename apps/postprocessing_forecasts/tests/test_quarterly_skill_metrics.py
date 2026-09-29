@@ -141,32 +141,24 @@ def _make_seasonal_fcst_dated(rows):
 class TestQuarterlyMetricsBasic:
     @pytest.fixture
     def basic_data(self):
+        # 10 years per quarter (== K_QUARTER=10) so raw-model skill rows
+        # survive the output floor (PP-065 P1c decision 4).
         obs = _make_quarterly_obs(
-            [
-                ("S1", 2020, 1, 100.0),
-                ("S1", 2021, 1, 110.0),
-                ("S1", 2022, 1, 100.0),
-                ("S1", 2023, 1, 110.0),
-                ("S1", 2024, 1, 100.0),
-                ("S1", 2020, 2, 80.0),
-                ("S1", 2021, 2, 85.0),
-                ("S1", 2022, 2, 80.0),
-                ("S1", 2023, 2, 85.0),
-                ("S1", 2024, 2, 80.0),
-            ]
+            [("S1", 2020 + i, 1, 100.0 if i % 2 == 0 else 110.0) for i in range(10)]
+            + [("S1", 2020 + i, 2, 80.0 if i % 2 == 0 else 85.0) for i in range(10)]
         )
         fcst = _make_quarterly_fcst(
             [
-                ("S1", 2020, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
-                ("S1", 2021, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
-                ("S1", 2022, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
-                ("S1", 2023, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
-                ("S1", 2024, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
-                ("S1", 2020, 2, "M1", 65, 68, 75, 82, 89, 94, 98),
-                ("S1", 2021, 2, "M1", 67, 70, 76, 83, 90, 95, 100),
-                ("S1", 2022, 2, "M1", 65, 68, 75, 82, 89, 94, 98),
-                ("S1", 2023, 2, "M1", 67, 70, 76, 83, 90, 95, 100),
-                ("S1", 2024, 2, "M1", 65, 68, 75, 82, 89, 94, 98),
+                ("S1", 2020 + i, 1, "M1", 80, 85, 92, 102, 112, 118, 125)
+                if i % 2 == 0
+                else ("S1", 2020 + i, 1, "M1", 88, 93, 100, 108, 116, 123, 130)
+                for i in range(10)
+            ]
+            + [
+                ("S1", 2020 + i, 2, "M1", 65, 68, 75, 82, 89, 94, 98)
+                if i % 2 == 0
+                else ("S1", 2020 + i, 2, "M1", 67, 70, 76, 83, 90, 95, 100)
+                for i in range(10)
             ]
         )
         return obs, fcst
@@ -201,7 +193,7 @@ class TestQuarterlyMetricsBasic:
         obs, fcst = basic_data
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
         model_rows = skill_stats[skill_stats["model_short"] == "M1"]
-        assert all(model_rows["n_pairs"] == 5)
+        assert all(model_rows["n_pairs"] == 10)
 
     def test_crps_computed(self, basic_data):
         obs, fcst = basic_data
@@ -213,29 +205,28 @@ class TestQuarterlyMetricsBasic:
 class TestQuarterlyMetricsEnsembles:
     @pytest.fixture
     def multi_model_data(self):
-        obs = _make_quarterly_obs(
-            [
-                ("S1", 2020, 1, 100.0),
-                ("S1", 2021, 1, 110.0),
-                ("S1", 2022, 1, 105.0),
-                ("S1", 2023, 1, 110.0),
-                ("S1", 2024, 1, 100.0),
-            ]
-        )
-        # Two models with good accuracy (close to observed)
+        # 10 years (== K_QUARTER=10) so the Naive Mean skill row survives
+        # the output floor (PP-065 P1c decision 4); cycles the original
+        # 5-year obs/M1/M2 pattern twice.
+        obs_pattern = [100.0, 110.0, 105.0, 110.0, 100.0]
+        m1_pattern = [
+            (80, 85, 92, 102, 112, 118, 125),
+            (88, 93, 100, 108, 116, 123, 130),
+            (85, 90, 97, 107, 115, 120, 127),
+            (88, 93, 100, 108, 116, 123, 130),
+            (80, 85, 92, 102, 112, 118, 125),
+        ]
+        m2_pattern = [
+            (82, 87, 94, 101, 111, 117, 124),
+            (90, 95, 102, 109, 117, 124, 131),
+            (87, 92, 99, 106, 114, 119, 126),
+            (90, 95, 102, 109, 117, 124, 131),
+            (82, 87, 94, 101, 111, 117, 124),
+        ]
+        obs = _make_quarterly_obs([("S1", 2020 + i, 1, obs_pattern[i % 5]) for i in range(10)])
         fcst = _make_quarterly_fcst(
-            [
-                ("S1", 2020, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
-                ("S1", 2021, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
-                ("S1", 2022, 1, "M1", 85, 90, 97, 107, 115, 120, 127),
-                ("S1", 2023, 1, "M1", 88, 93, 100, 108, 116, 123, 130),
-                ("S1", 2024, 1, "M1", 80, 85, 92, 102, 112, 118, 125),
-                ("S1", 2020, 1, "M2", 82, 87, 94, 101, 111, 117, 124),
-                ("S1", 2021, 1, "M2", 90, 95, 102, 109, 117, 124, 131),
-                ("S1", 2022, 1, "M2", 87, 92, 99, 106, 114, 119, 126),
-                ("S1", 2023, 1, "M2", 90, 95, 102, 109, 117, 124, 131),
-                ("S1", 2024, 1, "M2", 82, 87, 94, 101, 111, 117, 124),
-            ]
+            [("S1", 2020 + i, 1, "M1", *m1_pattern[i % 5]) for i in range(10)]
+            + [("S1", 2020 + i, 1, "M2", *m2_pattern[i % 5]) for i in range(10)]
         )
         return obs, fcst
 
@@ -262,7 +253,10 @@ class TestQuarterlyMetricsEnsembles:
             models = joint["model_short"].unique()
             assert "Naive Mean" in models
 
-    def test_em_recalc_uses_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
+    def test_em_recalc_never_forms_when_lr_skills_fail_thresholds(self, monkeypatch):
+        """Fixed-LR EM membership bypasses the skill gate for LR_Base/LR_SM
+        on trunk, but quarter must never form EM regardless (PP-065 P1c
+        decision 3)."""
         for key, value in {
             "ieasyhydroforecast_efficiency_threshold": "0.6",
             "ieasyhydroforecast_nse_threshold": "0.8",
@@ -297,26 +291,14 @@ class TestQuarterlyMetricsEnsembles:
         skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
         raw_skill = skill_stats[skill_stats["model_short"].isin({"LR_Base", "LR_SM"})]
         filtered_raw = filter_for_highly_skilled_forecasts(raw_skill)
-        em_joint = joint[joint["model_short"] == "EM"].sort_values("year")
+        em_joint = joint[joint["model_short"] == "EM"]
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
         assert filtered_raw.empty
-        assert len(em_joint) == 5
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
-        assert np.allclose(em_joint["q05"], [80.0] * 5)
-        assert np.allclose(em_joint["q50"], [100.0] * 5)
-        assert np.allclose(em_joint["q95"], [120.0] * 5)
-        assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
-        # EM rows must keep their period key so the write-side NaN guard
-        # (api_writer drops rows with null year/quarter_in_year) persists them.
-        assert "quarter_in_year" in em_joint.columns
-        assert em_joint["quarter_in_year"].notna().all()
-        assert set(em_joint["quarter_in_year"].astype(int)) == {1}
-        assert not em_skill.empty
-        assert int(em_skill.iloc[0]["n_pairs"]) == 5
-        assert pd.notna(em_skill.iloc[0]["crps"])
+        assert em_joint.empty, "Quarter must never form EM (PP-065 P1c decision 3)"
+        assert em_skill.empty
 
-    def test_em_recalc_accepts_db_form_lr_model_names(self, monkeypatch):
+    def test_em_recalc_never_forms_with_db_form_lr_model_names(self, monkeypatch):
         for key, value in {
             "ieasyhydroforecast_efficiency_threshold": "0.6",
             "ieasyhydroforecast_nse_threshold": "0.8",
@@ -349,14 +331,11 @@ class TestQuarterlyMetricsEnsembles:
         )
 
         skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
-        em_joint = joint[joint["model_short"] == "EM"].sort_values("year")
+        em_joint = joint[joint["model_short"] == "EM"]
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
 
-        assert len(em_joint) == 5
-        assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
-        assert np.allclose(em_joint["q50"], [100.0] * 5)
-        assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
-        assert not em_skill.empty
+        assert em_joint.empty
+        assert em_skill.empty
 
     def test_preexisting_baseline_rows_replaced_not_duplicated(self):
         """Stored EM/Naive/Skilled rows in the input are dropped, not doubled.
@@ -676,31 +655,31 @@ class TestQFallbackQuarterly:
     """Quarterly skill metrics when q50 column is absent."""
 
     def test_q50_column_absent_produces_metrics(self):
-        """When q50 is absent and q is present, quarterly metrics compute."""
-        obs = _make_quarterly_obs(
-            [
-                ("S1", 2020, 1, 100.0),
-                ("S1", 2021, 1, 110.0),
-                ("S1", 2022, 1, 100.0),
-                ("S1", 2023, 1, 110.0),
-                ("S1", 2024, 1, 100.0),
-            ]
-        )
+        """When q50 is absent and q is present, quarterly metrics compute.
+
+        Uses 10 years (== K_QUARTER=10) so the row survives the output
+        floor (PP-065 P1c decision 4).
+        """
+        n = 10
+        years = list(range(2020, 2020 + n))
+        vals = [100.0 if i % 2 == 0 else 110.0 for i in range(n)]
+        q_vals = [95.0 if i % 2 == 0 else 105.0 for i in range(n)]
+        obs = _make_quarterly_obs([("S1", years[i], 1, vals[i]) for i in range(n)])
         # No q50 column — only q
         fcst = pd.DataFrame(
             {
-                "code": ["S1"] * 5,
-                "year": [2020, 2021, 2022, 2023, 2024],
-                "quarter_in_year": [1] * 5,
-                "model_short": ["GBT"] * 5,
-                "q": [95.0, 105.0, 95.0, 105.0, 95.0],
-                "forecasted_discharge": [95.0, 105.0, 95.0, 105.0, 95.0],
-                "q05": [np.nan] * 5,
-                "q10": [np.nan] * 5,
-                "q25": [np.nan] * 5,
-                "q75": [np.nan] * 5,
-                "q90": [np.nan] * 5,
-                "q95": [np.nan] * 5,
+                "code": ["S1"] * n,
+                "year": years,
+                "quarter_in_year": [1] * n,
+                "model_short": ["GBT"] * n,
+                "q": q_vals,
+                "forecasted_discharge": q_vals,
+                "q05": [np.nan] * n,
+                "q10": [np.nan] * n,
+                "q25": [np.nan] * n,
+                "q75": [np.nan] * n,
+                "q90": [np.nan] * n,
+                "q95": [np.nan] * n,
             }
         )
         stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
@@ -709,30 +688,30 @@ class TestQFallbackQuarterly:
         assert gbt_stats.iloc[0]["n_pairs"] > 0, "n_pairs should be > 0"
 
     def test_q50_absent_no_forecasted_discharge_resolves_from_q(self):
-        """When q50 and forecasted_discharge are absent, q is used as fallback."""
-        obs = _make_quarterly_obs(
-            [
-                ("S1", 2020, 1, 100.0),
-                ("S1", 2021, 1, 110.0),
-                ("S1", 2022, 1, 100.0),
-                ("S1", 2023, 1, 110.0),
-                ("S1", 2024, 1, 100.0),
-            ]
-        )
+        """When q50 and forecasted_discharge are absent, q is used as fallback.
+
+        Uses 10 years (== K_QUARTER=10) so the row survives the output
+        floor (PP-065 P1c decision 4).
+        """
+        n = 10
+        years = list(range(2020, 2020 + n))
+        vals = [100.0 if i % 2 == 0 else 110.0 for i in range(n)]
+        q_vals = [95.0 if i % 2 == 0 else 105.0 for i in range(n)]
+        obs = _make_quarterly_obs([("S1", years[i], 1, vals[i]) for i in range(n)])
         # No q50, no forecasted_discharge — only q
         fcst = pd.DataFrame(
             {
-                "code": ["S1"] * 5,
-                "year": [2020, 2021, 2022, 2023, 2024],
-                "quarter_in_year": [1] * 5,
-                "model_short": ["GBT"] * 5,
-                "q": [95.0, 105.0, 95.0, 105.0, 95.0],
-                "q05": [np.nan] * 5,
-                "q10": [np.nan] * 5,
-                "q25": [np.nan] * 5,
-                "q75": [np.nan] * 5,
-                "q90": [np.nan] * 5,
-                "q95": [np.nan] * 5,
+                "code": ["S1"] * n,
+                "year": years,
+                "quarter_in_year": [1] * n,
+                "model_short": ["GBT"] * n,
+                "q": q_vals,
+                "q05": [np.nan] * n,
+                "q10": [np.nan] * n,
+                "q25": [np.nan] * n,
+                "q75": [np.nan] * n,
+                "q90": [np.nan] * n,
+                "q95": [np.nan] * n,
             }
         )
         stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)

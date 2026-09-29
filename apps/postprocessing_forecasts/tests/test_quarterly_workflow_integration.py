@@ -107,8 +107,10 @@ class TestQuarterlyRecalcWorkflow:
     """obs + forecasts → aggregate → skill metrics → ensembles."""
 
     def test_full_pipeline(self):
-        monthly_obs = _monthly_obs(n_years=5)
-        monthly_fc = _monthly_fc(n_years=5, models=("LR_Base", "LR_SM"))
+        # 10 years (== K_QUARTER=10) so raw-model and Naive Mean skill rows
+        # survive the output floor (PP-065 P1c decision 4).
+        monthly_obs = _monthly_obs(n_years=10)
+        monthly_fc = _monthly_fc(n_years=10, models=("LR_Base", "LR_SM"))
 
         # Aggregate
         qobs = aggregate_monthly_obs_to_quarterly(monthly_obs)
@@ -138,8 +140,9 @@ class TestQuarterlyRecalcWorkflow:
 
     def test_skill_then_ensemble_creation(self):
         """Skill metrics → create ensembles from pre-calculated stats."""
-        monthly_obs = _monthly_obs(n_years=5)
-        monthly_fc = _monthly_fc(n_years=5, models=("LR_Base", "LR_SM"))
+        # 10 years (== K_QUARTER=10) — see test_full_pipeline above.
+        monthly_obs = _monthly_obs(n_years=10)
+        monthly_fc = _monthly_fc(n_years=10, models=("LR_Base", "LR_SM"))
 
         qobs = aggregate_monthly_obs_to_quarterly(monthly_obs)
         qfc = aggregate_monthly_fc_to_quarterly(monthly_fc)
@@ -298,7 +301,9 @@ class TestQuarterlyOperationalWorkflow:
         assert not result.empty
 
         result_models = set(result["model_short"].unique())
-        assert "EM" in result_models
+        # Quarter never forms EM (PP-065 P1c decision 3) — season's
+        # equivalent below (TestSeasonalOperationalWorkflow) is unaffected.
+        assert "EM" not in result_models
         assert "Naive Mean" in result_models
 
 

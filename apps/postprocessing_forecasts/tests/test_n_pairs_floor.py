@@ -2,7 +2,8 @@
 
 The minimum-n floor is now configurable (P2 — Defect B):
 - MONTH: K = 4  (env var ``ieasyhydroforecast_min_pairs_long_term``, default 4)
-- QUARTER: K = 5  (env var ``ieasyhydroforecast_min_pairs_long_term_quarter``)
+- QUARTER: K = 10  (env var ``ieasyhydroforecast_min_pairs_long_term_quarter``,
+  PP-065 P1c decision 4)
 - SEASON: K = 5  (env var ``ieasyhydroforecast_min_pairs_long_term_season``)
 
 All skill rows with n_pairs < K must be silently dropped before the frame
@@ -14,7 +15,7 @@ gates and output rows.
 
 Applies to:
 - calculate_monthly_skill_metrics (monthly path, K=4)
-- calculate_quarterly_skill_metrics (aggregated path, period_col=quarter_in_year, K=5)
+- calculate_quarterly_skill_metrics (aggregated path, period_col=quarter_in_year, K=10)
 - calculate_seasonal_skill_metrics (aggregated path, period_col=season_in_year, K=5)
 
 The filter must cover ALL rows returned — raw model rows AND aggregated
@@ -46,7 +47,10 @@ QUANTILE_COLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
 
 # K values at defaults
 K_MONTH = 4
-K_QS = 5
+K_QUARTER = 10
+K_SEASON = 5
+# Backward-compat alias for season call sites in this file.
+K_QS = K_SEASON
 
 
 def _q_row(*q_values):
@@ -251,7 +255,7 @@ class TestMonthlyNPairsFloor:
 
 
 class TestQuarterlyNPairsFloor:
-    """calculate_quarterly_skill_metrics drops rows with n_pairs < K=5."""
+    """calculate_quarterly_skill_metrics drops rows with n_pairs < K=10."""
 
     def test_single_pair_quarterly_group_is_dropped(self):
         """Quarter group with 1 obs-forecast pair produces no skill row."""
@@ -268,10 +272,10 @@ class TestQuarterlyNPairsFloor:
         )
 
     def test_k_pair_quarterly_group_is_retained(self):
-        """Quarter group with n_pairs=K=5 is kept."""
-        obs = _make_quarterly_obs([(STATION, 2020 + i, 1, 100.0 + i * 5) for i in range(K_QS)])
+        """Quarter group with n_pairs=K=10 is kept."""
+        obs = _make_quarterly_obs([(STATION, 2020 + i, 1, 100.0 + i * 5) for i in range(K_QUARTER)])
         fcst = _make_quarterly_fcst(
-            [(STATION, 2020 + i, 1, MODEL, 102.0 + i * 5) for i in range(K_QS)]
+            [(STATION, 2020 + i, 1, MODEL, 102.0 + i * 5) for i in range(K_QUARTER)]
         )
 
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
@@ -279,16 +283,18 @@ class TestQuarterlyNPairsFloor:
         model_rows = skill_stats[
             (skill_stats["code"] == STATION) & (skill_stats["model_short"] == MODEL)
         ]
-        assert len(model_rows) == 1, f"Expected 1 row for n_pairs=K={K_QS}, got {len(model_rows)}"
-        assert model_rows.iloc[0]["n_pairs"] == K_QS
+        assert len(model_rows) == 1, (
+            f"Expected 1 row for n_pairs=K={K_QUARTER}, got {len(model_rows)}"
+        )
+        assert model_rows.iloc[0]["n_pairs"] == K_QUARTER
 
     def test_mixed_quarters_drops_km1_pair_keeps_k_pair(self):
         """Q1 with n_pairs=K-1 dropped, Q2 with n_pairs=K retained."""
-        obs_rows = [(STATION, 2020 + i, 1, 100.0 + i) for i in range(K_QS - 1)] + [
-            (STATION, 2020 + i, 2, 80.0 + i) for i in range(K_QS)
+        obs_rows = [(STATION, 2020 + i, 1, 100.0 + i) for i in range(K_QUARTER - 1)] + [
+            (STATION, 2020 + i, 2, 80.0 + i) for i in range(K_QUARTER)
         ]
-        fcst_rows = [(STATION, 2020 + i, 1, MODEL, 102.0 + i) for i in range(K_QS - 1)] + [
-            (STATION, 2020 + i, 2, MODEL, 82.0 + i) for i in range(K_QS)
+        fcst_rows = [(STATION, 2020 + i, 1, MODEL, 102.0 + i) for i in range(K_QUARTER - 1)] + [
+            (STATION, 2020 + i, 2, MODEL, 82.0 + i) for i in range(K_QUARTER)
         ]
         obs = _make_quarterly_obs(obs_rows)
         fcst = _make_quarterly_fcst(fcst_rows)
@@ -306,18 +312,18 @@ class TestQuarterlyNPairsFloor:
             & (skill_stats["quarter_in_year"] == 2)
         ]
 
-        assert q1_rows.empty, f"Q1 group has n_pairs=K-1={K_QS - 1} — must be dropped"
-        assert len(q2_rows) == 1, f"Q2 group has n_pairs=K={K_QS} — must be retained"
+        assert q1_rows.empty, f"Q1 group has n_pairs=K-1={K_QUARTER - 1} — must be dropped"
+        assert len(q2_rows) == 1, f"Q2 group has n_pairs=K={K_QUARTER} — must be retained"
 
     def test_no_n_pairs_lt_k_rows_survive_quarterly(self):
         """After filter: no row in the output has n_pairs < K."""
         obs_rows = (
-            [(STATION, 2020 + i, 1, 100.0 + i) for i in range(K_QS)]  # Q1: K years
+            [(STATION, 2020 + i, 1, 100.0 + i) for i in range(K_QUARTER)]  # Q1: K years
             + [(STATION, 2020, 2, 80.0)]  # Q2: 1 year → n_pairs=1
         )
         fcst_rows = (
-            [(STATION, 2020 + i, 1, "LR_Base", 102.0 + i) for i in range(K_QS)]
-            + [(STATION, 2020 + i, 1, "LR_SM", 104.0 + i) for i in range(K_QS)]
+            [(STATION, 2020 + i, 1, "LR_Base", 102.0 + i) for i in range(K_QUARTER)]
+            + [(STATION, 2020 + i, 1, "LR_SM", 104.0 + i) for i in range(K_QUARTER)]
             + [(STATION, 2020, 2, "LR_Base", 82.0)]  # n_pairs=1 for Q2
         )
         obs = _make_quarterly_obs(obs_rows)
@@ -325,9 +331,9 @@ class TestQuarterlyNPairsFloor:
 
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
-        bad_rows = skill_stats[skill_stats["n_pairs"].fillna(0) < K_QS]
+        bad_rows = skill_stats[skill_stats["n_pairs"].fillna(0) < K_QUARTER]
         assert bad_rows.empty, (
-            f"Rows with n_pairs<K={K_QS} survived the floor filter: "
+            f"Rows with n_pairs<K={K_QUARTER} survived the floor filter: "
             f"{bad_rows[['quarter_in_year', 'model_short', 'n_pairs']].to_dict('records')}"
         )
 

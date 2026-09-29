@@ -43,11 +43,17 @@ _QCOLS = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
 
 _YEARS_5 = [2020, 2021, 2022, 2023, 2024]
 _YEARS_3 = [2020, 2021, 2022]
+# PP-065 P1c: quarter's K default is 10 (was 5) — quarter-only tests that
+# need a skill/ensemble ROW to survive the output floor (or the Skilled
+# Mean/EM membership gate, which independently re-applies the same K) use
+# this 10-year fixture. Season's K stays 5, so season keeps using _YEARS_5.
+_YEARS_10 = list(range(2020, 2030))
 
 # Target discharge shared by all leads forecasting the same quarter/season —
 # the actual outcome doesn't depend on which lead predicted it.
 _OBS_5 = [100.0, 110.0, 120.0, 130.0, 140.0]
 _OBS_3 = [100.0, 110.0, 120.0]
+_OBS_10 = [100.0 + 10.0 * i for i in range(10)]
 
 
 @pytest.fixture(autouse=True)
@@ -116,33 +122,40 @@ _BAD_OFFSET = -8.0  # still NSE>0 at this obs scale, so BOTH models qualify
 
 
 def _two_lead_quarterly_fcst(years_lead1=_YEARS_5, years_lead3=_YEARS_5):
+    # Obs pattern computed by formula (not sliced from a fixed-length global)
+    # so this helper works for any years length — byte-identical to the
+    # original _OBS_5-slicing at the default 5-year arg (100, 110, 120, ...).
+    obs_lead1 = [100.0 + 10.0 * i for i in range(len(years_lead1))]
+    obs_lead3 = [100.0 + 10.0 * i for i in range(len(years_lead3))]
     # Lead 1: LR_BASE close to obs (low MAE), LR_SM further off (high MAE,
     # but still NSE>0).
-    rows = _quarterly_fcst_rows(years_lead1, _OBS_5[: len(years_lead1)], 1, "LR_BASE", _GOOD_OFFSET)
-    rows += _quarterly_fcst_rows(years_lead1, _OBS_5[: len(years_lead1)], 1, "LR_SM", _BAD_OFFSET)
+    rows = _quarterly_fcst_rows(years_lead1, obs_lead1, 1, "LR_BASE", _GOOD_OFFSET)
+    rows += _quarterly_fcst_rows(years_lead1, obs_lead1, 1, "LR_SM", _BAD_OFFSET)
     # Lead 3: the ranking flips — LR_SM is now the tighter fit — so Skilled
     # Mean weighting is a real per-lead signal, not just per-model.
-    rows += _quarterly_fcst_rows(years_lead3, _OBS_5[: len(years_lead3)], 3, "LR_BASE", _BAD_OFFSET)
-    rows += _quarterly_fcst_rows(years_lead3, _OBS_5[: len(years_lead3)], 3, "LR_SM", _GOOD_OFFSET)
+    rows += _quarterly_fcst_rows(years_lead3, obs_lead3, 3, "LR_BASE", _BAD_OFFSET)
+    rows += _quarterly_fcst_rows(years_lead3, obs_lead3, 3, "LR_SM", _GOOD_OFFSET)
     return pd.DataFrame(rows)
 
 
 class TestQuarterlyLeadAwarePointMetricsAndCRPS:
     def test_point_metrics_separate_rows_per_lead(self, lead_aware_on):
-        obs = _quarterly_obs()
-        fcst = _two_lead_quarterly_fcst()
+        # 10 years per lead (== K_QUARTER=10) so raw-model skill rows survive
+        # the output floor (PP-065 P1c decision 4).
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         base_rows = skill_stats[skill_stats["model_short"] == "LR_BASE"]
         assert "horizon_value" in skill_stats.columns
         assert set(base_rows["horizon_value"]) == {1, 3}
-        # Each lead pools its own 5 years — NOT the pooled 10 a
+        # Each lead pools its own 10 years — NOT the pooled 20 a
         # lead-blind (period, code, model) group would produce.
-        assert set(base_rows["n_pairs"]) == {5}
+        assert set(base_rows["n_pairs"]) == {10}
 
     def test_point_metrics_values_differ_by_lead(self, lead_aware_on):
-        obs = _quarterly_obs()
-        fcst = _two_lead_quarterly_fcst()
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         base_rows = skill_stats[skill_stats["model_short"] == "LR_BASE"].set_index("horizon_value")
@@ -153,8 +166,8 @@ class TestQuarterlyLeadAwarePointMetricsAndCRPS:
         assert base_rows.loc[3, "mae"] == pytest.approx(abs(_BAD_OFFSET), abs=1e-6)
 
     def test_crps_present_and_differs_by_lead(self, lead_aware_on):
-        obs = _quarterly_obs()
-        fcst = _two_lead_quarterly_fcst()
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         base_rows = skill_stats[skill_stats["model_short"] == "LR_BASE"].set_index("horizon_value")
@@ -165,30 +178,34 @@ class TestQuarterlyLeadAwarePointMetricsAndCRPS:
 
 
 class TestQuarterlyLeadAwareEnsembles:
-    def test_em_two_leads_two_rows_in_skill_side(self, lead_aware_on):
+    def test_em_never_forms_across_leads(self, lead_aware_on):
+        """Quarter never forms EM (PP-065 P1c decision 3), per-lead or not."""
         obs = _quarterly_obs()
         fcst = _two_lead_quarterly_fcst()
         skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         em_skill = skill_stats[skill_stats["model_short"] == "EM"]
         em_joint = joint[joint["model_short"] == "EM"]
-        assert set(em_skill["horizon_value"]) == {1, 3}
-        assert set(em_joint["horizon_value"]) == {1, 3}
-        # 5 years x 2 leads = 10 EM forecast rows, not blended into fewer.
-        assert len(em_joint) == 10
+        assert em_skill.empty
+        assert em_joint.empty
 
     def test_naive_mean_two_leads(self, lead_aware_on):
-        obs = _quarterly_obs()
-        fcst = _two_lead_quarterly_fcst()
+        # 10 years per lead (== K_QUARTER=10) so the Naive Mean skill row
+        # survives the output floor (PP-065 P1c decision 4).
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
         skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         naive_skill = skill_stats[skill_stats["model_short"] == "Naive Mean"]
         assert set(naive_skill["horizon_value"]) == {1, 3}
-        assert set(naive_skill["n_pairs"]) == {5}
+        assert set(naive_skill["n_pairs"]) == {10}
 
     def test_skilled_mean_two_leads_weights_differ(self, lead_aware_on):
-        obs = _quarterly_obs()
-        fcst = _two_lead_quarterly_fcst()
+        # 10 years per lead (== K_QUARTER=10): Skilled Mean membership
+        # re-applies the same K to the raw-model skill rows, so below K=10
+        # no member qualifies and Skilled Mean would never form.
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
         skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         sm_joint = joint[joint["model_short"] == "Skilled Mean"].copy()
@@ -219,28 +236,38 @@ class TestQuarterlyLeadAwareEnsembles:
             assert dist_to_sm < dist_to_base
 
     def test_create_quarterly_ensemble_forecasts_per_lead(self, lead_aware_on):
-        obs = _quarterly_obs()
-        fcst = _two_lead_quarterly_fcst()
+        # 10 years per lead (== K_QUARTER=10) so skill_stats survives the
+        # output floor at all — with an empty skill_stats the operational
+        # path's early-empty-skill guard would skip every ensemble type,
+        # including Naive Mean (PP-065 P1c decision 4).
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
         # Re-run ensemble creation directly against raw forecasts + the
         # (already per-lead) skill_stats, mirroring the maintenance recalc
         # call path rather than the skill function's internal EM/SM/Naive.
         result = create_quarterly_ensemble_forecasts(fcst, skill_stats)
-        for model_short in ("EM", "Naive Mean", "Skilled Mean"):
+        # Quarter never forms EM (PP-065 P1c decision 3).
+        assert result[result["model_short"] == "EM"].empty
+        for model_short in ("Naive Mean", "Skilled Mean"):
             rows = result[result["model_short"] == model_short]
             assert set(rows["horizon_value"]) == {1, 3}, model_short
 
 
 class TestQuarterlyLeadAwareMinNFloorPerLead:
     def test_floor_drops_only_the_thin_lead(self, lead_aware_on):
-        """Reproduces the #411-defeat bug: lead 3 alone has 3 pairs (< K=5),
-        lead 1 has 5. Pre-P2 pooling would combine them into one 8-pair
+        """Reproduces the #411-defeat bug: lead 3 alone has 3 pairs (< K=10),
+        lead 1 has 10. Pre-P2 pooling would combine them into one 13-pair
         group and incorrectly pass the floor. Post-P2, lead 3 must be
         dropped and lead 1 must survive.
+
+        Lead 1 uses 10 years (== K_QUARTER=10, PP-065 P1c decision 4); obs
+        spans the full 10-year range so the merge doesn't truncate lead 1's
+        pairs back down while lead 3's 3 years stay a genuine subset.
         """
-        obs = _quarterly_obs()
-        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_5, years_lead3=_YEARS_3)
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        fcst = _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_3)
 
         skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, fcst)
 
@@ -447,9 +474,15 @@ _WARN_FRAGMENT = "legacy NULL-lead"
 
 
 def _quarterly_fcst_mixed():
-    """Lead-1 rows (valid) + rows with a NULL horizon_value (all else valid)."""
-    rows = _quarterly_fcst_rows(_YEARS_5, _OBS_5, 1, "LR_BASE", _GOOD_OFFSET)
-    rows += _quarterly_fcst_rows(_YEARS_5, _OBS_5, 1, "LR_SM", _BAD_OFFSET)
+    """Lead-1 rows (valid) + rows with a NULL horizon_value (all else valid).
+
+    The valid lead-1 portion uses 10 years (== K_QUARTER=10, PP-065 P1c
+    decision 4) so its skill row survives the output floor; the NULL-lead
+    portion's year count is irrelevant since those rows are excluded before
+    the lead-aware groupby regardless.
+    """
+    rows = _quarterly_fcst_rows(_YEARS_10, _OBS_10, 1, "LR_BASE", _GOOD_OFFSET)
+    rows += _quarterly_fcst_rows(_YEARS_10, _OBS_10, 1, "LR_SM", _BAD_OFFSET)
     rows += _quarterly_fcst_rows(_YEARS_5, _OBS_5, _NULL, "LR_BASE", _GOOD_OFFSET)
     rows += _quarterly_fcst_rows(_YEARS_5, _OBS_5, _NULL, "LR_SM", _BAD_OFFSET)
     return pd.DataFrame(rows)
@@ -499,7 +532,9 @@ _AGG_SCHEMA_COLS = {"horizon_value", "code", "model_short", "n_pairs", "crps"}
 
 class TestQuarterlyNullLeadSkill:
     def test_mixed_produces_valid_lead_and_warns_skipping_nulls(self, lead_aware_on, caplog):
-        obs = _quarterly_obs()
+        # Obs spans the full 10-year valid-lead range (== K_QUARTER=10,
+        # PP-065 P1c decision 4) so the merge doesn't truncate lead 1's pairs.
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
         fcst = _quarterly_fcst_mixed()
         with caplog.at_level(logging.WARNING):
             skill_stats, joint, _ = calculate_quarterly_skill_metrics(obs, fcst)
@@ -507,8 +542,11 @@ class TestQuarterlyNullLeadSkill:
         # Real-lead skill + ensembles produced.
         base_rows = skill_stats[skill_stats["model_short"] == "LR_BASE"]
         assert set(base_rows["horizon_value"]) == {1}
-        assert set(base_rows["n_pairs"]) == {5}  # NOT 10 (NULL rows not pooled in)
-        for ms in ("EM", "Naive Mean", "Skilled Mean"):
+        assert set(base_rows["n_pairs"]) == {10}  # NOT 20 (NULL rows not pooled in)
+        # Quarter never forms EM (PP-065 P1c decision 3); Naive Mean and
+        # Skilled Mean still form at the one valid lead.
+        assert skill_stats[skill_stats["model_short"] == "EM"].empty
+        for ms in ("Naive Mean", "Skilled Mean"):
             assert set(skill_stats[skill_stats["model_short"] == ms]["horizon_value"]) == {1}
         # NULL-lead rows warn-skipped, not silently dropped.
         assert any(_WARN_FRAGMENT in r.message for r in caplog.records)
@@ -556,15 +594,23 @@ def _quarterly_skill_two_lead(skill_stats):
 
 class TestQuarterlyNullLeadEnsembleCreator:
     def test_mixed_generates_only_valid_lead_ensembles_and_warns(self, lead_aware_on, caplog):
-        obs = _quarterly_obs()
+        # 10 years per lead (== K_QUARTER=10, PP-065 P1c decision 4) so
+        # skill_stats survives the output floor — an empty skill_stats would
+        # hit the early-empty-skill guard before the NULL-lead exclusion
+        # warning is ever logged.
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
         # Build valid per-lead skill from the clean two-lead fixture.
-        skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, _two_lead_quarterly_fcst())
+        skill_stats, _, _ = calculate_quarterly_skill_metrics(
+            obs, _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
+        )
         mixed_fcst = _quarterly_fcst_mixed()  # lead 1 valid + NULL-lead rows
 
         with caplog.at_level(logging.WARNING):
             result = create_quarterly_ensemble_forecasts(mixed_fcst, skill_stats)
 
-        for ms in ("EM", "Naive Mean", "Skilled Mean"):
+        # Quarter never forms EM (PP-065 P1c decision 3).
+        assert result[result["model_short"] == "EM"].empty
+        for ms in ("Naive Mean", "Skilled Mean"):
             rows = result[result["model_short"] == ms]
             assert set(rows["horizon_value"]) == {1}, ms
         # NULL-lead raw rows preserved as passthrough (not silently dropped).
@@ -573,8 +619,10 @@ class TestQuarterlyNullLeadEnsembleCreator:
         assert any(_WARN_FRAGMENT in r.message for r in caplog.records)
 
     def test_all_null_no_ensembles_no_crash_and_warns(self, lead_aware_on, caplog):
-        obs = _quarterly_obs()
-        skill_stats, _, _ = calculate_quarterly_skill_metrics(obs, _two_lead_quarterly_fcst())
+        obs = _quarterly_obs(years=_YEARS_10, obs=_OBS_10)
+        skill_stats, _, _ = calculate_quarterly_skill_metrics(
+            obs, _two_lead_quarterly_fcst(years_lead1=_YEARS_10, years_lead3=_YEARS_10)
+        )
         all_null_fcst = _quarterly_fcst_all_null()
 
         with caplog.at_level(logging.WARNING):
@@ -717,8 +765,10 @@ class TestQuarterlyOneSidedLegacySkill:
         with caplog.at_level(logging.WARNING):
             result = create_quarterly_ensemble_forecasts(fcst, skill)
 
-        # Real lead 1 produced across all ensemble types; NO 'bad'/NULL lead.
-        for ms in ("EM", "Naive Mean", "Skilled Mean"):
+        # Quarter never forms EM (PP-065 P1c decision 3).
+        assert result[result["model_short"] == "EM"].empty
+        # Real lead 1 produced for Naive Mean/Skilled Mean; NO 'bad'/NULL lead.
+        for ms in ("Naive Mean", "Skilled Mean"):
             rows = result[result["model_short"] == ms]
             assert set(rows["horizon_value"].dropna()) == {1}, ms
         # A non-numeric lead must never become an ensemble group.
