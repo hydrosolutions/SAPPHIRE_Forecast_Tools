@@ -3333,6 +3333,25 @@ def _drop_stored_lead_mismatches(direct: pd.DataFrame) -> pd.DataFrame:
     `horizon_value` column, is never counted as a mismatch (nothing to
     compare); `select_operational_issuances` and the native-row rule
     handle those cases separately.
+
+    A row whose stored `horizon_value` is NULL is likewise never a
+    "mismatch" (nothing to compare it against), but letting it pass
+    through untouched would break the docstring's own promise above --
+    `select_operational_issuances` selects candidates using its OWN
+    derived lead regardless of the stored column (that column is only
+    OVERWRITTEN when a caller passes `lead_output_cols=("horizon_value",
+    )`), so a null-hv row would survive selection with its null
+    `horizon_value` intact when called with `lead_output_cols=()`. That
+    excludes the row from flag-ON ensemble grouping (which groups by
+    `horizon_value`), silently starving a Naive/Skilled Mean of a
+    contributor it should have had (PP-065 P1b Finding 3, out-of-loop
+    review). Fix it here, not in `select_operational_issuances` itself
+    (out of scope for this change): backfill a null stored
+    `horizon_value` with the same derived lead computed above, for
+    every row that survives the mismatch drop -- the smallest change
+    that makes the docstring's "self-consistent stored lead" promise
+    actually true for every row reaching the caller's
+    `lead_output_cols=()` call.
     """
     if direct.empty or "horizon_value" not in direct.columns:
         return direct
@@ -3364,7 +3383,22 @@ def _drop_stored_lead_mismatches(direct: pd.DataFrame) -> pd.DataFrame:
             "(valid_from - date)",
             n_mismatch,
         )
-    return direct[~mismatch].copy()
+    result = direct[~mismatch].copy()
+
+    # Finding 3 fix: backfill a NULL stored horizon_value with the
+    # derived lead, for rows that survived the mismatch drop above (a
+    # null stored_hv is, by construction, never flagged as a mismatch).
+    fillable = stored_hv.isna() & derived_lead.notna()
+    fill_idx = result.index.intersection(direct.index[fillable])
+    if len(fill_idx):
+        result.loc[fill_idx, "horizon_value"] = derived_lead.loc[fill_idx].astype(int)
+        logger.info(
+            "Backfilled %d quarterly direct forecast row(s) with a NULL "
+            "stored horizon_value using the lead derived from "
+            "(valid_from - date)",
+            len(fill_idx),
+        )
+    return result
 
 
 def _drop_direct_quarterly_derived_model_rows(direct: pd.DataFrame) -> pd.DataFrame:

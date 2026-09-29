@@ -32,6 +32,11 @@ from long_term_horizon_resolver import (
 from skill_lead_aware_flag import skill_lead_aware_enabled
 from src import data_reader, ensemble_calculator, file_writer, gap_detector
 from src import postprocessing_tools as pt
+from src.model_names import (
+    QUARTER_NATIVE_RAW_MODELS,
+    QUARTERLY_DERIVED_MODELS,
+    canonical_model_short_series,
+)
 from src.postprocessing_tools import TimingStats, timer
 
 # region Logging
@@ -293,40 +298,66 @@ def _run_monthly_gap_fill(
     return True, gaps
 
 
-_QUARTER_RAW_MODELS = {"LR_Base", "LR_SM"}
+# PP-065 P1b Finding 1 fix (out-of-loop review): every raw quarter
+# model can contribute to a Naive Mean, not only the two native LR
+# ones -- ensemble_calculator's actual "two or more non-null raw
+# contributors" gate has no LR-specific restriction. Reuse the
+# existing model-set constants rather than hand-rolling a new one.
+_QUARTER_RAW_MODELS = QUARTER_NATIVE_RAW_MODELS | QUARTERLY_DERIVED_MODELS
 
 
 def _filter_quarterly_gap_universe(universe: pd.DataFrame) -> pd.DataFrame:
     """Drop quarterly gap-universe keys with fewer than two raw models.
 
     Quarter no longer produces an EM row (PP-065 P1b item 3), so gap
-    detection keys on Naive Mean instead. A (year, quarter_in_year,
-    code) key needs BOTH raw quarter models (LR_Base, LR_SM) present
-    somewhere in the universe to ever form a Naive Mean ensemble; a
-    single-model key would otherwise surface as a perpetual,
-    unfillable gap.
+    detection keys on Naive Mean instead. A key needs at least two
+    distinct raw quarter models present somewhere in the universe to
+    ever form a Naive Mean ensemble; a single-model key would
+    otherwise surface as a perpetual, unfillable gap.
+
+    "Raw quarter models" is every model in ``_QUARTER_RAW_MODELS``
+    (PP-065 P1b Finding 1 fix): the two native LR models
+    (``QUARTER_NATIVE_RAW_MODELS``) plus the seven models re-enabled
+    for quarter as same-issue monthly derivations
+    (``QUARTERLY_DERIVED_MODELS``) -- any two of these nine can form a
+    Naive Mean, not only the two LR ones. Model names are compared via
+    ``canonical_model_short_series`` because ``model_short`` values
+    flowing through this function are in their API display-case form
+    (e.g. "LR_Base", "SM_GBT_Norm"), not the canonical upper-snake form
+    the constants are defined in.
+
+    Under ``SAPPHIRE_SKILL_LEAD_AWARE`` (PP-065 P1b Finding 2 fix), the
+    key additionally includes ``horizon_value``: Naive Mean formation
+    happens per (code, year, quarter, horizon_value) under the flag --
+    mirroring the gap-key-matching logic further down in the caller --
+    so two single-model rows at DIFFERENT leads must never be counted
+    together as "2 distinct models present" for one key.
 
     Args:
         universe: Concatenated quarterly combined-forecast rows and
             raw per-model quarterly forecast rows (see caller).
 
     Returns:
-        The subset of ``universe`` whose (year, quarter_in_year, code)
-        key has at least two distinct raw models present. Empty on
-        empty input, or on input missing a required column.
+        The subset of ``universe`` whose key has at least two distinct
+        raw models present. Empty on empty input, or on input missing
+        a required column.
     """
     key_cols = ["year", "quarter_in_year", "code"]
+    if skill_lead_aware_enabled() and "horizon_value" in universe.columns:
+        key_cols.append("horizon_value")
     required = {*key_cols, "model_short"}
     if universe.empty or not required.issubset(universe.columns):
         return universe.iloc[0:0]
 
     df = universe.copy()
     df["code"] = df["code"].astype(str)
-    raw_rows = df[df["model_short"].isin(_QUARTER_RAW_MODELS)]
+    canon_model = canonical_model_short_series(df["model_short"])
+    raw_rows = df[canon_model.isin(_QUARTER_RAW_MODELS)].copy()
     if raw_rows.empty:
         return df.iloc[0:0]
+    raw_rows["_pp065_canon_model"] = canon_model.loc[raw_rows.index]
 
-    distinct_counts = raw_rows.groupby(key_cols)["model_short"].nunique()
+    distinct_counts = raw_rows.groupby(key_cols)["_pp065_canon_model"].nunique()
     eligible_keys = set(distinct_counts[distinct_counts >= 2].index)
     if not eligible_keys:
         return df.iloc[0:0]
@@ -453,6 +484,71 @@ def postprocessing_maintenance_long_term():
                                         axis=1,
                                     )
                                 ]
+                            # PP-065 P1b Finding 4 fix (out-of-loop review):
+                            # model_short is intentionally OUT of the key
+                            # above so a Naive-Mean-only gap admits a
+                            # freshly regenerated Skilled Mean too (see
+                            # comment above). But
+                            # create_quarterly_ensemble_forecasts recomputes
+                            # BOTH ensembles together whenever it has enough
+                            # data, regardless of whether Skilled Mean was
+                            # actually the thing missing -- so a fresh
+                            # Skilled Mean row for a key that ALREADY has a
+                            # correct, persisted Skilled Mean in q_combined
+                            # would otherwise pass the filter above and
+                            # silently WIN the keep="last" dedup below,
+                            # overwriting a value that was never a gap
+                            # (possibly with a different value, e.g. if
+                            # skill membership shifted since it was last
+                            # computed). Drop such a row: only let a fresh
+                            # Skilled Mean through when there is no
+                            # pre-existing Skilled Mean at that key to
+                            # overwrite, or when Skilled Mean was ITSELF
+                            # reported missing at that key (gap detection
+                            # currently only checks Naive Mean -- see the
+                            # ensemble_models={"Naive Mean"} call above --
+                            # so the "itself reported missing" branch is a
+                            # no-op today, but keeps this correct if that
+                            # ever changes).
+                            if not q_new.empty and (q_new["model_short"] == "Skilled Mean").any():
+                                sm_key_cols = ["year", "quarter_in_year", "code"]
+                                if (
+                                    skill_lead_aware_enabled()
+                                    and "horizon_value" in q_new.columns
+                                    and "horizon_value" in q_combined.columns
+                                ):
+                                    sm_key_cols.append("horizon_value")
+
+                                def _sm_keys(frame, _cols=sm_key_cols):
+                                    if frame.empty or not {"model_short", *_cols}.issubset(
+                                        frame.columns
+                                    ):
+                                        return set()
+                                    sm_rows = frame[frame["model_short"] == "Skilled Mean"]
+                                    if sm_rows.empty:
+                                        return set()
+                                    return set(
+                                        sm_rows[_cols]
+                                        .assign(code=lambda d: d["code"].astype(str))
+                                        .itertuples(index=False, name=None)
+                                    )
+
+                                existing_sm_keys = _sm_keys(q_combined)
+                                gapped_sm_keys = _sm_keys(q_gaps)
+
+                                def _sm_row_key(r, _cols=sm_key_cols):
+                                    return tuple(str(r[c]) if c == "code" else r[c] for c in _cols)
+
+                                overwrite_mask = q_new.apply(
+                                    lambda r: (
+                                        r["model_short"] == "Skilled Mean"
+                                        and _sm_row_key(r) in existing_sm_keys
+                                        and _sm_row_key(r) not in gapped_sm_keys
+                                    ),
+                                    axis=1,
+                                )
+                                if overwrite_mask.any():
+                                    q_new = q_new[~overwrite_mask].copy()
                             q_merged = pd.concat(
                                 [q_combined, q_new],
                                 ignore_index=True,

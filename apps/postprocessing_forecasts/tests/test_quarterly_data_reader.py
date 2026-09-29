@@ -1491,3 +1491,91 @@ class TestCombinedForecastNormalization:
         result = data_reader._normalize_combined_forecasts(raw_api, "quarter")
 
         assert result.iloc[0]["horizon_value"] == 1
+
+
+class TestDropStoredLeadMismatchesNullBackfill:
+    """PP-065 P1b Finding 3 (out-of-loop review): a row whose stored
+
+    `horizon_value` is NULL is never flagged as a "mismatch" (nothing to
+    compare it against) and, before this fix, passed through with its
+    null `horizon_value` untouched -- even though
+    `_drop_stored_lead_mismatches`'s own docstring promises callers may
+    pass `lead_output_cols=()` to `select_operational_issuances`
+    afterward "since every row reaching it here already carries a
+    self-consistent stored lead". A null-hv row broke that promise: it
+    would exclude itself from flag-ON ensemble grouping (grouped by
+    `horizon_value`), preventing a Naive/Skilled Mean that should have
+    formed from a sibling row at the same lead.
+    """
+
+    def test_null_stored_horizon_value_backfilled_with_derived_lead(self):
+        direct = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "date": ["2025-12-25", "2025-12-25"],
+                "valid_from": ["2026-01-01", "2026-01-01"],
+                "valid_to": ["2026-03-31", "2026-03-31"],
+                "horizon_value": [None, 1],
+                "q50": [100.0, 110.0],
+            }
+        )
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        # Both rows share the same (issue date, target quarter), so both
+        # derive to lead 1 -- the null-hv row must be backfilled to the
+        # SAME lead as its sibling, not dropped and not left null.
+        assert len(result) == 2
+        lr_base = result[result["model_short"] == "LR_Base"]
+        lr_sm = result[result["model_short"] == "LR_SM"]
+        assert len(lr_base) == 1
+        assert int(lr_base.iloc[0]["horizon_value"]) == 1
+        assert int(lr_sm.iloc[0]["horizon_value"]) == 1
+        # The two rows now share a grouping key ensemble formation
+        # relies on under SAPPHIRE_SKILL_LEAD_AWARE.
+        assert set(result["horizon_value"]) == {1}
+
+    def test_null_stored_horizon_value_with_unparseable_date_stays_null(self):
+        """A null stored horizon_value with no derivable lead (missing
+
+        date) cannot be backfilled -- nothing to derive from -- and must
+        stay null rather than raise or fabricate a lead.
+        """
+        direct = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "date": [None],
+                "valid_from": ["2026-01-01"],
+                "valid_to": ["2026-03-31"],
+                "horizon_value": [None],
+                "q50": [100.0],
+            }
+        )
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert len(result) == 1
+        assert pd.isna(result.iloc[0]["horizon_value"])
+
+    def test_genuine_mismatch_still_dropped_not_backfilled(self):
+        """A row with a non-null, genuinely WRONG stored horizon_value
+
+        must still be dropped (this fix only changes the null-stored
+        case, per Finding 3's scope)."""
+        direct = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "date": ["2025-12-25"],
+                "valid_from": ["2026-01-01"],
+                "valid_to": ["2026-03-31"],
+                "horizon_value": [99],
+                "q50": [100.0],
+            }
+        )
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert result.empty
