@@ -12,10 +12,14 @@ sign-off to land the high-impact P2+P1 fixes first.
 > `(horizon_type, code, model_type, date, target)`. **`long_forecasts` has no `target` column.**
 > The real unique key is
 > **`(horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)`**
-> (`sapphire/services/postprocessing/app/models.py:159`; CRUD `crud.py:107`) — it is corrected
-> inline below. **Any stale-diff keyed on the old tuple would not match a single row.** Note the key
-> carries `horizon_value` (the lead) and the validity interval, so the diff must be computed per
-> lead and per `valid_from`/`valid_to`, not per "target".
+> (`sapphire/services/postprocessing/app/models.py:193-202`, the `LongForecast.__table_args__`
+> `UniqueConstraint` — **corrected 2026-09-29, plan-sync round 12g: the replaced citation was `:159`, not
+> `:160` — `:159` is the `code` column's own definition (`code = Column(String(10), nullable=False)`), not
+> the unique key**; CRUD `crud.py:107`,
+> verified consistent with the constraint) — it is corrected inline below. **Any stale-diff keyed on the
+> old tuple would not match a single row.** Note the key carries `horizon_value` (the lead) and the
+> validity interval, so the diff must be computed per lead and per `valid_from`/`valid_to`, not per
+> "target".
 
 > **Correction 2026-09-17 (plan rev4, P6b) — the implementation recipe below was also stale, and
 > one citation was wrong.** The 2026-07-14 fix corrected the natural key stated in "Problem" but

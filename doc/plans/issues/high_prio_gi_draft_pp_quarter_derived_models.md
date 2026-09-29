@@ -180,7 +180,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
 - Under flag ON it goes through `select_operational_issuances`. That **collapses duplicates and overwrites
   the stored `horizon_value` with a date-derived lead** (`src/data_reader.py:385-395`).
 - Normalization turns a null lead into 0 (`:1503`).
-- `_read_long_forecasts_api` drops every all-null column per batch (`:1468`), so `horizon_value`, `q` or
+- `_read_long_forecasts_api` drops every all-null column per batch (`:1469`), so `horizon_value`, `q` or
   `q50` can be missing from the frame.
 - So the derivation must see the **raw** monthly rows and tolerate missing columns.
 
@@ -309,7 +309,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      — parses `date`, drops and counts non-native rows AND null/unparseable-date rows. **A `date` column
      entirely absent from the `direct` frame is treated the same as every row's `date` being null.**
      `long_forecasts.date` is `nullable=False`
-     (`sapphire/services/postprocessing/app/models.py:159`), so a batch of real API rows can never have
+     (`sapphire/services/postprocessing/app/models.py:160`), so a batch of real API rows can never have
      `date` all-null — this absent-column case is **defensive; it arises only in test fixtures and
      non-API callers** (e.g. a hand-built frame, or a CSV-fed path), not from `_read_long_forecasts_api`
      against the live service. Regardless, the helper must check for the column's presence before parsing
@@ -567,10 +567,11 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        path (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py`'s quarter-write loop
        (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry
        (`api_writer.py:30`), not the `"ENSEMBLE_MEAN": "EM"` entry (line 50, which serves the skill-metrics
-       write path only). This write is live on servers today, and will keep running until this item (P1b)
-       merges. **FD-029, which hides every quarter EM row it reads on the dashboard side, is also live on
-       servers today** (owner decision R4-merge-is-deploy: it deploys via the dashboard's own daily
-       frontend auto-pull, not only with PP-065 P2). **Corrected 2026-09-28 (factual, not a decision
+       write path only). This write is presumed live on servers today (verify per org, `PP-064.C.step0`),
+       and will keep running until this item (P1b)
+       merges. **FD-029, which hides every quarter EM row it reads on the dashboard side, is also presumed
+       live on servers today** (owner decision R4-merge-is-deploy: it deploys via the dashboard's own daily
+       frontend auto-pull, not only with PP-065 P2; verify per org, `PP-064.C.step0`). **Corrected 2026-09-28 (factual, not a decision
        change): "a fresh EM row plus a non-native LR row" cannot be the whole story.** EM's per-key gate is
        `em_avg[em_avg["composition"].apply(is_multi_model_composition)]` (`ensemble_calculator.py:767`) —
        the same `is_multi_model_composition` predicate as Naive Mean's gate (`:915`), not the coarser
@@ -589,11 +590,16 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        this pipeline for quarter.) Confirm the precise count at the pre-deploy DB audit (PP-064 Chunk C
        detail 2), not by assumption. **The
        recovery point is not the branch merge itself** — merging `integ_quarter_p1b_p2` to trunk
-       (`deploy.pp`) only puts this item's code on the servers, it writes no rows. The blank card clears
-       only once the **first successful quarterly postprocessing run on the new image**, in the P2 window
-       (§ "P2 — rollout" below), has actually produced the derived/ensemble rows, and that run's output is
-       verified — at which point this item's stopped EM write and the derived/ensemble rows take
-       over.
+       (`deploy.pp`) only puts this item's code on the servers, it writes no rows. **Correction: the
+       in-window recalc's own step-8 raw derived-model rows can already make a previously blank card
+       displayable, before the first operational run** — see "Why the operational run, not the recalc, is
+       the target-quarter ensemble's recovery point" in § "P2 — rollout" below for the mechanism. The
+       recalc itself only forms the target quarter's own **Naive Mean / Skilled Mean ensemble rows** when
+       its own observation join happens to match — usually not the current quarter, but not guaranteed
+       never (see the loophole note in that same P2 section). What **reliably** clears those rows,
+       independent of that loophole, is the **first successful quarterly postprocessing run on the new
+       image** (P2 window, § "P2 — rollout" below) — at which point this item's stopped EM write and the
+       derived/ensemble rows take over.
    - **Log** one aggregated skip count per call.
 4. **Combined reader and maintenance.**
    - `read_quarterly_combined_forecasts` drops direct rows of the seven models. It stays **filter only**,
@@ -614,8 +620,21 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      December-issued Q1). Rows, not just keys: the two-raw-model prefilter counts models per key. Use that
      existing reader function, not a new `data_reader` entry point.
    - **Allowed restructuring:** the `q_combined.empty` guard (`:296`) becomes "the universe is empty", and
-     the quarterly block is reached when the monthly block has nothing to do (the monthly early exits no
-     longer end the run before it). Keep the `q_skill` guard (`:304`). Season gap-fill reachability stays
+     the quarterly block is reached when the monthly block has nothing to do. **Control-flow rule (the one
+     design; the maintenance test inventory below, ~:1977, follows it):** each of the six monthly-only
+     `sys.exit(0)` guards — `combined.empty` (`:113`), `gaps.empty` (`:126`), `skill_stats.empty` (`:141`),
+     `all_forecasts.empty` (`:159`), `filtered.empty` (`:184`) and `new_ensemble.empty` (`:257`) — stops
+     exiting there and instead skips forward to the quarterly block. **After the quarterly block, if the
+     monthly block did not complete, the script exits 0 there.** The seasonal block is not reached on that
+     path, so seasonal reachability is unchanged: it still runs only when the monthly block completed, as
+     below. Because the trailing "Audit trail" section (~:517-524) sits after the seasonal block, this
+     ordering also means it is reached, and its "Filled %d monthly ensemble gaps" line logged, only on the
+     path where the monthly block actually completed its fill — `gaps` is assigned at ~:117 on that same
+     path, so it is always defined wherever the Audit trail code reads it. This resolves the "Audit trail"
+     `gaps`-definedness question raised in an earlier round (both the NameError risk and a wrong "Filled N"
+     record on an incomplete-monthly path): under this rule, that section is unreachable on any path where
+     the monthly block did not complete, so neither can occur — this is the resolution, not an open
+     question to track separately. Keep the `q_skill` guard (`:304`). Season gap-fill reachability stays
      as today (it runs only when the monthly block completed); changing that is out of scope.
    - Quarters older than the window are covered by the recalc, not by maintenance. Maintenance writes only
      ensemble rows (`:316-321`); derived raw rows of a missed operational run come from the next recalc.
@@ -1182,26 +1201,98 @@ lead 0):
   quarter_in_year)` (`src/data_reader.py:3618-3623`), so even with the `forecast_date` bound missing
   entirely, the more recent Q1-2027 aggregate would win that filter and the Q4-2026 aggregate would be
   dropped anyway — its absence would not detect the bug. Two separate cases, each alone in its fixture,
-  keep each assertion diagnostic:
-  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
-    2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced, under both flags. The issue
-    date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits the hv 1/2/3 triplet
-    (`aggregation.py:1013`), and the quarter-start scope filter (`:1033-1041`, `d.month + lead` via
-    `_add_months_vectorized` checked against `_QUARTER_START_MONTHS`) is satisfied: 9 + 1 = 10 (October,
-    Q4 2026) — not excluded by that filter — so only the `forecast_date` bound can explain the absence. A
-    single monthly row (not a full triplet) is not a sufficient fixture here: with only one of the three
-    required leads present, `derive_quarterly_from_monthly_same_issue` already produces no aggregate for
-    the incomplete-triplet reason alone, so the test would pass even with the bound entirely missing — it
-    would not detect the bug it names. Fails on the pre-P1b base (neither flag bounds this path today).
-  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
-    2026-12-25** (after `forecast_date`) → no Q1-2027 aggregate is produced, under both flags. 12 + 1 = 13
-    → year + 1, month 1 (January 2027, Q1 2027) — not excluded by the scope filter — so only the
-    `forecast_date` bound can explain the absence. Same full-triplet requirement and pre-P1b-base failure
-    as above.
+  keep each assertion diagnostic. **Corrected 2026-09-29 (plan-sync round 12e): the flag-ON Q4-2026 case
+  also does not fail on the pre-P1b base, for a reason unrelated to `forecast_date` — it is a P1b-only
+  regression guard too, not the sole genuine pre-P1b-base failure the previous round claimed.** Pre-P1b,
+  `aggregate_monthly_fc_to_quarterly` groups by `["code", "year", "quarter_in_year", "model_short"]`, plus
+  `horizon_value` under flag ON (when `skill_lead_aware_enabled()` and `"horizon_value" in df.columns`,
+  `aggregation.py:529-530`), then keeps only groups with `n_months >= QUARTER_MIN_MONTHS` (= 2,
+  `aggregation.py:284`, enforced at `:536`). A same-issue hv 1/2/3 triplet carries three distinct
+  `horizon_value`s, so under flag ON it forms three one-month groups (`n_months == 1` each), all dropped
+  by that filter — with or without any `forecast_date` bound. **Both flag-ON cases (Q4-2026 and Q1-2027)
+  therefore already produce no aggregate on the pre-P1b base for this unrelated reason; neither is a
+  genuine pre-P1b-base failure — both are P1b-only regression guards.** (The Q1-2027 case already carried
+  this same conclusion via a separate, additional reason — its own "Corrected 2026-09-29" note below,
+  about `read_monthly_forecasts`'s target-year trim.) **The month_1/2/3 "Flag-ON fixture requirement" from
+  the previous round is removed, not reconciled — it is no longer needed.** It required configuring
+  `month_1`, `month_2` and `month_3` (leads 1/2/3, issue day 25) in
+  `ieasyhydroforecast_ml_long_term_supported_modes` so pre-P1b's `read_monthly_forecasts` would return the
+  triplet rows at all — otherwise it resolves `month_schedules =
+  _operational_schedules_for_horizon_type("month")` and returns empty immediately, with only a WARNING
+  logged (`data_reader.py` ~:1374-1382). That precondition no longer matters here: the flag-ON case can't
+  fail on the pre-P1b base regardless of whether those rows reach aggregation (see above). It also does
+  not carry over to P1b — item 2's "Derived rows" step reads raw monthly rows directly via
+  `_read_long_forecasts_api`, not through `read_monthly_forecasts`, so it never depends on `month_N` mode
+  configuration. **What the fixture must still configure, under BOTH flags,** is a `quarter` mode in
+  `ieasyhydroforecast_ml_long_term_supported_modes` (plus its `quarter.json` config): flag ON's
+  quarter-schedule resolution fails loud and returns empty without one (`data_reader.py` ~:3526-3534),
+  independent of the Source 1 path above; flag OFF's Source 2 branch calls `quarter_horizon_value()`
+  (`data_reader.py` ~:3546-3552 → `long_term_horizon_resolver.py` ~:68-80), which raises
+  `UnsupportedLongTermModeError` under the same precondition. (Flag OFF never calls
+  `read_monthly_forecasts` in this reader at all — `:3502-3510` — that is a separate, correct fact about
+  Source 1 only, not a quarter-mode exemption.)
+  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set), model
+    `LR_Base` (or `LR_SM`), issued 2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced
+    under flag OFF. The issue date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits
+    the hv 1/2/3 triplet (`aggregation.py:1013`), and the quarter-start scope filter (`:1033-1041`,
+    `d.month + lead` via `_add_months_vectorized` checked against `_QUARTER_START_MONTHS`) is satisfied:
+    9 + 1 = 10 (October, Q4 2026) — not excluded by that filter — so only the `forecast_date` bound can
+    explain the absence. A single monthly row (not a full triplet) is not a sufficient fixture here: with
+    only one of the three required leads present, `derive_quarterly_from_monthly_same_issue` already
+    produces no aggregate for the incomplete-triplet reason alone, so the test would pass even with the
+    bound entirely missing — it would not detect the bug it names. **The triplet's model must be
+    `LR_Base` or `LR_SM`:** the post-combine model filter (`_filter_supported_aggregated_forecast_models`,
+    `data_reader.py:98-104, 3606`, keyed on `AGGREGATED_SUPPORTED_MODELS`, `model_names.py:14-16`) drops
+    any other model regardless of the bound, which would make the case non-diagnostic. **Fails on the
+    pre-P1b base under flag OFF only:** flag OFF never bounds this path by `forecast_date` today, and
+    nothing else suppresses it (given the `LR_Base`/`LR_SM` model above). Under flag ON the case already
+    produces no aggregate for the unrelated per-lead-grouping reason above — write that variant as a
+    P1b-only regression guard, not as a case expected to fail on the pre-P1b base.
+  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set), model
+    `LR_Base` (or `LR_SM`), issued 2026-12-25** (after `forecast_date`) → no Q1-2027 aggregate is produced.
+    12 + 1 = 13 → year + 1, month 1 (January 2027, Q1 2027) — not excluded by the scope filter — so under
+    flag OFF only the `forecast_date` bound can explain the absence (given the `LR_Base`/`LR_SM` model
+    above, per the same post-combine filter), and this case **fails on the pre-P1b base under flag OFF**
+    (same full-triplet requirement as above). **Corrected 2026-09-29 (plan-sync round 12, unchanged in
+    round 12e): under flag ON this case is a P1b regression guard only, not a pre-P1b-base failure** — for
+    two independent reasons now: the per-lead grouping above, and `read_monthly_forecasts`'s own
+    target-year trim (`_trim_to_target_year_range(df, "year", start_year, end_year)`,
+    `data_reader.py:1402`) already runs before this triplet ever reaches aggregation, with `end_year =
+    forecast_date.year = 2026` (`:3483`) — the whole Jan-2027 triplet has target year 2027, outside
+    `[start_year, 2026]`, so `read_monthly_forecasts` drops all three rows itself, for a reason unrelated to
+    any `forecast_date` (issue-date) bound. The test's expected outcome ("no Q1-2027 aggregate") therefore
+    already holds on the current, unmodified trunk regardless of whether a `forecast_date` bound exists —
+    this case cannot fail on the pre-P1b base under flag ON, so it gives no signal about whether that bound
+    is correctly implemented pre-P1b. **After P1b it guards the `forecast_date` bound itself, not the wide
+    trim.** P1b's own derived-row trim for the latest reader is the wider `[start_year, end_year + 1]`
+    (§ "Target-year trim scope" above), which no longer excludes this triplet's 2027 target year on its
+    own — so post-P1b, this case's expected "no Q1-2027 aggregate" result can only come from the
+    `forecast_date` (issue-date) bound correctly dropping a triplet issued after `forecast_date`. It does
+    **not** prove the wide trim itself admits an already-issued prior-year Q1 — that is the separate,
+    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1316-1318, re-measured 2026-09-29,
+    plan-sync round 12i), whose own mutation note
+    ("removing the target-year extension makes the flag-ON case fail") is what proves the wide trim. Write
+    this case as a P1b-only regression guard for the `forecast_date` bound under the widened trim, not as
+    a case that "fails on the pre-P1b base" and not as proof of the wide trim.
 
   (A candidate issued 2026-10-25 would NOT work for either case: 10 + 1 = 11, November, not a
   quarter-start month, so it is dropped by the scope filter regardless of the bound and would not exercise
   it.)
+- **P3 interaction: add a `GBT` variant of both cases above, alongside the `LR_Base`/`LR_SM` one.** P3
+  removes the decision-G LR fallback entirely (§ "P3 — remove the LR fallback" ~:2236-2254), so once P3
+  lands an LR-only monthly triplet derives nothing at all through this path — both cases above would then
+  pass even with the `forecast_date` bound deleted, and stop detecting the bug they name. `GBT`'s
+  derivation (`QUARTERLY_DERIVED_MODELS`, unconditional) is untouched by P3, so write a `GBT`-model variant
+  of both cases here now (same triplet shape and dates, `model = GBT`) so the guard survives P3; P3's own
+  "Tests:" paragraph then drops only the `LR_Base`/`LR_SM` variant. **Write the `GBT` variant itself as a
+  P1b-only regression guard under BOTH flags, not as a case expected to fail on the pre-P1b base** — like
+  the flag-ON `LR_Base`/`LR_SM` case above, it gives a false pass pre-P1b for a reason unrelated to the
+  `forecast_date` bound: `GBT` is not in `AGGREGATED_SUPPORTED_MODELS` (`model_names.py:14-16`), and the
+  post-combine filter (`_filter_supported_aggregated_forecast_models`, `data_reader.py:98-104`, called at
+  `:3606`) has no flag branch, so it strips any `GBT` row before the assertion under **both** flags,
+  regardless of the bound; under flag ON the case additionally produces no aggregate for the unrelated
+  per-lead-grouping reason established above. Neither absence proves the bound is implemented until P1b
+  lands.
 - **Existing Source 1 (now unified) forecast_date bound, inputs to the derivation.** No row dated after
   `forecast_date` reaches `derive_quarterly_from_monthly_same_issue` (assert on a spy, or on the rows
   actually passed to it), under both flags.
@@ -1710,12 +1801,18 @@ line numbers verified against this branch's HEAD):
     "read_quarterly_forecasts\|read_latest_quarterly_forecasts" apps/postprocessing_forecasts/tests`, 10
     files total; excluding `test_quarter_calendar_window.py` and `test_quarterly_data_reader.py` themselves,
     the other **8** break down as follows, not uniformly "unaffected because they mock":
-    - **Six** are unaffected because they mock `data_reader.read_quarterly_forecasts`/
-      `read_latest_quarterly_forecasts` itself (or the whole `data_reader` module) and never exercise the
-      real reader body: `test_maintenance_long_term.py:594, 724`, `test_recalc_supported_modes_gate.py:212,
+    - **Six** are unaffected **by this reader change** because they mock
+      `data_reader.read_quarterly_forecasts`/`read_latest_quarterly_forecasts` itself (or the whole
+      `data_reader` module) and never exercise the real reader body: `test_maintenance_long_term.py:594,
+      724`, `test_recalc_supported_modes_gate.py:212,
       226, 233`, `test_monthly_workflow_integration.py:610, 680`, `test_wiring_integration.py:2273`,
       `test_recalc_workflow.py:123` (all mocked returns), and `test_lead_aware_latest_readers.py` (its one
-      hit is a docstring comment, not a call).
+      hit is a docstring comment, not a call). **`test_maintenance_long_term.py:594` and `:724` are not
+      unaffected overall, only by the reader change this bullet is about** — both sit inside
+      quarterly-gap-fill tests whose fixtures hold only one raw model, so item 4's separate,
+      maintenance-level two-raw-model prefilter (not this reader change) empties their gap universe; see
+      the "Tests" entry below for `test_quarterly_gap_fill_dedup_lead_aware` (`:501`) and
+      `test_quarterly_gap_fill_only_writes_gap_leads` (`:626`).
     - **One** (`test_lead_aware_empty_schedules.py:207` `TestQuarterlyEmptySchedulesFlagOn` and `:239`
       `TestLatestQuarterlyEmptySchedulesFlagOn`) DOES call the real readers, but both configure `quarter` as
       an **unsupported** mode — already covered above ("Mode unsupported (uzb-like...)"): flag ON
@@ -1778,9 +1875,9 @@ line numbers verified against this branch's HEAD):
     — missing from the enumeration above; added here.** Its one row is `model_type: "LR_Base"` with `q50`
     set but **no `"date"` key at all**, so the `direct` frame built from it has no `date` column. This is
     a **defensive** shape, not one that arises from the live API in practice: `long_forecasts.date` is
-    `nullable=False` (`sapphire/services/postprocessing/app/models.py:159`), so a real API batch can never
+    `nullable=False` (`sapphire/services/postprocessing/app/models.py:160`), so a real API batch can never
     have every row's `date` null, and `_read_long_forecasts_api`'s own all-null-column drop
-    (`:1468`) therefore never removes this column against the live service either — the shape can only
+    (`:1469`) therefore never removes this column against the live service either — the shape can only
     arise from a test fixture or a non-API caller. This is still a direct LR row, so decision
     R4-native-lr-precedence's native-row rule applies to it, in addition to PP-064's own missing-column
     guard (the general flag-OFF issue-year mask this test currently locks). Per item 2's "Order (flag
@@ -1849,10 +1946,92 @@ line numbers verified against this branch's HEAD):
     — switch to `"Naive Mean"`; horizon_value assertions (flag ON: the row's own lead; flag OFF: the
     configured lead) are otherwise unchanged, since this class's purpose is the flag-gated horizon_value
     seam, not EM.
-- `tests/test_maintenance_long_term.py:541-574`, `:616` (quarterly dedup, lead-aware) **changes**: its
+- `tests/test_maintenance_long_term.py:541-574`, `:616` (`test_quarterly_gap_fill_dedup_lead_aware`, `:501`;
+  quarterly dedup, lead-aware) **changes**: its
   `q_combined` and `q_fc` hold one raw model, so the new two-model prefilter excludes the key and nothing
-  is saved. Give the fixture two eligible raw models. Any other maintenance test that asserts the run ends
-  before the quarterly block (e.g. the early-exit tests at `:217`, `:245`) is listed.
+  is saved. Give the fixture two eligible raw models.
+- `tests/test_maintenance_long_term.py:626-763` (`test_quarterly_gap_fill_only_writes_gap_leads`) **also
+  changes, not previously listed here, on two independent axes (re-verified 2026-09-29, plan-sync round
+  12).** (1) Its `q_fc` (the gap-universe read, `read_quarterly_forecasts` mock) holds one raw model
+  (`LR_Base`) at the gap key, so the new two-model prefilter excludes it too: the gap universe becomes
+  empty for that key, the quarterly block is skipped end to end, and
+  `mock_file_writer.save_quarterly_forecast_data.assert_called_once()` (`:746`) fails with zero calls —
+  this test asserts the block *runs* (unlike the early-exit tests below, it is not itself an early-exit
+  test). Give `q_fc` two eligible raw models (e.g. add an `LR_SM` row alongside `LR_Base`) so the prefilter
+  admits the key. (2) **The test is built entirely on quarter EM gaps and EM output**: `q_combined`
+  (`:665-674`, the existing lead-0 row), `q_gaps` (`:676-684`, the detected gap) and `q_joint` (`:706-715`,
+  the regenerated ensemble output) all use `model_short: "EM"`. Item 4 above narrows quarterly gap
+  detection to `ensemble_models={"Naive Mean"}` and item 5 removes quarter EM entirely, so an all-`EM`
+  fixture no longer reflects a reachable production state — the same reason the "Writer EM tests" bullet
+  above switches its fixtures' `model_short` from `"EM"` to `"Naive Mean"` wherever the test's purpose is
+  not EM itself. This test's purpose (a non-gap lead's existing discharge is preserved, not overwritten by
+  `keep="last"`, when only one lead is a genuine gap) is not EM-specific either, so apply the same
+  substitution: switch `model_short` to `"Naive Mean"` in all three of `q_combined`, `q_gaps` and `q_joint`.
+  **New expected assertions:** replace `em_rows = saved[saved["model_short"] == "EM"]` (`:748`) with
+  `naive_mean_rows = saved[saved["model_short"] == "Naive Mean"]`; the numeric checks are otherwise
+  unchanged (flag ON: both leads present, lead 0 keeps its original 100.0, lead 1 is the regenerated 111.0;
+  flag OFF: one row). `test_quarterly_gap_fill_dedup_lead_aware` above has the same `q_gaps`/`q_joint`
+  all-`EM` shape (its own assertions only inspect `LR_Base` rows, so its listed fix does not need the
+  substitution to keep passing mechanically, but the same staleness applies to its fixture's realism —
+  flag this for the same pass if it is touched).
+- **P1b rule, verified against `postprocessing_maintenance_long_term.py` (~:113-388): item 4's
+  control-flow rule above (each of the six monthly-only `sys.exit(0)` guards skips forward to the
+  quarterly block instead of exiting there) applies to ALL SIX monthly-only `sys.exit(0)` guards** —
+  `combined.empty` (`:113`), `gaps.empty` (`:126`), `skill_stats.empty` (`:141`), `all_forecasts.empty`
+  (`:159`), `filtered.empty` (`:184`) and `new_ensemble.empty` (`:257`) — not just the `q_combined.empty`
+  guard the bullet names explicitly. None of them are wrapped in `try/except`, so today each is a hard
+  process exit; post-P1b each must instead skip forward to the quarterly block — not to the seasonal
+  block, which under item 4's rule is only reached once the monthly block has completed. **Consequence for
+  the gap-universe read (`data_reader.read_quarterly_forecasts(codes, Y-1, Y+1)`, the "Gap universe"
+  bullet above): it is now reached on every test path that used to hit one of these six exits early, not
+  only on the two paths that already reach the quarterly block today.**
+  `test_maintenance_long_term.py`'s `mock_data_reader` is a plain (non-autospec) `MagicMock()`
+  (`_import_module`, `:76`), so an unconfigured `read_quarterly_combined_forecasts` **and**
+  `read_quarterly_forecasts` call each return a bare `MagicMock`, not a DataFrame, unless a test sets
+  them. Today, `if not q_combined.empty:` gates the whole quarterly block on `q_combined` alone, and a
+  bare `MagicMock` is truthy, so an unconfigured `read_quarterly_combined_forecasts` silently skips that
+  block — this is exactly the skip-on-truthy-MagicMock that item 4's restructuring removes, since the
+  `q_combined.empty` guard becomes "the universe is empty" (a check on the gap-universe build from
+  `read_quarterly_forecasts`, not on `q_combined`), and `q_combined` itself is still read and concatenated
+  with the newly generated ensemble rows further down the same block. **The module's MagicMock
+  `data_reader` must therefore return EMPTY frames for BOTH `read_quarterly_combined_forecasts` and
+  `read_quarterly_forecasts` unless a test sets them, or a test that reaches the quarterly block raises on
+  a bare `MagicMock` instead of finding nothing to do.** Recommended: a shared fixture or helper in
+  `tests/test_maintenance_long_term.py` that sets both defaults, so individual tests only override what
+  they need — this is the complete list, replacing "e.g.":
+  - `test_no_combined_forecasts_exits_zero` (`:217`), `test_no_gaps_found_exits_zero` (`:245`),
+    `test_lookback_env_var_respected` (`:1078`), `test_empty_skill_metrics_exits_zero` (`:1109`),
+    `test_empty_forecasts_for_gaps_exits_zero` (`:1145`), `test_no_matching_forecast_rows_exits_zero`
+    (`:1185`), `test_ensemble_returns_no_em_rows_exits_zero` (`:1239`): **new expected result, under item
+    4's control-flow rule.** Each test's `assert_not_called()` checks on the next monthly step still hold
+    (each is gated on the monthly condition alone, unaffected by this restructuring), but the docstring's
+    "exits 0" no longer happens at the early guard: with both readers defaulted to empty DataFrames, the
+    gap universe is empty, the quarterly block finds nothing to do (no quarterly write), and the script
+    exits 0 right after the quarterly block because the monthly block did not complete — before the
+    seasonal block is reached. Assert that explicitly: no quarterly write
+    (`mock_file_writer.save_quarterly_forecast_data.assert_not_called()` — create and pass a
+    `mock_file_writer` in tests that do not already, since some of these currently omit it) and no
+    seasonal call (e.g. `mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()`), plus the
+    two fixture defaults so the run does not raise while getting there.
+  - `test_gaps_found_creates_and_saves_ensembles` (`:288`), `test_deduplication_works` (`:912`),
+    `test_audit_trail_logged` (`:1008`), `test_multi_station_gaps` (`:1327`), `test_save_error_causes_exit_one`
+    (`:1284`): these already reach the quarterly section today (none hits an early exit; `:1284`'s monthly
+    save error is appended to `errors` and does not itself return early), and under item 4's rule they
+    still complete the monthly block and reach the quarterly and seasonal blocks and the Audit trail
+    section exactly as before — **no change to their own assertions**. They currently tolerate an
+    unconfigured `read_quarterly_combined_forecasts` via the truthy-`MagicMock.empty` skip described
+    above, but that skip is what item 4's restructuring removes, so each of these tests now needs **both**
+    `read_quarterly_combined_forecasts.return_value` and `read_quarterly_forecasts.return_value` set to
+    empty DataFrames (correcting the earlier "no change ... needs the same `read_quarterly_forecasts`
+    fixture default" claim, which named only one of the two readers), or it raises under P1b where it
+    silently skipped before.
+  - `test_seasonal_gap_fill_processes_single_missing_issue_without_collapsing_leads` (`:354`) and
+    `test_monthly_gap_fill_only_writes_gap_leads` (`:766`): both already configure
+    `read_quarterly_combined_forecasts.return_value = pd.DataFrame()` but leave `read_quarterly_forecasts`
+    unconfigured — same fixture gap, same fix.
+  - Unaffected: `test_quarterly_gap_fill_dedup_lead_aware` (`:501`) and
+    `test_quarterly_gap_fill_only_writes_gap_leads` (`:626`) already configure
+    `read_quarterly_forecasts.return_value` (their own item-4 changes are listed separately above).
 
 **Acceptance (P1b):**
 - The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
@@ -1953,11 +2132,13 @@ Depends on P1b and P1c. Tests only.
 **One writer-paused window** (ops instruction, no code): merge the integration branch
 `integ_quarter_p1b_p2` (PP-065 P1b–P1d, PP-064 B) into `maxat_sapphire_2` — that merge **is** the
 postprocessing deploy trigger (owner decision R4-integration-branch; `deploy.pp` in the overview's
-dependency graph). PP-064 A, FD-029 P1 and PP-065 P1a are already live separately (owner decision
+dependency graph). PP-064 A, FD-029 P1 and PP-065 P1a are **presumed already live separately, per org,
+conditional on that org's resolved image tag being `latest`** (owner decision
 R4-merge-is-deploy; verify per org, `PP-064.C.step0`) and are not part of this merge. **The automatic
 bimonthly QUARTERLY recalc is allowed to run before this window and does not need to be paused** (owner
 decision R4-recalc-runs, 2026-09-28 — see N7 above): it already applies P1a's 3-of-3 rule, on calendar
-windows only, on servers today.
+windows only, presumed on servers today (verify per org, `PP-064.C.step0` — same caveat as the "already
+live separately" sentence above; the recalc's rule only takes effect once P1a's image is actually pulled).
 
 **This window follows PP-064 Chunk C's canonical "Order" sequence exactly**
 (`../high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout and verification");
@@ -1978,7 +2159,7 @@ point there, do not restate the checks here. In particular, do **not** require t
 any INFO-level log line (the quarterly-block/save/skip messages): canonical step 11 establishes they never
 reach this entry point's WARNING-capped log (INFRA-029) regardless of what actually happened.
 
-**Why the operational run, not the recalc, is the blank-card recovery point.** The in-window recalc (step
+**Why the operational run, not the recalc, is the target-quarter ensemble's recovery point.** The in-window recalc (step
 8) writes the derived seven-model rows for every quarter, the current one included
 (`src/skill_metrics.py` ~:2741, `joint_forecasts = forecasts.copy()`), but EM/Skilled Mean/Naive Mean are
 built from `merged`, an **inner join with observations** (~:2682-2690, ~:2806-2831) — so the recalc writes
@@ -1987,14 +2168,29 @@ quarter but is not guaranteed never: a quarter's last month counts as observed a
 (`src/data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g. kghm
 Dec 17–24) can make the current quarter "observed" before this recalc runs (see PP-064 Chunk C canonical
 step 11's PASS criterion 2 loophole note for the resulting read-back caveat). Only the quarterly block of
-`postprocessing_operational_long_term.py` (~:207-232) writes them unconditionally, from existing skill plus
-the latest derived forecasts, with no observation requirement. Until that operational run executes, the narrower
+`postprocessing_operational_long_term.py` (~:207-232) writes the Naive Mean row wherever a target-quarter
+key can form it (non-empty quarter skill, `postprocessing_operational_long_term.py:210`; two or more
+non-null contributors, `ensemble_calculator.py` ~:915) — see PP-064 step 11's INVESTIGATE outcome for when
+no key can form it — from existing skill plus the latest derived forecasts, with no observation
+requirement, and writes the Skilled Mean row alongside it only where that same key's own skill gate also
+passes (see PP-064's "Skilled Mean is not a required row" paragraph for the two conditions). **Correction:
+step 8's raw rows can already make a previously blank card displayable, before step 11 runs** — FD-029's
+read path left-merges the forecast rows with skill stats (`forecast_dashboard/src/db.py` ~:1538-1543,
+`how="left"`), and the card's own visibility check needs only one row whose `model_short` is in the
+checkbox options with a non-null `forecasted_discharge` (`dashboard/plot_manager.py` ~:423-480), not an
+ensemble row. So a blank-card key with a non-null derived value at step 8 is no longer guaranteed to stay
+literally blank until step 11. What step 11 reliably supplies — the in-window recalc only forms it when its
+own observation join happens to match, per the "not guaranteed never" case above — is the target-quarter's
+own **Naive Mean** (and, where its gate passes, Skilled Mean) ensemble row, for the
 blank-card population the overview's "User-visible consequence" paragraph now defines (a key where at
 most one of `LR_Base`/`LR_SM` has a non-null target-quarter forecast, so neither EM nor Naive Mean forms,
 and its one surviving row, if any, is non-native — **not** simply "a fresh EM row plus a non-native LR
-row", which also gets a fresh, visible Naive Mean row today) keeps showing a **blank card**. This manual run,
-verified, is the actual recovery point for the blank card — not the merge, and not the recalc alone — and
-closes the gap instead of leaving it open until the next natural cron day.
+row", which also gets a fresh, visible Naive Mean row today). Quarterly gap detection keys on Naive Mean
+(overview decision B), so the target-quarter's own Naive Mean row is the deliverable this recovery point is
+about, not merely card displayability. This manual run,
+verified, is the actual recovery point for that ensemble row — not the merge, and not the recalc alone —
+and closes the gap instead of leaving it open until the next natural cron day, even where step 8 has
+already made the card itself non-blank via a raw derived row.
 
 The export (canonical step 3) now captures **calendar-window-era, 3-of-3-era** quarter skill (whatever the
 automatic bimonthly recalc has already produced under P1a's rule since it merged, owner decision
@@ -2016,13 +2212,20 @@ does), not the original pre-P1a skill; treat it as such when comparing before/af
 - the Dataset B rows overwritten by fresh derived rows with the same key under flag OFF. This upsert is
   irreversible, which is why the export is taken first.
 
-**Operationally:** these two things become visible at different points, and only one of them waits for
-step 11. **The derived seven-model raw rows are written by the step-8 recalc itself** (see step 9's own
-check, above: `joint_forecasts = forecasts.copy()` in `_calculate_aggregated_skill_metrics` passes every
-raw forecast row through regardless of whether it joined an observation) — they are visible, with δ
-bounds (FD-029), after step 8/9, before step 11 has even run. **Only the target quarter's own Naive Mean
-/ Skilled Mean ensemble rows wait for step 11** to be guaranteed: step 8's recalc forms ensembles only
-where its own inner join with observations matches, usually not the current quarter (see PP-064 Chunk C
+**Operationally:** these two things become visible at different points, and step 11 is the RELIABLE
+point for only one of them. **The derived seven-model raw rows are written by the step-8 recalc
+itself** (see step 9's own check, above: `joint_forecasts = forecasts.copy()` in
+`_calculate_aggregated_skill_metrics` passes every raw forecast row through regardless of whether it
+joined an observation) — they are visible, with δ bounds (FD-029), after step 8/9, before step 11 has
+even run. **Step 11 reliably supplies the target quarter's own Naive Mean and Skilled Mean ensemble
+rows** — step 8's own recalc can occasionally form them first, via the observation-match loophole
+below, but that is not guaranteed. Step 11 writes the Naive Mean row wherever a
+target-quarter key can form a derived-composition Naive Mean — two or more non-null contributors (see
+PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none can) — and, separately, the Skilled
+Mean row for that same key only where its own skill gate also passes — see PP-064's "Skilled Mean is not a
+required row" paragraph (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` ~:783-791) for the
+two conditions; a key can form a Naive Mean without forming a Skilled Mean. Step 8's recalc forms either
+ensemble only where its own inner join with observations matches, usually not the current quarter (see PP-064 Chunk C
 canonical step 11's PASS criterion 2 and its pre-satisfied-branch note above for the exception). Do
 **not** frame either as appearing "on the next quarter issue day": that framing is what the step-11
 prompt-run requirement exists to avoid (the blank-card interval must not extend
@@ -2039,6 +2242,13 @@ Only after LTF-014 P0 and P2 are deployed on both orgs. **Blocked** while P0 is 
 - `README.md`: the passage that documents the active LR fallback, added by DOC-009 row 12 (at trunk the
   row targets `:14, 18-19, 305-320`). Grep `fallback` there and in the repo-root `doc/data_flow_long_term.md`,
   the other row-12 file.
+
+**Tests:** drop the `LR_Base`/`LR_SM` variant of the P1b Tests list's "Existing Source 1 (now unified)
+forecast_date bound, latest reader, both flags" cases (~:1198-1295) — once the fallback is gone, an
+LR-only monthly triplet derives nothing at all through this path, so that variant would pass trivially
+whether or not the bound still works. Keep the `GBT` variant P1b adds alongside it (same entry, ~:1281-1295);
+it exercises the same bound through the unconditional `QUARTERLY_DERIVED_MODELS` derivation, which this
+phase does not touch.
 
 **Acceptance:** before removing it, count per org the quarters that would lose LR rows. For the calendar
 quarters of scored years, expect none.

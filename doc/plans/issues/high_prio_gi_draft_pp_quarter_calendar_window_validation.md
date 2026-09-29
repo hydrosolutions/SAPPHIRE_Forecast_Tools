@@ -379,9 +379,10 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1169-1172 — re-measured
-  2026-09-29 after this round's own edits (round 11c) shifted the file again; earlier drafts' `~:434-436`,
-  `~:1117-1119`, `~:1132-1134`, `~:1162-1164` and `~:1165-1168` had each drifted): "a native row, a
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1188-1189 — re-measured
+  2026-09-29 (plan-sync round 12i) after this fix round's edits shifted the file again; earlier drafts'
+  `~:434-436`, `~:1117-1119`, `~:1132-1134`, `~:1162-1164`, `~:1165-1168`, `~:1169-1172` and `~:1170-1173`
+  had each drifted): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
   both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
@@ -602,7 +603,8 @@ Chunk B no longer edits `data_reader.py` or any other file.
   canonical sequence below — P1b–P1d are not deployed at this point in the runbook, they merge into trunk
   at step 4 and are pulled/verified on each server at step 6.) The precondition this bullet actually needs
   — that the recalc scores against 3-of-3 observations, not the old 2-of-3 rule — is already satisfied by
-  P1a alone, which is live now (owner decision R4-merge-is-deploy, verify per org at step 0): 2-of-3
+  P1a alone, which is **presumed live now, per org, conditional on that org's resolved image tag being
+  `latest`** (owner decision R4-merge-is-deploy, verify per org at step 0): 2-of-3
   observations against 3-of-3 derived forecasts would bias the scores, and P1a's 3-of-3 observation rule
   prevents that regardless of whether P1b–P1d have reached this server yet.
 - **Pre-window step** (before the writer-paused window opens, no code): merge trunk into
@@ -612,27 +614,49 @@ Chunk B no longer edits `data_reader.py` or any other file.
   not test these modules (INFRA-059: `.github/workflows/build_test.yml`'s `test_postprocessing` job,
   `:452-472`, only `uv sync`s and verifies imports, no pytest), so this local run is the only test gate
   before the merge below — and step 4's guard checks trunk `HEAD` against the commit hash recorded here.
-- **One writer-paused window** (ops instruction, no code). This is the **canonical in-window sequence** —
+- **One writer-paused window** (ops instruction, no code). This is the **canonical rollout sequence: steps
+  1-10 inside the writer-paused window, step 11 after it** —
   PP-065 § "P2 — rollout" and the overview's rollout step 3.4 reference this list rather than restating it:
+  **Both orgs, one window.** Step 4 below (the `integ_quarter_p1b_p2` → trunk merge, `deploy.pp`) deploys
+  P1b to **every** org whose image tag is `latest` at once (R4-merge-is-deploy) — there is no per-org merge
+  to stagger. **An org whose tag resolves to `local`** (detail 0's per-org read) is a BLOCKER to resolve
+  before this window opens — set that org's `.env` tag to `latest` (detail 0's resolution) before the
+  window, so step 4's merge reaches it like any other org; step 4's single merge does not by itself put
+  anything on an org still tagged `local`. So
+  steps 1-3 (pause every writer, the pre-deploy DB audit plus PP-065's rule-A triplet count,
+  and the export) must each be completed on **both** kghm and tjhm before step 4 runs: pausing and
+  auditing/exporting only one org before merging would leave the other org's writers active, and its
+  pre-change state uncaptured, the moment the new image auto-pulls there too. Steps 6-10 (pull/verify,
+  decision F, the recalc, post-recalc checks, resuming writers) are already written per-org below, run
+  inside this same writer-paused window, and none of them may be deferred to a later window for either
+  org — **except step 7 (decision F), which is tjhm-only** (kghm has no equivalent provenance-cleanup
+  problem; see "B3" above), so kghm has no step-7 action to perform, not a deferred one. **Step 11 (the
+  first operational run) runs AFTER step 10 resumes the writers, so it is after the writer-paused window
+  closes, not inside it** — it must still happen promptly, on both orgs, in this same rollout pass, just
+  not under the pause. **Window placement.** The window must fall between both orgs' LT cron
+  days — kghm's 10th and 25th, tjhm's 1st — e.g. days 2-9 or 11-24 of a month; step 0 (detail 0 below)
+  confirms each org's configured `operational_issue_day`, and the overview's own rollout step 1 ("crontab
+  LT line") confirms the actual cron entry still matches, before relying on either.
   1. **Pause every writer**, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
      maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`), any
      recalc other than the one at step 8, and manual runs — the automatic bimonthly recalc does not need
      pausing beforehand (owner decision R4-recalc-runs). Wait for running jobs to finish before continuing.
   2. **The read-only pre-deploy DB audit** (detail 2 below) and **PP-065's count of rule-A (same-issue
      monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", the "This window follows PP-064
-     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:1962-1966 — re-measured 2026-09-29 (round
-     11c), done here, at the audit step,
+     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:2143-2148 (the rule-A sentence is the
+     "pause writers → the pre-deploy DB audit and PP-065's own count of rule-A ..." line, ~:2146) —
+     re-measured 2026-09-29 (plan-sync round 12i), done here, at the audit step,
      not "before the recalc": that heading no longer exists in PP-065 P2).
   3. **Export** (detail 1 below: `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
      rows, kept out of the repo) — this is the SAME export PP-065 P2 refers to; state it once here.
   4. **Merge** `integ_quarter_p1b_p2` into trunk — this merge **is** the postprocessing deploy trigger
      (`deploy.pp` in the overview's dependency graph). **Guard: trunk must not have moved since the
      pre-window step's test run.** Before merging, confirm trunk `HEAD` still equals the trunk commit
-     recorded when it was merged into `integ_quarter_p1b_p2` at the pre-window step below. If trunk has
+     recorded when it was merged into `integ_quarter_p1b_p2` at the pre-window step above. If trunk has
      advanced (e.g. another PR landed on `maxat_sapphire_2` in the meantime), merge trunk into
      `integ_quarter_p1b_p2` again and re-run `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh
      postprocessing_forecasts` (and `forecast_dashboard` if applicable) on the updated tree before
-     proceeding — this merge gets no CI pytest gate either (see the pre-window step below), so this
+     proceeding — this merge gets no CI pytest gate either (see the pre-window step above), so this
      re-run is the only test gate against the newly-merged trunk commits.
   5. **Wait for the CI run on the merge commit to succeed** (`.github/workflows/deploy_production.yml`) —
      the merge builds and pushes the image. **Production CI pushes only the `:latest` tag**
@@ -640,12 +664,18 @@ Chunk B no longer edits `data_reader.py` or any other file.
      build or push any org's separately configured tag. This step does not by itself put anything on a
      server. **If CI fails: keep writers paused, and revert the merge or fix forward before resuming** — see
      "Abort path" below; do not proceed to step 6.
-  6. **On each server, pull the new image and verify it**: `docker pull
-     mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest}` (and
-     `mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}` if this window
+  6. **On each server, pull the new image and verify it**: use the tag as the org's `.env` actually
+     resolves it — `read_configuration` (`bin/utils/common_functions.sh:102-112`) sets an unset
+     `ieasyhydroforecast_backend_docker_image_tag` / `..._frontend_docker_image_tag` to `local` (with a
+     WARNING), never to `latest`, before exporting it — so read the raw `.env` value (or the exported
+     shell value after `read_configuration` has run) rather than typing `:latest` or relying on a bare
+     shell fallback. `docker pull
+     mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local}` (and
+     `mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-local}` if this window
      also carries a dashboard-affecting change) — **use the org's configured tag, not a hardcoded
-     `:latest`**. Then `docker image inspect
-     mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest} --format
+     `:latest`; if it is unset it resolves to `local`, meaning this org does not auto-deploy from CI at
+     all** (R4-merge-is-deploy condition 1). Then `docker image inspect
+     mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format
      '{{.Created}}'` (and digest) and confirm it matches the new build from step 5, not a stale local image
      (detail 0/`PP-064.C.step0`'s own reading may predate this merge — re-verify here). Nothing else pulls
      it inside this window: Luigi only pulls when a task starts
@@ -654,7 +684,11 @@ Chunk B no longer edits `data_reader.py` or any other file.
      locally at all — so without this explicit pull, steps 7-9 below would silently run against the OLD
      image. **If the pull or the verification fails or does not match: keep writers paused, do not
      proceed** — see "Abort path" below.
-     - **Pinned tags (both images).** Since step 5 only builds and pushes `:latest`, an org whose configured
+     - **Pinned tags (both images).** This bullet covers an org whose tag is **explicitly pinned** to a
+       real, non-`local` value (e.g. a version pin) — an org whose tag resolves to `local` is handled at
+       detail 0 below as a BLOCKER to fix before the window opens, not by retagging: never push a `:local`
+       tag to Docker Hub (Luigi would auto-pull it on every `local` deployment,
+       `apps/pipeline/pipeline_docker.py:298-304`). Since step 5 only builds and pushes `:latest`, an org whose configured
        tag (`ieasyhydroforecast_backend_docker_image_tag` / `..._frontend_docker_image_tag`) is **not**
        `latest` (e.g. a version pin) has **no new build matching that tag** — the pull in this step returns
        the same old image, and the creation-date/digest check correctly reports no match, but for a
@@ -662,11 +696,15 @@ Chunk B no longer edits `data_reader.py` or any other file.
        operator must either promote/retag this run's `:latest` build to the org's pinned tag (and push it),
        or abort per the "Abort path" below — do not proceed on a pinned org with an unmatched image.
        **Presumed: the local copies of the org env files set `latest`; to be recorded per org at step 0
-       (`PP-064.C.step0`)** — this repo's local `.env` copies carry no
-       `ieasyhydroforecast_backend_docker_image_tag` / `..._frontend_docker_image_tag` override, and no
-       per-org read confirming this has been recorded yet, so this is not verified fact. It is not expected
-       to trigger, but confirm at step 0 rather than assume it; it is a guard for the next org whose tag is
-       pinned.
+       (`PP-064.C.step0`).** **Corrected 2026-09-29 (plan-sync round 12): the repo's own template env file
+       DOES carry this override** — `apps/config/.env:136-137` sets both
+       `ieasyhydroforecast_backend_docker_image_tag` and `ieasyhydroforecast_frontend_docker_image_tag` to
+       `latest` (the earlier "carries no override" claim here was wrong). That file is a demo/template
+       config (`ieasyhydroforecast_organization=demo`), not a real kghm/tjhm server `.env`, so it shows
+       intent, not what either org's actual deployed `.env` contains — no per-org read confirming the real
+       servers match it has been recorded yet, so this is still not verified fact for kghm/tjhm. It is not
+       expected to trigger, but confirm at step 0 rather than assume it; it is a guard for the next org
+       whose tag is pinned.
      - **The dashboard needs a re-create, not just a pull.** `docker pull` on its own does not restart or
        re-create the running dashboard containers — a pulled image with no re-create keeps serving the OLD
        code. If this window carries a dashboard-affecting change, follow the pull with the same
@@ -683,16 +721,29 @@ Chunk B no longer edits `data_reader.py` or any other file.
       the next scheduled LT cron day. Exact command, per org: `bash
       bin/bimonthly_long_term_postprocessing.sh <env_file_path> operational`. This invokes
       `postprocessing_operational_long_term.py`, which has no quarter-only mode — the same run also
-      processes monthly and seasonal ensembles. This is what always writes the derived seven-model rows'
-      Naive Mean / Skilled Mean ensemble rows for the CURRENT quarter, whether or not that quarter is
-      observed: the in-window recalc (step 8) only writes ensembles where its own inner join against
-      observations matches (`src/skill_metrics.py` ~:2682-2690, ~:2806-2831) — usually not the current
+      processes monthly and seasonal ensembles. This is what writes the derived seven-model rows'
+      Naive Mean ensemble row for the CURRENT quarter, whether or not that quarter is observed, wherever a
+      target-quarter key can form a derived-composition Naive Mean — two or more non-null contributors,
+      **one of them derived** (Naive Mean itself needs only two or more distinct non-null raw
+      contributors, which a plain `LR_Base`+`LR_SM` key already satisfies,
+      `ensemble_calculator.py` ~:890-915; a *derived*-composition Naive Mean additionally requires one of
+      the seven re-enabled models among those contributors)
+      (see the INVESTIGATE outcome below for when none can). **Skilled Mean is a separate, narrower
+      condition, not implied by Naive Mean forming:** the same run writes a Skilled Mean row for that key
+      only where its own skill gate also passes — see "Skilled Mean is not a required row" below for the
+      two conditions. A target-quarter key can form a Naive Mean without forming a Skilled Mean, and gap
+      detection keys on Naive Mean only (PP-065 § "Quarterly ensembles = Naive Mean + Skilled Mean only"
+      ~:67, "A Skilled Mean that does not form is not a gap"). The in-window
+      recalc (step 8) only writes ensembles where its own inner join against observations matches
+      (`src/skill_metrics.py` ~:2682-2690, ~:2806-2831) — usually not the current
       quarter, **but not guaranteed never**: a quarter's last month counts as observed at ≥50% of its
       days (`data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g.
       kghm Dec 17–24) can make the current quarter "observed" before step 8 runs, and step 8 then writes
       its ensembles too — see PASS criterion 2's loophole note below. Only this operational run's
-      quarterly block (`postprocessing_operational_long_term.py` ~:207-232) writes them unconditionally,
-      from existing skill plus the latest derived forecasts, with no observation requirement. See the
+      quarterly block (`postprocessing_operational_long_term.py` ~:207-232) writes Naive Mean, from
+      existing skill plus the latest derived forecasts, with no observation requirement, whenever a
+      target-quarter key can form it — and Skilled Mean alongside it wherever that key's own skill gate
+      also passes. See the
       overview's "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card
       framing this closes.
 
@@ -739,8 +790,22 @@ Chunk B no longer edits `data_reader.py` or any other file.
       `dropna(subset=["forecasted_discharge"])` at `:836`). Requiring it unconditionally would fail valid
       runs — its absence is informational, not a failure (see below).
 
-      The run counts as successful only if **both** of the following hold, checked per org:
-      1. **Log checks, WARNING level, across two named files.**
+      **Step 11 outcomes, per org (round 12c: replaces the earlier three-outcome "criterion 2 not
+      applicable" framing with a simpler rule: the recalc and step 11 use different readers and trims, so
+      a per-key applicability test cannot be made exact; the operator investigates instead).**
+      - **PASS** = criterion 1 (below) and criterion 2 (below) both hold.
+      - **PASS (pre-satisfied)** = the existing late-quarter branch below: the derived-composition Naive
+        Mean already exists after step 9 → criterion 1 alone. See the "When the target quarter already
+        counts as observed …" bullet under criterion 2 for the rule and its documented limitation.
+      - **INVESTIGATE** = criterion 1 holds but criterion 2 is not met. This is NOT an automatic FAIL. The
+        operator determines and records either a defect, or the reason no key could form a
+        derived-composition Naive Mean (e.g. no target-quarter key with two or more contributors, one of
+        them derived; Naive Mean needs two or more distinct raw `model_short` values,
+        `ensemble_calculator.py` ~:887-915). The rollout is complete only after the investigation is
+        recorded.
+      - **FAIL** = criterion 1 fails.
+
+      1. **Criterion 1: log checks, WARNING level, across two named files.**
          - **Wrapper log** (`${LOG_DIR}/run_${TIMESTAMP}.log` — `log_file`,
            `bin/bimonthly_long_term_postprocessing.sh:57`; every `log_message` line is `tee -a`'d there,
            `:61`): the wrapper's own `log_message` lines are shell output, not Python logging, and are
@@ -763,7 +828,7 @@ Chunk B no longer edits `data_reader.py` or any other file.
            `read_quarterly_forecasts`/`read_latest_quarterly_forecasts`). Each is quoted verbatim from its
            source, including case; the match against this log file is case-sensitive, so none of these
            five strings, in this exact case, may appear anywhere in it.
-      2. **At least one Naive Mean row for the target quarter whose `composition` includes at least one
+      2. **Criterion 2: at least one Naive Mean row for the target quarter whose `composition` includes at least one
          `QUARTERLY_DERIVED_MODELS` member** (`src/model_names.py:22-24`), per org (aggregate counts only,
          no station codes in the plan or the PR).
          - **Why this is the one required data check.** Naive Mean's formation rule
@@ -799,11 +864,11 @@ Chunk B no longer edits `data_reader.py` or any other file.
            own quarterly block executed on this run.** The block can no-op end to end this run (e.g. its
            quarter skill frame is tombstone-only: an INFO-level `"Read 0 quarterly skill metric rows from
            API"` followed by an INFO-only skip, nothing at WARNING) and PASS would still be granted from
-           the pre-existing row alone. Step 9's two precondition checks (detail 5 below) confirm only that
-           the block's two required inputs exist in the DB after the recalc — by themselves they do not
-           distinguish this pre-satisfied case from step 11's own quarterly block actually running (detail
-           5 says so explicitly) — and PP-064 B's B5 is the standing contract for the block's behaviour
-           when they fail — see detail 5 below for both.
+           the pre-existing row alone. Step 9's precondition checks (i) and (ii) (detail 5 below) confirm
+           only that the block's two required inputs exist in the DB after the recalc — by themselves they
+           do not distinguish this pre-satisfied case from step 11's own quarterly block actually running
+           (detail 5 says so explicitly) — and PP-064 B's B5 is the standing contract for the block's
+           behaviour when they fail — see detail 5 below for both.
            **Step 9 (detail 5 below) must record whether this row already exists before step 11 runs.**
            If it does, PASS requires only criterion 1 (the wrapper and WARNING-level log checks) above;
            criterion 2 is recorded as "pre-satisfied at step 9" rather than re-evaluated against step
@@ -815,7 +880,10 @@ Chunk B no longer edits `data_reader.py` or any other file.
            unchanged row logs only `"Skipped unchanged long forecast: …"` at DEBUG (`crud.py:139`),
            invisible at the service's default INFO level (`app/logger.py:8`, `settings.log_level`), so
            its absence does not fail a valid run.
-           If no such row exists after step 9, PASS requires criteria 1 and 2 as stated above, unchanged.
+           If no such row exists after step 9, the outcome is determined at step 11 as stated in "Step 11
+           outcomes, per org" above: **PASS** if criteria 1 and 2 both hold; **INVESTIGATE** if criterion 1
+           holds but criterion 2 does not (not an automatic FAIL — see that outcome's own text for what the
+           operator records); **FAIL** if criterion 1 fails.
 
       **Informational, not pass/fail** (a lead for investigation, not a required outcome — do not gate the
       run's success on either of these):
@@ -832,9 +900,10 @@ Chunk B no longer edits `data_reader.py` or any other file.
       ~:2807-2832) rather than checking this run's own output, and added a second query without changing
       the pass/fail outcome. **Not the same as** criterion 2's step-9 recording above, which is a single
       aggregate boolean (recorded once at step 9, before step 11 runs) that determines whether the
-      recovery goal is already met — it changes which criteria PASS depends on (criterion 1 alone, with
-      criterion 2 pre-satisfied, vs. both 1 and 2) precisely in the case the dropped cross-check never
-      distinguished (a pre-existing row from step 8 vs. a fresh one from step 11), so it stays.
+      recovery goal is already met — the step-9 record only decides whether the pre-satisfied branch
+      applies; PASS / INVESTIGATE / FAIL are decided by step 11's own criteria (four outcomes in total,
+      listed above) precisely in the case the dropped cross-check never distinguished (a pre-existing
+      row from step 8 vs. a fresh one from step 11), so it stays.
 
       **Supporting context, not a separate check:**
       - **No EM row is written for the target quarter by this run.** PP-065 P1b's writer change stops the
@@ -912,9 +981,32 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    `operational_schedule_for_mode("quarter")` raises (`long_term_horizon_resolver.py:138-142`). Under flag
    OFF, PP-065 then skips the derivation and the native-row filter with one WARNING; under flag ON the
    quarter readers raise, as on trunk (`long_term_horizon_resolver.py:84-111` notes taj-style configs that
-   omit it). **R4-merge-is-deploy's per-org verification (2026-09-28):** also record the image tag and the
+   omit it). **R4-merge-is-deploy's per-org verification (2026-09-28):** record all three conditions that
+   decision depends on (overview § R4-merge-is-deploy, ~:165-201), not only the image dates: (1) **the
+   tag value** — read the org's actual configured tag from its `.env` file (or via `read_configuration`,
+   `bin/utils/common_functions.sh:102-112`, which resolves an unset tag to `local` with a WARNING, never
+   to `latest`); an org whose `.env` never sets these variables auto-pulls nothing from trunk and this
+   whole verification reduces to "still running `local`". **If it resolves to `local` for an org, record
+   this as a BLOCKER to resolve before the writer-paused window opens**: set that org's `.env` tag to
+   `latest`. Doing so itself pulls current trunk `:latest` at the next Luigi task / 19:00 frontend cron —
+   deploying PP-064 A, FD-029 P1 and PP-065 P1a to that org immediately, matching the other org's presumed
+   state — so re-run this step for that org after the pull, before the window opens; step 6 then needs no
+   special path for it. Never push a `:local` tag to Docker Hub to
+   work around this — Luigi on every `local`-tagged deployment would auto-pull it as soon as one exists
+   (`apps/pipeline/pipeline_docker.py:298-304`), turning every such org into an unintended auto-deploy
+   target; the pinned-tag retag guidance at canonical step 6 above applies only to explicitly pinned,
+   non-`local` tags, not to this case; (2) **whether `validate_dashboard_origins`
+   passes** for this org (`bin/daily_update_sapphire_frontend.sh:55`) — e.g. the last
+   `daily_update_sapphire_frontend` log shows the pull actually ran, not an early `exit 1` — **and inspect
+   the RUNNING dashboard container itself** (`docker ps` / `docker inspect <container> --format
+   '{{.Image}}'`, compared against the pulled image ID): `daily_update_sapphire_frontend.sh` backgrounds
+   the compose recreate (`:68-80`, `start_docker_compose_dashboards`,
+   `bin/utils/common_functions.sh:607-617`, which only backgrounds the `docker compose ... up -d` call and
+   records its PID) and never checks the result — it only `wait`s on that PID without checking its exit
+   status (`bin/daily_update_sapphire_frontend.sh:79`), so a
+   passing log and a fresh pull do not by themselves prove the running container is the new image; and (3) the
    postprocessing/dashboard image creation dates (`docker image inspect
-   mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest} --format
+   mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format
    '{{.Created}}'`, same for `sapphire-dashboard` with `ieasyhydroforecast_frontend_docker_image_tag` —
    use the org's *configured* tag, not a hardcoded `:latest`), to confirm Chunk A and FD-029 are actually
    live. The automatic bimonthly QUARTERLY recalc is allowed to run and does not need pausing (owner
@@ -966,12 +1058,12 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    - Tombstone count per `(model, quarter, hv)` per org, including the old quarter EM skill rows.
    - Suppressed quarter skill rows per org at K = 10 (decision C; `src/skill_metrics.py:2834-2849`).
      Locally the tjhm median `n_pairs` was 5–6 before the fix.
-   - **Two precondition checks that establish the quarterly block's inputs exist in the DB after this
-     recalc — they do not, by themselves, prove step 11's block ran on a later operational run.**
-     Canonical step 11's pre-satisfied branch (its PASS criterion 2 note) can pass from an already-existing
-     row without step 11's own quarterly block ever having executed on that run; these checks are run here,
-     as part of this recalc's own post-checks, to make the two required inputs observable, not to stand in
-     for step 11's own PASS criteria:
+   - **Two precondition checks, run per org as part of this recalc's own post-checks.** (i) and (ii)
+     establish that the quarterly block's inputs exist in the DB after this recalc — they do not, by
+     themselves, prove step 11's block ran on a later operational run: canonical step 11's pre-satisfied
+     branch (its PASS criterion 2 note) can pass from an already-existing row without step 11's own
+     quarterly block ever having executed on that run; (i) and (ii) make the two required inputs
+     observable, not stand in for step 11's own PASS criteria.
      - **(i) At least one NON-tombstone quarter skill row per org.** A tombstone is `n_pairs == 0` (or
        NULL) with every metric column NULL, upserted by the write-side to mark a stale long-horizon skill
        key; a legitimate row always has `n_pairs >= K` (`_drop_tombstone_rows`, `src/data_reader.py:107-120`
