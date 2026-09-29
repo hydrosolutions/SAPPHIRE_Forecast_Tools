@@ -2926,6 +2926,7 @@ def _add_naive_mean_aggregated(
     if metric_group_cols is None:
         metric_group_cols = [period_col, "code", "model_short"]
     from src.ensemble_calculator import (
+        _quarter_null_if_any_missing,
         composition_agg,
         is_multi_model_composition,
     )
@@ -2945,9 +2946,13 @@ def _add_naive_mean_aggregated(
     }
     if period_col not in time_group_cols:
         agg_dict[period_col] = "first"
+    # Quarter nulls a quantile column whenever ANY group member lacks it
+    # (e.g. a derived model with no quantiles at all); season keeps the
+    # unchanged skipna "mean". See _quarter_null_if_any_missing.
+    _qcol_agg = _quarter_null_if_any_missing if period_col == "quarter_in_year" else "mean"
     for qcol in _QUANTILE_COLS:
         if qcol in pool.columns:
-            agg_dict[qcol] = "mean"
+            agg_dict[qcol] = _qcol_agg
     for dcol in ("valid_from", "valid_to", "date"):
         if dcol in pool.columns and dcol not in time_group_cols:
             agg_dict[dcol] = "first"

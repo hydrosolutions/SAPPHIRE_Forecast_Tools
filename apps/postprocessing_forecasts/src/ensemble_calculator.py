@@ -56,6 +56,28 @@ def _skip_em_for_quarter(period_col: str) -> bool:
     return period_col == "quarter_in_year"
 
 
+def _quarter_null_if_any_missing(series: pd.Series) -> float:
+    """Per-column mean that nulls the whole group if ANY member lacks it.
+
+    Used only for QUARTER's Naive Mean quantile-column aggregation (PP-065
+    P1c plan, Tests list: "Adding a derived member nulls all of its
+    quantile columns"). A derived model contributes NO quantile information
+    at all — every quantile column is null by the P1a derivation helper's
+    documented output contract — so silently skipping its NaN via pandas'
+    default ``skipna`` mean would understate the combined ensemble's
+    uncertainty by pretending every contributing member supplied this
+    quantile. Evaluated independently per quantile column via one call per
+    column, so a null in one column on one member (e.g. an LR row with a
+    null ``q50`` but real q05-q95) does not null unrelated columns that
+    every member does supply.
+
+    Season is unaffected: its own Naive/Skilled Mean quantile aggregation
+    keeps plain ``"mean"`` (skipna) unchanged — callers select this
+    function only when ``period_col == "quarter_in_year"``.
+    """
+    return np.nan if series.isna().any() else series.mean()
+
+
 # ---------------------------------------------------------------------------
 # Main public functions
 # ---------------------------------------------------------------------------
@@ -914,9 +936,13 @@ def _add_naive_mean_aggregated_ens(
     }
     if period_col not in time_group_cols:
         naive_agg[period_col] = "first"
+    # Quarter nulls a quantile column whenever ANY group member lacks it
+    # (e.g. a derived model with no quantiles at all); season keeps the
+    # unchanged skipna "mean". See _quarter_null_if_any_missing.
+    _qcol_agg = _quarter_null_if_any_missing if period_col == "quarter_in_year" else "mean"
     for qcol in quantile_cols:
         if qcol in pool.columns:
-            naive_agg[qcol] = "mean"
+            naive_agg[qcol] = _qcol_agg
     for dcol in ("valid_from", "valid_to", "date"):
         if dcol in pool.columns and dcol not in time_group_cols:
             naive_agg[dcol] = "first"
