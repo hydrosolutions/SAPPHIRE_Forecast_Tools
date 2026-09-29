@@ -3523,12 +3523,11 @@ def read_quarterly_forecasts(
     """
     from src.aggregation import local_calendar_date
 
-    empty_cols = [
-        "code",
-        "year",
-        "quarter_in_year",
-        "model_short",
-    ]
+    # PP-065 P1b: every early-return empty frame carries the full output
+    # schema (including horizon_value/date, out-of-loop review finding),
+    # not just the four base columns -- so a caller never sees the output
+    # schema change shape depending on whether any row happened to survive.
+    empty_cols = _quarterly_fc_output_cols()
 
     # Direct quarterly forecasts from API.
     #
@@ -3707,13 +3706,20 @@ def read_quarterly_forecasts(
         direct = pd.DataFrame()
 
     # PP-065 P1b: derived rows (both flags), only when the shared schedule
-    # resolved. Read issue years [start_year - 1, end_year] -- matching
-    # the direct source's own widened read.
+    # resolved. The derivation's own issue-year read window must match
+    # THIS reader's own direct-read window for the SAME flag -- q_start_year
+    # under flag ON (already widened by the configured lead), start_year - 1
+    # under flag OFF (Problem 7's own widening) -- so a native direct row
+    # outside the derivation's window can never be mistaken for "absent"
+    # by _suppress_lr_fallback_covered_by_direct below (out-of-loop review
+    # finding: a mismatched window let an unread-but-present native row's
+    # fallback go unsuppressed).
+    derivation_start_year = q_start_year if (lead_aware and quarter_schedules) else start_year - 1
     derived_seven = pd.DataFrame()
     derived_lr_fallback = pd.DataFrame()
-    if single_schedule is not None:
+    if single_schedule is not None and single_schedule.issue_day >= 1:
         derived_seven, derived_lr = _derive_quarterly_rows(
-            codes, start_year - 1, end_year, single_schedule
+            codes, derivation_start_year, end_year, single_schedule
         )
         derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(derived_lr, direct)
         derived_seven = _trim_to_target_year_range(derived_seven, "year", start_year, end_year)
@@ -3747,8 +3753,13 @@ def read_quarterly_forecasts(
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    # Select canonical output columns
-    combined = combined[[c for c in _quarterly_fc_output_cols() if c in combined.columns]]
+    # Select canonical output columns. reindex (not a plain column filter)
+    # so horizon_value/date (and any other canonical column) is always
+    # PRESENT -- as an all-null column when nothing in this call's result
+    # happened to carry it -- rather than silently absent (out-of-loop
+    # review finding: a caller keying on result["horizon_value"] must
+    # never see the schema change shape depending on the data).
+    combined = combined.reindex(columns=_quarterly_fc_output_cols())
 
     # Normalize valid_from/valid_to to strings for consistency
     for col in ("valid_from", "valid_to"):
@@ -3942,7 +3953,7 @@ def read_latest_quarterly_forecasts(
                 "ieasyhydroforecast_ml_long_term_supported_modes); returning no "
                 "operational forecasts."
             )
-            return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
+            return pd.DataFrame(columns=_quarterly_fc_output_cols())
         max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
         q_start_year = start_year - _read_window_expansion_years(max_lead)
 
@@ -4013,13 +4024,23 @@ def read_latest_quarterly_forecasts(
         direct = pd.DataFrame()
 
     # PP-065 P1b: derived rows (both flags), only when the shared schedule
-    # resolved. Read issue years [start_year - 1, end_year], bounded by
-    # forecast_date (Problem 6, for free via _derive_quarterly_rows).
+    # resolved. The derivation's own issue-year read window must match
+    # THIS reader's own direct-read window for the SAME flag -- q_start_year
+    # under flag ON (already widened by the configured lead), start_year
+    # under flag OFF (this reader's direct branch has no Problem-7-style
+    # widening at all) -- so a native direct row outside the derivation's
+    # window can never be mistaken for "absent" by
+    # _suppress_lr_fallback_covered_by_direct below (out-of-loop review
+    # finding: a mismatched window let an unread-but-present native row's
+    # fallback go unsuppressed, changing output solely as forecast_date
+    # crossed a year boundary). Bounded by forecast_date (Problem 6, for
+    # free via _derive_quarterly_rows).
+    derivation_start_year = q_start_year if (lead_aware and quarter_schedules) else start_year
     derived_seven = pd.DataFrame()
     derived_lr_fallback = pd.DataFrame()
-    if single_schedule is not None:
+    if single_schedule is not None and single_schedule.issue_day >= 1:
         derived_seven, derived_lr = _derive_quarterly_rows(
-            codes, start_year - 1, end_year, single_schedule, forecast_date=today
+            codes, derivation_start_year, end_year, single_schedule, forecast_date=today
         )
         derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(derived_lr, direct)
         derived_seven = _trim_to_target_year_range(derived_seven, "year", start_year, end_year + 1)
@@ -4032,7 +4053,7 @@ def read_latest_quarterly_forecasts(
     frames = [f for f in (derived_seven, derived_lr_fallback, direct) if not f.empty]
     if not frames:
         logger.warning("No quarterly forecast data available")
-        return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
+        return pd.DataFrame(columns=_quarterly_fc_output_cols())
 
     if len(frames) == 1:
         combined = frames[0].copy()
@@ -4045,14 +4066,19 @@ def read_latest_quarterly_forecasts(
         combined = combined.drop_duplicates(subset=available, keep="last")
 
     if combined.empty:
-        return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
+        return pd.DataFrame(columns=_quarterly_fc_output_cols())
 
     combined = _filter_supported_quarter_models(combined)
     if combined.empty:
-        return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
+        return pd.DataFrame(columns=_quarterly_fc_output_cols())
 
-    # Select canonical output columns
-    combined = combined[[c for c in _quarterly_fc_output_cols() if c in combined.columns]]
+    # Select canonical output columns. reindex (not a plain column filter)
+    # so horizon_value/date (and any other canonical column) is always
+    # PRESENT -- as an all-null column when nothing in this call's result
+    # happened to carry it -- rather than silently absent (out-of-loop
+    # review finding: a caller keying on result["horizon_value"] must
+    # never see the schema change shape depending on the data).
+    combined = combined.reindex(columns=_quarterly_fc_output_cols())
 
     # Normalize valid_from/valid_to to strings
     for col in ("valid_from", "valid_to"):

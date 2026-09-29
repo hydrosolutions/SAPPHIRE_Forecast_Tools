@@ -1090,18 +1090,34 @@ class TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim:
         ]
 
     def test_native_direct_row_suppresses_monthly_derived_fallback(self, monkeypatch):
+        """The monthly source spells the model "LR_BASE" (DB-form
+
+        uppercase) while the direct row spells it "LR_Base" -- same
+        canonical model, different literal spelling. This is deliberate
+        (out-of-loop review finding): with matching spellings, the later
+        generic keep="last" combine dedup would ALSO happen to produce
+        the right answer even if `_suppress_lr_fallback_covered_by_direct`
+        were a no-op (it dedups on the literal `model_short` string, not
+        the canonical one), making the assertions vacuous. A spelling
+        mismatch means only the dedicated suppression function -- which
+        compares canonical models -- can prevent the fallback row from
+        surviving alongside the native one.
+        """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         monthly_rows = _quarter_derivation_rows(
-            "2024-09-25", 1, "LR_Base", [300.0, 310.0, 320.0], code=CODE
+            "2024-09-25", 1, "LR_BASE", [300.0, 310.0, 320.0], code=CODE
         )
         fake = _quarter_and_month_api_fake(self._direct_rows_native(), monthly_rows)
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
             result = data_reader.read_quarterly_forecasts([CODE], 2024, 2024)
 
         q4_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 4)]
-        lr_base = q4_2024[q4_2024["model_short"] == "LR_Base"]
-        assert len(lr_base) == 1
-        assert float(lr_base["forecasted_discharge"].iloc[0]) == 100.0
+        lr_base_canon = q4_2024[
+            data_reader.canonical_model_short_series(q4_2024["model_short"]) == "LR_BASE"
+        ]
+        assert len(lr_base_canon) == 1
+        assert float(lr_base_canon["forecasted_discharge"].iloc[0]) == 100.0
+        assert 310.0 not in set(q4_2024["forecasted_discharge"])
         lr_sm = q4_2024[q4_2024["model_short"] == "LR_SM"]
         assert len(lr_sm) == 1
         assert float(lr_sm["forecasted_discharge"].iloc[0]) == 120.0
@@ -2730,6 +2746,98 @@ class TestOutputSchemaFlagOff:
         assert "horizon_value" in result.columns
         assert result["horizon_value"].isna().any()  # the direct LR row
         assert result["horizon_value"].notna().any()  # the derived GBT row
+
+
+class TestOutputSchemaFlagOffDirectOnly:
+    """Out-of-loop review finding: with a direct-only result (no derived
+
+    row at all to carry `horizon_value` into the combine), the column
+    must still exist -- as all-null -- not be silently absent. Both
+    readers reindex onto the canonical output columns rather than
+    filtering to whatever columns happened to survive.
+    """
+
+    def test_read_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [_quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        assert not result.empty
+        assert "date" in result.columns
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].isna().all()
+
+    def test_read_latest_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [_quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert not result.empty
+        assert "date" in result.columns
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].isna().all()
+
+
+class TestDerivationWindowMatchesDirectWindow:
+    """Out-of-loop review finding: the monthly derivation's own issue-year
+
+    read window must match the reader's OWN direct-read window for the
+    active flag, or a native direct row that falls outside the (wider)
+    derivation window but inside the (narrower) direct window gets
+    treated as "absent" by the fallback-suppression check, letting a
+    stale monthly-derived fallback value win depending solely on which
+    side of a read-window boundary `forecast_date` falls -- with no
+    change to the underlying stored data.
+    """
+
+    def test_read_latest_quarterly_forecasts_flag_off_never_leaks_stale_fallback(self, monkeypatch):
+        # A native Q1-2026 direct row (issued 2025-12-25, kghm shape) with
+        # a same-issue monthly triplet that would derive a DIFFERENT
+        # value (310.0) if the native row were ever mistaken for absent.
+        # This reader's own flag-OFF direct branch has NO widening at
+        # all (pre-existing, unmodified by this diff), so once the 120-day
+        # rolling window ages past the native row's issue date, direct
+        # itself no longer sees it either -- by design, not a bug. The
+        # invariant under test is narrower: the derivation's read window
+        # must never be WIDER than direct's own, so a still-in-window
+        # native row is never mistaken for absent (310.0 must never
+        # appear), and an aged-out native row must not resurrect as a
+        # stale 310.0 fallback either -- the aged-out case is correctly
+        # EMPTY, matching what direct alone would already show.
+        direct_rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2025-12-25", 1, "LR_Base", [300.0, 310.0, 320.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+
+        def read_lr_base_rows(forecast_date):
+            monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+            with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+                result = data_reader.read_latest_quarterly_forecasts(
+                    [CODE], forecast_date=forecast_date
+                )
+            return result[result["model_short"] == "LR_Base"]
+
+        # 120 days before 2026-04-30 is 2025-12-31 (start_year=2025): the
+        # native row is in-window -- its own value (100.0) must win, never
+        # the fallback (310.0).
+        in_window = read_lr_base_rows(dt.date(2026, 4, 30))
+        assert len(in_window) == 1
+        assert float(in_window["forecasted_discharge"].iloc[0]) == 100.0
+
+        # 120 days before 2026-05-01 is 2026-01-01 (start_year=2026): the
+        # native row has aged out of BOTH direct's and the derivation's
+        # read window (pre-existing, unmodified 120-day design) -- this
+        # must be empty, never a resurrected stale 310.0 fallback.
+        aged_out = read_lr_base_rows(dt.date(2026, 5, 1))
+        assert aged_out.empty
+        assert 310.0 not in set(aged_out["forecasted_discharge"])
 
 
 class TestMissingQuarterConfigFilePropagates:
