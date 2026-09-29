@@ -1327,12 +1327,12 @@ def _write_aggregated_forecasts_to_api(
             )
 
         if skipped_aggregated_rows:
-            # INFO, not WARNING: unlike dropped_calendar_rows above (which
-            # signals a broken upstream invariant), skipping quarter's raw
-            # LR_Base/LR_SM and EM/ENSEMBLE_MEAN rows here is an intentional,
-            # routine filter (PP-065 item 3) that applies on every quarter
-            # write from now on, not an exceptional condition.
-            logger.info(
+            # WARNING, matching the dropped_calendar_rows pattern directly
+            # above: INFO never reaches the logs from production entry
+            # points (setup_library caps the root logger at WARNING on
+            # import -- INFRA-029), and this is a routine, per-call skip
+            # count operators should be able to see (PP-065 item 3).
+            logger.warning(
                 "Skipped %d %s forecast record(s) for LR_BASE/LR_SM/EM "
                 "(quarter no longer writes raw LR or EM rows)",
                 skipped_aggregated_rows,
