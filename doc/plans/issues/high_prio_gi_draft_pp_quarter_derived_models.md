@@ -137,10 +137,12 @@ added or corrected on 2026-09-28 are to trunk `6a4ecfae`.
      no LR row can be
      classified as native or not — the native-row rule cannot run at all. P1b then keeps today's unfiltered
      direct LR selection, with **one** WARNING, instead of dropping every LR row. This is an explicit
-     exception to native-row precedence: see "Degraded native rule, flag OFF" below (~:436-443). **Under
+     exception to native-row precedence: see "Degraded native rule, flag OFF" below (~:461). **Under
      flag ON a missing `operational_issue_day` raises `LongTermHorizonResolverError`, uncaught, as on
-     trunk today** (`_operational_schedules_for_horizon_type("quarter")`, `src/data_reader.py:3162`, with
-     no try/except around it in the flag-ON branch) — there is no carve-out for it.
+     trunk today**, at both unguarded call sites of
+     `_operational_schedules_for_horizon_type("quarter")` — `src/data_reader.py:3162`
+     (`read_quarterly_forecasts`) and `:3526` (`read_latest_quarterly_forecasts`), neither wrapped in a
+     try/except in the flag-ON branch — there is no carve-out for it.
 
 ## Feasibility (verified; re-measure per server)
 
@@ -342,8 +344,9 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      native-row helper (step 2), which drops it as unclassifiable for the unrelated, defensive reason
      described under "Order (flag ON)" above (an absent `date` column, treated like an all-null one). Both
      things happen on this row: the WARNING this test locks, then the drop. See "Order (flag ON)" above
-     for that rule; it is cited here, not there, because this is the test that actually exercises it — the
-     test itself only runs `read_quarterly_forecasts` under flag OFF, never `select_operational_issuances`.
+     for that rule; the flag-ON bullet only points here for the detail, because this is the test that
+     actually exercises it — the test itself only runs `read_quarterly_forecasts` under flag OFF, never
+     `select_operational_issuances`.
      **`read_latest_quarterly_forecasts` has no Problem-7 mask to order against**
      (`src/data_reader.py:3545-3552`, no such branch) — it has its own, unrelated Problem-6 `forecast_date`
      bound (~:3555-3571). Put this item's native-row helper **after** that bound in this reader too, so its
@@ -431,7 +434,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      year's Q1.~~ As originally written this applied the trim to ALL rows; the current contract restricts
      the target-year trim to DERIVED rows only (this item's own new mechanism). **Flag OFF direct rows do
      NOT keep PP-064's Problem-7 invariant unchanged — this sentence, as originally written, is corrected
-     by owner decision R4-native-lr-precedence (above, "Target-year trim scope", ~:341) and no longer
+     by owner decision R4-native-lr-precedence (above, "Target-year trim scope", ~:378) and no longer
      describes the current contract.** Only the specific claim about the **target-year bound** stays true
      without qualification: this item does not add a NEW target-year trim to direct rows (Problem-7's own
      `start_year − 1` widened read is untouched, and flag ON's existing `_trim_to_target_year_range` trim,
@@ -1170,14 +1173,22 @@ lead 0):
   `select_operational_issuances` still matches unclamped and would drop the row regardless of the
   helper's own classification; PP-066's Tests list carries that end-to-end case once its fix lands.
 - **Existing Source 1 (now unified) forecast_date bound, latest reader, both flags.**
-  `forecast_date = 2026-06-25`; **full hv 1/2/3 monthly triplets (q50 set), one issued 2026-09-25 and
-  another issued 2026-10-25** (both dates after `forecast_date`) → no Q4 aggregate is produced from
-  either, under both flags. A single monthly row per issue date is not a sufficient fixture here: with
-  only one of the three required leads present, `derive_quarterly_from_monthly_same_issue` already
-  produces no aggregate for the incomplete-triplet reason alone, so the test would pass even with the
-  `forecast_date` bound entirely missing — it would not detect the bug it names. Giving each issue date a
-  full, otherwise-derivable triplet, and asserting it is absent, means the bound is the only thing that
-  can explain the absence. Fails on the pre-P1b base (neither flag bounds this path today).
+  `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplets (q50 set), one issued
+  2026-09-25 and another issued 2026-12-25** (both dates after `forecast_date`) → no Q4-2026 aggregate is
+  produced from the first triplet and no Q1-2027 aggregate from the second, under both flags. Both issue
+  dates are otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits the hv 1/2/3 triplet
+  (`aggregation.py:1013`), and the quarter-start scope filter (`:1033-1041`, `d.month + lead` via
+  `_add_months_vectorized` checked against `_QUARTER_START_MONTHS`) is satisfied by both: 9 + 1 = 10
+  (October, Q4 2026) and 12 + 1 = 13 → year + 1, month 1 (January 2027, Q1 2027) — so neither is excluded
+  by that filter; only the `forecast_date` bound can explain the absence. (A candidate issued 2026-10-25
+  would NOT work here: 10 + 1 = 11, November, not a quarter-start month, so it is dropped by the scope
+  filter regardless of the bound and would not exercise it.) A single
+  monthly row per issue date is not a sufficient fixture here: with only one of the three required leads
+  present, `derive_quarterly_from_monthly_same_issue` already produces no aggregate for the
+  incomplete-triplet reason alone, so the test would pass even with the `forecast_date` bound entirely
+  missing — it would not detect the bug it names. Giving each issue date a full, otherwise-derivable
+  triplet, and asserting it is absent, means the bound is the only thing that can explain the absence.
+  Fails on the pre-P1b base (neither flag bounds this path today).
 - **Existing Source 1 (now unified) forecast_date bound, inputs to the derivation.** No row dated after
   `forecast_date` reaches `derive_quarterly_from_monthly_same_issue` (assert on a spy, or on the rows
   actually passed to it), under both flags.
@@ -1479,13 +1490,16 @@ line numbers verified against this branch's HEAD):
   native direct row suppresses the decision-G fallback derivation for its key**, in a case that genuinely
   exercises the lower-bound-widening exception, not merely "no competitor happened to exist."
   - **The LR_SM direct row (`q=120.0`, the class's `_direct_rows()` returns both LR_Base and LR_SM).** Only
-    the LR_Base row is re-dated to `2024-12-25`/Q1-2025 above. **State explicitly: the LR_SM row is left
-    at its original `2025-12-25`, targeting Q1 2026 — outside this reader's `[start_year, end_year] =
-    [2025, 2025]` target-year trim, so it is dropped by that trim regardless of native-row status, and
-    does not appear in the `q1_2025` slice this test asserts on at all.** The rewritten test therefore
-    makes no claim about LR_SM (dropping the original `got.get("LR_SM") == 120.0` assertion is
-    intentional, not an oversight); LR_SM coverage of this same invariant would need its own re-dated row
-    and is out of scope for this test.
+    the LR_Base row is re-dated to `2024-12-25`/Q1-2025 above. **The LR_SM row is left at its original
+    `2025-12-25`, targeting Q1 2026.** Under flag OFF there is no target-year trim on direct rows at all
+    (item 2's "Target-year trim scope," above: "Do not add a new target-year trim to direct rows"), so
+    LR_SM is not dropped by anything — it is native (day 25, lead 1) and its issue year (2025) equals
+    `start_year` (2025), so it survives ungated by the widening exception and remains in `result` exactly
+    as on the pre-rewrite test. It is simply absent from the `q1_2025` slice this test's new assertions
+    check, because its own target year is 2026, not 2025. **Keep the existing `got.get("LR_SM") == 120.0`
+    assertion, asserted against the `q1_2026` slice** (as the pre-rewrite test already does at
+    `tests/test_quarter_calendar_window.py:1030-1033`) alongside the new `q1_2025` assertions on LR_Base —
+    do not drop it.
 - `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim` (class `:1046`). **Split into two tests — one
   fixed with a new read window, one kept as the original regression, per the corrected analysis below.**
   **Test A and Test B currently share a single `_direct_rows()` fixture method on the class (both LR_Base

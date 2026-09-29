@@ -145,11 +145,12 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
     classified as native or not — the native-row rule itself cannot run. P1b then keeps today's unfiltered
     direct LR selection, with **one** WARNING, rather than dropping every LR row. This is an explicit
     exception to native-row precedence, not a contradiction of it — see PP-065's "Degraded native rule,
-    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:436-443) and PP-065's own item 9.
+    flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:461) and PP-065's own item 9.
     **Under flag ON there is no carve-out: a missing `operational_issue_day` already raises
-    `LongTermHorizonResolverError`, uncaught, as on trunk today**
-    (`_operational_schedules_for_horizon_type("quarter")`, `apps/postprocessing_forecasts/src/data_reader.py:3162`,
-    called with no try/except around it in the flag-ON branch).
+    `LongTermHorizonResolverError`, uncaught, as on trunk today**, at both unguarded call sites of
+    `_operational_schedules_for_horizon_type("quarter")` — `apps/postprocessing_forecasts/src/data_reader.py:3162`
+    (`read_quarterly_forecasts`) and `:3526` (`read_latest_quarterly_forecasts`), neither wrapped in a
+    try/except in the flag-ON branch.
 - **R4-merge-is-deploy. Merge = deploy (verified fact).** Every merge to `maxat_sapphire_2` reaches every org whose image
   tags are `latest` within about a day: CI pushes `:latest` (`.github/workflows/deploy_production.yml`);
   Luigi auto-pulls the backend images whenever the digest differs
@@ -173,8 +174,11 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
     the periodic trunk→integ sync this bullet requires then carries that revert into
     `integ_quarter_p1b_p2` too, silently removing P1b–P1d/PP-064 B from it (tests stay green because the
     reverted code is gone from both sides), and re-merging afterwards does not restore them. See PP-064's
-    "Abort path" for the canonical text — fix-forward is the default; a revert requires reverting the
-    revert on `integ_quarter_p1b_p2` before the next sync, verified by diff.
+    "Abort path" for the canonical text — fix-forward is the default; if a revert is unavoidable, the
+    revert commit only reaches `integ_quarter_p1b_p2` through that next trunk→integ sync, so the
+    follow-up is: do the sync first, then immediately revert the revert on `integ_quarter_p1b_p2` (not
+    before the sync, and not by re-creating the branch, which the next sync would undo anyway), verified
+    by diff.
   - Unrelated trunk merges (anything outside this quarter chain) keep deploying as normal — the hold
     applies only to PP-065 P1b–P1d and PP-064 B.
   - CI does not test these modules anyway (INFRA-059), so holding them off trunk costs no CI coverage.

@@ -379,9 +379,9 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1162-1164 — re-measured
-  2026-09-29 after this sync's own edits shifted the file again; earlier drafts' `~:434-436`,
-  `~:1117-1119` and `~:1132-1134` had each drifted): "a native row, a
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1165-1168 — re-measured
+  2026-09-29 after this round's own edits shifted the file again; earlier drafts' `~:434-436`,
+  `~:1117-1119`, `~:1132-1134` and `~:1162-1164` had each drifted): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
   both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
@@ -620,7 +620,8 @@ Chunk B no longer edits `data_reader.py` or any other file.
      pausing beforehand (owner decision R4-recalc-runs). Wait for running jobs to finish before continuing.
   2. **The read-only pre-deploy DB audit** (detail 2 below) and **PP-065's count of rule-A (same-issue
      monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", the "This window follows PP-064
-     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:1864-1868 — done here, at the audit step,
+     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:1949-1953 — re-measured 2026-09-29, done
+     here, at the audit step,
      not "before the recalc": that heading no longer exists in PP-065 P2).
   3. **Export** (detail 1 below: `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
      rows, kept out of the repo) — this is the SAME export PP-065 P2 refers to; state it once here.
@@ -879,13 +880,24 @@ Chunk B no longer edits `data_reader.py` or any other file.
   everything else. Re-merging `integ_quarter_p1b_p2` into trunk afterwards does not undo this: trunk
   already contains those commits as ancestors (from the original merge), so git treats them as already
   merged and the second merge applies no new diff — the content stays gone from both branches. **FIX
-  FORWARD is therefore the default abort action** (writers stay paused; do not revert). If a revert is
-  genuinely unavoidable, it carries a mandatory follow-up, to be done **before the next trunk → integ
-  sync**: revert the revert on `integ_quarter_p1b_p2` itself (or re-create the branch from its pre-merge
-  tip), then verify with `git diff <pre-merge-integ-tip> integ_quarter_p1b_p2 --
-  apps/postprocessing_forecasts` that P1b–P1d are present again before trusting any test run on that
-  branch. This is the canonical text for this hazard; the overview's R4-integration-branch decision
-  points here rather than restating it.
+  FORWARD is therefore the default abort action** (writers stay paused; do not revert). If a revert of the
+  `integ_quarter_p1b_p2` → trunk merge (commit R on trunk) is genuinely unavoidable, it carries a
+  mandatory follow-up, in this order — R only enters `integ_quarter_p1b_p2` through the next
+  trunk → integ sync, so the revert-of-R cannot happen before that sync:
+  1. Do the trunk → integ sync (the one this bullet's own rule requires periodically), which brings R
+     into `integ_quarter_p1b_p2` as an ancestor.
+  2. **Immediately** `git revert R` on `integ_quarter_p1b_p2`, before running or trusting any test on that
+     branch. This restores the P1b–P1d/PP-064 B content, and because R is now an ancestor of
+     `integ_quarter_p1b_p2`, later syncs do not re-apply it.
+  3. Verify the feature content is back: `git diff <pre-merge-integ-tip> integ_quarter_p1b_p2 --
+     apps/postprocessing_forecasts` shows only trunk changes made since that tip, and no removal of the
+     P1b–P1d changes — name concrete files or symbols to spot-check (e.g. the reader's use of
+     `derive_quarterly_from_monthly_same_issue`).
+
+  There is no "re-create the branch from its pre-merge tip" alternative: every later trunk → integ sync
+  brings R in again regardless, so a re-created branch would need this same revert-of-R follow-up anyway.
+  This is the canonical text for this hazard; the overview's R4-integration-branch decision points here
+  rather than restating it.
 
 **Details, keyed to the canonical steps above by number** (these are reference detail, not a second,
 competing order — "step N" above is the canonical sequence; "detail N" below is this list):
@@ -952,10 +964,12 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    - Tombstone count per `(model, quarter, hv)` per org, including the old quarter EM skill rows.
    - Suppressed quarter skill rows per org at K = 10 (decision C; `src/skill_metrics.py:2834-2849`).
      Locally the tjhm median `n_pairs` was 5–6 before the fix.
-   - **Two precondition checks that make the quarterly block's own inputs observable before step 11
-     runs.** Canonical step 11's pre-satisfied branch (its PASS criterion 2 note) can pass from an
-     already-existing row without step 11's own quarterly block ever having executed on this run — these
-     checks are what lets an operator tell those two cases apart, here, before that ambiguity matters:
+   - **Two precondition checks that establish the quarterly block's inputs exist in the DB after this
+     recalc — they do not, by themselves, prove step 11's block ran on a later operational run.**
+     Canonical step 11's pre-satisfied branch (its PASS criterion 2 note) can pass from an already-existing
+     row without step 11's own quarterly block ever having executed on that run; these checks are run here,
+     as part of this recalc's own post-checks, to make the two required inputs observable, not to stand in
+     for step 11's own PASS criteria:
      - **(i) At least one NON-tombstone quarter skill row per org.** A tombstone is `n_pairs == 0` (or
        NULL) with every metric column NULL, upserted by the write-side to mark a stale long-horizon skill
        key; a legitimate row always has `n_pairs >= K` (`_drop_tombstone_rows`, `src/data_reader.py:107-120`
@@ -969,8 +983,14 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
        quarterly ensemble is skipped (Problem 8), silently, with nothing at WARNING level to catch it. If
        K = 10 leaves an org with no quarter skill at all, B5 means no Naive Mean either: **escalate to the
        owner before the hydromet notice** goes out.
-     - **(ii) Target-quarter forecast rows are present.** See the next bullet for how this recalc writes
-       them and what "the target quarter" means; the block's other required input, alongside (i).
+     - **(ii) Target-quarter forecast rows are present.** This check reads this recalc's own output
+       (`read_quarterly_forecasts`, `recalculate_skill_metrics.py:386`), which is a different reader than
+       the one step 11's block calls at runtime (`read_latest_quarterly_forecasts`,
+       `postprocessing_operational_long_term.py:211`); that reader has its own silent empty-return branches
+       (`data_reader.py` ~:3603-3608). So (ii) confirms the rows exist in the DB, not that step 11's own
+       read of them would succeed. See "The derived seven-model rows for the target quarter are present,
+       per org" two bullets below for how this recalc writes them and what "the target quarter" means; the
+       block's other required input, alongside (i).
    - Freshly written QUARTER rows contain no rolling windows, no LR rows and no EM rows.
    - **The derived seven-model rows for the target quarter are present, per org** (moved here from step
      11, 2026-09-28: this recalc, not the operational run, writes them; "the target quarter" is the same
@@ -980,12 +1000,13 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
      through regardless of whether it joined an observation, so the target quarter's raw rows survive this
      recalc's pass-through — independently of whether a target-quarter ensemble also happens to be
      computed here (usually not, but see the next bullet). This is precondition check (ii) above.
-   - **B5 (Chunk B) is the ongoing detector for a quarterly block that later stops running**, in any future
-     run, not only this window's: it is the standing contract for what the block does when input (i) fails
-     — an empty (post-tombstone-drop) quarter skill frame skips every quarterly ensemble, exactly as an
-     empty monthly skill frame skips every monthly one. A quarterly block silently going quiet in some
-     later, unrelated run is B5's documented failure mode recurring, not a new class of bug; look there
-     first rather than re-deriving the mechanism.
+   - **B5 documents the mechanism to check first when the quarterly block goes quiet; no runtime detector
+     exists (the skip is INFO-only, `postprocessing_operational_long_term.py:232`).** It is the standing
+     contract for what the block does when input (i) fails — an empty (post-tombstone-drop) quarter skill
+     frame skips every quarterly ensemble, exactly as an empty monthly skill frame skips every monthly one,
+     logged at INFO and not surfaced anywhere else. A quarterly block silently going quiet in some later,
+     unrelated run is this documented failure mode recurring, not a new class of bug; look there first
+     rather than re-deriving the mechanism — but nothing in the code raises an alert on its own.
    - **Record whether a target-quarter Naive Mean row with a `QUARTERLY_DERIVED_MODELS` composition
      already exists after this recalc.** This happens whenever the target quarter already counts as
      observed before step 11 runs — the ≥50%-days-per-month rule (`data_reader.py` ~:1301-1302) can make
