@@ -17,6 +17,27 @@ SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, SCRIPT_DIR)
 
 
+def _load_real_model_names():
+    """Load the REAL ``src/model_names.py`` module from disk.
+
+    ``_import_module`` below replaces ``sys.modules["src"]`` with a
+    MagicMock so the entry point's other ``src.*`` imports can be
+    controlled per-test. ``postprocessing_maintenance_long_term.py``
+    also does ``from src.model_names import (...)`` (PP-065 P1b Finding
+    1/2 fix) -- a plain, dependency-free constants/helpers module with
+    no mockable side effects worth faking, so tests use the real thing,
+    loaded fresh from its file to stay independent of whatever else in
+    the test session has already touched ``sys.modules["src"]``.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "postprocessing_maintenance_long_term_test_model_names",
+        os.path.join(SCRIPT_DIR, "src", "model_names.py"),
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 # -- helpers ---------------------------------------------------------
 
 
@@ -102,17 +123,21 @@ def _import_module(mocks_dict):
     # TimingStats and timer must be usable at module level
     mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
 
+    real_model_names = _load_real_model_names()
+
     mock_src = MagicMock()
     mock_src.postprocessing_tools = mock_pt
     mock_src.data_reader = mock_data_reader
     mock_src.ensemble_calculator = mock_ensemble_calc
     mock_src.gap_detector = mock_gap_detector
     mock_src.file_writer = mock_file_writer
+    mock_src.model_names = real_model_names
 
     sys.modules["setup_library"] = mock_sl
     sys.modules["src"] = mock_src
     sys.modules["src.postprocessing_tools"] = mock_pt
     sys.modules["src.data_reader"] = mock_data_reader
+    sys.modules["src.model_names"] = real_model_names
     sys.modules["src.ensemble_calculator"] = mock_ensemble_calc
     sys.modules["src.gap_detector"] = mock_gap_detector
     sys.modules["src.file_writer"] = mock_file_writer
@@ -603,16 +628,21 @@ class TestMaintenanceLongTerm:
                 "nse": [0.8],
             }
         )
-        # Two eligible raw models (LR_Base, LR_SM) at the gap key so the
-        # two-raw-model gap-universe prefilter admits it (PP-065 P1b
-        # item 4) -- a single-model key can never form a Naive Mean and
-        # would otherwise be dropped before gap detection even runs.
+        # Two eligible raw models (LR_Base, LR_SM) at the SAME lead (0)
+        # at the gap key so the two-raw-model gap-universe prefilter
+        # admits it (PP-065 P1b item 4) -- a single-model key can never
+        # form a Naive Mean and would otherwise be dropped before gap
+        # detection even runs. horizon_value is set (matching what the
+        # real reader always returns under flag ON) so the Finding-2
+        # lead-aware prefilter key does not drop this admission via a
+        # NaN-horizon_value groupby key.
         q_fc = pd.DataFrame(
             {
                 "year": [2025, 2025],
                 "quarter_in_year": [1, 1],
                 "code": ["19999", "19999"],
                 "model_short": ["LR_Base", "LR_SM"],
+                "horizon_value": [0, 0],
                 "forecasted_discharge": [100.0, 100.0],
             }
         )
@@ -1534,3 +1564,375 @@ class TestMaintenanceLongTerm:
             assert len(em_saved) == 2, f"Expected 2 EM rows (one per station), got {len(em_saved)}"
             codes_with_em = set(em_saved["code"].astype(str))
             assert codes_with_em == {"10001", "10002"}
+
+
+class TestFilterQuarterlyGapUniverse:
+    """PP-065 P1b Findings 1 & 2 (out-of-loop review): direct unit tests
+
+    for ``_filter_quarterly_gap_universe``.
+    """
+
+    @staticmethod
+    def _filter(universe):
+        with patch.dict(sys.modules, {}):
+            module = _import_module({})
+            return module._filter_quarterly_gap_universe(universe)
+
+    def test_admits_two_derived_models_with_no_lr_present(self):
+        """FIX 1: a key with GBT + MC_ALD only (no LR rows at all) is a
+
+        real two-raw-model Naive Mean candidate -- any two of the nine
+        raw quarter models can form one -- and must be admitted, not
+        dropped for lacking LR specifically.
+        """
+        universe = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["GBT", "MC_ALD"],
+                "forecasted_discharge": [100.0, 200.0],
+            }
+        )
+
+        result = self._filter(universe)
+
+        assert len(result) == 2
+        assert set(result["model_short"]) == {"GBT", "MC_ALD"}
+
+    def test_single_derived_model_key_still_excluded(self):
+        """A single-model key (even a derived model) can never form a
+
+        Naive Mean and must remain excluded -- this fix only widens
+        WHICH models count as raw, not the >= 2 threshold itself.
+        """
+        universe = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["GBT"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+
+        result = self._filter(universe)
+
+        assert result.empty
+
+    def test_flag_on_excludes_single_model_per_lead_across_different_leads(self, monkeypatch):
+        """FIX 2: under the flag, LR_Base at lead 0 and LR_SM at lead 1
+
+        for the same (year, quarter, code) must NOT be counted together
+        as "2 distinct models present" -- neither lead alone has 2
+        models, so neither can form a Naive Mean, and the key must be
+        excluded.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        universe = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "horizon_value": [0, 1],
+                "forecasted_discharge": [100.0, 110.0],
+            }
+        )
+
+        result = self._filter(universe)
+
+        assert result.empty
+
+    def test_flag_on_admits_two_models_at_the_same_lead(self, monkeypatch):
+        """Companion to the above: two single-model rows at the SAME
+
+        lead ARE admitted under the flag.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        universe = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "horizon_value": [1, 1],
+                "forecasted_discharge": [100.0, 110.0],
+            }
+        )
+
+        result = self._filter(universe)
+
+        assert len(result) == 2
+
+    def test_flag_off_ignores_horizon_value_for_admission(self, monkeypatch):
+        """Flag OFF: unchanged (period-only key, no lead) -- two
+
+        single-model rows at DIFFERENT leads still count together as
+        "2 distinct models present" for the (year, quarter, code) key,
+        exactly like today's behavior (no `horizon_value` in the key).
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        universe = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "horizon_value": [0, 1],
+                "forecasted_discharge": [100.0, 110.0],
+            }
+        )
+
+        result = self._filter(universe)
+
+        assert len(result) == 2
+
+
+class TestQuarterlySkilledMeanNotOverwritten:
+    """PP-065 P1b Finding 4 (out-of-loop review, data-integrity risk):
+
+    a quarter/lead whose ONLY gap is Naive Mean, with an existing
+    correct Skilled Mean already persisted in ``q_combined``, must end
+    up with the Naive Mean freshly added AND the Skilled Mean value
+    UNCHANGED from what was already persisted -- even though
+    ``ensemble_calculator`` would compute a numerically DIFFERENT
+    Skilled Mean for that same key if run today (e.g. skill membership
+    shifted). ``model_short`` is deliberately excluded from the q_new
+    admission key so a fresh Naive Mean at a gapped key gets in; this
+    must not also let a fresh, unrequested Skilled Mean silently win
+    the keep="last" merge over an already-correct persisted value.
+    """
+
+    def test_existing_skilled_mean_survives_a_naive_mean_only_gap(self):
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        # Monthly block: no combined forecasts -> exits early, quarterly
+        # still runs (this finding is independent of the monthly path).
+        mock_data_reader.read_monthly_combined_forecasts.return_value = pd.DataFrame()
+
+        # Existing, CORRECT, already-persisted Skilled Mean (100.0) --
+        # never reported as a gap -- alongside a station/quarter that is
+        # ONLY missing its Naive Mean.
+        q_combined = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Skilled Mean"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        # Two eligible raw models so the gap-universe prefilter admits
+        # the key (PP-065 P1b item 4 / Finding 1 fix).
+        q_universe_raw = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "forecasted_discharge": [50.0, 60.0],
+            }
+        )
+        # Gap detection reports ONLY Naive Mean missing at this key
+        # (the gap detector's ensemble_models={"Naive Mean"} call).
+        q_gaps = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Naive Mean"],
+            }
+        )
+        q_skill = pd.DataFrame(
+            {
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "sdivsigma": [0.3],
+                "nse": [0.8],
+            }
+        )
+        # ensemble_calculator recomputes BOTH ensembles together. The
+        # freshly computed Skilled Mean (999.0) is DELIBERATELY
+        # different from the persisted value (100.0) -- e.g. skill
+        # membership shifted since it was last computed -- to make an
+        # accidental overwrite observable.
+        q_joint = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["Naive Mean", "Skilled Mean"],
+                "forecasted_discharge": [55.0, 999.0],
+            }
+        )
+
+        def read_skill_metrics(horizon_type, codes=None):
+            if horizon_type == "quarter":
+                return q_skill
+            return pd.DataFrame()
+
+        mock_data_reader.read_skill_metrics.side_effect = read_skill_metrics
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = q_combined
+        mock_data_reader.read_quarterly_forecasts.return_value = q_universe_raw
+        mock_gap_detector.detect_missing_quarterly_ensembles.return_value = q_gaps
+        mock_ensemble_calc.create_quarterly_ensemble_forecasts.return_value = q_joint
+        mock_file_writer.save_quarterly_forecast_data.return_value = None
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["19999"])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+
+            mock_file_writer.save_quarterly_forecast_data.assert_called_once()
+            saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
+
+            naive_rows = saved[saved["model_short"] == "Naive Mean"]
+            assert len(naive_rows) == 1
+            assert float(naive_rows.iloc[0]["forecasted_discharge"]) == 55.0
+
+            skilled_rows = saved[saved["model_short"] == "Skilled Mean"]
+            assert len(skilled_rows) == 1
+            assert float(skilled_rows.iloc[0]["forecasted_discharge"]) == 100.0, (
+                "The already-persisted Skilled Mean must survive unchanged -- "
+                "it was never a gap -- not be silently overwritten by a "
+                "freshly recomputed value."
+            )
+
+
+class TestQuarterlyFallThroughAfterMonthlyEarlyExit:
+    """PP-065 P1b Finding 5 (out-of-loop review, minor): the six
+
+    monthly-early-exit tests in ``TestMaintenanceLongTerm`` default the
+    quarterly readers to empty, so their "no quarterly save" assertions
+    hold whether or not the quarterly block is actually REACHED after
+    the monthly block exits early -- an immediate ``sys.exit(0)``
+    before quarterly would look identical. This test proves the
+    quarterly block is actually reached and does real work: the
+    monthly block exits early (no monthly gaps), and the quarterly
+    block still detects a gap, creates an ensemble, and calls
+    ``save_quarterly_forecast_data``.
+    """
+
+    def test_monthly_early_exit_quarterly_block_still_saves(self, combined_with_models):
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
+        # Monthly: no gaps found -> _run_monthly_gap_fill returns
+        # (False, gaps) and the monthly block exits early.
+        mock_gap_detector.detect_missing_monthly_ensembles.return_value = pd.DataFrame(
+            columns=["year", "month", "code", "model_short"]
+        )
+
+        # Quarterly: enough real data for a Naive Mean gap to be
+        # detected AND filled -- two distinct raw models present so the
+        # gap-universe prefilter admits the key (Finding 1 fix).
+        q_combined = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        q_universe_raw = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "forecasted_discharge": [100.0, 105.0],
+            }
+        )
+        q_gaps = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Naive Mean"],
+            }
+        )
+        q_skill = pd.DataFrame(
+            {
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "sdivsigma": [0.3],
+                "nse": [0.8],
+            }
+        )
+        q_joint = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Naive Mean"],
+                "forecasted_discharge": [102.5],
+            }
+        )
+
+        def read_skill_metrics(horizon_type, codes=None):
+            if horizon_type == "quarter":
+                return q_skill
+            return pd.DataFrame()
+
+        mock_data_reader.read_skill_metrics.side_effect = read_skill_metrics
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = q_combined
+        mock_data_reader.read_quarterly_forecasts.return_value = q_universe_raw
+        mock_gap_detector.detect_missing_quarterly_ensembles.return_value = q_gaps
+        mock_ensemble_calc.create_quarterly_ensemble_forecasts.return_value = q_joint
+        mock_file_writer.save_quarterly_forecast_data.return_value = None
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["19999"])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+            # The monthly block exited early (no gaps): prove the
+            # quarterly block was actually REACHED and did real work,
+            # not merely "nothing happened" -- which an early
+            # sys.exit(0) before quarterly would also produce.
+            mock_file_writer.save_quarterly_forecast_data.assert_called_once()
+            saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
+            assert "Naive Mean" in set(saved["model_short"])
