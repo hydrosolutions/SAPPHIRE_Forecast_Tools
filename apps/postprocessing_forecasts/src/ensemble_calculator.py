@@ -41,6 +41,21 @@ def is_multi_model_composition(composition: str) -> bool:
     return bool(composition) and "," in composition
 
 
+def _skip_em_for_quarter(period_col: str) -> bool:
+    """True when the EM block must be skipped entirely for *period_col*.
+
+    Quarter (``period_col == "quarter_in_year"``) never produces or persists
+    an Ensemble Mean (EM) row (PP-065 P1c decision 3), in either the
+    operational ensemble-creation path (this module's
+    ``_create_aggregated_ensemble_forecasts``) or the recalc skill-metrics
+    path (``src.skill_metrics._calculate_aggregated_skill_metrics``). Season
+    keeps today's EM behaviour, byte-identical — this guard is imported and
+    called identically by both modules so the quarter-only removal cannot
+    drift between the two paths.
+    """
+    return period_col == "quarter_in_year"
+
+
 # ---------------------------------------------------------------------------
 # Main public functions
 # ---------------------------------------------------------------------------
@@ -737,38 +752,39 @@ def _create_aggregated_ensemble_forecasts(
         else [period_col, "code", "model_short"]
     )
 
-    model_keys = canonical_model_short_series(joint["model_short"])
-    qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
-    qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
+    if not _skip_em_for_quarter(period_col):
+        model_keys = canonical_model_short_series(joint["model_short"])
+        qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
+        qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
 
-    n_models = qualifying["model_short"].nunique()
+        n_models = qualifying["model_short"].nunique()
 
-    if n_models > 1 and not qualifying.empty:
-        em_agg = {
-            "forecasted_discharge": "mean",
-            "model_short": composition_agg,
-        }
-        if period_col not in time_group_cols:
-            em_agg[period_col] = "first"
-        for qcol in _QUANTILE_COLS:
-            if qcol in qualifying.columns:
-                em_agg[qcol] = "mean"
-        for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in qualifying.columns and dcol not in time_group_cols:
-                em_agg[dcol] = "first"
+        if n_models > 1 and not qualifying.empty:
+            em_agg = {
+                "forecasted_discharge": "mean",
+                "model_short": composition_agg,
+            }
+            if period_col not in time_group_cols:
+                em_agg[period_col] = "first"
+            for qcol in _QUANTILE_COLS:
+                if qcol in qualifying.columns:
+                    em_agg[qcol] = "mean"
+            for dcol in ("valid_from", "valid_to", "date"):
+                if dcol in qualifying.columns and dcol not in time_group_cols:
+                    em_agg[dcol] = "first"
 
-        em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
-        em_avg = enforce_quantile_monotonicity(
-            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
-        )
-        em_avg = em_avg.rename(columns={"model_short": "composition"})
-        em_avg["model_short"] = "EM"
+            em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
+            em_avg = enforce_quantile_monotonicity(
+                em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
+            )
+            em_avg = em_avg.rename(columns={"model_short": "composition"})
+            em_avg["model_short"] = "EM"
 
-        em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
+            em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
 
-        if not em_avg.empty:
-            em_avg["flag"] = 0
-            joint = _append_aggregated_to_joint(joint, em_avg)
+            if not em_avg.empty:
+                em_avg["flag"] = 0
+                joint = _append_aggregated_to_joint(joint, em_avg)
 
     # --- Skilled Mean (1/MAE weighted) ---
     joint = _add_skilled_mean_aggregated_ens(
