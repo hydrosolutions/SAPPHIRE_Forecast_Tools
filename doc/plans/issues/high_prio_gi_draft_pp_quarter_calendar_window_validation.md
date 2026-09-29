@@ -379,9 +379,10 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1170-1173 — re-measured
-  2026-09-29 after this round's own edits (round 12c) shifted the file again; earlier drafts' `~:434-436`,
-  `~:1117-1119`, `~:1132-1134`, `~:1162-1164`, `~:1165-1168` and `~:1169-1172` had each drifted): "a native row, a
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1186-1187 — re-measured
+  2026-09-29 (plan-sync round 12h) after this fix round's edits shifted the file again; earlier drafts'
+  `~:434-436`, `~:1117-1119`, `~:1132-1134`, `~:1162-1164`, `~:1165-1168`, `~:1169-1172` and `~:1170-1173`
+  had each drifted): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
   both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
@@ -619,8 +620,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
   **Both orgs, one window.** Step 4 below (the `integ_quarter_p1b_p2` → trunk merge, `deploy.pp`) deploys
   P1b to **every** org whose image tag is `latest` at once (R4-merge-is-deploy) — there is no per-org merge
   to stagger. **An org whose tag resolves to `local`** (detail 0's per-org read) is a BLOCKER to resolve
-  before this window opens — set that org's `.env` tag to `latest` so step 4's merge reaches it, or plan an
-  explicit manual deploy for it; step 4's single merge does not by itself put anything on such an org. So
+  before this window opens — set that org's `.env` tag to `latest` (detail 0's resolution) before the
+  window, so step 4's merge reaches it like any other org; step 4's single merge does not by itself put
+  anything on an org still tagged `local`. So
   steps 1-3 (pause every writer, the pre-deploy DB audit plus PP-065's rule-A triplet count,
   and the export) must each be completed on **both** kghm and tjhm before step 4 runs: pausing and
   auditing/exporting only one org before merging would leave the other org's writers active, and its
@@ -641,9 +643,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
      pausing beforehand (owner decision R4-recalc-runs). Wait for running jobs to finish before continuing.
   2. **The read-only pre-deploy DB audit** (detail 2 below) and **PP-065's count of rule-A (same-issue
      monthly triplet) rows per model × quarter** (PP-065 § "P2 — rollout", the "This window follows PP-064
-     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:2122-2126 (the rule-A sentence is the
-     "pause writers → the pre-deploy DB audit and PP-065's own count of rule-A ..." line, ~:2125) —
-     re-measured 2026-09-29 (round 12g), done here, at the audit step,
+     Chunk C's canonical 'Order' sequence exactly" paragraph, ~:2140-2144 (the rule-A sentence is the
+     "pause writers → the pre-deploy DB audit and PP-065's own count of rule-A ..." line, ~:2143) —
+     re-measured 2026-09-29 (plan-sync round 12h), done here, at the audit step,
      not "before the recalc": that heading no longer exists in PP-065 P2).
   3. **Export** (detail 1 below: `pg_dump`/`COPY` of the QUARTER `skill_metrics` and `long_forecasts`
      rows, kept out of the repo) — this is the SAME export PP-065 P2 refers to; state it once here.
@@ -684,7 +686,7 @@ Chunk B no longer edits `data_reader.py` or any other file.
      proceed** — see "Abort path" below.
      - **Pinned tags (both images).** This bullet covers an org whose tag is **explicitly pinned** to a
        real, non-`local` value (e.g. a version pin) — an org whose tag resolves to `local` is handled at
-       detail 0 above as a BLOCKER to fix before the window opens, not by retagging: never push a `:local`
+       detail 0 below as a BLOCKER to fix before the window opens, not by retagging: never push a `:local`
        tag to Docker Hub (Luigi would auto-pull it on every `local` deployment,
        `apps/pipeline/pipeline_docker.py:298-304`). Since step 5 only builds and pushes `:latest`, an org whose configured
        tag (`ieasyhydroforecast_backend_docker_image_tag` / `..._frontend_docker_image_tag`) is **not**
@@ -980,23 +982,28 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    OFF, PP-065 then skips the derivation and the native-row filter with one WARNING; under flag ON the
    quarter readers raise, as on trunk (`long_term_horizon_resolver.py:84-111` notes taj-style configs that
    omit it). **R4-merge-is-deploy's per-org verification (2026-09-28):** record all three conditions that
-   decision depends on (overview § R4-merge-is-deploy, ~:164-185), not only the image dates: (1) **the
+   decision depends on (overview § R4-merge-is-deploy, ~:165-201), not only the image dates: (1) **the
    tag value** — read the org's actual configured tag from its `.env` file (or via `read_configuration`,
    `bin/utils/common_functions.sh:102-112`, which resolves an unset tag to `local` with a WARNING, never
    to `latest`); an org whose `.env` never sets these variables auto-pulls nothing from trunk and this
    whole verification reduces to "still running `local`". **If it resolves to `local` for an org, record
-   this as a BLOCKER to resolve before the writer-paused window opens**: either set that org's `.env` tag
-   to `latest`, or plan an explicit manual deploy for that org. Never push a `:local` tag to Docker Hub to
+   this as a BLOCKER to resolve before the writer-paused window opens**: set that org's `.env` tag to
+   `latest`. Doing so itself pulls current trunk `:latest` at the next Luigi task / 19:00 frontend cron —
+   deploying PP-064 A, FD-029 P1 and PP-065 P1a to that org immediately, matching the other org's presumed
+   state — so re-run this step for that org after the pull, before the window opens; step 6 then needs no
+   special path for it. Never push a `:local` tag to Docker Hub to
    work around this — Luigi on every `local`-tagged deployment would auto-pull it as soon as one exists
    (`apps/pipeline/pipeline_docker.py:298-304`), turning every such org into an unintended auto-deploy
-   target; the pinned-tag retag guidance at canonical step 6 below applies only to explicitly pinned,
+   target; the pinned-tag retag guidance at canonical step 6 above applies only to explicitly pinned,
    non-`local` tags, not to this case; (2) **whether `validate_dashboard_origins`
    passes** for this org (`bin/daily_update_sapphire_frontend.sh:55`) — e.g. the last
    `daily_update_sapphire_frontend` log shows the pull actually ran, not an early `exit 1` — **and inspect
    the RUNNING dashboard container itself** (`docker ps` / `docker inspect <container> --format
    '{{.Image}}'`, compared against the pulled image ID): `daily_update_sapphire_frontend.sh` backgrounds
-   the compose recreate and never checks its result (`:68-80`, `start_docker_compose_dashboards`,
-   `bin/utils/common_functions.sh:606-616`, only `wait`s on the PID without checking its exit status), so a
+   the compose recreate (`:68-80`, `start_docker_compose_dashboards`,
+   `bin/utils/common_functions.sh:607-617`, which only backgrounds the `docker compose ... up -d` call and
+   records its PID) and never checks the result — it only `wait`s on that PID without checking its exit
+   status (`bin/daily_update_sapphire_frontend.sh:79`), so a
    passing log and a fresh pull do not by themselves prove the running container is the new image; and (3) the
    postprocessing/dashboard image creation dates (`docker image inspect
    mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format
