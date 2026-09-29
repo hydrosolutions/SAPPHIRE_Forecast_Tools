@@ -711,18 +711,24 @@ Chunk B no longer edits `data_reader.py` or any other file.
       bin/bimonthly_long_term_postprocessing.sh <env_file_path> operational`. This invokes
       `postprocessing_operational_long_term.py`, which has no quarter-only mode — the same run also
       processes monthly and seasonal ensembles. This is what writes the derived seven-model rows'
-      Naive Mean / Skilled Mean ensemble rows for the CURRENT quarter, whether or not that quarter is
-      observed, wherever a target-quarter key can form a derived-composition Naive Mean (see the
-      INVESTIGATE outcome below for when none can): the in-window recalc (step 8) only writes ensembles
-      where its own inner join against observations matches (`src/skill_metrics.py` ~:2682-2690,
-      ~:2806-2831) — usually not the current
+      Naive Mean ensemble row for the CURRENT quarter, whether or not that quarter is observed, wherever a
+      target-quarter key can form a derived-composition Naive Mean — two or more non-null contributors
+      (see the INVESTIGATE outcome below for when none can). **Skilled Mean is a separate, narrower
+      condition, not implied by Naive Mean forming:** the same run writes a Skilled Mean row for that key
+      only where its own skill gate also passes — see "Skilled Mean is not a required row" below for the
+      two conditions. A target-quarter key can form a Naive Mean without forming a Skilled Mean, and gap
+      detection keys on Naive Mean only (PP-065 § "Quarterly ensembles = Naive Mean + Skilled Mean only"
+      ~:67, "A Skilled Mean that does not form is not a gap"). The in-window
+      recalc (step 8) only writes ensembles where its own inner join against observations matches
+      (`src/skill_metrics.py` ~:2682-2690, ~:2806-2831) — usually not the current
       quarter, **but not guaranteed never**: a quarter's last month counts as observed at ≥50% of its
       days (`data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g.
       kghm Dec 17–24) can make the current quarter "observed" before step 8 runs, and step 8 then writes
       its ensembles too — see PASS criterion 2's loophole note below. Only this operational run's
-      quarterly block (`postprocessing_operational_long_term.py` ~:207-232) writes them, from existing
-      skill plus the latest derived forecasts, with no observation requirement, whenever a target-quarter
-      key can form them. See the
+      quarterly block (`postprocessing_operational_long_term.py` ~:207-232) writes Naive Mean, from
+      existing skill plus the latest derived forecasts, with no observation requirement, whenever a
+      target-quarter key can form it — and Skilled Mean alongside it wherever that key's own skill gate
+      also passes. See the
       overview's "User-visible consequence" paragraph and PP-065 § "P2 — rollout" for the blank-card
       framing this closes.
 

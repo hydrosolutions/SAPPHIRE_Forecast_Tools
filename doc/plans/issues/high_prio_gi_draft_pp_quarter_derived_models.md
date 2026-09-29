@@ -1183,44 +1183,58 @@ lead 0):
   quarter_in_year)` (`src/data_reader.py:3618-3623`), so even with the `forecast_date` bound missing
   entirely, the more recent Q1-2027 aggregate would win that filter and the Q4-2026 aggregate would be
   dropped anyway — its absence would not detect the bug. Two separate cases, each alone in its fixture,
-  keep each assertion diagnostic. **Flag-ON fixture requirement.** **Corrected 2026-09-29 (plan-sync round
-  12): not both readers.** Pre-P1b, `read_quarterly_forecasts` calls `read_monthly_forecasts`
-  unconditionally under both flags (`data_reader.py:3143`); `read_latest_quarterly_forecasts` — the one
-  these two cases exercise — calls it only under flag ON, inside `if skill_lead_aware_enabled():`
-  (`data_reader.py:3494-3510`); flag OFF instead calls `_read_long_forecasts_api` and
-  `_normalize_monthly_forecasts` directly (`:3502-3510`), bypassing `read_monthly_forecasts` and its
-  internal trims entirely. Under flag ON, `read_monthly_forecasts` resolves `month_schedules =
+  keep each assertion diagnostic. **Corrected 2026-09-29 (plan-sync round 12e): the flag-ON Q4-2026 case
+  also does not fail on the pre-P1b base, for a reason unrelated to `forecast_date` — it is a P1b-only
+  regression guard too, not the sole genuine pre-P1b-base failure the previous round claimed.** Pre-P1b,
+  `aggregate_monthly_fc_to_quarterly` groups by `["code", "year", "quarter_in_year", "model_short"]`, plus
+  `horizon_value` under flag ON (when `skill_lead_aware_enabled()` and `"horizon_value" in df.columns`,
+  `aggregation.py:529-530`), then keeps only groups with `n_months >= QUARTER_MIN_MONTHS` (= 2,
+  `aggregation.py:284`, enforced at `:536`). A same-issue hv 1/2/3 triplet carries three distinct
+  `horizon_value`s, so under flag ON it forms three one-month groups (`n_months == 1` each), all dropped
+  by that filter — with or without any `forecast_date` bound. **Both flag-ON cases (Q4-2026 and Q1-2027)
+  therefore already produce no aggregate on the pre-P1b base for this unrelated reason; neither is a
+  genuine pre-P1b-base failure — both are P1b-only regression guards.** (The Q1-2027 case already carried
+  this same conclusion via a separate, additional reason — its own "Corrected 2026-09-29" note below,
+  about `read_monthly_forecasts`'s target-year trim.) **The month_1/2/3 "Flag-ON fixture requirement" from
+  the previous round is removed, not reconciled — it is no longer needed.** It required configuring
+  `month_1`, `month_2` and `month_3` (leads 1/2/3, issue day 25) in
+  `ieasyhydroforecast_ml_long_term_supported_modes` so pre-P1b's `read_monthly_forecasts` would return the
+  triplet rows at all — otherwise it resolves `month_schedules =
   _operational_schedules_for_horizon_type("month")` and returns empty immediately, with only a WARNING
-  logged, if no `month_N` mode is configured in `ieasyhydroforecast_ml_long_term_supported_modes`
-  (`data_reader.py` ~:1374-1382). If the flag-ON fixture leaves month schedules unconfigured, "no
-  Q4-2026/Q1-2027 aggregate" would already hold for that reason alone, regardless of the `forecast_date`
-  bound, so "fails on the pre-P1b base" would not actually detect the bug under flag ON. The flag-ON
-  fixture must therefore also configure `month_1`, `month_2` and `month_3` (leads 1/2/3, issue day 25) in
-  `ieasyhydroforecast_ml_long_term_supported_modes` and their config files, so `read_monthly_forecasts`
-  returns the triplet rows. **With that fixture in place, only the Q4-2026 case below genuinely exercises
-  the `forecast_date` bound pre-P1b** — it fails on the pre-P1b base under flag ON. **The Q1-2027 case does
-  not**, even with the same fixture: `read_monthly_forecasts`'s own target-year trim already empties it on
-  the pre-P1b base for an unrelated reason (see that case's own "Corrected 2026-09-29" note below) — write
-  it as a P1b-only regression guard, not as a case expected to fail on the pre-P1b base. (Flag OFF has no
-  such precondition — it never calls `read_monthly_forecasts` in this reader at all.)
-  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
-    2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced, under both flags. The issue
-    date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits the hv 1/2/3 triplet
-    (`aggregation.py:1013`), and the quarter-start scope filter (`:1033-1041`, `d.month + lead` via
-    `_add_months_vectorized` checked against `_QUARTER_START_MONTHS`) is satisfied: 9 + 1 = 10 (October,
-    Q4 2026) — not excluded by that filter — so only the `forecast_date` bound can explain the absence. A
-    single monthly row (not a full triplet) is not a sufficient fixture here: with only one of the three
-    required leads present, `derive_quarterly_from_monthly_same_issue` already produces no aggregate for
-    the incomplete-triplet reason alone, so the test would pass even with the bound entirely missing — it
-    would not detect the bug it names. Fails on the pre-P1b base under both flags: neither flag bounds this
-    path by `forecast_date` today, and the target year (2026) is within flag ON's own `end_year` (also
-    2026, see the next case), so nothing else suppresses it either.
-  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
-    2026-12-25** (after `forecast_date`) → no Q1-2027 aggregate is produced. 12 + 1 = 13 → year + 1, month 1
-    (January 2027, Q1 2027) — not excluded by the scope filter — so under flag OFF only the `forecast_date`
-    bound can explain the absence, and this case **fails on the pre-P1b base under flag OFF** (same
-    full-triplet requirement as above). **Corrected 2026-09-29 (plan-sync round 12): under flag ON this
-    case is a P1b regression guard only, not a pre-P1b-base failure.** `read_monthly_forecasts`'s own
+  logged (`data_reader.py` ~:1374-1382). That precondition no longer matters here: the flag-ON case can't
+  fail on the pre-P1b base regardless of whether those rows reach aggregation (see above). It also does
+  not carry over to P1b — item 2's "Derived rows" step reads raw monthly rows directly via
+  `_read_long_forecasts_api`, not through `read_monthly_forecasts`, so it never depends on `month_N` mode
+  configuration. **What the flag-ON fixture must still configure** is a `quarter` mode in
+  `ieasyhydroforecast_ml_long_term_supported_modes`: both readers' quarter-schedule resolution fails loud
+  and returns empty without one (`data_reader.py` ~:3526-3534), independent of the Source 1 path above.
+  Flag OFF has no such precondition — it never calls `read_monthly_forecasts` in this reader at all
+  (`:3502-3510`).
+  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set), model
+    `LR_Base` (or `LR_SM`), issued 2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced
+    under flag OFF. The issue date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits
+    the hv 1/2/3 triplet (`aggregation.py:1013`), and the quarter-start scope filter (`:1033-1041`,
+    `d.month + lead` via `_add_months_vectorized` checked against `_QUARTER_START_MONTHS`) is satisfied:
+    9 + 1 = 10 (October, Q4 2026) — not excluded by that filter — so only the `forecast_date` bound can
+    explain the absence. A single monthly row (not a full triplet) is not a sufficient fixture here: with
+    only one of the three required leads present, `derive_quarterly_from_monthly_same_issue` already
+    produces no aggregate for the incomplete-triplet reason alone, so the test would pass even with the
+    bound entirely missing — it would not detect the bug it names. **The triplet's model must be
+    `LR_Base` or `LR_SM`:** the post-combine model filter (`_filter_supported_aggregated_forecast_models`,
+    `data_reader.py:98-104, 3606`, keyed on `AGGREGATED_SUPPORTED_MODELS`, `model_names.py:14-16`) drops
+    any other model regardless of the bound, which would make the case non-diagnostic. **Fails on the
+    pre-P1b base under flag OFF only:** flag OFF never bounds this path by `forecast_date` today, and
+    nothing else suppresses it (given the `LR_Base`/`LR_SM` model above). Under flag ON the case already
+    produces no aggregate for the unrelated per-lead-grouping reason above — write that variant as a
+    P1b-only regression guard, not as a case expected to fail on the pre-P1b base.
+  - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set), model
+    `LR_Base` (or `LR_SM`), issued 2026-12-25** (after `forecast_date`) → no Q1-2027 aggregate is produced.
+    12 + 1 = 13 → year + 1, month 1 (January 2027, Q1 2027) — not excluded by the scope filter — so under
+    flag OFF only the `forecast_date` bound can explain the absence (given the `LR_Base`/`LR_SM` model
+    above, per the same post-combine filter), and this case **fails on the pre-P1b base under flag OFF**
+    (same full-triplet requirement as above). **Corrected 2026-09-29 (plan-sync round 12, unchanged in
+    round 12e): under flag ON this case is a P1b regression guard only, not a pre-P1b-base failure** — for
+    two independent reasons now: the per-lead grouping above, and `read_monthly_forecasts`'s own
     target-year trim (`_trim_to_target_year_range(df, "year", start_year, end_year)`,
     `data_reader.py:1402`) already runs before this triplet ever reaches aggregation, with `end_year =
     forecast_date.year = 2026` (`:3483`) — the whole Jan-2027 triplet has target year 2027, outside
@@ -1234,7 +1248,8 @@ lead 0):
     own — so post-P1b, this case's expected "no Q1-2027 aggregate" result can only come from the
     `forecast_date` (issue-date) bound correctly dropping a triplet issued after `forecast_date`. It does
     **not** prove the wide trim itself admits an already-issued prior-year Q1 — that is the separate,
-    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1265-1267), whose own mutation note
+    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1279-1281, re-measured 2026-09-29,
+    plan-sync round 12e), whose own mutation note
     ("removing the target-year extension makes the flag-ON case fail") is what proves the wide trim. Write
     this case as a P1b-only regression guard for the `forecast_date` bound under the widened trim, not as
     a case that "fails on the pre-P1b base" and not as proof of the wide trim.
@@ -2060,11 +2075,13 @@ quarter but is not guaranteed never: a quarter's last month counts as observed a
 (`src/data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g. kghm
 Dec 17–24) can make the current quarter "observed" before this recalc runs (see PP-064 Chunk C canonical
 step 11's PASS criterion 2 loophole note for the resulting read-back caveat). Only the quarterly block of
-`postprocessing_operational_long_term.py` (~:207-232) writes them wherever a target-quarter key can form
-them (non-empty quarter skill, `postprocessing_operational_long_term.py:210`; two or more non-null
-contributors, `ensemble_calculator.py` ~:915) — see PP-064 step 11's INVESTIGATE outcome for when no key
-can form them — from existing skill plus the latest derived forecasts, with no observation requirement.
-Until that operational run executes, the narrower
+`postprocessing_operational_long_term.py` (~:207-232) writes the Naive Mean row wherever a target-quarter
+key can form it (non-empty quarter skill, `postprocessing_operational_long_term.py:210`; two or more
+non-null contributors, `ensemble_calculator.py` ~:915) — see PP-064 step 11's INVESTIGATE outcome for when
+no key can form it — from existing skill plus the latest derived forecasts, with no observation
+requirement, and writes the Skilled Mean row alongside it only where that same key's own skill gate also
+passes (see PP-064's "Skilled Mean is not a required row" paragraph for the two conditions). Until that
+operational run executes, the narrower
 blank-card population the overview's "User-visible consequence" paragraph now defines (a key where at
 most one of `LR_Base`/`LR_SM` has a non-null target-quarter forecast, so neither EM nor Naive Mean forms,
 and its one surviving row, if any, is non-native — **not** simply "a fresh EM row plus a non-native LR
@@ -2097,9 +2114,12 @@ step 11. **The derived seven-model raw rows are written by the step-8 recalc its
 check, above: `joint_forecasts = forecasts.copy()` in `_calculate_aggregated_skill_metrics` passes every
 raw forecast row through regardless of whether it joined an observation) — they are visible, with δ
 bounds (FD-029), after step 8/9, before step 11 has even run. **Only the target quarter's own Naive Mean
-/ Skilled Mean ensemble rows wait for step 11**, which writes them wherever a target-quarter key can form
-a derived-composition Naive Mean (see PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none
-can): step 8's recalc forms ensembles only
+and Skilled Mean ensemble rows wait for step 11.** Step 11 writes the Naive Mean row wherever a
+target-quarter key can form a derived-composition Naive Mean — two or more non-null contributors (see
+PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none can) — and, separately, the Skilled
+Mean row for that same key only where its own skill gate also passes (NSE > 0, min-pairs K, via the inner
+merge; § "Quarterly ensembles = Naive Mean + Skilled Mean only" ~:61-63, 67): a key can form a Naive Mean
+without forming a Skilled Mean. Step 8's recalc forms either ensemble only
 where its own inner join with observations matches, usually not the current quarter (see PP-064 Chunk C
 canonical step 11's PASS criterion 2 and its pre-satisfied-branch note above for the exception). Do
 **not** frame either as appearing "on the next quarter issue day": that framing is what the step-11

@@ -147,13 +147,18 @@ older commits than previously cited. This row merges **directly into `maxat_sapp
 is reviewed, independent of the integration branch and of the PP-065 deploy — it does not wait for PP-065
 P1d. See the overview's `DOC-009.P2a-10` graph node for the matching dependency-graph statement.
 
-**Split hazard with row 12 (added 2026-09-29, plan-sync round 12).** Rows 10 and 12 both edit
-`doc/data_flow_long_term.md`: row 10 at `:240-242, 270-275` (below), row 12 at `:259-262` (see P2a-12
-below) — row 12's range sits *between* row 10's two ranges. Because P2a-10 merges to trunk first and P2a-12
-does not (it rides the integration branch), editing row 10's ranges shifts every line number after `:242`,
-including row 12's `:259-262`. **After P2a-10 lands on trunk, trunk must be merged into
-`integ_quarter_p1b_p2` and row 12's citations re-measured against the merged file before P2a-12 is
-written** — do not write P2a-12 against a pre-P2a-10 line count.
+**Split hazard with row 12 (added 2026-09-29, plan-sync round 12; worded order-neutral 2026-09-29, round
+12e).** Rows 10 and 12 both edit `doc/data_flow_long_term.md`: row 10 at `:240-242, 270-275` (below), row
+12 at `:259-262` (see P2a-12 below) — row 12's range sits *between* row 10's two ranges, so whichever edit
+lands in the shared tree second has its own citation shifted by the first. **Do not assume P2a-10 lands
+first** — it has no dependencies and typically reaches trunk before `PP-065.P1d` gates P2a-12, but nothing
+enforces that ordering. Whichever of P2a-10 / P2a-12 is applied second must re-measure its own
+`doc/data_flow_long_term.md` citation against the tree as it stands right before writing the edit, not
+against the line numbers in this table. Concretely: if P2a-10 lands on trunk first, `integ_quarter_p1b_p2`
+must merge trunk (picking up row 10's edit) before row 12's citation is re-measured and applied. If P2a-12
+lands on the integration branch first instead, row 10's own edit to trunk is unaffected (trunk does not yet
+carry row 12), but `integ_quarter_p1b_p2` must re-measure against trunk's row-10 edit the next time it
+syncs trunk, before any further edit to this region of the file on that branch.
 
 | # | File:line | Depends on | Edit |
 |---|---|---|---|
@@ -167,10 +172,12 @@ on trunk until PP-065 P1b–P1d merge, this P2a-12 documentation PR merges into 
 `integ_quarter_p1b_p2` alongside PP-065 P1b–P1d (owner decision R4-integration-branch), not directly into
 `maxat_sapphire_2` — it reaches trunk only when that branch merges (`deploy.pp`), so the docs and the code
 they describe land together. See the overview's `DOC-009.P2a-12` graph node for the matching
-dependency-graph statement. **Split hazard with row 10 (added 2026-09-29, plan-sync round 12): see P2a-10's
-own note above** — row 12's `:259-262` range sits between row 10's two edit ranges in the same file, so
-once P2a-10 merges to trunk, `integ_quarter_p1b_p2` must sync from trunk and row 12's `:259-262` citation
-must be re-measured on that synced tree before this table's line numbers are trusted.
+dependency-graph statement. **Split hazard with row 10 (added 2026-09-29, plan-sync round 12; worded
+order-neutral 2026-09-29, round 12e): see P2a-10's own note above** — row 12's `:259-262` range sits
+between row 10's two edit ranges in the same file, so whichever of the two rows' edits lands second must
+re-measure its own citation against the tree as it stands after the first. Do not assume P2a-10 lands
+first; if it does, `integ_quarter_p1b_p2` must sync from trunk and row 12's `:259-262` citation must be
+re-measured on that synced tree before this table's line numbers are trusted.
 
 **Merged-vs-deployed note (added 2026-09-28; tied to the overview's owner decisions
 R4-merge-is-deploy/R4-integration-branch/R4-recalc-runs, 2026-09-28 — numbered/labelled, not lettered,
