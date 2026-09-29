@@ -616,7 +616,9 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      existing reader function, not a new `data_reader` entry point.
    - **Allowed restructuring:** the `q_combined.empty` guard (`:296`) becomes "the universe is empty", and
      the quarterly block is reached when the monthly block has nothing to do (the monthly early exits no
-     longer end the run before it). Keep the `q_skill` guard (`:304`). Season gap-fill reachability stays
+     longer end the run before it — this applies to all six monthly `sys.exit(0)` guards, not only
+     `combined.empty`; see the complete affected-test list and the open "Audit trail" `gaps`-definedness
+     question in the maintenance test inventory below, ~:1960). Keep the `q_skill` guard (`:304`). Season gap-fill reachability stays
      as today (it runs only when the monthly block completed); changing that is out of scope.
    - Quarters older than the window are covered by the recalc, not by maintenance. Maintenance writes only
      ensemble rows (`:316-321`); derived raw rows of a missed operational run come from the next recalc.
@@ -1251,8 +1253,8 @@ lead 0):
     own — so post-P1b, this case's expected "no Q1-2027 aggregate" result can only come from the
     `forecast_date` (issue-date) bound correctly dropping a triplet issued after `forecast_date`. It does
     **not** prove the wide trim itself admits an already-issued prior-year Q1 — that is the separate,
-    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1279-1281, re-measured 2026-09-29,
-    plan-sync round 12e), whose own mutation note
+    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1299-1301, re-measured 2026-09-29,
+    plan-sync round 12g), whose own mutation note
     ("removing the target-year extension makes the flag-ON case fail") is what proves the wide trim. Write
     this case as a P1b-only regression guard for the `forecast_date` bound under the widened trim, not as
     a case that "fails on the pre-P1b base" and not as proof of the wide trim.
@@ -1266,7 +1268,14 @@ lead 0):
   pass even with the `forecast_date` bound deleted, and stop detecting the bug they name. `GBT`'s
   derivation (`QUARTERLY_DERIVED_MODELS`, unconditional) is untouched by P3, so write a `GBT`-model variant
   of both cases here now (same triplet shape and dates, `model = GBT`) so the guard survives P3; P3's own
-  Acceptance then drops only the `LR_Base`/`LR_SM` variant.
+  "Tests:" paragraph then drops only the `LR_Base`/`LR_SM` variant. **Write the `GBT` variant itself as a
+  P1b-only regression guard under BOTH flags, not as a case expected to fail on the pre-P1b base** — like
+  the flag-ON `LR_Base`/`LR_SM` case above, it gives a false pass pre-P1b for a reason unrelated to the
+  `forecast_date` bound: under flag OFF, `GBT` is not in `AGGREGATED_SUPPORTED_MODELS`
+  (`model_names.py:14-16`), so the post-combine filter (`_filter_supported_aggregated_forecast_models`,
+  `data_reader.py:98-104`, called at `:3606`) strips any `GBT` row before the assertion, regardless of the
+  bound; under flag ON the case already produces no aggregate for the unrelated per-lead-grouping reason
+  established above. Neither absence proves the bound is implemented until P1b lands.
 - **Existing Source 1 (now unified) forecast_date bound, inputs to the derivation.** No row dated after
   `forecast_date` reaches `derive_quarterly_from_monthly_same_issue` (assert on a spy, or on the rows
   actually passed to it), under both flags.
@@ -1948,8 +1957,60 @@ line numbers verified against this branch's HEAD):
   all-`EM` shape (its own assertions only inspect `LR_Base` rows, so its listed fix does not need the
   substitution to keep passing mechanically, but the same staleness applies to its fixture's realism —
   flag this for the same pass if it is touched).
-- Any other maintenance test that asserts the run ends
-  before the quarterly block (e.g. the early-exit tests at `:217`, `:245`) is listed.
+- **P1b rule, verified against `postprocessing_maintenance_long_term.py` (~:113-388): item 4's "Allowed
+  restructuring" bullet above ("the monthly early exits no longer end the run before it") applies to ALL
+  SIX monthly-only `sys.exit(0)` guards** — `combined.empty` (`:113`), `gaps.empty` (`:126`),
+  `skill_stats.empty` (`:141`), `all_forecasts.empty` (`:159`), `filtered.empty` (`:184`) and
+  `new_ensemble.empty` (`:257`) — not just the `q_combined.empty` guard the bullet names explicitly. None
+  of them are wrapped in `try/except`, so today each is a hard process exit; post-P1b each must instead
+  fall through to the quarterly (and seasonal) sections. **Consequence for the gap-universe read
+  (`data_reader.read_quarterly_forecasts(codes, Y-1, Y+1)`, the "Gap universe" bullet above): it is now
+  reached on every test path that used to hit one of these six exits early, not only on the two paths that
+  already reach the quarterly block today.** `test_maintenance_long_term.py`'s `mock_data_reader` is a
+  plain (non-autospec) `MagicMock()` (`_import_module`, `:76`), so an unconfigured
+  `read_quarterly_forecasts` call returns a bare `MagicMock`, not a DataFrame; today's `q_combined.empty`
+  guard tolerates this (a `MagicMock` attribute access, truthy, so `if not q_combined.empty:` silently
+  skips), but the new gap-universe build concatenates/filters `read_quarterly_forecasts`'s rows directly,
+  which raises on a bare `MagicMock` instead of skipping gracefully. **Every test below therefore needs a
+  `read_quarterly_forecasts.return_value = pd.DataFrame(...)` (empty, unless the test is specifically about
+  quarterly content) added to its fixture, or it breaks under P1b** — this is the complete list, replacing
+  "e.g.":
+  - `test_no_combined_forecasts_exits_zero` (`:217`): **new expected result** — no longer exits before the
+    quarterly section; `mock_gap_detector.detect_missing_monthly_ensembles.assert_not_called()` still holds
+    (that call is gated on `combined` alone, unaffected by this restructuring), but the docstring's "exits
+    0" now happens at the end-of-script exit, not the early one — assert that explicitly, and add the
+    `read_quarterly_forecasts` fixture default so the run does not raise while getting there.
+  - `test_no_gaps_found_exits_zero` (`:245`): same shape; `read_skill_metrics.assert_not_called()` /
+    `create_monthly_ensemble_forecasts.assert_not_called()` still hold, `sys.exit(0)` moves to the
+    end-of-script exit, add the fixture default.
+  - `test_lookback_env_var_respected` (`:1078`): hits the same `gaps.empty` guard as `:245` — same new
+    expected result and fixture need.
+  - `test_empty_skill_metrics_exits_zero` (`:1109`), `test_empty_forecasts_for_gaps_exits_zero` (`:1145`),
+    `test_no_matching_forecast_rows_exits_zero` (`:1185`), `test_ensemble_returns_no_em_rows_exits_zero`
+    (`:1239`): same shape — each currently asserts an early `SystemExit(0)` and an `assert_not_called()` on
+    the next monthly step; the `assert_not_called()` checks still hold (each is gated on the monthly
+    condition alone), `sys.exit(0)` moves to the end-of-script exit, add the fixture default.
+  - `test_gaps_found_creates_and_saves_ensembles` (`:288`), `test_deduplication_works` (`:912`),
+    `test_audit_trail_logged` (`:1008`), `test_multi_station_gaps` (`:1327`), `test_save_error_causes_exit_one`
+    (`:1284`): these already reach the quarterly section today (none hits an early exit; `:1284`'s monthly
+    save error is appended to `errors` and does not itself return early) and already tolerate an
+    unconfigured `read_quarterly_combined_forecasts` via the truthy-`MagicMock.empty` skip — **no change to
+    their own assertions, but each needs the same `read_quarterly_forecasts` fixture default added**, or it
+    raises under P1b where it silently skipped before.
+  - `test_seasonal_gap_fill_processes_single_missing_issue_without_collapsing_leads` (`:354`) and
+    `test_monthly_gap_fill_only_writes_gap_leads` (`:766`): both already configure
+    `read_quarterly_combined_forecasts.return_value = pd.DataFrame()` but leave `read_quarterly_forecasts`
+    unconfigured — same fixture gap, same fix.
+  - Unaffected: `test_quarterly_gap_fill_dedup_lead_aware` (`:501`) and
+    `test_quarterly_gap_fill_only_writes_gap_leads` (`:626`) already configure
+    `read_quarterly_forecasts.return_value` (their own item-4 changes are listed separately above).
+  - **Open P1b design question, not resolved by this plan's text:** the trailing "Audit trail" section
+    (`postprocessing_maintenance_long_term.py` ~:517-524) unconditionally reads `gaps` and `lookback`,
+    which today are only ever reached after `gaps` has been assigned (every early exit before it aborts the
+    process first). Once the six early exits stop aborting the process, P1b must ensure `gaps` is still
+    defined (e.g. as an empty frame) on every path that reaches this section, or it raises `NameError`
+    instead of the intended clean exit — verify this is handled before relying on any of the "new expected
+    result" descriptions above for the `SystemExit(0)` case specifically.
 
 **Acceptance (P1b):**
 - The full module suite via `run_tests.sh` (as P1a) is green apart from the test edits listed above; zero
@@ -2050,7 +2111,8 @@ Depends on P1b and P1c. Tests only.
 **One writer-paused window** (ops instruction, no code): merge the integration branch
 `integ_quarter_p1b_p2` (PP-065 P1b–P1d, PP-064 B) into `maxat_sapphire_2` — that merge **is** the
 postprocessing deploy trigger (owner decision R4-integration-branch; `deploy.pp` in the overview's
-dependency graph). PP-064 A, FD-029 P1 and PP-065 P1a are already live separately (owner decision
+dependency graph). PP-064 A, FD-029 P1 and PP-065 P1a are **presumed already live separately, per org,
+conditional on that org's resolved image tag being `latest`** (owner decision
 R4-merge-is-deploy; verify per org, `PP-064.C.step0`) and are not part of this merge. **The automatic
 bimonthly QUARTERLY recalc is allowed to run before this window and does not need to be paused** (owner
 decision R4-recalc-runs, 2026-09-28 — see N7 above): it already applies P1a's 3-of-3 rule, on calendar
@@ -2076,7 +2138,7 @@ point there, do not restate the checks here. In particular, do **not** require t
 any INFO-level log line (the quarterly-block/save/skip messages): canonical step 11 establishes they never
 reach this entry point's WARNING-capped log (INFRA-029) regardless of what actually happened.
 
-**Why the operational run, not the recalc, is the blank-card recovery point.** The in-window recalc (step
+**Why the operational run, not the recalc, is the target-quarter ensemble's recovery point.** The in-window recalc (step
 8) writes the derived seven-model rows for every quarter, the current one included
 (`src/skill_metrics.py` ~:2741, `joint_forecasts = forecasts.copy()`), but EM/Skilled Mean/Naive Mean are
 built from `merged`, an **inner join with observations** (~:2682-2690, ~:2806-2831) — so the recalc writes
@@ -2090,14 +2152,23 @@ key can form it (non-empty quarter skill, `postprocessing_operational_long_term.
 non-null contributors, `ensemble_calculator.py` ~:915) — see PP-064 step 11's INVESTIGATE outcome for when
 no key can form it — from existing skill plus the latest derived forecasts, with no observation
 requirement, and writes the Skilled Mean row alongside it only where that same key's own skill gate also
-passes (see PP-064's "Skilled Mean is not a required row" paragraph for the two conditions). Until that
-operational run executes, the narrower
+passes (see PP-064's "Skilled Mean is not a required row" paragraph for the two conditions). **Correction:
+step 8's raw rows can already make a previously blank card displayable, before step 11 runs** — FD-029's
+read path left-merges the forecast rows with skill stats (`forecast_dashboard/src/db.py` ~:1538-1543,
+`how="left"`), and the card's own visibility check needs only one row whose `model_short` is in the
+checkbox options with a non-null `forecasted_discharge` (`dashboard/plot_manager.py` ~:423-480), not an
+ensemble row. So a blank-card key with a non-null derived value at step 8 is no longer guaranteed to stay
+literally blank until step 11. What step 11 still uniquely supplies is the target-quarter's own **Naive
+Mean** (and, where its gate passes, Skilled Mean) ensemble row, the same
 blank-card population the overview's "User-visible consequence" paragraph now defines (a key where at
 most one of `LR_Base`/`LR_SM` has a non-null target-quarter forecast, so neither EM nor Naive Mean forms,
 and its one surviving row, if any, is non-native — **not** simply "a fresh EM row plus a non-native LR
-row", which also gets a fresh, visible Naive Mean row today) keeps showing a **blank card**. This manual run,
-verified, is the actual recovery point for the blank card — not the merge, and not the recalc alone — and
-closes the gap instead of leaving it open until the next natural cron day.
+row", which also gets a fresh, visible Naive Mean row today). Quarterly gap detection keys on Naive Mean
+(overview decision B), so the target-quarter's own Naive Mean row is the deliverable this recovery point is
+about, not merely card displayability. This manual run,
+verified, is the actual recovery point for that ensemble row — not the merge, and not the recalc alone —
+and closes the gap instead of leaving it open until the next natural cron day, even where step 8 has
+already made the card itself non-blank via a raw derived row.
 
 The export (canonical step 3) now captures **calendar-window-era, 3-of-3-era** quarter skill (whatever the
 automatic bimonthly recalc has already produced under P1a's rule since it merged, owner decision

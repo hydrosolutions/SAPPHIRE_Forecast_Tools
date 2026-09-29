@@ -163,7 +163,7 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
   chain actually depends on (round 12, verified in code — none of them break the mechanism, but each is a
   place it can fail to fire for a given org, so step 0 must confirm all three):**
   1. **The tag value, as the org's `.env` resolves it.** `read_configuration`
-     (`bin/utils/common_functions.sh:103-109`) sets an unset `ieasyhydroforecast_backend_docker_image_tag`
+     (`bin/utils/common_functions.sh:102-112`, including the exports) sets an unset `ieasyhydroforecast_backend_docker_image_tag`
      / `..._frontend_docker_image_tag` to `"local"` (with a WARNING) before exporting it, and
      `bin/docker-compose-luigi.yml`'s `pipeline-base` service passes that shell value straight into the
      container (`ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}`).
@@ -172,11 +172,21 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
      environment entirely — which does not happen on the normal path, since `read_configuration` always
      runs (and always sets *some* value) before `docker compose run` (e.g.
      `bin/run_pentadal_forecasts.sh:14` then `:91`). An org whose env file never sets these two variables
-     auto-pulls nothing from trunk — it keeps running whatever `local` image already exists.
+     auto-pulls nothing from trunk — it keeps running whatever `local` image already exists. **An org whose
+     tag resolves to `local` is a BLOCKER, to resolve before the writer-paused window opens**: either set
+     that org's `.env` tag to `latest`, or plan an explicit manual deploy for that org. Never push a
+     `:local` tag to Docker Hub to work around this — Luigi on every `local`-tagged deployment would
+     auto-pull it as soon as one exists (`apps/pipeline/pipeline_docker.py:298-304`), turning every such
+     org into an unintended auto-deploy target; the pinned-tag retag guidance (`PP-064.C`, canonical step 6)
+     applies only to an explicitly pinned, non-`local` tag, not to this case.
   2. **Whether `validate_dashboard_origins` passes.** `bin/daily_update_sapphire_frontend.sh:55` runs
      `validate_dashboard_origins || exit 1` before the `docker pull` at `:66-68`; a malformed
      `ieasyhydroforecast_url_pentad` / `_decad` value aborts the script before the pull, so that day's
-     dashboard auto-update does not happen.
+     dashboard auto-update does not happen. **This condition alone does not prove the running container is
+     the new image** — also inspect the RUNNING dashboard container (`docker ps` / `docker inspect
+     <container> --format '{{.Image}}'`, compared against the pulled image ID): the script backgrounds the
+     compose recreate and never checks its result (`:68-80`; `start_docker_compose_dashboards`,
+     `bin/utils/common_functions.sh:606-616`, only `wait`s on the PID without checking its exit status).
   3. **The image creation dates.** `docker image inspect
      mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format
      '{{.Created}}'` (same for `sapphire-dashboard` with `ieasyhydroforecast_frontend_docker_image_tag` —
@@ -271,16 +281,28 @@ Mean/Naive Mean) form only where that inner join finds an observation — **usua
 quarter, but not never**: a quarter's last month counts as observed at ≥50% of its days
 (`data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g. kghm
 Dec 17–24) can make the current quarter "observed" before this recalc runs, and the recalc then writes
-its ensembles too. Only the quarterly block of `postprocessing_operational_long_term.py` (~:207-232)
-writes them regardless of whether the quarter is observed, from existing skill plus the latest derived
+its ensembles too. **Correction: these step-8 raw rows can already make a previously blank card
+displayable, before step 11 runs.** FD-029's read path left-merges the forecast rows with skill stats
+(`forecast_dashboard/src/db.py` ~:1538-1543, `how="left"`), so a raw derived-model row survives with no
+matching skill/ensemble row required, and the card's own visibility check only needs one row whose
+`model_short` is in the checkbox options with a non-null `forecasted_discharge`
+(`dashboard/plot_manager.py` ~:423-480) — it does not require an ensemble row. So once step 8 has written a
+non-null derived value for a blank-card key, that card can already show a displayable derived forecast
+(with δ bounds) ahead of step 11. Step 11 remains required regardless: only the quarterly block of
+`postprocessing_operational_long_term.py` (~:207-232)
+writes the target-quarter's own **ensemble** rows regardless of whether the quarter is observed, from existing skill plus the latest derived
 forecasts, with no observation requirement — but only where a target-quarter key can form a
 derived-composition Naive Mean (see PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none
 can). See PP-064 Chunk C canonical step 11's PASS criterion 2 for the resulting
-loophole (a pre-existing derived-composition Naive Mean row is not by itself evidence step 11 ran). The
-blank card clears only once that **operational** quarterly postprocessing run has executed on the new
+loophole (a pre-existing derived-composition Naive Mean row is not by itself evidence step 11 ran). Quarterly
+gap detection keys on Naive Mean (decision B above), so the target-quarter's own Naive Mean row — not
+merely a displayable raw row — is the actual deliverable this rollout is verifying; that row, and the
+Skilled Mean row where its own gate passes, clear only once that **operational** quarterly postprocessing
+run has executed on the new
 image and its output has been verified (PP-064 Chunk C canonical step 11 / PP-065 P2's post-checks) — see
 PP-064 Chunk C § "Order" for the exact command, and PP-065 § "P2 — rollout" for the same step in context —
-so the blank-card interval does not extend to the next natural LT cron day.
+so the ensemble-row gap does not extend to the next natural LT cron day, even where step 8 has already
+made the card itself non-blank.
 
 **Status.** #527 (PP-064 A), #528 (FD-029 P1) and #530 (PP-065 P1a) are presumed live on both servers
 (verify per org, `PP-064.C.step0`). PP-065 P1b onward and PP-064 B are held on the integration branch
@@ -349,8 +371,10 @@ Resolved since rev 2:
    deploy. **Step 4 (the writer-paused
    window, which includes `deploy.pp`) is the deploy, due before 2026-12-25** — the 2026-12-25 deadline in
    the dependency graph sits on `deploy.pp` and the other `.deploy` nodes, not on step 3's merge. **Rollout mechanism (owner decisions R4-merge-is-deploy, R4-integration-branch, R4-recalc-runs,
-   2026-09-28, current):** merge = deploy (decision R4-merge-is-deploy), so PP-064 A, FD-029 P1 and PP-065 P1a are already
-   live on both servers (verify per org, `PP-064.C.step0`). The remaining work (PP-065 P1b–P1d, PP-064 B)
+   2026-09-28, current):** merge = deploy (decision R4-merge-is-deploy), so PP-064 A, FD-029 P1 and PP-065 P1a are
+   **presumed already live on both servers, conditional on each org's resolved image tag being `latest`**
+   (verify per org, `PP-064.C.step0` — an org whose tag resolves to `local` is not covered by this mechanism
+   at all, see the R4-merge-is-deploy per-org conditions above). The remaining work (PP-065 P1b–P1d, PP-064 B)
    is held on the integration branch `integ_quarter_p1b_p2` (decision R4-integration-branch) instead of being gated at the
    deploy step — there is no server-side gate to hold, since anything merged to trunk auto-pulls. The
    automatic bimonthly quarterly recalc is allowed to run in the meantime (decision R4-recalc-runs); it is not paused.
@@ -497,7 +521,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "LTF-017":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A":        { "stage": "merge",  "depends_on": [], "status": "MERGED #527", "parallel_agents": 1 },
     "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A"], "deadline": "2026-12-25", "status": "presumed live via auto-pull since 2026-09-27/28 (owner decision R4-merge-is-deploy); verify per org (PP-064.C.step0)", "note": "not gated on the integration-branch merge (deploy.pp): its own deploy already happened via auto-pull, independent of PP-065/FD-029" },
-    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). This is decision R4-merge-is-deploy's per-org verification, and must record all three conditions that decision depends on (R4-merge-is-deploy above, ~:164-185), not only image dates: (1) the tag value, read from the org's .env (or via read_configuration, bin/utils/common_functions.sh:102-112, which resolves an unset tag to 'local' with a WARNING, never to 'latest'); (2) whether validate_dashboard_origins passes for this org (bin/daily_update_sapphire_frontend.sh:55) -- e.g. the last daily_update_sapphire_frontend log shows the pull actually ran, not an early exit 1; and (3) the postprocessing/dashboard image creation dates (docker image inspect mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format '{{.Created}}', same for sapphire-dashboard with ieasyhydroforecast_frontend_docker_image_tag -- use the org's configured tag, not a hardcoded :latest), to confirm Chunk A and FD-029 are actually live. The automatic bimonthly QUARTERLY recalc is allowed to run and is NOT paused (owner decision R4-recalc-runs, 2026-09-28)." },
+    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). This is decision R4-merge-is-deploy's per-org verification, and must record all three conditions that decision depends on (R4-merge-is-deploy above, ~:164-185), not only image dates: (1) the tag value, read from the org's .env (or via read_configuration, bin/utils/common_functions.sh:102-112, which resolves an unset tag to 'local' with a WARNING, never to 'latest') -- if it resolves to 'local' for an org, record this as a BLOCKER to resolve before the writer-paused window opens: either set that org's .env tag to 'latest', or plan an explicit manual deploy for that org; never push a ':local' tag to Docker Hub to work around this, since Luigi on every 'local'-tagged deployment would auto-pull it as soon as one exists (apps/pipeline/pipeline_docker.py:298-304); (2) whether validate_dashboard_origins passes for this org (bin/daily_update_sapphire_frontend.sh:55) -- e.g. the last daily_update_sapphire_frontend log shows the pull actually ran, not an early exit 1 -- and inspect the RUNNING dashboard container itself (docker ps / docker inspect <container> --format '{{.Image}}', compared against the pulled image ID), since daily_update_sapphire_frontend.sh backgrounds the compose recreate and never checks its result (:68-80, start_docker_compose_dashboards, bin/utils/common_functions.sh:606-616, only waits on the PID without checking its exit status); and (3) the postprocessing/dashboard image creation dates (docker image inspect mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format '{{.Created}}', same for sapphire-dashboard with ieasyhydroforecast_frontend_docker_image_tag -- use the org's configured tag, not a hardcoded :latest), to confirm Chunk A and FD-029 are actually live. The automatic bimonthly QUARTERLY recalc is allowed to run and is NOT paused (owner decision R4-recalc-runs, 2026-09-28)." },
     "FD-029":          { "stage": "merge",  "depends_on": [], "status": "MERGED #528 (P1)", "parallel_agents": 1 },
     "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029"], "deadline": "2026-12-25", "status": "presumed live via auto-pull since 2026-09-27/28 (owner decision R4-merge-is-deploy: the dashboard's own daily frontend cron pull, independent of Luigi); verify per org (PP-064.C.step0)", "note": "not gated on the integration-branch merge (deploy.pp): its own deploy already happened, independent of PP-065 P1b-P1d" },
     "PP-065.P1a":      { "stage": "merge",  "depends_on": ["PP-064.A"], "status": "MERGED #530", "parallel_agents": 1 },
@@ -511,7 +535,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "deploy.pp.pulled": { "stage": "deploy", "depends_on": ["deploy.pp"], "note": "the new image is pulled and verified (creation date/digest) on each server -- PP-064 Chunk C canonical steps 5-6. This is the node on which the code is actually on the servers, distinct from deploy.pp (the merge event)." },
     "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp.pulled"], "note": "decision F (tjhm provenance cleanup), with the service owner, inside the same writer-paused window as deploy.pp -- PP-064 Chunk C canonical step 7" },
     "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp.pulled", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export taken at the start of this same writer-paused window (canonical step 3, before the merge); the export captures calendar-window-era, 3-of-3-era quarter skill (owner decision R4-recalc-runs), not pre-P1a skill. Requires deploy.pp.pulled (the per-org image pull and creation-date/digest verification, canonical step 6) to have completed first -- PP-064 Chunk C canonical step 8." },
-    "operational_run.1": { "stage": "ops",  "depends_on": ["recalc.1"], "note": "canonical steps 9-11: post-recalc checks (9), resume the paused writers (10), then run the first operational quarterly postprocessing run promptly and verify it -- do not wait for the next scheduled LT cron day (11, bash bin/bimonthly_long_term_postprocessing.sh <env> operational). Step 11 is the BLANK-CARD RECOVERY POINT: it writes the derived seven-model rows' Naive Mean ensemble row for the current quarter, whether or not that quarter is observed, wherever a target-quarter key can form a derived-composition Naive Mean -- two or more non-null contributors (see PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none can) -- and, separately, a Skilled Mean row for that same key only where its own skill gate also passes -- see PP-064's 'Skilled Mean is not a required row' paragraph (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` ~:768-775) for the two conditions; a key can form a Naive Mean without forming a Skilled Mean. recalc.1 only writes either when its own observation join happens to match, which is usually not the current quarter but is not guaranteed never (see PP-064 Chunk C canonical step 11's PASS criterion 2 loophole note). See PP-064 Chunk C canonical step 11 (its own success-criteria bullet) and PP-065 P2's 'Why the operational run, not the recalc, is the blank-card recovery point'." },
+    "operational_run.1": { "stage": "ops",  "depends_on": ["recalc.1"], "note": "canonical steps 9-11: post-recalc checks (9), resume the paused writers (10), then run the first operational quarterly postprocessing run promptly and verify it -- do not wait for the next scheduled LT cron day (11, bash bin/bimonthly_long_term_postprocessing.sh <env> operational). Step 11 is the TARGET-QUARTER ENSEMBLE RECOVERY POINT (not necessarily the first point the card stops being blank -- recalc.1's own raw derived rows can already make a displayable card, PP-065 P2 ~:2141): it writes the derived seven-model rows' Naive Mean ensemble row for the current quarter, whether or not that quarter is observed, wherever a target-quarter key can form a derived-composition Naive Mean -- two or more non-null contributors, one of them derived (Naive Mean itself needs only two or more distinct non-null raw contributors, which a plain LR_Base+LR_SM key already satisfies, ensemble_calculator.py ~:890-915; see PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when no derived-composition key can form) -- and, separately, a Skilled Mean row for that same key only where its own skill gate also passes -- see PP-064's 'Skilled Mean is not a required row' paragraph (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` ~:768-775) for the two conditions; a key can form a Naive Mean without forming a Skilled Mean. Quarterly gap detection keys on Naive Mean (decision B), so this ensemble row, not card displayability, is the deliverable. recalc.1 only writes either when its own observation join happens to match, which is usually not the current quarter but is not guaranteed never (see PP-064 Chunk C canonical step 11's PASS criterion 2 loophole note). See PP-064 Chunk C canonical step 11 (its own success-criteria bullet) and PP-065 P2's 'Why the operational run, not the recalc, is the target-quarter ensemble's recovery point'." },
     "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "operational_run.1"] },
     "PP-065.P3.deploy":{ "stage": "deploy", "depends_on": ["PP-065.P3"] },
     "recalc.2":        { "stage": "ops",    "depends_on": ["LTF-014.P2", "PP-065.P3.deploy"] },
