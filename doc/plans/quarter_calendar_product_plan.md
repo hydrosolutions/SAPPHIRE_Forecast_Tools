@@ -265,8 +265,10 @@ quarter, but not never**: a quarter's last month counts as observed at ≥50% of
 (`data_reader.py` ~:1301-1302), so a writer-paused window that falls late in that month (e.g. kghm
 Dec 17–24) can make the current quarter "observed" before this recalc runs, and the recalc then writes
 its ensembles too. Only the quarterly block of `postprocessing_operational_long_term.py` (~:207-232)
-is guaranteed to write them regardless, from existing skill plus the latest derived forecasts, with no
-observation requirement — see PP-064 Chunk C canonical step 11's PASS criterion 2 for the resulting
+writes them regardless of whether the quarter is observed, from existing skill plus the latest derived
+forecasts, with no observation requirement — but only where a target-quarter key can form a
+derived-composition Naive Mean (see PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none
+can). See PP-064 Chunk C canonical step 11's PASS criterion 2 for the resulting
 loophole (a pre-existing derived-composition Naive Mean row is not by itself evidence step 11 ran). The
 blank card clears only once that **operational** quarterly postprocessing run has executed on the new
 image and its output has been verified (PP-064 Chunk C canonical step 11 / PP-065 P2's post-checks) — see
@@ -349,18 +351,22 @@ Resolved since rev 2:
    2. DOC-009 P1a.
    3. PP-065 P1b–P1d and PP-064 B (the B5 check): reviewed and merged into `integ_quarter_p1b_p2`, kept
       current with trunk in the meantime.
-   4. **In one writer-paused window between LT cron days** (kghm 10/25, tjhm 1). **Both orgs' steps
-      complete inside this one window — this merge deploys to every org at once, so pausing/auditing/
-      exporting only one org before merging would leave the other org's writers unprotected**; see PP-064
-      Chunk C's own "Both orgs, one window" note for why and for the window-placement example, not restated
-      here. This window follows PP-064
+   4. **In one writer-paused window between LT cron days** (kghm 10/25, tjhm 1). **Both orgs' paused steps
+      (1-10) complete inside this one window — this merge deploys to every org at once, so pausing/
+      auditing/exporting only one org before merging would leave the other org's writers unprotected**; see
+      PP-064 Chunk C's own "Both orgs, one window" note for why and for the window-placement example, not
+      restated here. **Step 11 (the first operational run) runs promptly after step 10 resumes the
+      writers, so it is after the window closes, not inside it** — see PP-064 Chunk C's own "Window
+      placement" note (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout
+      and verification"). This window follows PP-064
       Chunk C's canonical **"Order"** sequence (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md`
       § "Chunk C — rollout and verification"); it is stated once there and referenced here, not restated:
       pause writers → the pre-deploy DB audit and PP-065's rule-A triplet count → **export** → merge
       `integ_quarter_p1b_p2` into trunk (`deploy.pp`) → wait for CI on the merge commit → pull and verify
-      the image on each server (using the *configured* image tag,
-      `mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest}` and
-      `mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}`, not a hardcoded
+      the image on each server (using the tag as the org's `.env` actually resolves it — `read_configuration`
+      resolves an unset tag to `local`, never `latest` — e.g.
+      `mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local}` and
+      `mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-local}`, not a hardcoded
       `:latest`) → decision F (tjhm) → recalc per org → post-recalc checks → resume writers → the first
       operational quarterly postprocessing run, verified. See PP-064 Chunk C § "Order" for the exact
       per-step detail (including the abort path if CI or the pull/verify step fails) and the exact
@@ -405,7 +411,9 @@ Resolved since rev 2:
      Naive Mean row today, since both share the same `LR_Base`+`LR_SM` gate pre-P1b). The true recovery point is **not** the `deploy.pp` merge
      itself, and **not** the in-window skill recalc either — the recalc only writes ensembles for quarters
      with an observation match, usually not the current quarter but not guaranteed (see the "User-visible
-     consequence" paragraph above for the loophole where it is). Only the operational run is guaranteed to.
+     consequence" paragraph above for the loophole where it is). The operational run is the one that writes
+     them wherever a target-quarter key can form a derived-composition Naive Mean (see PP-064 Chunk C
+     canonical step 11's INVESTIGATE outcome for when none can).
      It is the **first successful operational quarterly postprocessing run on the new image**
      (PP-064 Chunk C canonical step 11), verified. See the PP-064 Chunk C runbook
      (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout and verification")
@@ -464,7 +472,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
   "phases": {
     "DOC-009.P1a":     { "stage": "merge",  "depends_on": [] },
     "DOC-009.P1b":     { "stage": "merge",  "depends_on": ["D4"] },
-    "DOC-009.P2a-10":  { "stage": "merge",  "depends_on": [], "note": "row 10 (the long_forecasts join-key contract: horizon_value = lead, not the quarter number) describes trunk behaviour already true today -- horizon_value = quarter_horizon_value() is set unconditionally on trunk since PP-064 Chunk A (#527) -- not post-P1b behaviour, so it is a standalone trunk merge, independent of the integration branch and of PP-065.P1d. Route corrected 2026-09-29 (plan-sync round 12); split out of the former single DOC-009.P2a node, which incorrectly gated it on PP-065.P1d" },
+    "DOC-009.P2a-10":  { "stage": "merge",  "depends_on": [], "note": "row 10 (the long_forecasts join-key contract: horizon_value = lead, not the quarter number) describes trunk behaviour already true today -- horizon_value = quarter_horizon_value() is set unconditionally in api_writer.py's quarter-write loop, but that assignment predates PP-064 Chunk A: it was introduced by the earlier P-PIPE commit 18580271 ('P-PIPE PP4: config-lead ensemble writers + four independent seasonal products', 2026-06-23), not by #527. Under flag ON the writer actually prefers the row's own per-lead horizon_value over that unconditional assignment (api_writer.py:1173-1176) -- flag ON's horizon_value is therefore also already the lead, just sourced from the row. Either way this is not post-P1b behaviour, so it is a standalone trunk merge, independent of the integration branch and of PP-065.P1d. Route corrected 2026-09-29 (plan-sync round 12); split out of the former single DOC-009.P2a node, which incorrectly gated it on PP-065.P1d" },
     "DOC-009.P2a-12":  { "stage": "merge",  "depends_on": ["PP-065.P1d"], "note": "row 12 describes post-P1b behaviour, so P2a-12 merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), alongside PP-065 P1b-P1d, and reaches trunk only with deploy.pp -- not a standalone trunk merge. The PP-065 P1a 3-of-3 observation content it documents is on trunk since #530 AND presumed already LIVE on servers via auto-pull (owner decision R4-merge-is-deploy, verify per org)" },
     "DOC-009.P2b":     { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm"], "note": "row 11 (LT readme schedule); deferred with P0" },
     "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
@@ -479,7 +487,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "LTF-017":         { "stage": "merge",  "depends_on": [], "parallel_agents": 1 },
     "PP-064.A":        { "stage": "merge",  "depends_on": [], "status": "MERGED #527", "parallel_agents": 1 },
     "PP-064.A.deploy": { "stage": "deploy", "depends_on": ["PP-064.A"], "deadline": "2026-12-25", "status": "presumed live via auto-pull since 2026-09-27/28 (owner decision R4-merge-is-deploy); verify per org (PP-064.C.step0)", "note": "not gated on the integration-branch merge (deploy.pp): its own deploy already happened via auto-pull, independent of PP-065/FD-029" },
-    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). Also record the image tag and the postprocessing/dashboard image creation dates (docker image inspect mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-latest} --format '{{.Created}}', same for sapphire-dashboard with ieasyhydroforecast_frontend_docker_image_tag -- use the org's configured tag, not a hardcoded :latest) -- this is decision R4-merge-is-deploy's per-org verification. The automatic bimonthly QUARTERLY recalc is allowed to run and is NOT paused (owner decision R4-recalc-runs, 2026-09-28)." },
+    "PP-064.C.step0":  { "stage": "ops",    "depends_on": [], "note": "per-org read: SAPPHIRE_SKILL_LEAD_AWARE, ml_long_term_supported_modes, min_pairs, and confirm the quarter config carries operational_issue_day (PP-064 Chunk C step 0). This is decision R4-merge-is-deploy's per-org verification, and must record all three conditions that decision depends on (R4-merge-is-deploy above, ~:164-182), not only image dates: (1) the tag value, read from the org's .env (or via read_configuration, bin/utils/common_functions.sh:102-112, which resolves an unset tag to 'local' with a WARNING, never to 'latest'); (2) whether validate_dashboard_origins passes for this org (bin/daily_update_sapphire_frontend.sh:55) -- e.g. the last daily_update_sapphire_frontend log shows the pull actually ran, not an early exit 1; and (3) the postprocessing/dashboard image creation dates (docker image inspect mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag:-local} --format '{{.Created}}', same for sapphire-dashboard with ieasyhydroforecast_frontend_docker_image_tag -- use the org's configured tag, not a hardcoded :latest), to confirm Chunk A and FD-029 are actually live. The automatic bimonthly QUARTERLY recalc is allowed to run and is NOT paused (owner decision R4-recalc-runs, 2026-09-28)." },
     "FD-029":          { "stage": "merge",  "depends_on": [], "status": "MERGED #528 (P1)", "parallel_agents": 1 },
     "FD-029.deploy":   { "stage": "deploy", "depends_on": ["FD-029"], "deadline": "2026-12-25", "status": "presumed live via auto-pull since 2026-09-27/28 (owner decision R4-merge-is-deploy: the dashboard's own daily frontend cron pull, independent of Luigi); verify per org (PP-064.C.step0)", "note": "not gated on the integration-branch merge (deploy.pp): its own deploy already happened, independent of PP-065 P1b-P1d" },
     "PP-065.P1a":      { "stage": "merge",  "depends_on": ["PP-064.A"], "status": "MERGED #530", "parallel_agents": 1 },
@@ -493,7 +501,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "deploy.pp.pulled": { "stage": "deploy", "depends_on": ["deploy.pp"], "note": "the new image is pulled and verified (creation date/digest) on each server -- PP-064 Chunk C canonical steps 5-6. This is the node on which the code is actually on the servers, distinct from deploy.pp (the merge event)." },
     "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp.pulled"], "note": "decision F (tjhm provenance cleanup), with the service owner, inside the same writer-paused window as deploy.pp -- PP-064 Chunk C canonical step 7" },
     "recalc.1":        { "stage": "ops",    "depends_on": ["deploy.pp.pulled", "tjhm.reimport"], "note": "PP-064 C + PP-065 P2, per org, after an export taken at the start of this same writer-paused window (canonical step 3, before the merge); the export captures calendar-window-era, 3-of-3-era quarter skill (owner decision R4-recalc-runs), not pre-P1a skill. Requires deploy.pp.pulled (the per-org image pull and creation-date/digest verification, canonical step 6) to have completed first -- PP-064 Chunk C canonical step 8." },
-    "operational_run.1": { "stage": "ops",  "depends_on": ["recalc.1"], "note": "canonical steps 9-11: post-recalc checks (9), resume the paused writers (10), then run the first operational quarterly postprocessing run promptly and verify it -- do not wait for the next scheduled LT cron day (11, bash bin/bimonthly_long_term_postprocessing.sh <env> operational). Step 11 is the BLANK-CARD RECOVERY POINT: it is what always writes the derived seven-model rows' Naive Mean / Skilled Mean ensemble rows for the current quarter, whether or not that quarter is observed -- recalc.1 only writes them when its own observation join happens to match, which is usually not the current quarter but is not guaranteed never (see PP-064 Chunk C canonical step 11's PASS criterion 2 loophole note). See PP-064 Chunk C canonical step 11 (its own success-criteria bullet) and PP-065 P2's 'Why the operational run, not the recalc, is the blank-card recovery point'." },
+    "operational_run.1": { "stage": "ops",  "depends_on": ["recalc.1"], "note": "canonical steps 9-11: post-recalc checks (9), resume the paused writers (10), then run the first operational quarterly postprocessing run promptly and verify it -- do not wait for the next scheduled LT cron day (11, bash bin/bimonthly_long_term_postprocessing.sh <env> operational). Step 11 is the BLANK-CARD RECOVERY POINT: it writes the derived seven-model rows' Naive Mean / Skilled Mean ensemble rows for the current quarter, whether or not that quarter is observed, wherever a target-quarter key can form them (see PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none can) -- recalc.1 only writes them when its own observation join happens to match, which is usually not the current quarter but is not guaranteed never (see PP-064 Chunk C canonical step 11's PASS criterion 2 loophole note). See PP-064 Chunk C canonical step 11 (its own success-criteria bullet) and PP-065 P2's 'Why the operational run, not the recalc, is the blank-card recovery point'." },
     "PP-065.P3":       { "stage": "merge",  "depends_on": ["LTF-014.P2", "operational_run.1"] },
     "PP-065.P3.deploy":{ "stage": "deploy", "depends_on": ["PP-065.P3"] },
     "recalc.2":        { "stage": "ops",    "depends_on": ["LTF-014.P2", "PP-065.P3.deploy"] },

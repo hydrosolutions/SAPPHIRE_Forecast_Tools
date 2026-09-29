@@ -1197,7 +1197,11 @@ lead 0):
   bound, so "fails on the pre-P1b base" would not actually detect the bug under flag ON. The flag-ON
   fixture must therefore also configure `month_1`, `month_2` and `month_3` (leads 1/2/3, issue day 25) in
   `ieasyhydroforecast_ml_long_term_supported_modes` and their config files, so `read_monthly_forecasts`
-  returns the triplet rows and the test genuinely exercises the `forecast_date` bound. (Flag OFF has no
+  returns the triplet rows. **With that fixture in place, only the Q4-2026 case below genuinely exercises
+  the `forecast_date` bound pre-P1b** — it fails on the pre-P1b base under flag ON. **The Q1-2027 case does
+  not**, even with the same fixture: `read_monthly_forecasts`'s own target-year trim already empties it on
+  the pre-P1b base for an unrelated reason (see that case's own "Corrected 2026-09-29" note below) — write
+  it as a P1b-only regression guard, not as a case expected to fail on the pre-P1b base. (Flag OFF has no
   such precondition — it never calls `read_monthly_forecasts` in this reader at all.)
   - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
     2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced, under both flags. The issue
@@ -1224,11 +1228,16 @@ lead 0):
     any `forecast_date` (issue-date) bound. The test's expected outcome ("no Q1-2027 aggregate") therefore
     already holds on the current, unmodified trunk regardless of whether a `forecast_date` bound exists —
     this case cannot fail on the pre-P1b base under flag ON, so it gives no signal about whether that bound
-    is correctly implemented pre-P1b. What it does guard is P1b itself: P1b's own derived-row trim for the
-    latest reader is the wider `[start_year, end_year + 1]` (§ "Target-year trim scope" above), specifically
-    so a December-issued Q1 survives; this flag-ON case is the regression test that P1b's wider trim (not
-    `read_monthly_forecasts`'s narrower one) is what actually governs the derived path once P1b lands —
-    write it as a P1b-only regression guard, not as a case that "fails on the pre-P1b base".
+    is correctly implemented pre-P1b. **After P1b it guards the `forecast_date` bound itself, not the wide
+    trim.** P1b's own derived-row trim for the latest reader is the wider `[start_year, end_year + 1]`
+    (§ "Target-year trim scope" above), which no longer excludes this triplet's 2027 target year on its
+    own — so post-P1b, this case's expected "no Q1-2027 aggregate" result can only come from the
+    `forecast_date` (issue-date) bound correctly dropping a triplet issued after `forecast_date`. It does
+    **not** prove the wide trim itself admits an already-issued prior-year Q1 — that is the separate,
+    positive "December Q1 at `forecast_date` 2026-12-25" case below (~:1265-1267), whose own mutation note
+    ("removing the target-year extension makes the flag-ON case fail") is what proves the wide trim. Write
+    this case as a P1b-only regression guard for the `forecast_date` bound under the widened trim, not as
+    a case that "fails on the pre-P1b base" and not as proof of the wide trim.
 
   (A candidate issued 2026-10-25 would NOT work for either case: 10 + 1 = 11, November, not a
   quarter-start month, so it is dropped by the scope filter regardless of the bound and would not exercise
@@ -2085,7 +2094,9 @@ step 11. **The derived seven-model raw rows are written by the step-8 recalc its
 check, above: `joint_forecasts = forecasts.copy()` in `_calculate_aggregated_skill_metrics` passes every
 raw forecast row through regardless of whether it joined an observation) — they are visible, with δ
 bounds (FD-029), after step 8/9, before step 11 has even run. **Only the target quarter's own Naive Mean
-/ Skilled Mean ensemble rows wait for step 11** to be guaranteed: step 8's recalc forms ensembles only
+/ Skilled Mean ensemble rows wait for step 11**, which writes them wherever a target-quarter key can form
+a derived-composition Naive Mean (see PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none
+can): step 8's recalc forms ensembles only
 where its own inner join with observations matches, usually not the current quarter (see PP-064 Chunk C
 canonical step 11's PASS criterion 2 and its pre-satisfied-branch note above for the exception). Do
 **not** frame either as appearing "on the next quarter issue day": that framing is what the step-11
