@@ -780,7 +780,8 @@ Chunk B no longer edits `data_reader.py` or any other file.
       a per-key applicability test cannot be made exact; the operator investigates instead).**
       - **PASS** = criterion 1 (below) and criterion 2 (below) both hold.
       - **PASS (pre-satisfied)** = the existing late-quarter branch below: the derived-composition Naive
-        Mean already exists after step 9 → criterion 1 alone. Keep its own text and documented limitation.
+        Mean already exists after step 9 → criterion 1 alone. See the "When the target quarter already
+        counts as observed …" bullet under criterion 2 for the rule and its documented limitation.
       - **INVESTIGATE** = criterion 1 holds but criterion 2 is not met. This is NOT an automatic FAIL. The
         operator determines and records either a defect, or the reason no key could form a
         derived-composition Naive Mean (e.g. no target-quarter key with two or more contributors, one of
