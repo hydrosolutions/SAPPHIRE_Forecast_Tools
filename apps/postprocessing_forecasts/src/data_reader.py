@@ -25,6 +25,9 @@ from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.model_names import (
     AGGREGATED_ENSEMBLE_MODELS,
     AGGREGATED_SUPPORTED_MODELS,
+    QUARTER_NATIVE_RAW_MODELS,
+    QUARTER_SUPPORTED_MODELS,
+    QUARTERLY_DERIVED_MODELS,
     canonical_model_short_series,
 )
 from src.postprocessing_tools import count_quantile_crossings
@@ -84,15 +87,16 @@ _QUARTERLY_FC_COLS = [
 def _quarterly_fc_output_cols() -> list[str]:
     """Return the canonical quarterly forecast output columns.
 
-    Under SAPPHIRE_SKILL_LEAD_AWARE, extends the base column list with
-    "horizon_value" and "date" so the per-lead selection made by
-    select_operational_issuances() survives into the final output. Flag
-    OFF returns _QUARTERLY_FC_COLS unchanged (columns not present in the
-    frame are filtered out by callers anyway).
+    Extends the base column list with "horizon_value" and "date" under
+    BOTH SAPPHIRE_SKILL_LEAD_AWARE states (PP-065 P1b): flag ON needs
+    them for the per-lead selection made by select_operational_issuances()
+    to survive into the final output; flag OFF needs them so the PP-065
+    derived rows' own `date`/`horizon_value` survive too (columns not
+    present in the frame are filtered out by callers anyway, and
+    `horizon_value` may be null on flag-OFF direct rows -- no flag-OFF
+    consumer keys on it).
     """
-    if skill_lead_aware_enabled():
-        return _QUARTERLY_FC_COLS + ["horizon_value", "date"]
-    return _QUARTERLY_FC_COLS
+    return _QUARTERLY_FC_COLS + ["horizon_value", "date"]
 
 
 def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFrame:
@@ -102,6 +106,25 @@ def _filter_supported_aggregated_forecast_models(df: pd.DataFrame) -> pd.DataFra
 
     model_keys = canonical_model_short_series(df["model_short"])
     return df[model_keys.isin(AGGREGATED_SUPPORTED_MODELS)].copy()
+
+
+def _filter_supported_quarter_models(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep supported QUARTER models: the two native LR raw models, the
+
+    seven PP-065 derived models, and existing ensemble aggregate rows.
+
+    Quarter-only counterpart to `_filter_supported_aggregated_forecast_models`
+    (used post-combine by `read_quarterly_forecasts` and
+    `read_latest_quarterly_forecasts` ONLY) -- the season readers
+    (`read_seasonal_forecasts`, `read_latest_seasonal_forecasts`) keep
+    calling `_filter_supported_aggregated_forecast_models` with
+    AGGREGATED_SUPPORTED_MODELS, unchanged.
+    """
+    if df.empty or "model_short" not in df.columns:
+        return df
+
+    model_keys = canonical_model_short_series(df["model_short"])
+    return df[model_keys.isin(QUARTER_SUPPORTED_MODELS)].copy()
 
 
 def _drop_tombstone_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -3042,7 +3065,11 @@ def read_seasonal_observations(
 # -------------------------------------------------------------------
 
 
-def _quarter_native_q1_issue_date(start_year: int) -> pd.Timestamp | None:
+def _quarter_native_q1_issue_date(
+    start_year: int,
+    *,
+    schedule: OperationalSchedule | None = None,
+) -> pd.Timestamp | None:
     """Return the schedule-dated Q1-of-`start_year` issue date, or None.
 
     Used by `read_quarterly_forecasts`' flag-OFF exception (Problem 7) to
@@ -3061,6 +3088,14 @@ def _quarter_native_q1_issue_date(start_year: int) -> pd.Timestamp | None:
 
     Args:
         start_year: The requested read window's first year.
+        schedule: PP-065 P1b -- an already-resolved quarter operational
+            schedule to use instead of resolving one internally (shared
+            with the native-row rule and the quarterly derivation calls,
+            so a degraded/invalid schedule logs exactly one
+            schedule-resolution WARNING per reader call, not one per call
+            site). When omitted (the default), behaviour is unchanged:
+            this function resolves and validates the schedule itself, as
+            it always has.
 
     Returns:
         A normalized (midnight) `pd.Timestamp` for the native Q1 issue
@@ -3068,29 +3103,32 @@ def _quarter_native_q1_issue_date(start_year: int) -> pd.Timestamp | None:
         resolved (config missing/invalid) or has an invalid
         `issue_day` (< 1) -- in which case a single WARNING is logged
         and callers must treat the Problem-7 exception as unavailable.
+        When `schedule` is passed explicitly, it is trusted as already
+        resolved and validated -- no warning is logged from here.
     """
-    try:
-        schedule = operational_schedule_for_mode("quarter")
-    except (LongTermHorizonResolverError, FileNotFoundError) as exc:
-        logger.warning(
-            "Could not resolve the quarter operational schedule needed for "
-            "the flag-OFF December-issued-Q1-of-start_year exception (%s); "
-            "every quarterly direct row issued before the requested year "
-            "range will be dropped for start_year=%d.",
-            exc,
-            start_year,
-        )
-        return None
+    if schedule is None:
+        try:
+            schedule = operational_schedule_for_mode("quarter")
+        except (LongTermHorizonResolverError, FileNotFoundError) as exc:
+            logger.warning(
+                "Could not resolve the quarter operational schedule needed for "
+                "the flag-OFF December-issued-Q1-of-start_year exception (%s); "
+                "every quarterly direct row issued before the requested year "
+                "range will be dropped for start_year=%d.",
+                exc,
+                start_year,
+            )
+            return None
 
-    if schedule.issue_day < 1:
-        logger.warning(
-            "Quarter operational schedule has an invalid issue_day=%d; the "
-            "flag-OFF December-issued-Q1-of-start_year exception is "
-            "disabled for start_year=%d.",
-            schedule.issue_day,
-            start_year,
-        )
-        return None
+        if schedule.issue_day < 1:
+            logger.warning(
+                "Quarter operational schedule has an invalid issue_day=%d; the "
+                "flag-OFF December-issued-Q1-of-start_year exception is "
+                "disabled for start_year=%d.",
+                schedule.issue_day,
+                start_year,
+            )
+            return None
 
     # 0-based month index (Jan of year Y == Y*12) for valid_from (Jan 1 of
     # start_year) minus lead_time whole months.
@@ -3102,23 +3140,376 @@ def _quarter_native_q1_issue_date(start_year: int) -> pd.Timestamp | None:
     return pd.Timestamp(issue_year, issue_month, issue_day)
 
 
+def _resolve_quarter_native_schedule(
+    *,
+    lead_aware: bool,
+    quarter_schedules: dict[str, OperationalSchedule] | None,
+) -> OperationalSchedule | None:
+    """Resolve the SINGLE quarter operational schedule shared by the
+
+    native-row rule, the quarterly derivation calls, and (flag OFF)
+    `_quarter_native_q1_issue_date`'s own Problem-7 exception (PP-065
+    P1b "Schedule resolution, flag OFF" -- exactly one
+    schedule-resolution WARNING per reader call, on top of, and
+    independent from, PP-064's own missing-column "filter skipped"
+    guard).
+
+    Flag ON: the schedule is already resolved via `quarter_schedules`
+    (`_operational_schedules_for_horizon_type("quarter")`, guaranteed to
+    contain the key "quarter" whenever `quarter_schedules` is
+    non-empty) -- reused as-is. No new resolution attempt, no new
+    warning path: flag-ON behaviour is unchanged by this function.
+
+    Flag OFF: resolves `operational_schedule_for_mode("quarter")` once.
+    `LongTermHorizonResolverError` (a superclass of
+    `UnsupportedLongTermModeError`) and a resolved schedule with
+    `issue_day < 1` are both degraded-mode triggers here; each logs
+    exactly one WARNING, with a distinct substring
+    ("quarter operational schedule" / "invalid issue_day"), and returns
+    None -- callers must then skip the native-row filter AND the
+    quarterly derivation entirely (mirrors FD-029's degraded mode), and
+    must NOT call `_quarter_native_q1_issue_date` at all (passing
+    `schedule=None` back to it would re-resolve and log a second
+    warning). `FileNotFoundError` (a missing config FILE) is
+    deliberately NOT caught here -- it propagates, per the "Missing
+    quarter config FILE" rule: a missing file is a misconfiguration that
+    fails the run, unlike a resolvable-but-incomplete config.
+
+    Args:
+        lead_aware: `skill_lead_aware_enabled()`, decides which branch
+            runs.
+        quarter_schedules: The reader's already-resolved flag-ON
+            schedule dict (`_operational_schedules_for_horizon_type
+            ("quarter")`), or None under flag OFF.
+
+    Returns:
+        The resolved schedule, or None if it could not be resolved
+        (degraded mode).
+    """
+    if lead_aware:
+        return quarter_schedules["quarter"] if quarter_schedules else None
+
+    try:
+        schedule = operational_schedule_for_mode("quarter")
+    except LongTermHorizonResolverError as exc:
+        logger.warning(
+            "Could not resolve the quarter operational schedule for "
+            "native-row selection and quarterly derivation (%s); "
+            "quarterly direct LR rows are returned unfiltered and no "
+            "derived quarterly rows are produced.",
+            exc,
+        )
+        return None
+
+    if schedule.issue_day < 1:
+        logger.warning(
+            "Quarter operational schedule has an invalid issue_day=%d; "
+            "quarterly direct LR rows are returned unfiltered and no "
+            "derived quarterly rows are produced.",
+            schedule.issue_day,
+        )
+        return None
+
+    return schedule
+
+
+def _rename_monthly_raw_for_quarter_derivation(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename/normalize raw monthly API rows for
+
+    `derive_quarterly_from_monthly_same_issue` (PP-065 P1b), WITHOUT the
+    side effects of `_normalize_monthly_forecasts` (which fills a null
+    `horizon_value` with 0 and parses `valid_from` without
+    `format="mixed"`).
+
+    Renames `model_type` -> `model_short` and normalizes `code` exactly
+    as the other readers do (see `_normalize_monthly_forecasts`,
+    `_normalize_combined_forecasts`); does nothing else. `date`,
+    `valid_from`, `horizon_value`, `q`, `q50` are passed through
+    unparsed/untouched -- the derivation helper parses/validates them
+    itself.
+    """
+    df = df.copy()
+    if "model_type" in df.columns:
+        df = df.rename(columns={"model_type": "model_short"})
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(r"\.0$", "", regex=True)
+    return df
+
+
+def _select_native_quarter_lr_rows(
+    direct: pd.DataFrame,
+    schedule: OperationalSchedule | None,
+) -> pd.DataFrame:
+    """PP-065 P1b native-row selection, shared by both quarter readers
+
+    under both `SAPPHIRE_SKILL_LEAD_AWARE` states (decision
+    R4-native-lr-precedence: the native rule wins over PP-064's broader
+    flag-OFF "trunk set" for LR direct rows).
+
+    Applies PP-064's Contract rule -- `date.day` == the quarter
+    schedule's `issue_day` (clamped to the length of the issue month via
+    `clamp_issue_days`, the same clamp the producer applies) AND
+    year-aware lead (`valid_from` minus `date`, in months) ==
+    `schedule.lead_time` -- to LR rows ONLY (`QUARTER_NATIVE_RAW_MODELS`).
+    Non-LR rows (the seven derived models, EM/Naive/Skilled Mean) pass
+    through unaffected here; the seven models are dropped by a separate,
+    unconditional step elsewhere.
+
+    A non-native LR row (a rewrite, a persisted monthly-derived row, a
+    backfill) is dropped and counted (INFO). An LR row with a null or
+    unparseable `date`, or a `direct` frame with no `date` column at
+    all, is dropped and counted the same way -- never raises.
+
+    Degraded mode (`schedule is None`, e.g. the quarter config has no
+    `operational_issue_day`): the native-row filter is disabled
+    entirely -- `direct` is returned UNCHANGED, mirroring FD-029's
+    degraded-mode precedent.
+
+    Args:
+        direct: Normalized direct quarterly forecast rows (post
+            `_normalize_combined_forecasts`), `date` unparsed.
+        schedule: The reader's shared, already-resolved quarter
+            operational schedule (`_resolve_quarter_native_schedule`),
+            or None if it could not be resolved (degraded mode).
+
+    Returns:
+        `direct` with non-native LR rows removed; unchanged if
+        `schedule` is None, `direct` is empty, or `direct` has no
+        `model_short` column.
+    """
+    if schedule is None or direct.empty or "model_short" not in direct.columns:
+        return direct
+
+    from src.aggregation import clamp_issue_days, local_calendar_date
+
+    canon_model = canonical_model_short_series(direct["model_short"])
+    is_lr = canon_model.isin(QUARTER_NATIVE_RAW_MODELS)
+    if not is_lr.any():
+        return direct
+
+    if "date" in direct.columns:
+        issue_date = local_calendar_date(direct["date"])
+    else:
+        issue_date = pd.Series(pd.NaT, index=direct.index, dtype="datetime64[ns]")
+
+    if "valid_from" in direct.columns:
+        valid_from = local_calendar_date(direct["valid_from"])
+    else:
+        valid_from = pd.Series(pd.NaT, index=direct.index, dtype="datetime64[ns]")
+
+    lead_months = (valid_from.dt.year - issue_date.dt.year) * 12 + (
+        valid_from.dt.month - issue_date.dt.month
+    )
+    expected_day = clamp_issue_days(issue_date, schedule.issue_day)
+    is_native = (
+        issue_date.notna()
+        & valid_from.notna()
+        & (issue_date.dt.day == expected_day)
+        & (lead_months == schedule.lead_time)
+    )
+
+    drop_mask = is_lr & ~is_native
+    n_dropped = int(drop_mask.sum())
+    if n_dropped:
+        logger.info(
+            "Dropped %d quarterly direct LR forecast row(s) that are not "
+            "a native scheduled issuance (rewrite, persisted "
+            "monthly-derived, or backfill row)",
+            n_dropped,
+        )
+    return direct[~drop_mask].copy()
+
+
+def _drop_stored_lead_mismatches(direct: pd.DataFrame) -> pd.DataFrame:
+    """PP-065 P1b "Stored leads (flag ON)": drop and count direct rows
+
+    whose stored `horizon_value` differs from the lead derived from
+    (`valid_from` - `date`), BEFORE `select_operational_issuances` runs.
+    Call `select_operational_issuances` with `lead_output_cols=()`
+    afterward so it does not need to (re)write `horizon_value` -- every
+    row reaching it here already carries a self-consistent stored lead.
+
+    A row with a missing/unparseable `date`/`valid_from`, or a missing
+    `horizon_value` column, is never counted as a mismatch (nothing to
+    compare); `select_operational_issuances` and the native-row rule
+    handle those cases separately.
+    """
+    if direct.empty or "horizon_value" not in direct.columns:
+        return direct
+
+    date_parsed = pd.to_datetime(direct.get("date"), errors="coerce")
+    valid_from_parsed = pd.to_datetime(direct.get("valid_from"), errors="coerce")
+    derived_lead = (valid_from_parsed.dt.year - date_parsed.dt.year) * 12 + (
+        valid_from_parsed.dt.month - date_parsed.dt.month
+    )
+    stored_hv = pd.to_numeric(direct["horizon_value"], errors="coerce")
+    mismatch = stored_hv.notna() & derived_lead.notna() & (stored_hv != derived_lead)
+    n_mismatch = int(mismatch.sum())
+    if n_mismatch:
+        logger.info(
+            "Dropped %d quarterly direct forecast row(s) whose stored "
+            "horizon_value does not match the lead derived from "
+            "(valid_from - date)",
+            n_mismatch,
+        )
+    return direct[~mismatch].copy()
+
+
+def _drop_direct_quarterly_derived_model_rows(direct: pd.DataFrame) -> pd.DataFrame:
+    """PP-065 P1b: unconditionally drop direct rows of the seven
+
+    `QUARTERLY_DERIVED_MODELS` before the direct and derived sources are
+    combined -- after this, the readers' `keep="last"` dedup has no LR
+    or derived-model collision left to resolve. Applies regardless of
+    native-ness or `SAPPHIRE_SKILL_LEAD_AWARE`; also drops legacy
+    "Dataset B" rows (persisted QUARTER rows of the seven models at hv
+    1-4 with `date == valid_from`), which predate this derivation
+    mechanism.
+    """
+    if direct.empty or "model_short" not in direct.columns:
+        return direct
+    canon_model = canonical_model_short_series(direct["model_short"])
+    return direct[~canon_model.isin(QUARTERLY_DERIVED_MODELS)].copy()
+
+
+def _suppress_lr_fallback_covered_by_direct(
+    derived_lr: pd.DataFrame,
+    direct: pd.DataFrame,
+) -> pd.DataFrame:
+    """PP-065 P1b decision G: drop a decision-G LR fallback row for any
+
+    (code, model, year, quarter) key already covered by a selected
+    direct LR row -- native beats fallback (decision
+    R4-native-lr-precedence).
+
+    `direct` here is the reader's OWN final, fully-processed direct
+    frame (post native-row selection and, under flag ON, post
+    `select_operational_issuances`) -- the same rows about to be
+    combined with the derived sources.
+    """
+    if derived_lr.empty or direct.empty:
+        return derived_lr
+    required = {"code", "model_short", "year", "quarter_in_year"}
+    if not required.issubset(direct.columns):
+        return derived_lr
+
+    direct_canon = canonical_model_short_series(direct["model_short"])
+    direct_lr_mask = direct_canon.isin(QUARTER_NATIVE_RAW_MODELS)
+    if not direct_lr_mask.any():
+        return derived_lr
+
+    direct_lr = direct.loc[direct_lr_mask]
+    covered_keys = set(
+        zip(
+            direct_lr["code"].astype(str),
+            direct_canon.loc[direct_lr_mask],
+            pd.to_numeric(direct_lr["year"], errors="coerce"),
+            pd.to_numeric(direct_lr["quarter_in_year"], errors="coerce"),
+            strict=True,
+        )
+    )
+    if not covered_keys:
+        return derived_lr
+
+    derived_canon = canonical_model_short_series(derived_lr["model_short"])
+    derived_keys = list(
+        zip(
+            derived_lr["code"].astype(str),
+            derived_canon,
+            pd.to_numeric(derived_lr["year"], errors="coerce"),
+            pd.to_numeric(derived_lr["quarter_in_year"], errors="coerce"),
+            strict=True,
+        )
+    )
+    keep_mask = pd.Series([key not in covered_keys for key in derived_keys], index=derived_lr.index)
+    return derived_lr.loc[keep_mask].copy()
+
+
+def _derive_quarterly_rows(
+    codes: list[str],
+    issue_start_year: int,
+    issue_end_year: int,
+    schedule: OperationalSchedule,
+    *,
+    forecast_date: dt.date | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """PP-065 P1b "Derived rows": read raw monthly rows and derive
+
+    quarterly forecasts for the seven `QUARTERLY_DERIVED_MODELS`
+    (unconditional) and, as the decision-G fallback source, for
+    `QUARTER_NATIVE_RAW_MODELS` (LR) -- the caller suppresses the
+    fallback for any key already covered by a native direct row
+    (`_suppress_lr_fallback_covered_by_direct`).
+
+    Reads via `_read_long_forecasts_api(..., horizon_type="month")` --
+    NOT `read_monthly_forecasts` -- for issue years
+    `[issue_start_year, issue_end_year]`. In the latest reader,
+    `forecast_date` additionally bounds the monthly rows fed into
+    derivation (a null/unparseable issue date is kept, unaffected by the
+    bound, mirroring the direct-source Problem-6 bound).
+
+    `derive_quarterly_from_monthly_same_issue` logs its own exclusion
+    counts internally -- this function does not re-log them.
+
+    Returns:
+        (derived rows for the seven models, derived LR fallback rows) --
+        both untrimmed by target year; the caller trims.
+    """
+    from src.aggregation import derive_quarterly_from_monthly_same_issue, local_calendar_date
+
+    empty = pd.DataFrame()
+    raw_monthly = _read_long_forecasts_api(
+        codes, issue_start_year, issue_end_year, horizon_type="month"
+    )
+    if raw_monthly is None or raw_monthly.empty:
+        return empty, empty
+
+    renamed = _rename_monthly_raw_for_quarter_derivation(raw_monthly)
+
+    if forecast_date is not None and "date" in renamed.columns:
+        issue_date = local_calendar_date(renamed["date"])
+        keep_mask = issue_date.isna() | (issue_date.dt.normalize() <= pd.Timestamp(forecast_date))
+        dropped = int((~keep_mask).sum())
+        renamed = renamed[keep_mask].copy()
+        if dropped:
+            logger.info(
+                "Dropped %d monthly forecast row(s) dated after "
+                "forecast_date before quarterly derivation",
+                dropped,
+            )
+
+    if renamed.empty:
+        return empty, empty
+
+    derived_seven, _ = derive_quarterly_from_monthly_same_issue(
+        renamed, schedule.lead_time, schedule.issue_day, QUARTERLY_DERIVED_MODELS
+    )
+    derived_lr, _ = derive_quarterly_from_monthly_same_issue(
+        renamed, schedule.lead_time, schedule.issue_day, QUARTER_NATIVE_RAW_MODELS
+    )
+    return derived_seven, derived_lr
+
+
 def read_quarterly_forecasts(
     codes: list[str],
     start_year: int,
     end_year: int,
 ) -> pd.DataFrame:
-    """Read quarterly forecasts from aggregated monthly and direct API sources.
+    """Read quarterly forecasts from derived monthly and direct API sources.
 
-    Combines two sources:
-    1. Monthly forecasts aggregated to quarterly via
-       ``aggregate_monthly_fc_to_quarterly``.
-    2. Direct quarterly forecasts read from the API
-       (``horizon_type="quarter"``).
+    Combines three sources (PP-065 P1b):
+    1. The seven `QUARTERLY_DERIVED_MODELS`, derived from same-issue
+       monthly triplets (`derive_quarterly_from_monthly_same_issue`).
+    2. A decision-G LR (`QUARTER_NATIVE_RAW_MODELS`) fallback, derived
+       the same way, for any (code, model, year, quarter) key with no
+       selected native direct LR row.
+    3. Direct quarterly forecasts read from the API
+       (``horizon_type="quarter"``), restricted to native scheduled
+       issuances for LR rows (decision R4-native-lr-precedence) and with
+       the seven derived models' own direct rows dropped unconditionally.
 
-    When a model appears in both sources for the same quarter, the
-    direct quarterly forecast takes precedence.  Raw model rows are
-    restricted to the supported two-model set (LR_Base, LR_SM) after
-    combining monthly-aggregated and direct quarterly sources.
+    A native direct LR row always wins over the decision-G fallback for
+    its own key.
 
     Args:
         codes: Station codes to read.
@@ -3128,9 +3519,9 @@ def read_quarterly_forecasts(
     Returns:
         DataFrame with columns: [code, year, quarter_in_year,
         model_short, q05-q95, forecasted_discharge, valid_from,
-        valid_to].
+        valid_to, horizon_value, date].
     """
-    from src.aggregation import aggregate_monthly_fc_to_quarterly, local_calendar_date
+    from src.aggregation import local_calendar_date
 
     empty_cols = [
         "code",
@@ -3139,14 +3530,7 @@ def read_quarterly_forecasts(
         "model_short",
     ]
 
-    # Source 1: aggregate monthly forecasts to quarterly
-    monthly = read_monthly_forecasts(codes, start_year, end_year)
-    if not monthly.empty:
-        aggregated = aggregate_monthly_fc_to_quarterly(monthly)
-    else:
-        aggregated = pd.DataFrame()
-
-    # Source 2: direct quarterly forecasts from API.
+    # Direct quarterly forecasts from API.
     #
     # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), read WITHOUT the
     # horizon_value filter (read-then-derive-then-filter), expand the
@@ -3170,6 +3554,14 @@ def read_quarterly_forecasts(
             return pd.DataFrame(columns=empty_cols)
         max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
         q_start_year = start_year - _read_window_expansion_years(max_lead)
+
+    # PP-065 P1b: resolve the SINGLE shared quarter schedule once, used by
+    # the native-row rule, the derivation calls below, and (flag OFF)
+    # _quarter_native_q1_issue_date's own Problem-7 exception. None means
+    # degraded mode: no native filter, no derivation.
+    single_schedule = _resolve_quarter_native_schedule(
+        lead_aware=lead_aware, quarter_schedules=quarter_schedules
+    )
 
     if lead_aware and quarter_schedules:
         raw_q = _read_long_forecasts_api(
@@ -3199,14 +3591,25 @@ def read_quarterly_forecasts(
         )
     if raw_q is not None and not raw_q.empty:
         direct = _normalize_combined_forecasts(raw_q, "quarter")
+        # PP-065 P1b: drop direct rows of the seven derived-eligible
+        # models unconditionally, before anything else -- this also
+        # drops legacy "Dataset B" rows (see
+        # _drop_direct_quarterly_derived_model_rows).
+        direct = _drop_direct_quarterly_derived_model_rows(direct)
         if lead_aware and quarter_schedules and not direct.empty:
-            direct = select_operational_issuances(
-                direct,
-                quarter_schedules,
-                target_year_col="year",
-                target_period_col="quarter_in_year",
-            )
-            direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
+            # Order (flag ON): native-row helper -> stored-leads
+            # pre-filter -> select_operational_issuances.
+            direct = _select_native_quarter_lr_rows(direct, single_schedule)
+            direct = _drop_stored_lead_mismatches(direct)
+            if not direct.empty:
+                direct = select_operational_issuances(
+                    direct,
+                    quarter_schedules,
+                    target_year_col="year",
+                    target_period_col="quarter_in_year",
+                    lead_output_cols=(),
+                )
+                direct = _trim_to_target_year_range(direct, "year", start_year, end_year)
         elif (
             not lead_aware
             and not direct.empty
@@ -3214,6 +3617,10 @@ def read_quarterly_forecasts(
             and "quarter_in_year" in direct.columns
             and "date" in direct.columns
         ):
+            # Order (flag OFF): PP-064's Problem-7 issue-year mask runs
+            # FIRST, then this item's native-row helper (decision
+            # R4-native-lr-precedence).
+            #
             # Invariant: the flag-OFF direct set = trunk's set (every row
             # with issue year in [start_year, end_year], ANY target year)
             # PLUS ONLY the NATIVE, schedule-dated December-issued Q1 of
@@ -3244,11 +3651,20 @@ def read_quarterly_forecasts(
             # either. A target year > end_year (e.g. a Dec-end_year issue's
             # next-year Q1) also survives unconditionally -- see the
             # next-year-precedence regression test.
+            #
+            # Once past this mask, decision R4-native-lr-precedence's
+            # native-row rule below still governs which LR rows survive
+            # at all -- this mask alone no longer describes the final
+            # outcome for LR rows.
             target_years = pd.to_numeric(direct["year"], errors="coerce")
             quarters = pd.to_numeric(direct["quarter_in_year"], errors="coerce")
             issue_dates = local_calendar_date(direct["date"])
             issue_years = issue_dates.dt.year
-            native_q1_issue_date = _quarter_native_q1_issue_date(start_year)
+            native_q1_issue_date = (
+                _quarter_native_q1_issue_date(start_year, schedule=single_schedule)
+                if single_schedule is not None
+                else None
+            )
             if native_q1_issue_date is None:
                 # Schedule unresolvable: no exception -- trunk's set only.
                 is_december_q1_of_start_year = pd.Series(False, index=direct.index)
@@ -3269,13 +3685,16 @@ def read_quarterly_forecasts(
                     "before the requested year range",
                     dropped_issue_year_rows,
                 )
+            direct = _select_native_quarter_lr_rows(direct, single_schedule)
         elif not lead_aware and not direct.empty:
             # The mask above needs quarter_in_year and date to tell a
             # genuine December-issued Q1 of start_year apart from any
             # other out-of-window row; without them it cannot run at
             # all (year alone was already shown insufficient -- see
             # TestRegressionIssueYearMaskTooPermissive). Surface that
-            # rather than silently skipping it.
+            # rather than silently skipping it. The row(s) still reach
+            # the native-row helper below (a missing `date` column is
+            # itself one of the reasons that helper drops an LR row).
             missing_cols = sorted({"quarter_in_year", "date"} - set(direct.columns))
             if missing_cols:
                 logger.warning(
@@ -3283,23 +3702,40 @@ def read_quarterly_forecasts(
                     "rows missing column(s) %s",
                     missing_cols,
                 )
+            direct = _select_native_quarter_lr_rows(direct, single_schedule)
     else:
         direct = pd.DataFrame()
 
-    # Combine sources
-    if aggregated.empty and direct.empty:
+    # PP-065 P1b: derived rows (both flags), only when the shared schedule
+    # resolved. Read issue years [start_year - 1, end_year] -- matching
+    # the direct source's own widened read.
+    derived_seven = pd.DataFrame()
+    derived_lr_fallback = pd.DataFrame()
+    if single_schedule is not None:
+        derived_seven, derived_lr = _derive_quarterly_rows(
+            codes, start_year - 1, end_year, single_schedule
+        )
+        derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(derived_lr, direct)
+        derived_seven = _trim_to_target_year_range(derived_seven, "year", start_year, end_year)
+        derived_lr_fallback = _trim_to_target_year_range(
+            derived_lr_fallback, "year", start_year, end_year
+        )
+
+    # Combine sources: derived rows first, direct last --
+    # drop_duplicates(keep="last") prefers direct (though by this point
+    # there is no remaining LR/derived-model collision to resolve; see
+    # _drop_direct_quarterly_derived_model_rows and
+    # _suppress_lr_fallback_covered_by_direct).
+    frames = [f for f in (derived_seven, derived_lr_fallback, direct) if not f.empty]
+    if not frames:
         return pd.DataFrame(columns=empty_cols)
 
-    if aggregated.empty:
-        combined = direct
-    elif direct.empty:
-        combined = aggregated
+    if len(frames) == 1:
+        combined = frames[0].copy()
     else:
-        # Concat: aggregated first, direct second.
-        # drop_duplicates(keep="last") prefers direct.
-        combined = pd.concat([aggregated, direct], ignore_index=True)
+        combined = pd.concat(frames, ignore_index=True)
         dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
-        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
+        if lead_aware and "horizon_value" in combined.columns:
             dedup_cols = [*dedup_cols, "horizon_value"]
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
@@ -3307,7 +3743,7 @@ def read_quarterly_forecasts(
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    combined = _filter_supported_aggregated_forecast_models(combined)
+    combined = _filter_supported_quarter_models(combined)
     if combined.empty:
         return pd.DataFrame(columns=empty_cols)
 
@@ -3454,15 +3890,20 @@ def read_latest_quarterly_forecasts(
     codes: list[str],
     forecast_date: dt.date | None = None,
 ) -> pd.DataFrame:
-    """Read latest quarterly forecasts from aggregated monthly and direct API.
+    """Read latest quarterly forecasts from derived monthly and direct API.
 
-    Combines two sources:
-    1. Monthly forecasts (120-day lookback) aggregated to quarterly.
-    2. Direct quarterly forecasts from the API.
+    Combines three sources (PP-065 P1b) -- see `read_quarterly_forecasts`
+    for the full contract, which this mirrors:
+    1. The seven `QUARTERLY_DERIVED_MODELS`, derived from same-issue
+       monthly triplets issued on or before `forecast_date`.
+    2. A decision-G LR fallback, derived the same way, for any (code,
+       model, year, quarter) key with no selected native direct LR row.
+    3. Direct quarterly forecasts from the API, restricted to native
+       scheduled issuances for LR rows, with the seven derived models'
+       own direct rows dropped unconditionally.
 
-    When a model appears in both sources, the direct forecast wins.
-    Raw model rows are restricted to LR_Base and LR_SM after combining
-    the two sources; existing ensemble rows are kept.
+    A native direct LR row always wins over the decision-G fallback for
+    its own key.
 
     Args:
         codes: Station codes to read.
@@ -3472,44 +3913,14 @@ def read_latest_quarterly_forecasts(
         DataFrame with quarterly forecasts for the most recent
         quarter. Empty DataFrame if no data.
     """
-    from src.aggregation import (
-        aggregate_monthly_fc_to_quarterly,
-        local_calendar_date,
-    )
+    from src.aggregation import local_calendar_date
 
     today = forecast_date if forecast_date is not None else dt.date.today()
     start_date = today - dt.timedelta(days=120)
     start_year = start_date.year
     end_year = today.year
 
-    # Source 1: aggregate monthly forecasts to quarterly.
-    #
-    # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), aggregate the
-    # OPERATIONALLY-SELECTED monthly rows -- route through
-    # read_monthly_forecasts (which performs the flag-ON window
-    # expansion + select_operational_issuances + trim) so a same-target
-    # backfill/reissue monthly row cannot leak into the latest quarterly
-    # output. This mirrors read_quarterly_forecasts' Source 1. Flag OFF
-    # keeps the pre-existing raw path (unfiltered monthly read) unchanged.
-    if skill_lead_aware_enabled():
-        df_m = read_monthly_forecasts(codes, start_year, end_year)
-        if df_m is not None and not df_m.empty:
-            if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
-                df_m["forecasted_discharge"] = df_m["q50"].astype(float)
-            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
-        else:
-            aggregated = pd.DataFrame()
-    else:
-        raw_m = _read_long_forecasts_api(codes, start_year, end_year)
-        if raw_m is not None and not raw_m.empty:
-            df_m = _normalize_monthly_forecasts(raw_m)
-            if "forecasted_discharge" not in df_m.columns and "q50" in df_m.columns:
-                df_m["forecasted_discharge"] = df_m["q50"].astype(float)
-            aggregated = aggregate_monthly_fc_to_quarterly(df_m)
-        else:
-            aggregated = pd.DataFrame()
-
-    # Source 2: direct quarterly forecasts from API.
+    # Direct quarterly forecasts from API.
     #
     # Under SAPPHIRE_SKILL_LEAD_AWARE (default OFF), read WITHOUT the
     # horizon_value filter (read-then-derive-then-filter), expand the
@@ -3534,6 +3945,14 @@ def read_latest_quarterly_forecasts(
             return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
         max_lead = max((s.lead_time for s in quarter_schedules.values()), default=0)
         q_start_year = start_year - _read_window_expansion_years(max_lead)
+
+    # PP-065 P1b: resolve the SINGLE shared quarter schedule once, used by
+    # the native-row rule and the derivation calls below (this reader has
+    # no Problem-7 exception to share it with). None means degraded mode:
+    # no native filter, no derivation.
+    single_schedule = _resolve_quarter_native_schedule(
+        lead_aware=lead_aware, quarter_schedules=quarter_schedules
+    )
 
     if lead_aware and quarter_schedules:
         raw_q = _read_long_forecasts_api(
@@ -3569,33 +3988,58 @@ def read_latest_quarterly_forecasts(
                     "the quarter start)",
                     dropped_future_issue_rows,
                 )
+        # PP-065 P1b: drop direct rows of the seven derived-eligible
+        # models unconditionally (also drops legacy "Dataset B" rows).
+        direct = _drop_direct_quarterly_derived_model_rows(direct)
+        # This reader has no Problem-7 mask to order against -- the
+        # native-row helper runs right after the forecast_date bound
+        # above, under both flags.
+        direct = _select_native_quarter_lr_rows(direct, single_schedule)
         if lead_aware and quarter_schedules and not direct.empty:
-            direct = select_operational_issuances(
-                direct,
-                quarter_schedules,
-                target_year_col="year",
-                target_period_col="quarter_in_year",
-            )
-            # Problem 6: admit end_year + 1 so a 25 Dec issue's next-year
-            # Q1 survives (the date bound above prevents a back-dated
-            # run from picking a later issue through this wider bound).
-            direct = _trim_to_target_year_range(direct, "year", start_year, end_year + 1)
+            direct = _drop_stored_lead_mismatches(direct)
+            if not direct.empty:
+                direct = select_operational_issuances(
+                    direct,
+                    quarter_schedules,
+                    target_year_col="year",
+                    target_period_col="quarter_in_year",
+                    lead_output_cols=(),
+                )
+                # Problem 6: admit end_year + 1 so a 25 Dec issue's next-year
+                # Q1 survives (the date bound above prevents a back-dated
+                # run from picking a later issue through this wider bound).
+                direct = _trim_to_target_year_range(direct, "year", start_year, end_year + 1)
     else:
         direct = pd.DataFrame()
 
-    # Combine sources
-    if aggregated.empty and direct.empty:
+    # PP-065 P1b: derived rows (both flags), only when the shared schedule
+    # resolved. Read issue years [start_year - 1, end_year], bounded by
+    # forecast_date (Problem 6, for free via _derive_quarterly_rows).
+    derived_seven = pd.DataFrame()
+    derived_lr_fallback = pd.DataFrame()
+    if single_schedule is not None:
+        derived_seven, derived_lr = _derive_quarterly_rows(
+            codes, start_year - 1, end_year, single_schedule, forecast_date=today
+        )
+        derived_lr_fallback = _suppress_lr_fallback_covered_by_direct(derived_lr, direct)
+        derived_seven = _trim_to_target_year_range(derived_seven, "year", start_year, end_year + 1)
+        derived_lr_fallback = _trim_to_target_year_range(
+            derived_lr_fallback, "year", start_year, end_year + 1
+        )
+
+    # Combine sources: derived rows first, direct last (see
+    # read_quarterly_forecasts for why no collision remains by this point).
+    frames = [f for f in (derived_seven, derived_lr_fallback, direct) if not f.empty]
+    if not frames:
         logger.warning("No quarterly forecast data available")
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
-    if aggregated.empty:
-        combined = direct
-    elif direct.empty:
-        combined = aggregated
+    if len(frames) == 1:
+        combined = frames[0].copy()
     else:
-        combined = pd.concat([aggregated, direct], ignore_index=True)
+        combined = pd.concat(frames, ignore_index=True)
         dedup_cols = ["code", "year", "quarter_in_year", "model_short"]
-        if skill_lead_aware_enabled() and "horizon_value" in combined.columns:
+        if lead_aware and "horizon_value" in combined.columns:
             dedup_cols = [*dedup_cols, "horizon_value"]
         available = [c for c in dedup_cols if c in combined.columns]
         combined = combined.drop_duplicates(subset=available, keep="last")
@@ -3603,7 +4047,7 @@ def read_latest_quarterly_forecasts(
     if combined.empty:
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
-    combined = _filter_supported_aggregated_forecast_models(combined)
+    combined = _filter_supported_quarter_models(combined)
     if combined.empty:
         return pd.DataFrame(columns=_QUARTERLY_FC_COLS)
 
