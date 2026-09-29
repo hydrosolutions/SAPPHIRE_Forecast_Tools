@@ -3329,31 +3329,42 @@ def _drop_stored_lead_mismatches(direct: pd.DataFrame) -> pd.DataFrame:
     afterward so it does not need to (re)write `horizon_value` -- every
     row reaching it here already carries a self-consistent stored lead.
 
-    A row with a missing/unparseable `date`/`valid_from`, or a missing
-    `horizon_value` column, is never counted as a mismatch (nothing to
-    compare); `select_operational_issuances` and the native-row rule
-    handle those cases separately.
+    A row with a missing/unparseable `date`/`valid_from` is never
+    counted as a mismatch (nothing to compare); `select_operational_
+    issuances` and the native-row rule handle that case separately.
 
-    A row whose stored `horizon_value` is NULL is likewise never a
-    "mismatch" (nothing to compare it against), but letting it pass
-    through untouched would break the docstring's own promise above --
-    `select_operational_issuances` selects candidates using its OWN
-    derived lead regardless of the stored column (that column is only
-    OVERWRITTEN when a caller passes `lead_output_cols=("horizon_value",
-    )`), so a null-hv row would survive selection with its null
-    `horizon_value` intact when called with `lead_output_cols=()`. That
-    excludes the row from flag-ON ensemble grouping (which groups by
-    `horizon_value`), silently starving a Naive/Skilled Mean of a
-    contributor it should have had (PP-065 P1b Finding 3, out-of-loop
-    review). Fix it here, not in `select_operational_issuances` itself
-    (out of scope for this change): backfill a null stored
-    `horizon_value` with the same derived lead computed above, for
+    A row whose stored `horizon_value` is NULL -- or whose
+    `horizon_value` column is entirely ABSENT from `direct` (e.g.
+    `_read_long_forecasts_api` drops an all-null column outright, so a
+    batch where every row happens to have a null stored lead arrives
+    here with no column at all, not a column full of nulls) -- is
+    likewise never a "mismatch" (nothing to compare it against), but
+    letting it pass through untouched would break the docstring's own
+    promise above -- `select_operational_issuances` selects candidates
+    using its OWN derived lead regardless of the stored column (that
+    column is only OVERWRITTEN when a caller passes
+    `lead_output_cols=("horizon_value",)`), so a null/missing-hv row
+    would survive selection with a null `horizon_value` intact when
+    called with `lead_output_cols=()`. That excludes the row from
+    flag-ON ensemble grouping (which groups by `horizon_value`),
+    silently starving a Naive/Skilled Mean of a contributor it should
+    have had (PP-065 P1b Finding 3, out-of-loop review; Finding A,
+    fix round 2, extends the same fix to the column-absent case).
+    Fix it here, not in `select_operational_issuances` itself (out of
+    scope for this change): backfill a null/missing stored
+    `horizon_value` with the same derived lead computed below, for
     every row that survives the mismatch drop -- the smallest change
     that makes the docstring's "self-consistent stored lead" promise
     actually true for every row reaching the caller's
     `lead_output_cols=()` call.
+
+    The "column entirely missing" and "column present with individual
+    nulls" cases share this single derivation path: when the column is
+    absent, `stored_hv` is built as an all-NaN series over the same
+    index, which then flows through the same mismatch/backfill logic
+    used for a present-but-partially-null column.
     """
-    if direct.empty or "horizon_value" not in direct.columns:
+    if direct.empty:
         return direct
 
     # A `date` or `valid_from` column entirely absent (e.g. an all-null
@@ -3373,7 +3384,16 @@ def _drop_stored_lead_mismatches(direct: pd.DataFrame) -> pd.DataFrame:
     derived_lead = (valid_from_parsed.dt.year - date_parsed.dt.year) * 12 + (
         valid_from_parsed.dt.month - date_parsed.dt.month
     )
-    stored_hv = pd.to_numeric(direct["horizon_value"], errors="coerce")
+
+    if "horizon_value" in direct.columns:
+        stored_hv = pd.to_numeric(direct["horizon_value"], errors="coerce")
+    else:
+        # Column entirely absent (Finding A, fix round 2): treat every
+        # row the same as a present-but-null stored value so it flows
+        # through the identical mismatch/backfill logic below, instead
+        # of returning `direct` untouched with no lead ever assigned.
+        stored_hv = pd.Series(float("nan"), index=direct.index)
+
     mismatch = stored_hv.notna() & derived_lead.notna() & (stored_hv != derived_lead)
     n_mismatch = int(mismatch.sum())
     if n_mismatch:
@@ -3385,17 +3405,20 @@ def _drop_stored_lead_mismatches(direct: pd.DataFrame) -> pd.DataFrame:
         )
     result = direct[~mismatch].copy()
 
-    # Finding 3 fix: backfill a NULL stored horizon_value with the
-    # derived lead, for rows that survived the mismatch drop above (a
-    # null stored_hv is, by construction, never flagged as a mismatch).
+    # Finding 3 fix (extended by Finding A, fix round 2): backfill a
+    # NULL or entirely-missing stored horizon_value with the derived
+    # lead, for rows that survived the mismatch drop above (a null
+    # stored_hv is, by construction, never flagged as a mismatch).
     fillable = stored_hv.isna() & derived_lead.notna()
     fill_idx = result.index.intersection(direct.index[fillable])
     if len(fill_idx):
+        if "horizon_value" not in result.columns:
+            result["horizon_value"] = float("nan")
         result.loc[fill_idx, "horizon_value"] = derived_lead.loc[fill_idx].astype(int)
         logger.info(
             "Backfilled %d quarterly direct forecast row(s) with a NULL "
-            "stored horizon_value using the lead derived from "
-            "(valid_from - date)",
+            "or missing stored horizon_value using the lead derived "
+            "from (valid_from - date)",
             len(fill_idx),
         )
     return result
