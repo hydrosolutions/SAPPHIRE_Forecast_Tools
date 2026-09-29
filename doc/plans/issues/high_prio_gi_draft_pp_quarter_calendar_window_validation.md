@@ -614,6 +614,18 @@ Chunk B no longer edits `data_reader.py` or any other file.
   before the merge below — and step 4's guard checks trunk `HEAD` against the commit hash recorded here.
 - **One writer-paused window** (ops instruction, no code). This is the **canonical in-window sequence** —
   PP-065 § "P2 — rollout" and the overview's rollout step 3.4 reference this list rather than restating it:
+  **Both orgs, one window.** Step 4 below (the `integ_quarter_p1b_p2` → trunk merge, `deploy.pp`) deploys
+  P1b to **every** org whose image tag is `latest` at once (R4-merge-is-deploy) — there is no per-org merge
+  to stagger. So steps 1-3 (pause every writer, the pre-deploy DB audit plus PP-065's rule-A triplet count,
+  and the export) must each be completed on **both** kghm and tjhm before step 4 runs: pausing and
+  auditing/exporting only one org before merging would leave the other org's writers active, and its
+  pre-change state uncaptured, the moment the new image auto-pulls there too. Steps 6-11 (pull/verify,
+  decision F, the recalc, post-recalc checks, resuming writers, the first operational run) are already
+  written per-org below and all run on both orgs inside this same window — none of them may be deferred to
+  a later window for either org. **Window placement.** The window must fall between both orgs' LT cron
+  days — kghm's 10th and 25th, tjhm's 1st — e.g. days 2-9 or 11-24 of a month; step 0 (detail 0 below)
+  confirms each org's configured `operational_issue_day`, and the overview's own rollout step 1 ("crontab
+  LT line") confirms the actual cron entry still matches, before relying on either.
   1. **Pause every writer**, not just the LT cron days (kghm 10 and 25; tjhm 1): operational runs, the
      maintenance runs (`apps/pipeline/pipeline_docker.py:1946-1972`; `apps/run_locally.sh:1745-1748`), any
      recalc other than the one at step 8, and manual runs — the automatic bimonthly recalc does not need
@@ -799,11 +811,13 @@ Chunk B no longer edits `data_reader.py` or any other file.
            own quarterly block executed on this run.** The block can no-op end to end this run (e.g. its
            quarter skill frame is tombstone-only: an INFO-level `"Read 0 quarterly skill metric rows from
            API"` followed by an INFO-only skip, nothing at WARNING) and PASS would still be granted from
-           the pre-existing row alone. Step 9's two precondition checks (detail 5 below) confirm only that
-           the block's two required inputs exist in the DB after the recalc — by themselves they do not
-           distinguish this pre-satisfied case from step 11's own quarterly block actually running (detail
-           5 says so explicitly) — and PP-064 B's B5 is the standing contract for the block's behaviour
-           when they fail — see detail 5 below for both.
+           the pre-existing row alone. Step 9's precondition checks (i) and (ii) (detail 5 below) confirm
+           only that the block's two required inputs exist in the DB after the recalc — by themselves they
+           do not distinguish this pre-satisfied case from step 11's own quarterly block actually running
+           (detail 5 says so explicitly) — and PP-064 B's B5 is the standing contract for the block's
+           behaviour when they fail — see detail 5 below for both. Step 9's third precondition check (iii)
+           is a separate, narrower question — not whether the block's inputs exist, but whether criterion 2
+           is even reachable this run at all — see detail 5 below and the paragraph after the next one.
            **Step 9 (detail 5 below) must record whether this row already exists before step 11 runs.**
            If it does, PASS requires only criterion 1 (the wrapper and WARNING-level log checks) above;
            criterion 2 is recorded as "pre-satisfied at step 9" rather than re-evaluated against step
@@ -816,6 +830,17 @@ Chunk B no longer edits `data_reader.py` or any other file.
            invisible at the service's default INFO level (`app/logger.py:8`, `settings.log_level`), so
            its absence does not fail a valid run.
            If no such row exists after step 9, PASS requires criteria 1 and 2 as stated above, unchanged.
+
+           **Criterion 2 not applicable (a third, distinct outcome from step 9's check (iii); does not
+           change the pre-satisfied-branch logic above).** Criterion 2 requires a target-quarter Naive Mean
+           row whose composition includes a `QUARTERLY_DERIVED_MODELS` member; that composition can only
+           form at a `(year, quarter_in_year, code[, horizon_value])` key where at least two distinct raw
+           `model_short` values have a non-null target-quarter `forecasted_discharge`, one of them a
+           `QUARTERLY_DERIVED_MODELS` member (`is_multi_model_composition`, `ensemble_calculator.py`
+           ~:887-915, applied to Naive Mean at `:915`). If step 9's check (iii) recorded that no such key
+           exists for an org's target quarter, criterion 2 is not applicable for that org this run — no
+           run of step 11's block, however correct, can produce it — and PASS requires only criterion 1 for
+           that org. Record "criterion 2 not applicable" rather than failing the run on its absence.
 
       **Informational, not pass/fail** (a lead for investigation, not a required outcome — do not gate the
       run's success on either of these):
@@ -966,12 +991,14 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    - Tombstone count per `(model, quarter, hv)` per org, including the old quarter EM skill rows.
    - Suppressed quarter skill rows per org at K = 10 (decision C; `src/skill_metrics.py:2834-2849`).
      Locally the tjhm median `n_pairs` was 5–6 before the fix.
-   - **Two precondition checks that establish the quarterly block's inputs exist in the DB after this
-     recalc — they do not, by themselves, prove step 11's block ran on a later operational run.**
-     Canonical step 11's pre-satisfied branch (its PASS criterion 2 note) can pass from an already-existing
-     row without step 11's own quarterly block ever having executed on that run; these checks are run here,
-     as part of this recalc's own post-checks, to make the two required inputs observable, not to stand in
-     for step 11's own PASS criteria:
+   - **Three precondition checks, run per org as part of this recalc's own post-checks.** (i) and (ii)
+     establish that the quarterly block's inputs exist in the DB after this recalc — they do not, by
+     themselves, prove step 11's block ran on a later operational run: canonical step 11's pre-satisfied
+     branch (its PASS criterion 2 note) can pass from an already-existing row without step 11's own
+     quarterly block ever having executed on that run; (i) and (ii) make the two required inputs
+     observable, not stand in for step 11's own PASS criteria. (iii) is different in kind — it establishes
+     whether step 11's PASS criterion 2 is even structurally reachable this run, independent of whether the
+     block executes correctly:
      - **(i) At least one NON-tombstone quarter skill row per org.** A tombstone is `n_pairs == 0` (or
        NULL) with every metric column NULL, upserted by the write-side to mark a stale long-horizon skill
        key; a legitimate row always has `n_pairs >= K` (`_drop_tombstone_rows`, `src/data_reader.py:107-120`
@@ -997,6 +1024,17 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
        derived seven-model rows for the target quarter are present, per org" two bullets below for how
        this recalc writes them and what "the target quarter" means; the block's other required input,
        alongside (i).
+     - **(iii) At least one key eligible to form a derived-composition Naive Mean, per org.** Step 11's
+       PASS criterion 2 needs a target-quarter Naive Mean row whose composition includes a
+       `QUARTERLY_DERIVED_MODELS` member; that composition can only form at a `(year, quarter_in_year,
+       code[, horizon_value])` key where at least two distinct raw `model_short` values have a non-null
+       target-quarter `forecasted_discharge`, one of them a `QUARTERLY_DERIVED_MODELS` member
+       (`is_multi_model_composition`, `ensemble_calculator.py` ~:887-915, applied to Naive Mean at `:915`).
+       Record, per org, whether at least one such key exists — an aggregate count over the target-quarter
+       forecast rows read back at (ii) above, no station codes in the plan or the PR. **If none exists for
+       an org, criterion 2 is not applicable for that org this run: record it and do not fail step 11 on
+       its absence** — see step 11's own "Criterion 2 not applicable" paragraph above for how this record
+       is used there.
    - Freshly written QUARTER rows contain no rolling windows, no LR rows and no EM rows.
    - **The derived seven-model rows for the target quarter are present, per org** (moved here from step
      11, 2026-09-28: this recalc, not the operational run, writes them; "the target quarter" is the same

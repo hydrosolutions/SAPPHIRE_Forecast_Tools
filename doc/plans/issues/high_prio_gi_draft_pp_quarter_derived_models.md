@@ -180,7 +180,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
 - Under flag ON it goes through `select_operational_issuances`. That **collapses duplicates and overwrites
   the stored `horizon_value` with a date-derived lead** (`src/data_reader.py:385-395`).
 - Normalization turns a null lead into 0 (`:1503`).
-- `_read_long_forecasts_api` drops every all-null column per batch (`:1468`), so `horizon_value`, `q` or
+- `_read_long_forecasts_api` drops every all-null column per batch (`:1469`), so `horizon_value`, `q` or
   `q50` can be missing from the frame.
 - So the derivation must see the **raw** monthly rows and tolerate missing columns.
 
@@ -309,7 +309,7 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
      — parses `date`, drops and counts non-native rows AND null/unparseable-date rows. **A `date` column
      entirely absent from the `direct` frame is treated the same as every row's `date` being null.**
      `long_forecasts.date` is `nullable=False`
-     (`sapphire/services/postprocessing/app/models.py:159`), so a batch of real API rows can never have
+     (`sapphire/services/postprocessing/app/models.py:160`), so a batch of real API rows can never have
      `date` all-null — this absent-column case is **defensive; it arises only in test fixtures and
      non-API callers** (e.g. a hand-built frame, or a CSV-fed path), not from `_read_long_forecasts_api`
      against the live service. Regardless, the helper must check for the column's presence before parsing
@@ -567,10 +567,11 @@ An exact-`valid_from` predicate would have left tjhm with ~26, and the kghm GBT 
        path (`_create_aggregated_ensemble_forecasts:765`), and `api_writer.py`'s quarter-write loop
        (`:1157-1158`) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry
        (`api_writer.py:30`), not the `"ENSEMBLE_MEAN": "EM"` entry (line 50, which serves the skill-metrics
-       write path only). This write is live on servers today, and will keep running until this item (P1b)
-       merges. **FD-029, which hides every quarter EM row it reads on the dashboard side, is also live on
-       servers today** (owner decision R4-merge-is-deploy: it deploys via the dashboard's own daily
-       frontend auto-pull, not only with PP-065 P2). **Corrected 2026-09-28 (factual, not a decision
+       write path only). This write is presumed live on servers today (verify per org, `PP-064.C.step0`),
+       and will keep running until this item (P1b)
+       merges. **FD-029, which hides every quarter EM row it reads on the dashboard side, is also presumed
+       live on servers today** (owner decision R4-merge-is-deploy: it deploys via the dashboard's own daily
+       frontend auto-pull, not only with PP-065 P2; verify per org, `PP-064.C.step0`). **Corrected 2026-09-28 (factual, not a decision
        change): "a fresh EM row plus a non-native LR row" cannot be the whole story.** EM's per-key gate is
        `em_avg[em_avg["composition"].apply(is_multi_model_composition)]` (`ensemble_calculator.py:767`) —
        the same `is_multi_model_composition` predicate as Naive Mean's gate (`:915`), not the coarser
@@ -1182,7 +1183,18 @@ lead 0):
   quarter_in_year)` (`src/data_reader.py:3618-3623`), so even with the `forecast_date` bound missing
   entirely, the more recent Q1-2027 aggregate would win that filter and the Q4-2026 aggregate would be
   dropped anyway — its absence would not detect the bug. Two separate cases, each alone in its fixture,
-  keep each assertion diagnostic:
+  keep each assertion diagnostic. **Flag-ON fixture requirement.** Pre-P1b, both readers' Source 1 calls
+  `read_monthly_forecasts` unconditionally under both flags (`data_reader.py:3143, 3495`); under flag ON
+  that function resolves `month_schedules = _operational_schedules_for_horizon_type("month")` and returns
+  empty immediately, with only a WARNING logged, if no `month_N` mode is configured in
+  `ieasyhydroforecast_ml_long_term_supported_modes` (`data_reader.py` ~:1374-1382). If the flag-ON fixture
+  leaves month schedules unconfigured, "no Q4-2026/Q1-2027 aggregate" would already hold for that reason
+  alone, regardless of the `forecast_date` bound, so "fails on the pre-P1b base" would not actually detect
+  the bug under flag ON. The flag-ON fixture must therefore also configure `month_1`, `month_2` and
+  `month_3` (leads 1/2/3, issue day 25) in `ieasyhydroforecast_ml_long_term_supported_modes` and their
+  config files, so `read_monthly_forecasts` returns the triplet rows and the test genuinely exercises the
+  `forecast_date` bound. (Flag OFF has no such precondition — it calls the same reader, but flag OFF's own
+  code path in `read_monthly_forecasts` does not gate on `month_schedules`.)
   - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
     2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced, under both flags. The issue
     date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits the hv 1/2/3 triplet
@@ -1710,12 +1722,18 @@ line numbers verified against this branch's HEAD):
     "read_quarterly_forecasts\|read_latest_quarterly_forecasts" apps/postprocessing_forecasts/tests`, 10
     files total; excluding `test_quarter_calendar_window.py` and `test_quarterly_data_reader.py` themselves,
     the other **8** break down as follows, not uniformly "unaffected because they mock":
-    - **Six** are unaffected because they mock `data_reader.read_quarterly_forecasts`/
-      `read_latest_quarterly_forecasts` itself (or the whole `data_reader` module) and never exercise the
-      real reader body: `test_maintenance_long_term.py:594, 724`, `test_recalc_supported_modes_gate.py:212,
+    - **Six** are unaffected **by this reader change** because they mock
+      `data_reader.read_quarterly_forecasts`/`read_latest_quarterly_forecasts` itself (or the whole
+      `data_reader` module) and never exercise the real reader body: `test_maintenance_long_term.py:594,
+      724`, `test_recalc_supported_modes_gate.py:212,
       226, 233`, `test_monthly_workflow_integration.py:610, 680`, `test_wiring_integration.py:2273`,
       `test_recalc_workflow.py:123` (all mocked returns), and `test_lead_aware_latest_readers.py` (its one
-      hit is a docstring comment, not a call).
+      hit is a docstring comment, not a call). **`test_maintenance_long_term.py:594` and `:724` are not
+      unaffected overall, only by the reader change this bullet is about** — both sit inside
+      quarterly-gap-fill tests whose fixtures hold only one raw model, so item 4's separate,
+      maintenance-level two-raw-model prefilter (not this reader change) empties their gap universe; see
+      the "Tests" entry below for `test_quarterly_gap_fill_dedup_lead_aware` (`:501`) and
+      `test_quarterly_gap_fill_only_writes_gap_leads` (`:626`).
     - **One** (`test_lead_aware_empty_schedules.py:207` `TestQuarterlyEmptySchedulesFlagOn` and `:239`
       `TestLatestQuarterlyEmptySchedulesFlagOn`) DOES call the real readers, but both configure `quarter` as
       an **unsupported** mode — already covered above ("Mode unsupported (uzb-like...)"): flag ON
@@ -1778,9 +1796,9 @@ line numbers verified against this branch's HEAD):
     — missing from the enumeration above; added here.** Its one row is `model_type: "LR_Base"` with `q50`
     set but **no `"date"` key at all**, so the `direct` frame built from it has no `date` column. This is
     a **defensive** shape, not one that arises from the live API in practice: `long_forecasts.date` is
-    `nullable=False` (`sapphire/services/postprocessing/app/models.py:159`), so a real API batch can never
+    `nullable=False` (`sapphire/services/postprocessing/app/models.py:160`), so a real API batch can never
     have every row's `date` null, and `_read_long_forecasts_api`'s own all-null-column drop
-    (`:1468`) therefore never removes this column against the live service either — the shape can only
+    (`:1469`) therefore never removes this column against the live service either — the shape can only
     arise from a test fixture or a non-API caller. This is still a direct LR row, so decision
     R4-native-lr-precedence's native-row rule applies to it, in addition to PP-064's own missing-column
     guard (the general flag-OFF issue-year mask this test currently locks). Per item 2's "Order (flag
@@ -1849,9 +1867,20 @@ line numbers verified against this branch's HEAD):
     — switch to `"Naive Mean"`; horizon_value assertions (flag ON: the row's own lead; flag OFF: the
     configured lead) are otherwise unchanged, since this class's purpose is the flag-gated horizon_value
     seam, not EM.
-- `tests/test_maintenance_long_term.py:541-574`, `:616` (quarterly dedup, lead-aware) **changes**: its
+- `tests/test_maintenance_long_term.py:541-574`, `:616` (`test_quarterly_gap_fill_dedup_lead_aware`, `:501`;
+  quarterly dedup, lead-aware) **changes**: its
   `q_combined` and `q_fc` hold one raw model, so the new two-model prefilter excludes the key and nothing
-  is saved. Give the fixture two eligible raw models. Any other maintenance test that asserts the run ends
+  is saved. Give the fixture two eligible raw models.
+- `tests/test_maintenance_long_term.py:626-763` (`test_quarterly_gap_fill_only_writes_gap_leads`) **also
+  changes, not previously listed here.** Its `q_fc` (the gap-universe read, `read_quarterly_forecasts`
+  mock) holds one raw model (`LR_Base`) at the gap key, so the new two-model prefilter excludes it too: the
+  gap universe becomes empty for that key, the quarterly block is skipped end to end, and
+  `mock_file_writer.save_quarterly_forecast_data.assert_called_once()` (`:746`) fails with zero calls —
+  this test asserts the block *runs* (unlike the early-exit tests below, it is not itself an
+  early-exit test). Give `q_fc` two eligible raw models (e.g. add an `LR_SM` row alongside `LR_Base`) so
+  the prefilter admits the key; the test's own assertions (the non-gap lead-0 EM keeps its original
+  discharge, flag ON vs. OFF) are otherwise unchanged.
+- Any other maintenance test that asserts the run ends
   before the quarterly block (e.g. the early-exit tests at `:217`, `:245`) is listed.
 
 **Acceptance (P1b):**

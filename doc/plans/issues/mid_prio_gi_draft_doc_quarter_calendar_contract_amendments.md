@@ -8,9 +8,14 @@
   deletes remove product rows.
 - **P1b (contract amendments)** needs overview decision D4 (service owner) and the owner's sign-off. It
   does not gate code; until it merges, PP-064/PP-065 reviewers use the overview decisions, not rows 1–5.
-- **P2 (readmes, data-flow doc)** is split. **P2a** (rows 10 and 12) is released with the PP-065 deploy.
-  **P2b** (row 11, the LT readme's `forecast_months` schedule) merges after LTF-014 P0 (both orgs), which
-  is deferred (owner, 2026-09-26). Each P2 table repeats this per row.
+- **P2 (readmes, data-flow doc)** is split into three parts (route corrected 2026-09-29, plan-sync round
+  12; see § P2a-10 below for why). **P2a-10** (row 10, the `long_forecasts` join-key contract)
+  describes trunk behaviour already true today, independent of PP-065's own P1b–P1d work — it merges
+  directly to trunk as soon as it is ready, not gated on the integration branch. **P2a-12** (row 12, the
+  postprocessing README and the rest of the data-flow doc) describes post-P1b behaviour and is released
+  with the PP-065 deploy, via the same integration branch as PP-065 P1b–P1d. **P2b** (row 11, the LT
+  readme's `forecast_months` schedule) merges after LTF-014 P0 (both orgs), which is deferred (owner,
+  2026-09-26). Each P2 table repeats this per row.
 
 **Labels**: `documentation`, `long-term`, `quarter`, `data-governance`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
@@ -121,15 +126,32 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 
 ## P2 — readmes and data-flow doc (rewrites allowed)
 
-### P2a — released with the PP-065 deploy (rows 10 and 12)
+### P2a-10 — trunk, independent of PP-065 (row 10)
 
-**Route (orchestrator decision, 2026-09-28).** Rows 10 and 12 describe **post-P1b** behaviour (the
+**Route (corrected 2026-09-29, plan-sync round 12; supersedes the original 2026-09-28 route below for row
+10 only).** Row 10 documents the `long_forecasts` join-key contract — `horizon_value` is the lead, not the
+quarter number, and the actuals/climatology joins key on the calendar quarter, not on `horizon_value`. This
+is **not post-P1b behaviour**: `horizon_value = quarter_horizon_value()` (the lead) is set unconditionally
+in `api_writer.py`'s quarter-write loop already on trunk (PP-064 Chunk A, `#527`, merged and presumed live
+— verify per org, `PP-064.C.step0`), and the calendar-quarter windows row 10's actuals join describes are
+PP-064 A's own calendar-window guard, not anything PP-065 P1b–P1d adds. Since the behaviour row 10
+describes already exists on trunk, this row merges **directly into `maxat_sapphire_2`**, as soon as it is
+reviewed, independent of the integration branch and of the PP-065 deploy — it does not wait for PP-065
+P1d. See the overview's `DOC-009.P2a-10` graph node for the matching dependency-graph statement.
+
+| # | File:line | Depends on | Edit |
+|---|---|---|---|
+| 10 | `doc/data_flow_long_term.md:240-242, 270-275` | trunk, independent of PP-065 | For long forecasts `horizon_value` is the **lead**, not the quarter number. **Year-specific actuals** (`previous`/`current`): join on `code` + calendar quarter from `valid_from` + target year. **Climatology** (`norm`): join on `code` + quarter; the reference snapshot for a December-issued Q1 is overview D6 (FD-030's norm-reference-year decision). Say so; do not decide it here |
+
+### P2a-12 — released with the PP-065 deploy (row 12)
+
+**Route (orchestrator decision, 2026-09-28).** Row 12 describes **post-P1b** behaviour (the
 seven-model derivation, the LR fallback, the writer/ensemble changes). Since that behaviour does not exist
-on trunk until PP-065 P1b–P1d merge, this P2a documentation PR merges into the **integration branch**
+on trunk until PP-065 P1b–P1d merge, this P2a-12 documentation PR merges into the **integration branch**
 `integ_quarter_p1b_p2` alongside PP-065 P1b–P1d (owner decision R4-integration-branch), not directly into
 `maxat_sapphire_2` — it reaches trunk only when that branch merges (`deploy.pp`), so the docs and the code
-they describe land together. See the overview's `DOC-009.P2a` graph node for the matching dependency-graph
-statement.
+they describe land together. See the overview's `DOC-009.P2a-12` graph node for the matching
+dependency-graph statement.
 
 **Merged-vs-deployed note (added 2026-09-28; tied to the overview's owner decisions
 R4-merge-is-deploy/R4-integration-branch/R4-recalc-runs, 2026-09-28 — numbered/labelled, not lettered,
@@ -149,7 +171,6 @@ out as already-live when this row is edited.
 
 | # | File:line | Depends on | Edit |
 |---|---|---|---|
-| 10 | `doc/data_flow_long_term.md:240-242, 270-275` | released with the PP-065 deploy | For long forecasts `horizon_value` is the **lead**, not the quarter number. **Year-specific actuals** (`previous`/`current`): join on `code` + calendar quarter from `valid_from` + target year. **Climatology** (`norm`): join on `code` + quarter; the reference snapshot for a December-issued Q1 is overview D6 (FD-030's norm-reference-year decision). Say so; do not decide it here |
 | 12 | `apps/postprocessing_forecasts/README.md:14, 18-19, 305-320`; `doc/data_flow_long_term.md:259-262` | released with the PP-065 deploy | Window = calendar quarter. Quarterly raw models: LR_Base and LR_SM from their native quarter mode, plus the seven other models as same-issue, unweighted averages of their monthly forecasts at leads L..L+2 (decision A). While decision G's fallback is active, LR quarters without a native row are derived from monthly but **not persisted**. Derived quarters need 3 of 3 months; quarterly observations need 3 of 3 months too (PP-065 P1a, the former PP-064 B4). Replace the `:259-262` "2-of-3-month tolerance" contrast with what trunk does at the time of writing. Derived rows have null quantiles; bounds are forecast ∓ δ at display time (decision D; `apps/forecast_dashboard/src/processing.py:1244`). Ensembles: Naive Mean + Skilled Mean, no quarter EM (Q-ENS). Season: LR_Base/LR_SM only, EM = mean(LR). Stored `date` of quarter rows: LR rows are no longer rewritten by postprocessing, so they keep the native issue date; under flag OFF, derived and ensemble rows are dated `valid_from`. Legacy rows of other shapes may exist (PP-064 § Mechanism and problems, item 5) |
 
 ### P2b — after LTF-014 P0 (row 11)
@@ -171,7 +192,7 @@ LT readme must not present `[3,6,9,12]` / `[1,4,7,10]` as the deployed schedule.
 
 ## Agent constraints
 
-**Files**: exactly those in the P1a, P1b, P2a and P2b tables, plus `doc/plans/module_issues.md` (the
+**Files**: exactly those in the P1a, P1b, P2a-10, P2a-12 and P2b tables, plus `doc/plans/module_issues.md` (the
 MIG-008, PP-056, PP-058 and PP-059 index rows only). No code, no tests, nothing under `sapphire/services/`.
 
 **Instruction**: *"Do NOT change any existing function signatures, data flow logic, or control flow.
@@ -185,9 +206,11 @@ means the edit rules above: adjacent notes and warnings, except the P2 rewrites.
   not enough.
 - **Additions only for decision records, runbooks and `doc/configuration.md`**: `git diff --numstat`
   shows ≤ 1 deletion per P1a/P1b file, ≤ 3 for `doc/configuration.md` and
-  `doc/dev/review_checklist_local_template.md` (table-row suffixes), ≤ 4 for `module_issues.md`. P2a and
-  P2b files are exempt.
-- **P2a/P2b timing.** P2a (rows 10, 12) ships in the same release as the PP-065 deploy. P2b (row 11) is
+  `doc/dev/review_checklist_local_template.md` (table-row suffixes), ≤ 4 for `module_issues.md`. P2a-10,
+  P2a-12 and P2b files are exempt.
+- **P2a-10/P2a-12/P2b timing.** P2a-10 (row 10) merges directly to trunk as soon as it is reviewed —
+  it does not wait for the PP-065 deploy. P2a-12 (row 12) ships in the same release as the PP-065 deploy
+  (via the integration branch). P2b (row 11) is
   not merged while LTF-014 P0 is deferred; the PR that lands it links the P0 deployment record for both
   orgs.
 - **Rows 6a/6b.** The warning boxes state that the QUARTER gate applies from the PP-065 deploy, derive

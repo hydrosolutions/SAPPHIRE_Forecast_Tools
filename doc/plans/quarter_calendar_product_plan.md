@@ -151,7 +151,8 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
     `_operational_schedules_for_horizon_type("quarter")` — `apps/postprocessing_forecasts/src/data_reader.py:3162`
     (`read_quarterly_forecasts`) and `:3526` (`read_latest_quarterly_forecasts`), neither wrapped in a
     try/except in the flag-ON branch.
-- **R4-merge-is-deploy. Merge = deploy (verified fact).** Every merge to `maxat_sapphire_2` reaches every org whose image
+- **R4-merge-is-deploy. Merge = deploy (mechanism verified in code; per-org reality verified at step 0).**
+  Every merge to `maxat_sapphire_2` reaches every org whose image
   tags are `latest` within about a day: CI pushes `:latest` (`.github/workflows/deploy_production.yml`);
   Luigi auto-pulls the backend images whenever the digest differs
   (`apps/pipeline/pipeline_docker.py:296-304`); and the canonical 19:00 UTC cron entry
@@ -213,7 +214,8 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
   not that the notice moves.
 
 **User-visible consequence (supersedes the "after the joint deploy" framing elsewhere in this plan).**
-FD-029 (which hides every quarter `EM` row and every non-native LR row) is live now, while PP-065 P1b
+FD-029 (which hides every quarter `EM` row and every non-native LR row) is presumed live, verify per org
+(`PP-064.C.step0`), while PP-065 P1b
 (which stops writing fresh `EM` rows, starts writing the derived seven-model rows, and widens Naive
 Mean's/Skilled Mean's composition to draw from them — a Naive Mean/Skilled Mean row built from `LR_Base`/
 `LR_SM` alone can already form pre-P1b) is not — it is held on the integration branch (decision
@@ -325,7 +327,11 @@ Resolved since rev 2:
    2. DOC-009 P1a.
    3. PP-065 P1b–P1d and PP-064 B (the B5 check): reviewed and merged into `integ_quarter_p1b_p2`, kept
       current with trunk in the meantime.
-   4. **In one writer-paused window between LT cron days** (kghm 10/25, tjhm 1). This window follows PP-064
+   4. **In one writer-paused window between LT cron days** (kghm 10/25, tjhm 1). **Both orgs' steps
+      complete inside this one window — this merge deploys to every org at once, so pausing/auditing/
+      exporting only one org before merging would leave the other org's writers unprotected**; see PP-064
+      Chunk C's own "Both orgs, one window" note for why and for the window-placement example, not restated
+      here. This window follows PP-064
       Chunk C's canonical **"Order"** sequence (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md`
       § "Chunk C — rollout and verification"); it is stated once there and referenced here, not restated:
       pause writers → the pre-deploy DB audit and PP-065's rule-A triplet count → **export** → merge
@@ -357,7 +363,8 @@ Resolved since rev 2:
      comma-gate (`is_multi_model_composition`) only needs two distinct raw `model_short` values, and
      `LR_Base`/`LR_SM` are two. Once PP-065 P1b lands, their `composition` widens to also draw from the
      seven derived models, matching monthly.
-     **No quarterly Ensemble Mean is shown** — FD-029 is **live now** (owner decision R4-merge-is-deploy) and hides every
+     **No quarterly Ensemble Mean is shown** — FD-029 is **presumed live, verify per org (`PP-064.C.step0`)**
+     (owner decision R4-merge-is-deploy) and hides every
      quarter `EM` row on the dashboard and in the bulletin input already (both old, persisted rows and any
      fresh ones). Postprocessing itself still **writes** fresh quarter `EM` rows today, since PP-065 P1b
      (the change that stops this write) is held on the integration branch, not yet merged to trunk (owner
@@ -366,8 +373,9 @@ Resolved since rev 2:
      from the pre-#527 branch) resolves that through `MODEL_TYPE_MAP`'s identity `"EM": "EM"` entry
      (`api_writer.py:30`) — not an `"ENSEMBLE_MEAN"`-to-`"EM"` mapping, which is a separate entry used only
      by the skill-metrics write path.
-   - **Current, ongoing consequence (not a transient one): a blank card.** Because FD-029 is live and hides
-     both the fresh `EM` rows above and every non-native LR row, while PP-065 P1b (which would start
+   - **Current, ongoing consequence (not a transient one): a blank card.** Because FD-029 is presumed live
+     (verify per org, `PP-064.C.step0`) and hides both the fresh `EM` rows above and every non-native LR
+     row, while PP-065 P1b (which would start
      writing the derived seven-model rows and widen the Naive Mean / Skilled Mean composition to draw from
      them, in place of the `EM` write it stops) has not yet merged, **some quarters show a blank card on
      the dashboard right now** — see the "User-visible consequence" paragraph above for the precise
@@ -434,7 +442,8 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
   "phases": {
     "DOC-009.P1a":     { "stage": "merge",  "depends_on": [] },
     "DOC-009.P1b":     { "stage": "merge",  "depends_on": ["D4"] },
-    "DOC-009.P2a":     { "stage": "merge",  "depends_on": ["PP-065.P1d"], "note": "rows 10 and 12 describe post-P1b behaviour, so P2a merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), alongside PP-065 P1b-P1d, and reaches trunk only with deploy.pp -- not a standalone trunk merge. The PP-065 P1a 3-of-3 observation content it documents is on trunk since #530 AND presumed already LIVE on servers via auto-pull (owner decision R4-merge-is-deploy, verify per org)" },
+    "DOC-009.P2a-10":  { "stage": "merge",  "depends_on": [], "note": "row 10 (the long_forecasts join-key contract: horizon_value = lead, not the quarter number) describes trunk behaviour already true today -- horizon_value = quarter_horizon_value() is set unconditionally on trunk since PP-064 Chunk A (#527) -- not post-P1b behaviour, so it is a standalone trunk merge, independent of the integration branch and of PP-065.P1d. Route corrected 2026-09-29 (plan-sync round 12); split out of the former single DOC-009.P2a node, which incorrectly gated it on PP-065.P1d" },
+    "DOC-009.P2a-12":  { "stage": "merge",  "depends_on": ["PP-065.P1d"], "note": "row 12 describes post-P1b behaviour, so P2a-12 merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), alongside PP-065 P1b-P1d, and reaches trunk only with deploy.pp -- not a standalone trunk merge. The PP-065 P1a 3-of-3 observation content it documents is on trunk since #530 AND presumed already LIVE on servers via auto-pull (owner decision R4-merge-is-deploy, verify per org)" },
     "DOC-009.P2b":     { "stage": "merge",  "depends_on": ["LTF-014.P0.kghm", "LTF-014.P0.tjhm"], "note": "row 11 (LT readme schedule); deferred with P0" },
     "LTF-014.P0.tjhm": { "stage": "ops",    "depends_on": ["LTF-014 P0 gate"], "status": "DEFERRED by owner 2026-09-26 (configs stay [3..9])" },
     "LTF-014.P0b":     { "stage": "ops",    "depends_on": ["LTF-014.P0.tjhm"], "status": "MOOT while P0 is deferred; expires 2026-11-30 (recovery window)" },
@@ -457,7 +466,7 @@ separate `deploy.pp.pulled` node below, which is explicit about this so the lege
     "PP-065.P1c":      { "stage": "merge",  "depends_on": ["PP-065.P1a"], "parallel_agents": 1, "note": "merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), not directly into maxat_sapphire_2" },
     "PP-065.P1d":      { "stage": "merge",  "depends_on": ["PP-065.P1b", "PP-065.P1c"], "parallel_agents": 1, "note": "merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), not directly into maxat_sapphire_2" },
     "PP-064.B":        { "stage": "merge",  "depends_on": ["PP-065.P1d", "D3"], "parallel_agents": 1, "note": "the B5 check only; merges into the integration branch integ_quarter_p1b_p2 (owner decision R4-integration-branch), not directly into maxat_sapphire_2" },
-    "PP-065.P2.ready": { "stage": "ops",    "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a", "DOC-009.P2a", "PP-064.C.step0"], "note": "P2's code and runbook reviewed on the integration branch, and the writer-paused window scheduled. This is the readiness precondition for deploy.pp (the integration-branch merge to trunk). DOC-009.P2a is included because it rides the same integration branch (its own note: 'reaches trunk only with deploy.pp -- not a standalone trunk merge'), so it must also be merged and reviewed before the window opens." },
+    "PP-065.P2.ready": { "stage": "ops",    "depends_on": ["PP-065.P1d", "PP-064.B", "DOC-009.P1a", "DOC-009.P2a-12", "PP-064.C.step0"], "note": "P2's code and runbook reviewed on the integration branch, and the writer-paused window scheduled. This is the readiness precondition for deploy.pp (the integration-branch merge to trunk). DOC-009.P2a-12 is included because it rides the same integration branch (its own note: 'reaches trunk only with deploy.pp -- not a standalone trunk merge'), so it must also be merged and reviewed before the window opens. DOC-009.P2a-10 is NOT included: it merges directly to trunk, independent of this branch (see its own node)." },
     "deploy.pp":       { "stage": "merge", "depends_on": ["PP-065.P2.ready"], "deadline": "2026-12-25", "note": "owner decision R4-integration-branch: this node IS the merge of integ_quarter_p1b_p2 into maxat_sapphire_2, inside the writer-paused window, at canonical step 4 (after the pre-deploy audit + triplet count and the export) -- that merge is the postprocessing deploy trigger. PP-064.A.deploy, FD-029.deploy and PP-065.P1a.deploy are independent, already presumed live (see their own nodes) and are not part of this merge. It does not by itself put the new image on any server -- CI still has to build and push the configured tag (canonical step 5), and each server still has to pull and verify it (canonical step 6); see PP-064 Chunk C 'Order' for those steps and the abort path if either fails." },
     "deploy.pp.pulled": { "stage": "deploy", "depends_on": ["deploy.pp"], "note": "the new image is pulled and verified (creation date/digest) on each server -- PP-064 Chunk C canonical steps 5-6. This is the node on which the code is actually on the servers, distinct from deploy.pp (the merge event)." },
     "tjhm.reimport":   { "stage": "ops",    "depends_on": ["deploy.pp.pulled"], "note": "decision F (tjhm provenance cleanup), with the service owner, inside the same writer-paused window as deploy.pp -- PP-064 Chunk C canonical step 7" },
