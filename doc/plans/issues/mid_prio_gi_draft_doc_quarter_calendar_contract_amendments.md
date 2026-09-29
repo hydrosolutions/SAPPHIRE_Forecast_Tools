@@ -132,12 +132,29 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 10 only).** Row 10 documents the `long_forecasts` join-key contract — `horizon_value` is the lead, not the
 quarter number, and the actuals/climatology joins key on the calendar quarter, not on `horizon_value`. This
 is **not post-P1b behaviour**: `horizon_value = quarter_horizon_value()` (the lead) is set unconditionally
-in `api_writer.py`'s quarter-write loop already on trunk (PP-064 Chunk A, `#527`, merged and presumed live
-— verify per org, `PP-064.C.step0`), and the calendar-quarter windows row 10's actuals join describes are
-PP-064 A's own calendar-window guard, not anything PP-065 P1b–P1d adds. Since the behaviour row 10
-describes already exists on trunk, this row merges **directly into `maxat_sapphire_2`**, as soon as it is
-reviewed, independent of the integration branch and of the PP-065 deploy — it does not wait for PP-065
+in `api_writer.py`'s quarter-write loop. **Corrected 2026-09-29 (plan-sync round 12): the citation was
+wrong.** This assignment predates PP-064 Chunk A — it was introduced by the earlier P-PIPE commit
+`18580271` ("P-PIPE PP4: config-lead ensemble writers + four independent seasonal products",
+2026-06-23), verified with `git log -S'horizon_value = quarter_horizon_value()' --oneline` against
+`api_writer.py`, not by `#527` (2026-09-27). Under flag ON the writer actually prefers the row's own
+per-lead `horizon_value` over this unconditional assignment
+(`api_writer.py:1173-1176`: `if skill_lead_aware_enabled() and pd.notna(row.get("horizon_value")):
+horizon_value = int(row["horizon_value"]) else: horizon_value = quarter_horizon_value()`) — flag ON's
+`horizon_value` is therefore also already the lead, just sourced from the row rather than from the
+unconditional call. Either way, the calendar-quarter windows row 10's actuals join describes are PP-064
+A's own calendar-window guard (`#527`), not anything PP-065 P1b–P1d adds — **the conclusion is unchanged: the
+behaviour row 10 describes is already true on trunk**, just via an older commit than previously cited (plus
+the flag-ON row-level override above). This row merges **directly into `maxat_sapphire_2`**, as soon as it
+is reviewed, independent of the integration branch and of the PP-065 deploy — it does not wait for PP-065
 P1d. See the overview's `DOC-009.P2a-10` graph node for the matching dependency-graph statement.
+
+**Split hazard with row 12 (added 2026-09-29, plan-sync round 12).** Rows 10 and 12 both edit
+`doc/data_flow_long_term.md`: row 10 at `:240-242, 270-275` (below), row 12 at `:259-262` (see P2a-12
+below) — row 12's range sits *between* row 10's two ranges. Because P2a-10 merges to trunk first and P2a-12
+does not (it rides the integration branch), editing row 10's ranges shifts every line number after `:242`,
+including row 12's `:259-262`. **After P2a-10 lands on trunk, trunk must be merged into
+`integ_quarter_p1b_p2` and row 12's citations re-measured against the merged file before P2a-12 is
+written** — do not write P2a-12 against a pre-P2a-10 line count.
 
 | # | File:line | Depends on | Edit |
 |---|---|---|---|
@@ -151,7 +168,10 @@ on trunk until PP-065 P1b–P1d merge, this P2a-12 documentation PR merges into 
 `integ_quarter_p1b_p2` alongside PP-065 P1b–P1d (owner decision R4-integration-branch), not directly into
 `maxat_sapphire_2` — it reaches trunk only when that branch merges (`deploy.pp`), so the docs and the code
 they describe land together. See the overview's `DOC-009.P2a-12` graph node for the matching
-dependency-graph statement.
+dependency-graph statement. **Split hazard with row 10 (added 2026-09-29, plan-sync round 12): see P2a-10's
+own note above** — row 12's `:259-262` range sits between row 10's two edit ranges in the same file, so
+once P2a-10 merges to trunk, `integ_quarter_p1b_p2` must sync from trunk and row 12's `:259-262` citation
+must be re-measured on that synced tree before this table's line numbers are trusted.
 
 **Merged-vs-deployed note (added 2026-09-28; tied to the overview's owner decisions
 R4-merge-is-deploy/R4-integration-branch/R4-recalc-runs, 2026-09-28 — numbered/labelled, not lettered,

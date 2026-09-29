@@ -619,10 +619,14 @@ Chunk B no longer edits `data_reader.py` or any other file.
   to stagger. So steps 1-3 (pause every writer, the pre-deploy DB audit plus PP-065's rule-A triplet count,
   and the export) must each be completed on **both** kghm and tjhm before step 4 runs: pausing and
   auditing/exporting only one org before merging would leave the other org's writers active, and its
-  pre-change state uncaptured, the moment the new image auto-pulls there too. Steps 6-11 (pull/verify,
-  decision F, the recalc, post-recalc checks, resuming writers, the first operational run) are already
-  written per-org below and all run on both orgs inside this same window — none of them may be deferred to
-  a later window for either org. **Window placement.** The window must fall between both orgs' LT cron
+  pre-change state uncaptured, the moment the new image auto-pulls there too. Steps 6-10 (pull/verify,
+  decision F, the recalc, post-recalc checks, resuming writers) are already written per-org below, run
+  inside this same writer-paused window, and none of them may be deferred to a later window for either
+  org — **except step 7 (decision F), which is tjhm-only** (kghm has no equivalent provenance-cleanup
+  problem; see "B3" above), so kghm has no step-7 action to perform, not a deferred one. **Step 11 (the
+  first operational run) runs AFTER step 10 resumes the writers, so it is after the writer-paused window
+  closes, not inside it** — it must still happen promptly, on both orgs, in this same rollout pass, just
+  not under the pause. **Window placement.** The window must fall between both orgs' LT cron
   days — kghm's 10th and 25th, tjhm's 1st — e.g. days 2-9 or 11-24 of a month; step 0 (detail 0 below)
   confirms each org's configured `operational_issue_day`, and the overview's own rollout step 1 ("crontab
   LT line") confirms the actual cron entry still matches, before relying on either.
@@ -674,11 +678,15 @@ Chunk B no longer edits `data_reader.py` or any other file.
        operator must either promote/retag this run's `:latest` build to the org's pinned tag (and push it),
        or abort per the "Abort path" below — do not proceed on a pinned org with an unmatched image.
        **Presumed: the local copies of the org env files set `latest`; to be recorded per org at step 0
-       (`PP-064.C.step0`)** — this repo's local `.env` copies carry no
-       `ieasyhydroforecast_backend_docker_image_tag` / `..._frontend_docker_image_tag` override, and no
-       per-org read confirming this has been recorded yet, so this is not verified fact. It is not expected
-       to trigger, but confirm at step 0 rather than assume it; it is a guard for the next org whose tag is
-       pinned.
+       (`PP-064.C.step0`).** **Corrected 2026-09-29 (plan-sync round 12): the repo's own template env file
+       DOES carry this override** — `apps/config/.env:136-137` sets both
+       `ieasyhydroforecast_backend_docker_image_tag` and `ieasyhydroforecast_frontend_docker_image_tag` to
+       `latest` (the earlier "carries no override" claim here was wrong). That file is a demo/template
+       config (`ieasyhydroforecast_organization=demo`), not a real kghm/tjhm server `.env`, so it shows
+       intent, not what either org's actual deployed `.env` contains — no per-org read confirming the real
+       servers match it has been recorded yet, so this is still not verified fact for kghm/tjhm. It is not
+       expected to trigger, but confirm at step 0 rather than assume it; it is a guard for the next org
+       whose tag is pinned.
      - **The dashboard needs a re-create, not just a pull.** `docker pull` on its own does not restart or
        re-create the running dashboard containers — a pulled image with no re-create keeps serving the OLD
        code. If this window carries a dashboard-affecting change, follow the pull with the same
@@ -829,7 +837,9 @@ Chunk B no longer edits `data_reader.py` or any other file.
            unchanged row logs only `"Skipped unchanged long forecast: …"` at DEBUG (`crud.py:139`),
            invisible at the service's default INFO level (`app/logger.py:8`, `settings.log_level`), so
            its absence does not fail a valid run.
-           If no such row exists after step 9, PASS requires criteria 1 and 2 as stated above, unchanged.
+           If no such row exists after step 9, PASS requires criteria 1 and 2 as stated above — unless step
+           9's check (iii) recorded criterion 2 as not applicable (a third, distinct outcome; see the next
+           paragraph), in which case PASS requires only criterion 1.
 
            **Criterion 2 not applicable (a third, distinct outcome from step 9's check (iii); does not
            change the pre-satisfied-branch logic above).** Criterion 2 requires a target-quarter Naive Mean
@@ -837,10 +847,18 @@ Chunk B no longer edits `data_reader.py` or any other file.
            form at a `(year, quarter_in_year, code[, horizon_value])` key where at least two distinct raw
            `model_short` values have a non-null target-quarter `forecasted_discharge`, one of them a
            `QUARTERLY_DERIVED_MODELS` member (`is_multi_model_composition`, `ensemble_calculator.py`
-           ~:887-915, applied to Naive Mean at `:915`). If step 9's check (iii) recorded that no such key
-           exists for an org's target quarter, criterion 2 is not applicable for that org this run — no
-           run of step 11's block, however correct, can produce it — and PASS requires only criterion 1 for
-           that org. Record "criterion 2 not applicable" rather than failing the run on its absence.
+           ~:887-915, applied to Naive Mean at `:915`). **Corrected 2026-09-29 (plan-sync round 12): the
+           second, non-derived contributor is not limited to rows this recalc persisted** — it also
+           includes decision G's fallback-derived LR (never persisted) and native LR rows the LT module
+           writes directly, both of which step 11's own read (`read_latest_quarterly_forecasts`) can feed
+           into the same Naive Mean composition; see step 9's check (iii) below for the redefined test and
+           how the operator counts each contributor. If step 9's check (iii) recorded that no target-quarter
+           key has a persisted derived-model row plus at least one such other contributor, criterion 2 is
+           not applicable for that org this run — no run of step 11's block, however correct, can produce
+           it — and PASS requires only criterion 1 for that org. **When in doubt, treat criterion 2 as
+           applicable** rather than recording "not applicable" (see check (iii) for why). Record "criterion
+           2 not applicable" only when check (iii) is confident in the negative, rather than failing the run
+           on its absence.
 
       **Informational, not pass/fail** (a lead for investigation, not a required outcome — do not gate the
       run's success on either of these):
@@ -857,9 +875,10 @@ Chunk B no longer edits `data_reader.py` or any other file.
       ~:2807-2832) rather than checking this run's own output, and added a second query without changing
       the pass/fail outcome. **Not the same as** criterion 2's step-9 recording above, which is a single
       aggregate boolean (recorded once at step 9, before step 11 runs) that determines whether the
-      recovery goal is already met — it changes which criteria PASS depends on (criterion 1 alone, with
-      criterion 2 pre-satisfied, vs. both 1 and 2) precisely in the case the dropped cross-check never
-      distinguished (a pre-existing row from step 8 vs. a fresh one from step 11), so it stays.
+      recovery goal is already met — it changes which criteria PASS depends on (criterion 1 alone with
+      criterion 2 pre-satisfied; both 1 and 2; or criterion 1 alone with criterion 2 not applicable — three
+      outcomes, not two) precisely in the case the dropped cross-check never distinguished (a pre-existing
+      row from step 8 vs. a fresh one from step 11), so it stays.
 
       **Supporting context, not a separate check:**
       - **No EM row is written for the target quarter by this run.** PP-065 P1b's writer change stops the
@@ -1030,11 +1049,32 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
        code[, horizon_value])` key where at least two distinct raw `model_short` values have a non-null
        target-quarter `forecasted_discharge`, one of them a `QUARTERLY_DERIVED_MODELS` member
        (`is_multi_model_composition`, `ensemble_calculator.py` ~:887-915, applied to Naive Mean at `:915`).
-       Record, per org, whether at least one such key exists — an aggregate count over the target-quarter
-       forecast rows read back at (ii) above, no station codes in the plan or the PR. **If none exists for
-       an org, criterion 2 is not applicable for that org this run: record it and do not fail step 11 on
-       its absence** — see step 11's own "Criterion 2 not applicable" paragraph above for how this record
-       is used there.
+       **Corrected 2026-09-29 (plan-sync round 12): this is not just the rows (ii) read back.** (ii) is
+       scoped to target-quarter rows THIS recalc persisted, but step 11's own read of the key
+       (`read_latest_quarterly_forecasts`) also feeds Naive Mean from two contributors (ii) cannot see:
+       decision G's fallback-derived LR (never persisted at all) and native LR rows the LT module writes
+       directly, not this recalc's save. **Redefined check:** per org, record whether at least one
+       target-quarter key has a persisted derived-model row (readable at (ii)) **plus** at least one other
+       contributor — another derived model, a native LR row, or a same-issue monthly LR triplet eligible for
+       the decision-G fallback. Criterion 2 is not applicable only when NO target-quarter key has both.
+       **When in doubt (e.g. the fallback-eligibility count is not cheap to read back), treat criterion 2 as
+       applicable rather than recording "not applicable"** — a false "applicable" only means step 11's own
+       PASS check runs and can fail loudly, which is safer than silently excusing a real gap.
+       **How the operator counts each, per org — aggregate read-backs only, no station codes:**
+       - The persisted-derived-model contributor and any same-key derived-model second contributor: the
+         target-quarter forecast rows read back at (ii) above, grouped by key, counting distinct
+         `QUARTERLY_DERIVED_MODELS` members per key.
+       - A native-LR contributor: a target-quarter `long_forecasts` read-back (API/DB, quarter horizon
+         type) for `LR_Base`/`LR_SM` rows that pass native-row selection (PP-065's shared native-row
+         helper) — read the DB state as of step 11, not (ii)'s pre-recalc-write snapshot, since a native LR
+         row can predate this recalc entirely.
+       - A fallback-eligible-LR contributor: per (code, year, quarter), whether a same-issue monthly LR
+         triplet (the three leads `derive_quarterly_from_monthly_same_issue` needs) exists for `LR_Base` or
+         `LR_SM` with no selected native row at that key — reuse PP-065's own rule-A triplet count (§ "P2 —
+         rollout", the pre-deploy rule-A count) rather than computing a second, separate count here.
+       Record, per org, whether at least one such key exists. **If none exists for an org, criterion 2 is
+       not applicable for that org this run: record it and do not fail step 11 on its absence** — see step
+       11's own "Criterion 2 not applicable" paragraph above for how this record is used there.
    - Freshly written QUARTER rows contain no rolling windows, no LR rows and no EM rows.
    - **The derived seven-model rows for the target quarter are present, per org** (moved here from step
      11, 2026-09-28: this recalc, not the operational run, writes them; "the target quarter" is the same

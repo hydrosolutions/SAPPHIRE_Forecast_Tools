@@ -87,11 +87,12 @@ approach of branch `sandro_sapphire_2_quaterly_agg`.
 1. **[SUPERSEDED same day by decisions R4-merge-is-deploy, R4-integration-branch and R4-recalc-runs,
    below — kept for history only.]** The first-pass rule was "do NOT deploy trunk before PP-065 P2 is
    ready" (block any server pull of a trunk-built postprocessing/dashboard image until P2). It was
-   narrowed the same day once it was confirmed that PP-064 A and PP-065 P1a were already live on servers
-   via Luigi's auto-pull; decision R4-merge-is-deploy then established that FD-029 P1 was independently
-   already live too, via the dashboard's own daily auto-pull — so no merged PR can in fact be held back
-   from servers this way. Decisions R4-merge-is-deploy, R4-integration-branch and R4-recalc-runs replace
-   this gate entirely: see below.
+   narrowed the same day once it was believed confirmed that PP-064 A and PP-065 P1a were already live on
+   servers via Luigi's auto-pull (presumed, not independently verified per org even then — see
+   R4-merge-is-deploy's own per-org caveat below); decision R4-merge-is-deploy then established that FD-029
+   P1 was independently presumed live too, via the dashboard's own daily auto-pull — so no merged PR can in
+   fact be held back from servers this way. Decisions R4-merge-is-deploy, R4-integration-branch and
+   R4-recalc-runs replace this gate entirely: see below.
 2. **PP-065 P1b replaces "Source 1".** In both quarter readers (`read_quarterly_forecasts`,
    `read_latest_quarterly_forecasts`, `apps/postprocessing_forecasts/src/data_reader.py:3105` and `:3453`),
    the old mixed-issue, 2-of-3 `aggregate_monthly_fc_to_quarterly` path is replaced with
@@ -158,12 +159,33 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
   (`apps/pipeline/pipeline_docker.py:296-304`); and the canonical 19:00 UTC cron entry
   (`bin/run_daily_maintenance.sh:118-126`) always runs `bin/daily_update_sapphire_frontend.sh`, which
   (`:66-80`) pulls `mabesa/sapphire-dashboard:$ieasyhydroforecast_frontend_docker_image_tag` and re-creates
-  the dashboard containers (`doc/prod/update_deployment_checklist.md:835-842`). **Consequence: #527
-  (PP-064 A), #528 (FD-029 P1) and #530 (PP-065 P1a) are all presumed LIVE on the servers since
-  2026-09-27/28** — this covers FD-029 P1 too, via the daily frontend pull, not only PP-064 A/PP-065 P1a
-  via Luigi. Verify per org: the creation dates of the postprocessing and dashboard images (`docker image
-  inspect ... --format '{{.Created}}'`) and the image tags in the server `.env`. This verification is
-  `PP-064.C.step0` in the dependency graph.
+  the dashboard containers (`doc/prod/update_deployment_checklist.md:835-842`). **Three conditions this
+  chain actually depends on (round 12, verified in code — none of them break the mechanism, but each is a
+  place it can fail to fire for a given org, so step 0 must confirm all three, not just the image dates):**
+  1. **An unset tag defaults to `local`, not `latest`.** `read_configuration`
+     (`bin/utils/common_functions.sh:103-109`) sets an unset `ieasyhydroforecast_backend_docker_image_tag`
+     / `..._frontend_docker_image_tag` to `"local"` (with a WARNING) before exporting it, and
+     `bin/docker-compose-luigi.yml`'s `pipeline-base` service passes that shell value straight into the
+     container (`ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}`).
+     Luigi's own Python default of `"latest"` (`apps/pipeline/pipeline_docker.py:298`,
+     `os.getenv(..., "latest")`) is therefore reached only if the variable is absent from Luigi's container
+     environment entirely — which does not happen on the normal path, since `read_configuration` always
+     runs (and always sets *some* value) before `docker compose run` (e.g.
+     `bin/run_pentadal_forecasts.sh:14` then `:91`). An org whose env file never sets these two variables
+     auto-pulls nothing from trunk — it keeps running whatever `local` image already exists.
+  2. **The frontend pull is gated, not unconditional.** `bin/daily_update_sapphire_frontend.sh:55` runs
+     `validate_dashboard_origins || exit 1` before the `docker pull` at `:66-68`; a malformed
+     `ieasyhydroforecast_url_pentad` / `_decad` value aborts the script before the pull, so that day's
+     dashboard auto-update does not happen.
+  3. **The repo's own template env file sets both tags to `latest`** (`apps/config/.env:136-137`) — a
+     demo/template file, not a per-org server `.env`, so it shows intent, not what an org's actual deployed
+     `.env` contains; each org's real value is still unverified until step 0 reads it.
+
+  **Consequence: #527 (PP-064 A), #528 (FD-029 P1) and #530 (PP-065 P1a) are all presumed LIVE on the
+  servers since 2026-09-27/28** — this covers FD-029 P1 too, via the daily frontend pull, not only PP-064
+  A/PP-065 P1a via Luigi. Verify per org: the creation dates of the postprocessing and dashboard images
+  (`docker image inspect ... --format '{{.Created}}'`) and the image tags in the server `.env`. This
+  verification is `PP-064.C.step0` in the dependency graph.
 - **R4-integration-branch. Owner: HOLD the merges.** Because nothing merged to trunk can be kept off servers (R4-merge-is-deploy), the
   remaining work — PP-065 P1b, P1c, P1d and PP-064 B — is reviewed and merged as PRs into an
   **integration branch**, named `integ_quarter_p1b_p2`, not into `maxat_sapphire_2`. That integration

@@ -1183,18 +1183,22 @@ lead 0):
   quarter_in_year)` (`src/data_reader.py:3618-3623`), so even with the `forecast_date` bound missing
   entirely, the more recent Q1-2027 aggregate would win that filter and the Q4-2026 aggregate would be
   dropped anyway — its absence would not detect the bug. Two separate cases, each alone in its fixture,
-  keep each assertion diagnostic. **Flag-ON fixture requirement.** Pre-P1b, both readers' Source 1 calls
-  `read_monthly_forecasts` unconditionally under both flags (`data_reader.py:3143, 3495`); under flag ON
-  that function resolves `month_schedules = _operational_schedules_for_horizon_type("month")` and returns
-  empty immediately, with only a WARNING logged, if no `month_N` mode is configured in
-  `ieasyhydroforecast_ml_long_term_supported_modes` (`data_reader.py` ~:1374-1382). If the flag-ON fixture
-  leaves month schedules unconfigured, "no Q4-2026/Q1-2027 aggregate" would already hold for that reason
-  alone, regardless of the `forecast_date` bound, so "fails on the pre-P1b base" would not actually detect
-  the bug under flag ON. The flag-ON fixture must therefore also configure `month_1`, `month_2` and
-  `month_3` (leads 1/2/3, issue day 25) in `ieasyhydroforecast_ml_long_term_supported_modes` and their
-  config files, so `read_monthly_forecasts` returns the triplet rows and the test genuinely exercises the
-  `forecast_date` bound. (Flag OFF has no such precondition — it calls the same reader, but flag OFF's own
-  code path in `read_monthly_forecasts` does not gate on `month_schedules`.)
+  keep each assertion diagnostic. **Flag-ON fixture requirement.** **Corrected 2026-09-29 (plan-sync round
+  12): not both readers.** Pre-P1b, `read_quarterly_forecasts` calls `read_monthly_forecasts`
+  unconditionally under both flags (`data_reader.py:3143`); `read_latest_quarterly_forecasts` — the one
+  these two cases exercise — calls it only under flag ON, inside `if skill_lead_aware_enabled():`
+  (`data_reader.py:3494-3510`); flag OFF instead calls `_read_long_forecasts_api` and
+  `_normalize_monthly_forecasts` directly (`:3502-3510`), bypassing `read_monthly_forecasts` and its
+  internal trims entirely. Under flag ON, `read_monthly_forecasts` resolves `month_schedules =
+  _operational_schedules_for_horizon_type("month")` and returns empty immediately, with only a WARNING
+  logged, if no `month_N` mode is configured in `ieasyhydroforecast_ml_long_term_supported_modes`
+  (`data_reader.py` ~:1374-1382). If the flag-ON fixture leaves month schedules unconfigured, "no
+  Q4-2026/Q1-2027 aggregate" would already hold for that reason alone, regardless of the `forecast_date`
+  bound, so "fails on the pre-P1b base" would not actually detect the bug under flag ON. The flag-ON
+  fixture must therefore also configure `month_1`, `month_2` and `month_3` (leads 1/2/3, issue day 25) in
+  `ieasyhydroforecast_ml_long_term_supported_modes` and their config files, so `read_monthly_forecasts`
+  returns the triplet rows and the test genuinely exercises the `forecast_date` bound. (Flag OFF has no
+  such precondition — it never calls `read_monthly_forecasts` in this reader at all.)
   - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
     2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced, under both flags. The issue
     date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits the hv 1/2/3 triplet
@@ -1204,12 +1208,27 @@ lead 0):
     single monthly row (not a full triplet) is not a sufficient fixture here: with only one of the three
     required leads present, `derive_quarterly_from_monthly_same_issue` already produces no aggregate for
     the incomplete-triplet reason alone, so the test would pass even with the bound entirely missing — it
-    would not detect the bug it names. Fails on the pre-P1b base (neither flag bounds this path today).
+    would not detect the bug it names. Fails on the pre-P1b base under both flags: neither flag bounds this
+    path by `forecast_date` today, and the target year (2026) is within flag ON's own `end_year` (also
+    2026, see the next case), so nothing else suppresses it either.
   - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set) issued
-    2026-12-25** (after `forecast_date`) → no Q1-2027 aggregate is produced, under both flags. 12 + 1 = 13
-    → year + 1, month 1 (January 2027, Q1 2027) — not excluded by the scope filter — so only the
-    `forecast_date` bound can explain the absence. Same full-triplet requirement and pre-P1b-base failure
-    as above.
+    2026-12-25** (after `forecast_date`) → no Q1-2027 aggregate is produced. 12 + 1 = 13 → year + 1, month 1
+    (January 2027, Q1 2027) — not excluded by the scope filter — so under flag OFF only the `forecast_date`
+    bound can explain the absence, and this case **fails on the pre-P1b base under flag OFF** (same
+    full-triplet requirement as above). **Corrected 2026-09-29 (plan-sync round 12): under flag ON this
+    case is a P1b regression guard only, not a pre-P1b-base failure.** `read_monthly_forecasts`'s own
+    target-year trim (`_trim_to_target_year_range(df, "year", start_year, end_year)`,
+    `data_reader.py:1402`) already runs before this triplet ever reaches aggregation, with `end_year =
+    forecast_date.year = 2026` (`:3483`) — the whole Jan-2027 triplet has target year 2027, outside
+    `[start_year, 2026]`, so `read_monthly_forecasts` drops all three rows itself, for a reason unrelated to
+    any `forecast_date` (issue-date) bound. The test's expected outcome ("no Q1-2027 aggregate") therefore
+    already holds on the current, unmodified trunk regardless of whether a `forecast_date` bound exists —
+    this case cannot fail on the pre-P1b base under flag ON, so it gives no signal about whether that bound
+    is correctly implemented pre-P1b. What it does guard is P1b itself: P1b's own derived-row trim for the
+    latest reader is the wider `[start_year, end_year + 1]` (§ "Target-year trim scope" above), specifically
+    so a December-issued Q1 survives; this flag-ON case is the regression test that P1b's wider trim (not
+    `read_monthly_forecasts`'s narrower one) is what actually governs the derived path once P1b lands —
+    write it as a P1b-only regression guard, not as a case that "fails on the pre-P1b base".
 
   (A candidate issued 2026-10-25 would NOT work for either case: 10 + 1 = 11, November, not a
   quarter-start month, so it is dropped by the scope filter regardless of the bound and would not exercise
@@ -1872,14 +1891,29 @@ line numbers verified against this branch's HEAD):
   `q_combined` and `q_fc` hold one raw model, so the new two-model prefilter excludes the key and nothing
   is saved. Give the fixture two eligible raw models.
 - `tests/test_maintenance_long_term.py:626-763` (`test_quarterly_gap_fill_only_writes_gap_leads`) **also
-  changes, not previously listed here.** Its `q_fc` (the gap-universe read, `read_quarterly_forecasts`
-  mock) holds one raw model (`LR_Base`) at the gap key, so the new two-model prefilter excludes it too: the
-  gap universe becomes empty for that key, the quarterly block is skipped end to end, and
+  changes, not previously listed here, on two independent axes (re-verified 2026-09-29, plan-sync round
+  12).** (1) Its `q_fc` (the gap-universe read, `read_quarterly_forecasts` mock) holds one raw model
+  (`LR_Base`) at the gap key, so the new two-model prefilter excludes it too: the gap universe becomes
+  empty for that key, the quarterly block is skipped end to end, and
   `mock_file_writer.save_quarterly_forecast_data.assert_called_once()` (`:746`) fails with zero calls —
-  this test asserts the block *runs* (unlike the early-exit tests below, it is not itself an
-  early-exit test). Give `q_fc` two eligible raw models (e.g. add an `LR_SM` row alongside `LR_Base`) so
-  the prefilter admits the key; the test's own assertions (the non-gap lead-0 EM keeps its original
-  discharge, flag ON vs. OFF) are otherwise unchanged.
+  this test asserts the block *runs* (unlike the early-exit tests below, it is not itself an early-exit
+  test). Give `q_fc` two eligible raw models (e.g. add an `LR_SM` row alongside `LR_Base`) so the prefilter
+  admits the key. (2) **The test is built entirely on quarter EM gaps and EM output**: `q_combined`
+  (`:665-674`, the existing lead-0 row), `q_gaps` (`:676-684`, the detected gap) and `q_joint` (`:706-715`,
+  the regenerated ensemble output) all use `model_short: "EM"`. Item 4 above narrows quarterly gap
+  detection to `ensemble_models={"Naive Mean"}` and item 5 removes quarter EM entirely, so an all-`EM`
+  fixture no longer reflects a reachable production state — the same reason the "Writer EM tests" bullet
+  above switches its fixtures' `model_short` from `"EM"` to `"Naive Mean"` wherever the test's purpose is
+  not EM itself. This test's purpose (a non-gap lead's existing discharge is preserved, not overwritten by
+  `keep="last"`, when only one lead is a genuine gap) is not EM-specific either, so apply the same
+  substitution: switch `model_short` to `"Naive Mean"` in all three of `q_combined`, `q_gaps` and `q_joint`.
+  **New expected assertions:** replace `em_rows = saved[saved["model_short"] == "EM"]` (`:748`) with
+  `naive_mean_rows = saved[saved["model_short"] == "Naive Mean"]`; the numeric checks are otherwise
+  unchanged (flag ON: both leads present, lead 0 keeps its original 100.0, lead 1 is the regenerated 111.0;
+  flag OFF: one row). `test_quarterly_gap_fill_dedup_lead_aware` above has the same `q_gaps`/`q_joint`
+  all-`EM` shape (its own assertions only inspect `LR_Base` rows, so its listed fix does not need the
+  substitution to keep passing mechanically, but the same staleness applies to its fixture's realism —
+  flag this for the same pass if it is touched).
 - Any other maintenance test that asserts the run ends
   before the quarterly block (e.g. the early-exit tests at `:217`, `:245`) is listed.
 
@@ -1986,7 +2020,8 @@ dependency graph). PP-064 A, FD-029 P1 and PP-065 P1a are already live separatel
 R4-merge-is-deploy; verify per org, `PP-064.C.step0`) and are not part of this merge. **The automatic
 bimonthly QUARTERLY recalc is allowed to run before this window and does not need to be paused** (owner
 decision R4-recalc-runs, 2026-09-28 — see N7 above): it already applies P1a's 3-of-3 rule, on calendar
-windows only, on servers today.
+windows only, presumed on servers today (verify per org, `PP-064.C.step0` — same caveat as the "already
+live separately" sentence above; the recalc's rule only takes effect once P1a's image is actually pulled).
 
 **This window follows PP-064 Chunk C's canonical "Order" sequence exactly**
 (`../high_prio_gi_draft_pp_quarter_calendar_window_validation.md` § "Chunk C — rollout and verification");
