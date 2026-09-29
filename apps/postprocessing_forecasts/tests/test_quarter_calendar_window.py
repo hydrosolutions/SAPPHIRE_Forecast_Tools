@@ -2686,6 +2686,31 @@ class TestDatasetBDropped:
             )
         assert "GBT" not in set(result.get("model_short", []))
 
+    def test_read_quarterly_combined_forecasts(self, monkeypatch):
+        """`read_quarterly_combined_forecasts` is filter-only (item 4): it
+
+        also drops direct rows of the seven `QUARTERLY_DERIVED_MODELS`,
+        with no monthly read/derivation of its own.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        mock_df = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "year": [2026, 2026],
+                "quarter_in_year": [1, 1],
+                "model_short": ["GBT", "LR_Base"],
+                "forecasted_discharge": [999.0, 100.0],
+            }
+        )
+        with patch.object(
+            data_reader,
+            "_read_long_combined_forecasts_api",
+            return_value=mock_df,
+        ):
+            result = data_reader.read_quarterly_combined_forecasts()
+        assert "GBT" not in set(result.get("model_short", []))
+        assert "LR_Base" in set(result.get("model_short", []))
+
 
 class TestOutputSchemaFlagOff:
     """Both readers return `date` and `horizon_value` under flag OFF now

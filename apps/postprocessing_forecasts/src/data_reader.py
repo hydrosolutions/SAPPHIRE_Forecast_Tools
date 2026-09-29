@@ -4208,6 +4208,14 @@ def read_quarterly_combined_forecasts(
 
     API-only — no CSV fallback for new horizons.
 
+    PP-065 P1b: drops rows of the seven `QUARTERLY_DERIVED_MODELS` (this
+    reader is filter-only — no monthly read, unlike
+    `read_quarterly_forecasts`/`read_latest_quarterly_forecasts`, which
+    additionally derive replacement rows for those models). This also
+    drops legacy "Dataset B" rows (persisted QUARTER rows of the seven
+    models at hv 1-4 with `date == valid_from`), which predate the
+    derivation mechanism.
+
     Args:
         codes: Optional list of station codes to filter. When provided,
             only forecasts for those codes are returned. When None,
@@ -4228,6 +4236,7 @@ def read_quarterly_combined_forecasts(
     )
     if df is not None and not df.empty:
         logger.info("Read %d quarterly combined forecast rows from API", len(df))
+        df = _drop_direct_quarterly_derived_model_rows(df)
         return df
     logger.warning("No quarterly combined forecasts available")
     return pd.DataFrame()
