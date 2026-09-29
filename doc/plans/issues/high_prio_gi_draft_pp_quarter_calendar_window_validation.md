@@ -379,9 +379,9 @@ was an earlier round; it was deleted, and every call site now imports `local_cal
   trunk behaviour, not introduced by this chunk. **PP-065 P1b's native-only LR selection closes it
   properly**, in both readers, under both flags, by selecting the native row directly instead of relying
   on which duplicate happens to win a dedup — see PP-065's Tests list, "Native-row selection (kghm
-  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1132-1134 — re-measured
-  2026-09-29 after this sync's own edits shifted the file again; earlier drafts' `~:434-436` and
-  `~:1117-1119` had both drifted): "a native row, a
+  shape)" entry (`../high_prio_gi_draft_pp_quarter_derived_models.md`, ~:1162-1164 — re-measured
+  2026-09-29 after this sync's own edits shifted the file again; earlier drafts' `~:434-436`,
+  `~:1117-1119` and `~:1132-1134` had each drifted): "a native row, a
   rewrite (`date = valid_from`) and a persisted derived Dec-1 row for the same LR Q1 → the native row, in
   both readers".
 - Drop a row when its issue year is `< start_year` **unless** it is that Q1-of-`start_year` row —
@@ -751,15 +751,17 @@ Chunk B no longer edits `data_reader.py` or any other file.
            prints its path as `"  Service log: $SERVICE_LOG"`, `:111`): require that the WARNING-level
            early-exit and failure strings are absent — each verified below as `logger.warning` in the
            source, so each WOULD reach this WARNING-capped file if it fired:
-           `"No monthly skill metrics available. …Exiting."` (`postprocessing_operational_long_term.py`
-           `logger.warning` at `:146-150`, followed by `sys.exit(0)` at `:151`); `"No recent monthly
-           forecasts available. Exiting."` (`logger.warning` at `:162`, `sys.exit(0)` at `:163`); `"…
-           quarterly forecasts API write returned False (disabled, unavailable, or failed)."`
-           (`file_writer.py:858`, `logger.warning`, called from `:227`); `"No quarterly skill metrics
-           available"` (`data_reader.py:2837`, `logger.warning`, `read_quarterly_skill_metrics`); `"No
-           quarterly forecast data available"` (`data_reader.py:3588`, `logger.warning`,
-           `read_quarterly_forecasts`/`read_latest_quarterly_forecasts`). None of these five strings may
-           appear anywhere in this file.
+           `"No monthly skill metrics available. Run recalculate_skill_metrics.py or maintenance first.
+           Exiting."` (`postprocessing_operational_long_term.py` `logger.warning` at `:146-150`, followed
+           by `sys.exit(0)` at `:151`); `"No recent monthly forecasts available. Exiting."`
+           (`logger.warning` at `:162`, `sys.exit(0)` at `:163`); `"Quarterly forecasts API write returned
+           False (disabled, unavailable, or failed)."` (`file_writer.py:858`, `logger.warning`, called
+           from `:227` — capital "Quarterly", not "quarterly"); `"No quarterly skill metrics available"`
+           (`data_reader.py:2837`, `logger.warning`, `read_quarterly_skill_metrics`); `"No quarterly
+           forecast data available"` (`data_reader.py:3588`, `logger.warning`,
+           `read_quarterly_forecasts`/`read_latest_quarterly_forecasts`). Each is quoted verbatim from its
+           source, including case; the match against this log file is case-sensitive, so none of these
+           five strings, in this exact case, may appear anywhere in it.
       2. **At least one Naive Mean row for the target quarter whose `composition` includes at least one
          `QUARTERLY_DERIVED_MODELS` member** (`src/model_names.py:22-24`), per org (aggregate counts only,
          no station codes in the plan or the PR).
@@ -791,7 +793,14 @@ Chunk B no longer edits `data_reader.py` or any other file.
            `read_latest_quarterly_forecasts`'s two silent `if combined.empty: return ...` branches,
            `data_reader.py` ~:3603-3604 and ~:3607-3608, and the resulting skip at
            `postprocessing_operational_long_term.py:230`/`:232` is `logger.info`, not `logger.warning`,
-           so criterion 1 above would not catch a silently-skipped step 11 either).
+           so criterion 1 above would not catch a silently-skipped step 11 either). **In this branch, PASS
+           proves only that the blank-card recovery goal is already met — it does NOT prove that step 11's
+           own quarterly block executed on this run.** The block can no-op end to end this run (e.g. its
+           quarter skill frame is tombstone-only: an INFO-level `"Read 0 quarterly skill metric rows from
+           API"` followed by an INFO-only skip, nothing at WARNING) and PASS would still be granted from
+           the pre-existing row alone. Step 9's two precondition checks (detail 5 below) exist to make that
+           distinction observable in advance, and PP-064 B's B5 is the standing contract for the block's
+           behaviour when they fail — see detail 5 below for both.
            **Step 9 (detail 5 below) must record whether this row already exists before step 11 runs.**
            If it does, PASS requires only criterion 1 (the wrapper and WARNING-level log checks) above;
            criterion 2 is recorded as "pre-satisfied at step 9" rather than re-evaluated against step
@@ -860,6 +869,24 @@ Chunk B no longer edits `data_reader.py` or any other file.
   P1b image at the configured tag regardless of this window's own CI/pull outcome, which Luigi then
   auto-pulls **outside any writer-paused window**.
 
+  **The revert-of-a-merge trap (default abort action: FIX FORWARD, not revert).** Reverting the
+  `integ_quarter_p1b_p2` → trunk merge on trunk is not a neutral undo. The overview's own
+  R4-integration-branch rule requires periodically merging trunk INTO `integ_quarter_p1b_p2` to keep it
+  current; the next such sync after a revert on trunk carries that revert commit into
+  `integ_quarter_p1b_p2` too, and since the branch's own tip still has P1b–P1d/PP-064 B unreverted, the
+  sync applies the revert's diff there as well — **silently removing P1b–P1d/PP-064 B from the
+  integration branch**, with its tests staying green because the code under test was removed along with
+  everything else. Re-merging `integ_quarter_p1b_p2` into trunk afterwards does not undo this: trunk
+  already contains those commits as ancestors (from the original merge), so git treats them as already
+  merged and the second merge applies no new diff — the content stays gone from both branches. **FIX
+  FORWARD is therefore the default abort action** (writers stay paused; do not revert). If a revert is
+  genuinely unavoidable, it carries a mandatory follow-up, to be done **before the next trunk → integ
+  sync**: revert the revert on `integ_quarter_p1b_p2` itself (or re-create the branch from its pre-merge
+  tip), then verify with `git diff <pre-merge-integ-tip> integ_quarter_p1b_p2 --
+  apps/postprocessing_forecasts` that P1b–P1d are present again before trusting any test run on that
+  branch. This is the canonical text for this hazard; the overview's R4-integration-branch decision
+  points here rather than restating it.
+
 **Details, keyed to the canonical steps above by number** (these are reference detail, not a second,
 competing order — "step N" above is the canonical sequence; "detail N" below is this list):
 
@@ -925,10 +952,25 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    - Tombstone count per `(model, quarter, hv)` per org, including the old quarter EM skill rows.
    - Suppressed quarter skill rows per org at K = 10 (decision C; `src/skill_metrics.py:2834-2849`).
      Locally the tjhm median `n_pairs` was 5–6 before the fix.
-   - The per-org quarter skill frame, read as the pipeline reads it (tombstones dropped,
-     `src/data_reader.py:106, 2833`), is **non-empty**. Otherwise every quarterly ensemble is skipped
-     (Problem 8). If K = 10 leaves an org with no quarter skill at all, B5 means no Naive Mean either:
-     **escalate to the owner before the hydromet notice** goes out.
+   - **Two precondition checks that make the quarterly block's own inputs observable before step 11
+     runs.** Canonical step 11's pre-satisfied branch (its PASS criterion 2 note) can pass from an
+     already-existing row without step 11's own quarterly block ever having executed on this run — these
+     checks are what lets an operator tell those two cases apart, here, before that ambiguity matters:
+     - **(i) At least one NON-tombstone quarter skill row per org.** A tombstone is `n_pairs == 0` (or
+       NULL) with every metric column NULL, upserted by the write-side to mark a stale long-horizon skill
+       key; a legitimate row always has `n_pairs >= K` (`_drop_tombstone_rows`, `src/data_reader.py:107-120`
+       — `n_pairs.notna() & (n_pairs > 0)` is the exact separator). The per-org quarter skill frame, read
+       as the operational run itself reads it (tombstones dropped by `read_quarterly_skill_metrics`,
+       `src/data_reader.py:2832-2838`), must be **non-empty**. If it is not — including the tombstone-only
+       case, where the API returns rows but every one is a tombstone, `_drop_tombstone_rows` strips all of
+       them, and the read logs `"Read 0 quarterly skill metric rows from API"` at INFO
+       (`data_reader.py:2835`) — the operational run's own `if not quarterly_skill.empty:` gate
+       (`postprocessing_operational_long_term.py:210`) takes the INFO-only skip branch (`:232`): every
+       quarterly ensemble is skipped (Problem 8), silently, with nothing at WARNING level to catch it. If
+       K = 10 leaves an org with no quarter skill at all, B5 means no Naive Mean either: **escalate to the
+       owner before the hydromet notice** goes out.
+     - **(ii) Target-quarter forecast rows are present.** See the next bullet for how this recalc writes
+       them and what "the target quarter" means; the block's other required input, alongside (i).
    - Freshly written QUARTER rows contain no rolling windows, no LR rows and no EM rows.
    - **The derived seven-model rows for the target quarter are present, per org** (moved here from step
      11, 2026-09-28: this recalc, not the operational run, writes them; "the target quarter" is the same
@@ -937,7 +979,13 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
      `_calculate_aggregated_skill_metrics` (`skill_metrics.py` ~:2741-2742) passes every raw forecast row
      through regardless of whether it joined an observation, so the target quarter's raw rows survive this
      recalc's pass-through — independently of whether a target-quarter ensemble also happens to be
-     computed here (usually not, but see the next bullet).
+     computed here (usually not, but see the next bullet). This is precondition check (ii) above.
+   - **B5 (Chunk B) is the ongoing detector for a quarterly block that later stops running**, in any future
+     run, not only this window's: it is the standing contract for what the block does when input (i) fails
+     — an empty (post-tombstone-drop) quarter skill frame skips every quarterly ensemble, exactly as an
+     empty monthly skill frame skips every monthly one. A quarterly block silently going quiet in some
+     later, unrelated run is B5's documented failure mode recurring, not a new class of bug; look there
+     first rather than re-deriving the mechanism.
    - **Record whether a target-quarter Naive Mean row with a `QUARTERLY_DERIVED_MODELS` composition
      already exists after this recalc.** This happens whenever the target quarter already counts as
      observed before step 11 runs — the ≥50%-days-per-month rule (`data_reader.py` ~:1301-1302) can make
@@ -985,7 +1033,7 @@ competing order — "step N" above is the canonical sequence; "detail N" below i
    winning the dashboard's dedup indefinitely. No code change here — this is a rollout/runbook step, not
    a Chunk A/B behaviour.
    - **Skill needs the same rollback step (added 2026-09-27).** FD-029's rollback caveat also covers
-     quarter skill (`../mid_prio_gi_draft_fd_quarter_card_calendar_window.md`, ~:272-281, "The rollback
+     quarter skill (`../mid_prio_gi_draft_fd_quarter_card_calendar_window.md`, ~:298-307, "The rollback
      caveat extends to skill, not only to forecast rows"): a quarter skill row written during the flag-ON
      era at the hv-0 sentinel holds genuine lead-0 skill, not a rewrite, so it keeps winning the
      dashboard's flag-OFF selection's first preference (hv-0 over the configured-lead fallback) after the

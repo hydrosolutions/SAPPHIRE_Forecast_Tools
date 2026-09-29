@@ -140,11 +140,16 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
   `TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim`, `tests/test_quarter_calendar_window.py:995,
   1046`) are rewritten with native-shaped fixtures per PP-065's list (PP-065 § "Owner decisions this plan
   implements", item 9). PP-064's own Problem-7 section carries a pointer to this decision.
-  - **Degraded LR carve-out (owner).** When `quarter.json` lacks `operational_issue_day`, no LR row can be
+  - **Degraded LR carve-out (owner). Flag OFF only.** When `quarter.json` lacks `operational_issue_day`,
+    no LR row can be
     classified as native or not — the native-row rule itself cannot run. P1b then keeps today's unfiltered
     direct LR selection, with **one** WARNING, rather than dropping every LR row. This is an explicit
     exception to native-row precedence, not a contradiction of it — see PP-065's "Degraded native rule,
     flag OFF" bullet (`high_prio_gi_draft_pp_quarter_derived_models.md` ~:436-443) and PP-065's own item 9.
+    **Under flag ON there is no carve-out: a missing `operational_issue_day` already raises
+    `LongTermHorizonResolverError`, uncaught, as on trunk today**
+    (`_operational_schedules_for_horizon_type("quarter")`, `apps/postprocessing_forecasts/src/data_reader.py:3162`,
+    called with no try/except around it in the flag-ON branch).
 - **R4-merge-is-deploy. Merge = deploy (verified fact).** Every merge to `maxat_sapphire_2` reaches every org whose image
   tags are `latest` within about a day: CI pushes `:latest` (`.github/workflows/deploy_production.yml`);
   Luigi auto-pulls the backend images whenever the digest differs
@@ -164,6 +169,12 @@ decisions; unrelated to the 2026-09-26 "round 4" decisions above (the lettered A
   export — and that merge **is** the postprocessing deploy (`deploy.pp`).
   - The integration branch must be kept current with trunk: merge trunk INTO it periodically; never
     rebase a shared branch; never `git stash`.
+  - **Reverting the eventual `integ_quarter_p1b_p2` → trunk merge, instead of fixing forward, is a trap:**
+    the periodic trunk→integ sync this bullet requires then carries that revert into
+    `integ_quarter_p1b_p2` too, silently removing P1b–P1d/PP-064 B from it (tests stay green because the
+    reverted code is gone from both sides), and re-merging afterwards does not restore them. See PP-064's
+    "Abort path" for the canonical text — fix-forward is the default; a revert requires reverting the
+    revert on `integ_quarter_p1b_p2` before the next sync, verified by diff.
   - Unrelated trunk merges (anything outside this quarter chain) keep deploying as normal — the hold
     applies only to PP-065 P1b–P1d and PP-064 B.
   - CI does not test these modules anyway (INFRA-059), so holding them off trunk costs no CI coverage.
@@ -203,8 +214,11 @@ FD-029 (which hides every quarter `EM` row and every non-native LR row) is live 
 Mean's/Skilled Mean's composition to draw from them — a Naive Mean/Skilled Mean row built from `LR_Base`/
 `LR_SM` alone can already form pre-P1b) is not — it is held on the integration branch (decision
 R4-integration-branch). **Corrected 2026-09-28 (factual, not a decision change): "a fresh `EM` row plus a
-non-native LR row" is not the blank-card population.** EM's own gate (`ensemble_calculator.py`
-`n_models > 1` ~:744-746) and Naive Mean's gate (`is_multi_model_composition` at `:915`) are, pre-P1b, the
+non-native LR row" is not the blank-card population.** EM's per-key gate is
+`em_avg[em_avg["composition"].apply(is_multi_model_composition)]` (`ensemble_calculator.py:767`) — the
+same `is_multi_model_composition` predicate as Naive Mean's gate (`:915`), not the coarser `n_models > 1`
+whole-frame precondition (`:744`, which only counts distinct qualifying models across the entire frame
+before the per-key groupby runs). Pre-P1b these are, in effect, the
 identical condition — both require `LR_Base` **and** `LR_SM` present with a non-null `forecasted_discharge`
 at the key, the only two non-baseline models the pipeline reads for quarter today — so any key with a
 *fresh* `EM` row also has a fresh, visible Naive Mean row from the same run; FD-029 does not hide Naive

@@ -224,8 +224,12 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      skill-metrics write path, not the quarter forecast write path. This plan's dedup above already drops
      every quarter EM row it reads, consistent with the owner decision of no quarterly EM, but PP-065 P1b
      is what stops the write. **Corrected 2026-09-28: "EM plus a non-native LR row, nothing else" is not
-     the population this leaves blank.** EM's own gate (`ensemble_calculator.py` `n_models > 1` ~:744-746)
-     and Naive Mean's gate (`is_multi_model_composition` at `:915`) are, pre-P1b, the identical condition —
+     the population this leaves blank.** EM's per-key gate is
+     `em_avg[em_avg["composition"].apply(is_multi_model_composition)]` (`ensemble_calculator.py:767`) —
+     the same `is_multi_model_composition` predicate as Naive Mean's gate (`:915`), not the coarser
+     `n_models > 1` whole-frame precondition (`:744`, which only counts distinct qualifying models across
+     the entire frame before the per-key groupby runs). Pre-P1b these are, in effect, the identical
+     condition —
      both need `LR_Base` and `LR_SM` present with a non-null forecast at the key, the only two non-baseline
      models the pipeline reads for quarter today — so a fresh EM row always has a paired, visible Naive
      Mean row from the same run, and this dedup does not drop Naive Mean. Until P1b ships, the card shows
