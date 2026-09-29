@@ -1205,11 +1205,14 @@ lead 0):
   fail on the pre-P1b base regardless of whether those rows reach aggregation (see above). It also does
   not carry over to P1b — item 2's "Derived rows" step reads raw monthly rows directly via
   `_read_long_forecasts_api`, not through `read_monthly_forecasts`, so it never depends on `month_N` mode
-  configuration. **What the flag-ON fixture must still configure** is a `quarter` mode in
-  `ieasyhydroforecast_ml_long_term_supported_modes`: both readers' quarter-schedule resolution fails loud
-  and returns empty without one (`data_reader.py` ~:3526-3534), independent of the Source 1 path above.
-  Flag OFF has no such precondition — it never calls `read_monthly_forecasts` in this reader at all
-  (`:3502-3510`).
+  configuration. **What the fixture must still configure, under BOTH flags,** is a `quarter` mode in
+  `ieasyhydroforecast_ml_long_term_supported_modes` (plus its `quarter.json` config): flag ON's
+  quarter-schedule resolution fails loud and returns empty without one (`data_reader.py` ~:3526-3534),
+  independent of the Source 1 path above; flag OFF's Source 2 branch calls `quarter_horizon_value()`
+  (`data_reader.py` ~:3546-3552 → `long_term_horizon_resolver.py` ~:68-80), which raises
+  `UnsupportedLongTermModeError` under the same precondition. (Flag OFF never calls
+  `read_monthly_forecasts` in this reader at all — `:3502-3510` — that is a separate, correct fact about
+  Source 1 only, not a quarter-mode exemption.)
   - `forecast_date = 2026-06-25` (kghm shape, lead 1); **full hv 1/2/3 monthly triplet (q50 set), model
     `LR_Base` (or `LR_SM`), issued 2026-09-25** (after `forecast_date`) → no Q4-2026 aggregate is produced
     under flag OFF. The issue date is otherwise-derivable: `leads_needed = (lead, lead+1, lead+2)` admits
@@ -1257,6 +1260,13 @@ lead 0):
   (A candidate issued 2026-10-25 would NOT work for either case: 10 + 1 = 11, November, not a
   quarter-start month, so it is dropped by the scope filter regardless of the bound and would not exercise
   it.)
+- **P3 interaction: add a `GBT` variant of both cases above, alongside the `LR_Base`/`LR_SM` one.** P3
+  removes the decision-G LR fallback entirely (§ "P3 — remove the LR fallback" ~:2141-2160), so once P3
+  lands an LR-only monthly triplet derives nothing at all through this path — both cases above would then
+  pass even with the `forecast_date` bound deleted, and stop detecting the bug they name. `GBT`'s
+  derivation (`QUARTERLY_DERIVED_MODELS`, unconditional) is untouched by P3, so write a `GBT`-model variant
+  of both cases here now (same triplet shape and dates, `model = GBT`) so the guard survives P3; P3's own
+  Acceptance then drops only the `LR_Base`/`LR_SM` variant.
 - **Existing Source 1 (now unified) forecast_date bound, inputs to the derivation.** No row dated after
   `forecast_date` reaches `derive_quarterly_from_monthly_same_issue` (assert on a spy, or on the rows
   actually passed to it), under both flags.
@@ -2117,10 +2127,10 @@ bounds (FD-029), after step 8/9, before step 11 has even run. **Only the target 
 and Skilled Mean ensemble rows wait for step 11.** Step 11 writes the Naive Mean row wherever a
 target-quarter key can form a derived-composition Naive Mean — two or more non-null contributors (see
 PP-064 Chunk C canonical step 11's INVESTIGATE outcome for when none can) — and, separately, the Skilled
-Mean row for that same key only where its own skill gate also passes (NSE > 0, min-pairs K, via the inner
-merge; § "Quarterly ensembles = Naive Mean + Skilled Mean only" ~:61-63, 67): a key can form a Naive Mean
-without forming a Skilled Mean. Step 8's recalc forms either ensemble only
-where its own inner join with observations matches, usually not the current quarter (see PP-064 Chunk C
+Mean row for that same key only where its own skill gate also passes — see PP-064's "Skilled Mean is not a
+required row" paragraph (`high_prio_gi_draft_pp_quarter_calendar_window_validation.md` ~:768-775) for the
+two conditions; a key can form a Naive Mean without forming a Skilled Mean. Step 8's recalc forms either
+ensemble only where its own inner join with observations matches, usually not the current quarter (see PP-064 Chunk C
 canonical step 11's PASS criterion 2 and its pre-satisfied-branch note above for the exception). Do
 **not** frame either as appearing "on the next quarter issue day": that framing is what the step-11
 prompt-run requirement exists to avoid (the blank-card interval must not extend
@@ -2137,6 +2147,13 @@ Only after LTF-014 P0 and P2 are deployed on both orgs. **Blocked** while P0 is 
 - `README.md`: the passage that documents the active LR fallback, added by DOC-009 row 12 (at trunk the
   row targets `:14, 18-19, 305-320`). Grep `fallback` there and in the repo-root `doc/data_flow_long_term.md`,
   the other row-12 file.
+
+**Tests:** drop the `LR_Base`/`LR_SM` variant of the P1b Tests list's "Existing Source 1 (now unified)
+forecast_date bound, latest reader, both flags" cases (~:1180-1262) — once the fallback is gone, an
+LR-only monthly triplet derives nothing at all through this path, so that variant would pass trivially
+whether or not the bound still works. Keep the `GBT` variant P1b adds alongside it (same entry, ~:1263-1269);
+it exercises the same bound through the unconditional `QUARTERLY_DERIVED_MODELS` derivation, which this
+phase does not touch.
 
 **Acceptance:** before removing it, count per org the quarters that would lose LR rows. For the calendar
 quarters of scored years, expect none.
