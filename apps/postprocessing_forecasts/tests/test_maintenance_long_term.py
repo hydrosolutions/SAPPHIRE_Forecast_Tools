@@ -1821,6 +1821,269 @@ class TestQuarterlySkilledMeanNotOverwritten:
             )
 
 
+class TestQuarterlySkilledMeanGuardLeadAware:
+    """PP-065 P1b Finding B (confirm-fixes review, fix round 2): the
+
+    Finding-4 overwrite guard above must key on `horizon_value` under
+    SAPPHIRE_SKILL_LEAD_AWARE even when `q_combined` (existing
+    persisted data) lacks the column entirely -- e.g. it holds only a
+    legacy Skilled Mean row written before this reader/writer contract
+    existed, or before the flag was ever turned on for that org.
+    Requiring the column on BOTH frames (fix round 1's condition) let a
+    legacy no-lead row silently match ANY new lead, incorrectly
+    suppressing a genuinely new, correctly-gapped Skilled Mean for a
+    DIFFERENT lead than the legacy row's unknown one.
+    """
+
+    def test_new_lead_skilled_mean_written_despite_legacy_no_lead_existing_row(self, monkeypatch):
+        """Regression for Finding B: q_combined has a legacy Skilled
+
+        Mean with NO horizon_value column at all; q_new has a
+        genuinely new, correctly-gapped Skilled Mean for a specific
+        lead under flag ON -- the new lead's Skilled Mean must be
+        WRITTEN, not suppressed.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        mock_data_reader.read_monthly_combined_forecasts.return_value = pd.DataFrame()
+
+        # Legacy, pre-lead-aware Skilled Mean -- NO horizon_value column
+        # at all, unlike a present-but-null column.
+        q_combined = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Skilled Mean"],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        assert "horizon_value" not in q_combined.columns
+
+        # Two eligible raw models at the SAME lead so the flag-ON
+        # gap-universe prefilter admits the key.
+        q_universe_raw = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "horizon_value": [1, 1],
+                "forecasted_discharge": [50.0, 60.0],
+            }
+        )
+        # Gap detection reports ONLY Naive Mean missing, at lead 1.
+        q_gaps = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Naive Mean"],
+                "horizon_value": [1],
+            }
+        )
+        q_skill = pd.DataFrame(
+            {
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "sdivsigma": [0.3],
+                "nse": [0.8],
+            }
+        )
+        # ensemble_calculator recomputes BOTH ensembles together, at
+        # the gapped lead (1). The Skilled Mean value (77.0) is
+        # genuinely NEW -- there is no known-lead existing value to
+        # compare it against.
+        q_joint = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["Naive Mean", "Skilled Mean"],
+                "horizon_value": [1, 1],
+                "forecasted_discharge": [55.0, 77.0],
+            }
+        )
+
+        def read_skill_metrics(horizon_type, codes=None):
+            if horizon_type == "quarter":
+                return q_skill
+            return pd.DataFrame()
+
+        mock_data_reader.read_skill_metrics.side_effect = read_skill_metrics
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = q_combined
+        mock_data_reader.read_quarterly_forecasts.return_value = q_universe_raw
+        mock_gap_detector.detect_missing_quarterly_ensembles.return_value = q_gaps
+        mock_ensemble_calc.create_quarterly_ensemble_forecasts.return_value = q_joint
+        mock_file_writer.save_quarterly_forecast_data.return_value = None
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["19999"])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+
+            mock_file_writer.save_quarterly_forecast_data.assert_called_once()
+            saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
+
+            skilled_rows = saved[saved["model_short"] == "Skilled Mean"]
+            # Both the legacy no-lead row and the new lead-1 row survive:
+            # they are distinct dedup keys (differing horizon_value), so
+            # this is not an overwrite -- the new lead's Skilled Mean is
+            # simply ADDED, not suppressed.
+            lead1_rows = skilled_rows[skilled_rows["horizon_value"] == 1]
+            assert len(lead1_rows) == 1, (
+                "The new lead-1 Skilled Mean must be written -- a legacy "
+                "Skilled Mean with no known lead must never be treated as "
+                "already covering it."
+            )
+            assert float(lead1_rows.iloc[0]["forecasted_discharge"]) == 77.0
+            legacy_rows = skilled_rows[skilled_rows["horizon_value"].isna()]
+            assert len(legacy_rows) == 1
+            assert float(legacy_rows.iloc[0]["forecasted_discharge"]) == 100.0
+
+    def test_existing_skilled_mean_at_same_known_lead_still_protected(self, monkeypatch):
+        """Companion test: the ORIGINAL finding-4 protection (exact lead
+
+        match) must still hold under the lead-aware flag when
+        `q_combined` DOES carry the same, known lead as the new row --
+        this fix must not reopen finding 4.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        mock_sl = MagicMock()
+        mock_data_reader = MagicMock()
+        mock_gap_detector = MagicMock()
+        mock_ensemble_calc = MagicMock()
+        mock_file_writer = MagicMock()
+        mock_pt = MagicMock()
+        mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+
+        mock_sl.load_environment.return_value = None
+        mock_data_reader.read_monthly_combined_forecasts.return_value = pd.DataFrame()
+
+        # Existing, CORRECT, already-persisted Skilled Mean at the SAME
+        # known lead (1) as the freshly recomputed one below.
+        q_combined = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Skilled Mean"],
+                "horizon_value": [1],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        q_universe_raw = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "horizon_value": [1, 1],
+                "forecasted_discharge": [50.0, 60.0],
+            }
+        )
+        q_gaps = pd.DataFrame(
+            {
+                "year": [2025],
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["Naive Mean"],
+                "horizon_value": [1],
+            }
+        )
+        q_skill = pd.DataFrame(
+            {
+                "quarter_in_year": [1],
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "sdivsigma": [0.3],
+                "nse": [0.8],
+            }
+        )
+        # Freshly computed Skilled Mean (999.0) DELIBERATELY differs
+        # from the persisted value (100.0) at the SAME lead (1), to make
+        # an accidental overwrite observable.
+        q_joint = pd.DataFrame(
+            {
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "code": ["19999", "19999"],
+                "model_short": ["Naive Mean", "Skilled Mean"],
+                "horizon_value": [1, 1],
+                "forecasted_discharge": [55.0, 999.0],
+            }
+        )
+
+        def read_skill_metrics(horizon_type, codes=None):
+            if horizon_type == "quarter":
+                return q_skill
+            return pd.DataFrame()
+
+        mock_data_reader.read_skill_metrics.side_effect = read_skill_metrics
+        mock_data_reader.read_quarterly_combined_forecasts.return_value = q_combined
+        mock_data_reader.read_quarterly_forecasts.return_value = q_universe_raw
+        mock_gap_detector.detect_missing_quarterly_ensembles.return_value = q_gaps
+        mock_ensemble_calc.create_quarterly_ensemble_forecasts.return_value = q_joint
+        mock_file_writer.save_quarterly_forecast_data.return_value = None
+
+        with patch.dict(sys.modules, {}):
+            module = _import_module(
+                {
+                    "sl": mock_sl,
+                    "data_reader": mock_data_reader,
+                    "gap_detector": mock_gap_detector,
+                    "ensemble_calc": mock_ensemble_calc,
+                    "file_writer": mock_file_writer,
+                    "pt": mock_pt,
+                }
+            )
+            module._read_station_codes = MagicMock(return_value=["19999"])
+
+            with pytest.raises(SystemExit) as exc_info:
+                module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+
+            mock_file_writer.save_quarterly_forecast_data.assert_called_once()
+            saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
+
+            naive_rows = saved[saved["model_short"] == "Naive Mean"]
+            assert len(naive_rows) == 1
+            assert float(naive_rows.iloc[0]["forecasted_discharge"]) == 55.0
+
+            skilled_rows = saved[saved["model_short"] == "Skilled Mean"]
+            assert len(skilled_rows) == 1
+            assert float(skilled_rows.iloc[0]["forecasted_discharge"]) == 100.0, (
+                "The already-persisted Skilled Mean at the SAME known lead "
+                "must survive unchanged, exactly like the flag-OFF case in "
+                "TestQuarterlySkilledMeanNotOverwritten -- this fix only "
+                "changes behavior when q_combined lacks horizon_value "
+                "entirely."
+            )
+
+
 class TestQuarterlyFallThroughAfterMonthlyEarlyExit:
     """PP-065 P1b Finding 5 (out-of-loop review, minor): the six
 

@@ -511,12 +511,56 @@ def postprocessing_maintenance_long_term():
                             # no-op today, but keeps this correct if that
                             # ever changes).
                             if not q_new.empty and (q_new["model_short"] == "Skilled Mean").any():
+                                # PP-065 P1b Finding B fix (fix round 2,
+                                # confirm-fixes review): the key used to
+                                # decide "does an existing Skilled Mean
+                                # already cover this key" must not
+                                # silently collapse to (year, quarter,
+                                # code) -- ignoring lead entirely --
+                                # just because q_combined happens to lack
+                                # a `horizon_value` column (e.g. it holds
+                                # only a legacy Skilled Mean row written
+                                # before this reader/writer contract, or
+                                # before the flag was ever turned on for
+                                # this org). Requiring the column on BOTH
+                                # frames (the round-1 condition) let a
+                                # legacy no-lead row match ANY lead,
+                                # incorrectly suppressing a genuinely new,
+                                # correctly-gapped Skilled Mean for a
+                                # DIFFERENT lead than the legacy row's
+                                # (unknown) one.
+                                #
+                                # Fix: key on `horizon_value` whenever the
+                                # flag is on and q_new (the freshly
+                                # generated candidates) carries it --
+                                # regardless of whether q_combined has the
+                                # column. `_sm_keys` below already treats
+                                # a frame missing a key column as
+                                # contributing no keys at all (its
+                                # `issubset` guard), so when q_combined
+                                # lacks `horizon_value` entirely,
+                                # `existing_sm_keys` comes back empty and
+                                # no row is treated as "already covered"
+                                # -- the safer default (option (a) in the
+                                # review: an existing row with an unknown
+                                # lead is never a match for a specific-
+                                # lead new row, since ambiguous coverage
+                                # should not block a real, detected gap).
+                                # A present-but-individually-null
+                                # `horizon_value` in q_combined already
+                                # behaves this way without any extra
+                                # code: the tuple comparison below never
+                                # matches NaN against a real lead value,
+                                # so it was never part of this defect.
+                                # The original finding-4 exact-match
+                                # protection (a genuinely non-gapped
+                                # Skilled Mean at the SAME known lead)
+                                # is unchanged: when both frames carry a
+                                # real, equal `horizon_value`, the key
+                                # still matches and the row is still
+                                # dropped.
                                 sm_key_cols = ["year", "quarter_in_year", "code"]
-                                if (
-                                    skill_lead_aware_enabled()
-                                    and "horizon_value" in q_new.columns
-                                    and "horizon_value" in q_combined.columns
-                                ):
+                                if skill_lead_aware_enabled() and "horizon_value" in q_new.columns:
                                     sm_key_cols.append("horizon_value")
 
                                 def _sm_keys(frame, _cols=sm_key_cols):

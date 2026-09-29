@@ -1579,3 +1579,69 @@ class TestDropStoredLeadMismatchesNullBackfill:
         result = data_reader._drop_stored_lead_mismatches(direct)
 
         assert result.empty
+
+
+class TestDropStoredLeadMismatchesMissingColumnBackfill:
+    """PP-065 P1b Finding A (confirm-fixes review, fix round 2): fix
+
+    round 1's null-lead backfill (`TestDropStoredLeadMismatchesNullBackfill`
+    above) only covered a `horizon_value` column that is PRESENT but
+    individually null. `_read_long_forecasts_api` drops an all-null
+    column outright, so a batch where EVERY row happens to have a null
+    stored lead arrives here with no `horizon_value` column at all --
+    before this fix, the function's early return skipped the backfill
+    entirely for that case, leaving every row's lead null and excluding
+    it from flag-ON ensemble grouping.
+    """
+
+    def test_missing_horizon_value_column_backfilled_with_derived_lead(self):
+        """`direct` has NO `horizon_value` column at all -- every row
+
+        must still end up with the correct derived lead in the output,
+        not null.
+        """
+        direct = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "date": ["2025-12-25", "2025-12-25"],
+                "valid_from": ["2026-01-01", "2026-01-01"],
+                "valid_to": ["2026-03-31", "2026-03-31"],
+                "q50": [100.0, 110.0],
+            }
+        )
+        assert "horizon_value" not in direct.columns
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert len(result) == 2
+        assert "horizon_value" in result.columns
+        assert set(result["horizon_value"]) == {1}
+        lr_base = result[result["model_short"] == "LR_Base"]
+        lr_sm = result[result["model_short"] == "LR_SM"]
+        assert int(lr_base.iloc[0]["horizon_value"]) == 1
+        assert int(lr_sm.iloc[0]["horizon_value"]) == 1
+
+    def test_missing_horizon_value_column_with_unparseable_date_stays_null(self):
+        """With no `horizon_value` column and no derivable lead (missing
+
+        date), the row must stay null rather than raise or fabricate a
+        lead -- consistent with the present-column case.
+        """
+        direct = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "date": [None],
+                "valid_from": ["2026-01-01"],
+                "valid_to": ["2026-03-31"],
+                "q50": [100.0],
+            }
+        )
+        assert "horizon_value" not in direct.columns
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert len(result) == 1
+        if "horizon_value" in result.columns:
+            assert pd.isna(result.iloc[0]["horizon_value"])
