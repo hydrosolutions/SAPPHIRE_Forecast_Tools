@@ -368,6 +368,55 @@ class TestScenario1DecemberQ1Chain:
             )
             assert pd.isna(sm_row["horizon_value"])
 
+    def test_december_q1_chain_two_lr_models_still_forms_no_em(self, monkeypatch, kghm_config):
+        """Finding 4 (P1d review round 1), part (a): every other fixture
+        in this file has only ONE LR model (either LR_Base alone as the
+        fallback, or one native LR row) -- but the legacy EM gate
+        (inside `_create_aggregated_ensemble_forecasts`) requires 2+ RAW
+        LR models (from `AGGREGATED_EM_RAW_MODELS = {LR_BASE, LR_SM}`)
+        before it even attempts to form EM, so "no EM appears" was true
+        for a trivial reason with those fixtures, not because
+        `_skip_em_for_quarter` was doing anything. This fixture adds a
+        SECOND LR model (LR_SM, alongside LR_Base) as a decision-G
+        monthly-derived fallback contributor, so that if the
+        quarter-EM-skip guard were disabled, EM WOULD otherwise form --
+        then asserts it still doesn't.
+
+        Verified by mutation: monkeypatching `_skip_em_for_quarter` to
+        always return False makes this test fail (an "EM" row,
+        composition "LR_Base, LR_SM", then appears in the result).
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        lr_sm_values = [50.0, 60.0, 70.0]
+        monthly_rows = self._monthly_rows() + _monthly_triplet_rows(
+            self._ISSUE_DATE, self._LEAD, "LR_SM", lr_sm_values
+        )
+        fake = _api_fake(quarter_rows=[], monthly_rows=monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            quarterly_fc = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2025, 12, 25)
+            )
+        # Two DISTINCT raw LR models present -- the shape the legacy EM
+        # gate (2+ raw LR models) needs before it would even attempt EM.
+        assert set(quarterly_fc["model_short"]) == {"LR_Base", "LR_SM", "GBT"}
+
+        skill_stats = pd.concat(
+            [
+                self._skill_stats(),
+                pd.DataFrame(
+                    [(1, CODE, "LR_SM", 0.3, 0.9, 5.0, 0.9, 1.0, 10)],
+                    columns=SKILL_COLS,
+                ),
+            ],
+            ignore_index=True,
+        )
+        result = ensemble_calculator.create_quarterly_ensemble_forecasts(quarterly_fc, skill_stats)
+        assert "EM" not in set(result["model_short"]), (
+            "quarter never forms EM (P1c decision 3), even with 2+ raw "
+            "LR models present -- the exact case the legacy EM gate "
+            "alone would otherwise let through"
+        )
+
 
 # ===========================================================================
 # Scenario 2 -- flag-OFF chain including the writer (P1d bullet 2)
@@ -392,12 +441,20 @@ class TestScenario2FlagOffWriterChain:
       own API mock): [70, 80, 90] -> mean 80.0.
     - GBT (derived): [130, 140, 150] -> mean 140.0.
 
-    The operational merge then adds a PERSISTED, non-native, stale LR_Base
-    row (date=2025-01-01, i.e. day 1 / lead 3 months -- neither kghm's
-    native day 25 nor lead 1) at the SAME (code, year=2025,
-    quarter_in_year=2) key, with a deliberately implausible marker value
-    (999.0) so it is unmistakable if it ever leaked into an ensemble or a
-    written record.
+    The stale, non-native LR_Base row (date=2025-01-01, i.e. day 1 / lead
+    3 months -- neither kghm's native day 25 nor lead 1) at the SAME
+    (code, year=2025, quarter_in_year=2) key, with a deliberately
+    implausible marker value (999.0) so it is unmistakable if it ever
+    leaked into an ensemble or a written record, is fed in at TWO points:
+    (1) via the READER's own mocked API boundary
+    (``_read_long_forecasts_api``, ``horizon_type="quarter"``), proving
+    the reader's OWN native-row filter (``_select_native_quarter_lr_rows``)
+    rejects it before it ever reaches the ensemble step; and (2) via the
+    operational merge's persisted-combined-forecasts mock
+    (``read_quarterly_combined_forecasts``), proving the generic
+    ``keep="last"`` dedup in the merge independently resolves a collision
+    with a stale PERSISTED row (a different code path -- that reader never
+    calls the native-row filter at all).
     """
 
     _ISSUE_DATE = "2025-03-25"
@@ -430,11 +487,44 @@ class TestScenario2FlagOffWriterChain:
         w_gbt = 1.0 / (self._MAE_GBT + eps)
         return (80.0 * w_lr + 140.0 * w_gbt) / (w_lr + w_gbt)
 
+    def _stale_non_native_direct_row(self):
+        """The persisted, non-native, stale LR_Base row (date=2025-01-01,
+        i.e. day 1 / lead 3 months -- neither kghm's native day 25 nor
+        lead 1) at the SAME (code, year=2025, quarter_in_year=2) key as
+        the fresh LR_Base fallback, with a deliberately implausible
+        marker value (999.0). Raw API-shaped, so it can be fed through
+        EITHER mocked API boundary (``_read_long_forecasts_api`` or the
+        combined-forecasts client) unmodified."""
+        return _direct_quarter_row(
+            "2025-04-01",
+            "2025-06-30",
+            "2025-01-01",
+            model="LR_Base",
+            q=self._STALE_LR_VALUE,
+            horizon_value=self._LEAD,
+        )
+
     def test_flag_off_chain_including_writer(self, monkeypatch, kghm_config):
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
 
         # --- Reader ---
-        fake = _api_fake(quarter_rows=[], monthly_rows=self._monthly_rows())
+        # Finding 1 (P1d review round 1): the stale, non-native LR_Base row
+        # is supplied HERE, via the reader's OWN mocked API boundary
+        # (`_read_long_forecasts_api`, `horizon_type="quarter"` -- the
+        # direct-row source `read_latest_quarterly_forecasts` reads under
+        # flag OFF), so the REAL reader has to see it and its OWN
+        # `_select_native_quarter_lr_rows` native-row filter has to reject
+        # it (day 1 != kghm's native day 25) -- NOT a row injected only
+        # after the reader already ran. Verified by mutation: forcing
+        # `_select_native_quarter_lr_rows` to be an identity/no-op makes
+        # this test fail (the 999.0 value would then survive into
+        # `quarterly_fc` and override the clean 80.0 fallback via the
+        # reader's own keep="last" dedup, since both rows share the same
+        # (code, year, quarter_in_year, model_short) key).
+        fake = _api_fake(
+            quarter_rows=[self._stale_non_native_direct_row()],
+            monthly_rows=self._monthly_rows(),
+        )
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
             quarterly_fc = data_reader.read_latest_quarterly_forecasts(
                 [CODE], forecast_date=dt.date(2025, 3, 25)
@@ -442,6 +532,13 @@ class TestScenario2FlagOffWriterChain:
         assert set(quarterly_fc["model_short"]) == {"LR_Base", "GBT"}
         assert set(quarterly_fc["quarter_in_year"].astype(int)) == {2}
         assert set(quarterly_fc["year"].astype(int)) == {2025}
+        # The reader's own native-row filter must have rejected the stale
+        # row: only the clean, monthly-derived fallback value (80.0)
+        # survives for LR_Base.
+        assert self._STALE_LR_VALUE not in set(quarterly_fc["forecasted_discharge"])
+        lr_row_from_reader = quarterly_fc[quarterly_fc["model_short"] == "LR_Base"]
+        assert len(lr_row_from_reader) == 1
+        assert float(lr_row_from_reader.iloc[0]["forecasted_discharge"]) == 80.0
 
         # --- Ensembles (computed from the reader's output ONLY, before
         # the persisted stale row ever enters the picture) ---
@@ -462,16 +559,13 @@ class TestScenario2FlagOffWriterChain:
         # non-native LR row) concatenated with the fresh ensemble output,
         # deduped exactly as postprocessing_operational_long_term.py does
         # it (:220-226). read_quarterly_combined_forecasts is the REAL
-        # function; only the SapphirePostprocessingClient is mocked. ---
-        stale_row = _direct_quarter_row(
-            "2025-04-01",
-            "2025-06-30",
-            "2025-01-01",
-            model="LR_Base",
-            q=self._STALE_LR_VALUE,
-            horizon_value=self._LEAD,
-        )
-        client = _mock_combined_client([stale_row])
+        # function; only the SapphirePostprocessingClient is mocked. This
+        # is a SEPARATE code path from the reader's native-row filter
+        # above (read_quarterly_combined_forecasts never calls
+        # `_select_native_quarter_lr_rows`) -- it proves the merge's own
+        # generic keep="last" dedup independently resolves a collision
+        # with a stale PERSISTED row. ---
+        client = _mock_combined_client([self._stale_non_native_direct_row()])
         with (
             patch.object(data_reader, "SAPPHIRE_API_AVAILABLE", True),
             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
@@ -509,6 +603,24 @@ class TestScenario2FlagOffWriterChain:
         assert float(lr_rows_after.iloc[0]["forecasted_discharge"]) == 80.0
         assert self._STALE_LR_VALUE not in set(quarterly_joint["forecasted_discharge"])
 
+        # Finding 4 (P1d review round 1), part (b): add a PERSISTED EM row
+        # to the writer's own input, so this file's writer-reaching test
+        # exercises the writer's unconditional P1b item-3 EM-skip itself
+        # (not just relying on other test files to cover it) -- built from
+        # `nm_after` so it carries a consistent (code, year,
+        # quarter_in_year, valid_from, valid_to) key, with an implausible
+        # marker value (777.0). Verified by mutation: temporarily
+        # disabling the writer's `model_upper in {...,"EM",...}` skip
+        # branch makes this test fail (777.0 would then appear in
+        # `records`).
+        _EM_MARKER_VALUE = 777.0
+        persisted_em_row = nm_after.iloc[0].copy()
+        persisted_em_row["model_short"] = "EM"
+        persisted_em_row["forecasted_discharge"] = _EM_MARKER_VALUE
+        quarterly_joint_for_writer = pd.concat(
+            [quarterly_joint, pd.DataFrame([persisted_em_row])], ignore_index=True
+        )
+
         # --- Writer: mock only the postprocessing API client ---
         mock_client = MagicMock()
         mock_client.readiness_check.return_value = True
@@ -518,22 +630,38 @@ class TestScenario2FlagOffWriterChain:
             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}),
             patch("src.api_writer._get_postprocessing_client", return_value=mock_client),
         ):
-            result = api_writer._write_quarterly_ensemble_to_api(quarterly_joint)
+            result = api_writer._write_quarterly_ensemble_to_api(quarterly_joint_for_writer)
         assert result is True
 
         records = mock_client.write_long_forecasts.call_args[0][0]
-        # No raw LR row is EVER written for quarter (P1b item 3), even
-        # though one survives in quarterly_joint (the fresh LR_Base row
-        # from the dedup above).
+        # No raw LR row, and no EM row (matched or persisted), is EVER
+        # written for quarter (P1b item 3), even though a fresh LR_Base
+        # row survives in quarterly_joint (the dedup above) and a
+        # persisted EM row was fed into the writer's own input just above.
         assert all(rec["q"] != self._STALE_LR_VALUE for rec in records if rec.get("q") is not None)
+        assert all(rec["q"] != _EM_MARKER_VALUE for rec in records if rec.get("q") is not None)
         assert all(
             rec["model_type"] not in {"LR_Base", "LR_SM", "LR_BASE", "EM", "ENSEMBLE_MEAN"}
             for rec in records
         )
-        # Exactly the derived GBT row + Naive Mean + Skilled Mean survive.
+        # Finding 3 (P1d review round 1): assert the COMPLETE emitted
+        # model set (no more, no fewer) and the actual emitted `q` value
+        # of each ensemble record, not just which models are absent.
+        # Exactly the derived GBT row + Naive Mean + Skilled Mean survive
+        # -- the persisted EM row above is skipped entirely, not merely
+        # relabelled. Verified by mutation: corrupting the Naive/Skilled
+        # Mean values in `quarterly_joint` before this write call (or
+        # dropping those two rows from the writer's input) makes these
+        # assertions fail.
         assert len(records) == 3
+        emitted_model_types = {rec["model_type"] for rec in records}
+        assert emitted_model_types == {"GBT", "Naive Mean", "Skilled Mean"}
         gbt_record = next(rec for rec in records if rec["model_type"] == "GBT")
+        nm_record = next(rec for rec in records if rec["model_type"] == "Naive Mean")
+        sm_record = next(rec for rec in records if rec["model_type"] == "Skilled Mean")
         assert gbt_record["q"] == 140.0
+        assert nm_record["q"] == pytest.approx(self._expected_naive_mean())
+        assert sm_record["q"] == pytest.approx(self._expected_skilled_mean(), rel=1e-9)
 
 
 # ===========================================================================
@@ -607,6 +735,33 @@ class TestScenario3TjhmDecisionF:
             horizon_value=self._LEAD,
         )
 
+    def _stale_native_direct_row_mismatched_spelling(self):
+        """Same pre-decision-F native row as `_stale_native_direct_row`,
+        but spelled "LR_BASE" (canonically equivalent to the monthly
+        triplet's "LR_Base" -- see `canonical_model_short`, which
+        upper-cases before comparing) instead of matching it exactly.
+
+        Finding 2 (P1d review round 1): with matched spellings, the
+        reader's generic ``keep="last"`` string-keyed dedup alone happens
+        to produce "native row wins" even if
+        `_suppress_lr_fallback_covered_by_direct` were a no-op, because
+        both rows share one literal `model_short` string. A mismatched
+        (but canonically equivalent) spelling is the only shape where
+        ONLY the dedicated canonical-comparison suppression function can
+        correctly prevent the fallback from surviving alongside the
+        native row -- this is a legitimate real-world shape per this
+        repo's own model-name canonicalization convention, not an
+        artificial edge case.
+        """
+        return _direct_quarter_row(
+            "2026-10-01",
+            "2026-12-31",
+            "2026-10-01",
+            model="LR_BASE",
+            q=self._STALE_NATIVE_LR_VALUE,
+            horizon_value=self._LEAD,
+        )
+
     def _skill_stats(self):
         rows = [
             (4, CODE, "LR_Base", 0.3, 0.9, 5.0, 0.9, self._MAE, 10),
@@ -667,6 +822,41 @@ class TestScenario3TjhmDecisionF:
         assert float(nm["forecasted_discharge"]) == pytest.approx(expected)
         assert float(sm["forecasted_discharge"]) == pytest.approx(expected)
 
+    def test_before_decision_f_mismatched_lr_spelling_still_suppresses_fallback(
+        self, monkeypatch, tjhm_config
+    ):
+        """Finding 2 (P1d review round 1): isolates
+        `_suppress_lr_fallback_covered_by_direct`'s OWN contribution from
+        the reader's generic keep="last" dedup, by spelling the native
+        direct row "LR_BASE" while the monthly triplet feeding the
+        decision-G fallback stays "LR_Base" (see
+        `_stale_native_direct_row_mismatched_spelling`).
+
+        Only the dedicated canonical-comparison suppression function can
+        recognize these two differently-spelled rows as the SAME (code,
+        model, year, quarter) key and drop the fallback; the generic
+        dedup keys on the raw `model_short` string and would treat them
+        as two independent rows. Verified by mutation: forcing
+        `_suppress_lr_fallback_covered_by_direct` to be an identity/no-op
+        makes this test fail (both the "LR_BASE" native row AND the
+        "LR_Base" fallback row then survive into `q4_2026`, so
+        `len(lr_rows) == 1` fails).
+        """
+        q4_2026, _joint = self._run_chain(
+            monkeypatch,
+            tjhm_config,
+            quarter_rows=[self._stale_native_direct_row_mismatched_spelling()],
+        )
+
+        lr_rows = q4_2026[q4_2026["model_short"].str.upper() == "LR_BASE"]
+        assert len(lr_rows) == 1
+        assert lr_rows.iloc[0]["model_short"] == "LR_BASE"
+        assert float(lr_rows.iloc[0]["forecasted_discharge"]) == self._STALE_NATIVE_LR_VALUE
+        # The genuine monthly-derived fallback (210.0, spelled "LR_Base")
+        # must have been suppressed, not merely out-voted by a dedup key
+        # collision that never applied to these mismatched spellings.
+        assert 210.0 not in set(q4_2026["forecasted_discharge"])
+
     def test_after_decision_f_fallback_lr_feeds_ensembles_and_is_never_written(
         self, monkeypatch, tjhm_config
     ):
@@ -713,6 +903,20 @@ class TestScenario3TjhmDecisionF:
             rec["model_type"] not in {"LR_Base", "LR_SM", "LR_BASE", "EM", "ENSEMBLE_MEAN"}
             for rec in records
         )
+        # Finding 3 (P1d review round 1): assert the COMPLETE emitted
+        # model set -- the fallback-derived LR row and any EM are ABSENT,
+        # and (this file's own "end-to-end" claim requires proving the
+        # ensemble rows are not just non-LR but actually PRESENT with the
+        # correct value) GBT/Naive Mean/Skilled Mean are all present with
+        # their hand-computed values. Verified by mutation: dropping the
+        # Naive/Skilled Mean rows from `joint` before this write call, or
+        # corrupting their values, makes these assertions fail (the prior
+        # membership-only checks above did not).
         written_models = {rec["model_type"] for rec in records}
-        assert "LR_Base" not in written_models
-        assert "GBT" in written_models
+        assert written_models == {"GBT", "Naive Mean", "Skilled Mean"}
+        gbt_record = next(rec for rec in records if rec["model_type"] == "GBT")
+        nm_record = next(rec for rec in records if rec["model_type"] == "Naive Mean")
+        sm_record = next(rec for rec in records if rec["model_type"] == "Skilled Mean")
+        assert gbt_record["q"] == 310.0
+        assert nm_record["q"] == pytest.approx(expected)
+        assert sm_record["q"] == pytest.approx(expected)
