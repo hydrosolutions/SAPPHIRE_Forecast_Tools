@@ -227,7 +227,9 @@ class TestQuarterlyEnsembleWriter:
             result = _write_quarterly_ensemble_to_api(data)
         assert result is True
         records = self.mock_client.write_long_forecasts.call_args[0][0]
-        assert len(records) == 2
+        # PP-065 item 3: quarter no longer writes EM rows, so only the
+        # Naive Mean row survives.
+        assert len(records) == 1
         assert records[0]["horizon_type"] == "quarter"
 
     def test_valid_from_valid_to(self):
@@ -236,7 +238,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["S1"],
                 "year": [2025],
                 "quarter_in_year": [2],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "forecasted_discharge": [100.0],
             }
         )
@@ -258,7 +260,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["PP4_Q_SENTINEL", "PP4_Q_SENTINEL"],
                 "year": [2025, 2025],
                 "quarter_in_year": [1, 2],
-                "model_short": ["EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean"],
                 "forecasted_discharge": [100.0, 110.0],
             }
         )
@@ -288,12 +290,15 @@ class TestQuarterlyEnsembleWriter:
         written using ITS OWN values, not quarter_horizon_value()/valid_from.
         """
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        # PP-065 item 3: quarter no longer writes raw LR_Base/LR_SM rows, so
+        # this test uses a model the writer still keeps (its purpose is the
+        # flag-ON own-horizon_value/date behaviour, not the model identity).
         data = pd.DataFrame(
             {
                 "code": ["19999"],
                 "year": [2025],
                 "quarter_in_year": [1],
-                "model_short": ["LR_Base"],
+                "model_short": ["Naive Mean"],
                 "forecasted_discharge": [100.0],
                 "horizon_value": [3],
                 "date": ["2024-10-25"],
@@ -320,7 +325,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["19999"],
                 "year": [2025],
                 "quarter_in_year": [2],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "forecasted_discharge": [100.0],
             }
         )
@@ -349,7 +354,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["19999", "19999"],
                 "year": [2024, 2024],
                 "month": [1, 2],
-                "model_short": ["EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean"],
                 "horizon_value": [1, 1],
                 "q05": [10.0, 20.0],
                 "q10": [15.0, 25.0],
