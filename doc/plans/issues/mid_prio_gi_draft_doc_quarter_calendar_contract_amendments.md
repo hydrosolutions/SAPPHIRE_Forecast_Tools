@@ -96,7 +96,7 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 | 20 | `doc/prod/longforecast_historical_data_decision_request.md:55, 71` | "`QUARTER hv0` … is the correct home for the Tajik quarterly backfill"; "Holding … the Tajik `QUARTER hv0` backfill" | Add a note: the backfill may write only calendar windows (Jan/Apr/Jul/Oct issues), and only after LTF-014 P2 / MIG-008 (b) |
 | 21 | same, `:46` and DECISION `:84-86` | "current 2-model config … will never regenerate these rows"; Dataset B: "delete the deprecated models" | Add a note that D8 stands for the **legacy population only**. PP-065 writes quarter rows for the seven models again, so a predicate on `model_type` alone now also matches freshly derived rows. Under flag OFF, kghm derived Q1 rows share the Dataset B hv1-January natural key |
 | 22 | `doc/plans/archive/longforecast_hv_convention_plan.md` (top of file) | P3 predicates, still cited as the ones to use by `doc/prod/long_term_deploy_runbook.md:400, 435` and the decision request `:95` | Top-of-file banner: "P3 predicates are superseded for QUARTER (DOC-009, 2026-09-26). The deprecated-model delete matches PP-065 derived rows, and the calendar-hv1 signature matches regenerated rows. Re-derive before any delete (D8)." |
-| 23 | `doc/plans/issues/high_prio_gi_draft_pp_quarter_skill_lead_mismatch.md:139-144, 150-154, 160-161` + its PP-056 index row | open question "one of the two populations is wrong"; acceptance "skill rows land at 1..4 and not at 0"; "Do not 'fix' this by dropping the `hv=0` rows" | Add a note: quarter hv = config lead (convention RESOLUTION). PP-065 supersedes PP-056 for the seven models. The kghm hv0 quarter skill rows of those models are **meant** to be replaced by hv1 rows and tombstoned by the recalc (PP-065 § P2). Suffix on the index row: "; superseded for the seven models by PP-065 (DOC-009)" |
+| 23 | `doc/plans/issues/high_prio_gi_draft_pp_quarter_skill_lead_mismatch.md:139-144, 150-154, 160-161` + its PP-056 index row | open question "one of the two populations is wrong"; acceptance "skill rows land at 1..4 and not at 0"; "Do not 'fix' this by dropping the `hv=0` rows" | Add a note: quarter hv = config lead (convention RESOLUTION). PP-065 supersedes PP-056 for the seven models. The kghm hv0 quarter skill rows of those models are **meant** to be replaced by hv1 rows and tombstoned by the recalc (PP-065 § P2). Suffix on the index row: "; superseded for the seven models by PP-065 (DOC-009)". **Applied 2026-09-28 (plan sync) — the header note only**, verified present at `high_prio_gi_draft_pp_quarter_skill_lead_mismatch.md:1-16`. **Not yet done:** the index-row suffix — `module_issues.md:311`'s PP-056 row is still unsuffixed. |
 | 24 | PP-059 `doc/plans/issues/mid_prio_gi_draft_pp_remove_monthly_em.md:23`, `:140-141`, `:159-160`; PP-058 `doc/plans/issues/low_prio_gi_draft_pp_vestigial_long_term_em.md:115-117`; their PP-058 and PP-059 index rows | PP-059 KEEP row "EM \| quarter / season \| fixed `LR_Base` + `LR_SM` aggregate"; acceptance "Quarter and season EM unchanged"; "Do not touch quarter/season EM"; PP-058 "Quarter/season EM is a different thing again"; both index rows "quarter/season EM … untouched / separate" | Add a note next to each passage: "Superseded for QUARTER by PP-065 (owner, 2026-09-26): quarter has no EM; quarter ensembles are Naive Mean + Skilled Mean. Still holds for SEASON." Suffix on each index row: "; quarter EM removed by PP-065 (DOC-009)" |
 
 ## P1b — contract amendments (need D4 + owner sign-off)
@@ -122,6 +122,30 @@ decisions, or they would make an operator run a harmful cleanup or a gate that f
 ## P2 — readmes and data-flow doc (rewrites allowed)
 
 ### P2a — released with the PP-065 deploy (rows 10 and 12)
+
+**Route (orchestrator decision, 2026-09-28).** Rows 10 and 12 describe **post-P1b** behaviour (the
+seven-model derivation, the LR fallback, the writer/ensemble changes). Since that behaviour does not exist
+on trunk until PP-065 P1b–P1d merge, this P2a documentation PR merges into the **integration branch**
+`integ_quarter_p1b_p2` alongside PP-065 P1b–P1d (owner decision R4-integration-branch), not directly into
+`maxat_sapphire_2` — it reaches trunk only when that branch merges (`deploy.pp`), so the docs and the code
+they describe land together. See the overview's `DOC-009.P2a` graph node for the matching dependency-graph
+statement.
+
+**Merged-vs-deployed note (added 2026-09-28; tied to the overview's owner decisions
+R4-merge-is-deploy/R4-integration-branch/R4-recalc-runs, 2026-09-28 — numbered/labelled, not lettered,
+to avoid colliding with the 2026-09-26 decisions E/F/G above).**
+Row 12's content is not entirely future work: its "quarterly observations need 3 of 3 months" sentence
+(`QUARTER_OBS_MIN_MONTHS = 3`) is **already live on trunk since #530** (PP-065 P1a's own "Rollout note
+(N7)": the 3-of-3 rule takes effect at merge, not gated behind P2's writer changes) — and, per owner
+decision R4-merge-is-deploy (merge = deploy), it is **presumed already live on servers today**, via
+auto-pull (verify per org). N7's original ban on recalcing before P2's export is lifted (owner decision
+R4-recalc-runs) — the automatic
+bimonthly quarterly recalc is allowed to apply this rule now. "Released with the PP-065 deploy" therefore
+still describes correctly when the **rest** of row 12 (the seven-model derivation, the LR fallback, the
+writer/ensemble changes — all still P1b–P1d) ships: that work is held on the integration branch
+`integ_quarter_p1b_p2` (owner decision R4-integration-branch) and reaches *readers of a deployed system* only when that branch
+merges to trunk in the P2 window; the 3-of-3 sentence specifically is ahead of that and should be called
+out as already-live when this row is edited.
 
 | # | File:line | Depends on | Edit |
 |---|---|---|---|

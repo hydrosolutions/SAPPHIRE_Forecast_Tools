@@ -67,8 +67,8 @@ the same latency class as Problem 1, not a live incident.
 
 ## Proposed fix (Problem 1)
 
-Once PP-064 Chunk A has merged, its `local_calendar_date` helper
-(`apps/postprocessing_forecasts/src/aggregation.py:100-199`, added by that branch — not in
+**PP-064 Chunk A has merged (#527); this condition is now met.** Its `local_calendar_date` helper
+(`apps/postprocessing_forecasts/src/aggregation.py:102-201`, added by that branch — not in
 `data_reader.py`) is safe to reuse for the day/month/year arithmetic here (`derived_lead` at
 `:346-348`, `issue_day` at `:349`) — those only ever read `.dt.year`/`.dt.month`/`.dt.day`, which are
 unaffected by dropping time-of-day. `local_calendar_date` is a per-value `pd.Timestamp` parse
@@ -120,15 +120,20 @@ leaves that match alone; this is the deliberate exception, and only the match, n
 Problem 1's "do not change" list covers.
 
 Clamp the issue day to the issue month's own length before matching, mirroring the producer
-(`lt_utils.py:170-172`) and PP-064/FD-029's own native-row predicates: for each row, compute
-`clamped_issue_day = min(s.issue_day, days_in_month(derived issue year, derived issue month))` per
-schedule `s`, and match against `(lead, day) in {(s.lead_time, min(s.issue_day, days_in_that_month))
-for s in schedules.values()}` — the clamp target depends on the *row's own* derived issue year/month
-(from `derived_lead`), not a fixed month, since the same configured `issue_day` clamps differently in a
-28-day February versus a 30-day June. Do not change the function's signature, its selection grain, the
-derived-lead computation, or the tie-break `select_operational_issuances` uses elsewhere (Problem 1's
-fix) — clamp only the day value the match compares against. Keep the exact-match semantics for every
-issue day that never needs clamping (the overwhelming majority — any day ≤ 28).
+(`lt_utils.py:170-172`) and PP-064/FD-029/PP-065's own native-row predicates. **Reuse PP-065's own
+vectorized clamp helper — do not add a new one.** PP-065 P1a already built and unit-tested
+`clamp_issue_days(dates, issue_day)` (`apps/postprocessing_forecasts/src/aggregation.py:646-672`,
+`Series.dt.days_in_month`-based; PP-065 P1b's own native-row rule reuses this same helper for its own
+per-row clamp, not the scalar `clamp_issue_day`). Call `clamp_issue_days(issue_dates, s.issue_day)`
+**once per schedule `s`**, on the row's own **derived** issue date (from `derived_lead`), and match
+against `(lead, day) in {(s.lead_time, clamped_day) for s in schedules.values()}` — the clamp target
+depends on the *row's own* derived issue year/month, not a fixed month, since the same configured
+`issue_day` clamps differently in a 28-day February versus a 30-day June. Do not change the function's
+signature, its selection grain, the derived-lead computation, or the separate full-timestamp tie-break
+`select_operational_issuances` uses elsewhere (Problem 1's fix, which keeps a distinct sort/tie-break
+key from whatever day/month/year arithmetic reads the truncated date) — clamp only the day value the
+match compares against. Keep the exact-match semantics for every issue day that never needs clamping
+(the overwhelming majority — any day ≤ 28).
 
 ## Tests
 

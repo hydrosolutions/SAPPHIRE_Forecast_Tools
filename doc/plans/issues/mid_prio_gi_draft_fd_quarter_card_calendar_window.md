@@ -1,9 +1,21 @@
 # FD-029: Quarterly card shows the latest calendar quarter, fetched with a year-safe window
 
-**Status**: Draft (2026-09-26, rev 6 after the fourth review round)
+**Status**: P1 **merged to trunk (#528, 2026-09-27), presumed already live on both servers** via the
+dashboard's own daily frontend auto-pull (owner decision R4-merge-is-deploy, 2026-09-28;
+`bin/daily_update_sapphire_frontend.sh`, run from the 19:00 UTC cron entry — verify per org, image
+creation date). This means FD-029 is already
+hiding every quarter `EM` row and every non-native LR row on the dashboard, while PP-065 P1b (which stops
+writing fresh `EM` rows and starts writing the replacement derived/ensemble rows) is still held on the
+integration branch `integ_quarter_p1b_p2` (owner decision R4-integration-branch) — so some quarters show a
+**blank card right now**, not only once a future joint deploy happens. **The population is narrower than
+"EM plus a non-native LR row"**: pre-P1b, EM's and Naive Mean's formation gates are identical (both need
+`LR_Base` and `LR_SM` present), so a fresh EM row always has a paired, visible Naive Mean row today — see
+the overview's "User-visible consequence" paragraph for the precise, corrected population.
 **Module**: `apps/forecast_dashboard`
-**Priority**: Medium. **Deploy before 2026-12-25**, when the first kghm calendar Q1 is issued: on Dec 25–31
-its flag-OFF derived and ensemble rows, dated 2027-01-01, fall outside the fetch window (Problem 1).
+**Priority**: Medium. The first kghm calendar Q1 is issued around 2026-12-25; by then PP-065 P1b (still
+held on the integration branch) must have merged to trunk — that merge is the postprocessing deploy
+(`deploy.pp`) — so the derived and ensemble rows it writes are dated correctly and fetched within this
+card's window (Problem 1). See the overview's dependency graph.
 **Labels**: `forecast_dashboard`, `long-term`, `quarter`
 **Overview**: [`../quarter_calendar_product_plan.md`](../quarter_calendar_product_plan.md). The dependency
 graph lives there only. Overview decision D5 (caption issue date) is **resolved here** by the
@@ -211,9 +223,20 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      the `"ENSEMBLE_MEAN": "EM"` entry (line 50), which is a separate mapping used only by the
      skill-metrics write path, not the quarter forecast write path. This plan's dedup above already drops
      every quarter EM row it reads, consistent with the owner decision of no quarterly EM, but PP-065 P1b
-     is what stops the write. Until P1b ships, a quarter whose only rows are a fresh EM row plus a
-     non-native LR row shows **nothing** on the card: the EM row is dropped here and the LR row is dropped
-     by the native-only rule below.
+     is what stops the write. **Corrected 2026-09-28: "EM plus a non-native LR row, nothing else" is not
+     the population this leaves blank.** EM's per-key gate is
+     `em_avg[em_avg["composition"].apply(is_multi_model_composition)]` (`ensemble_calculator.py:767`) —
+     the same `is_multi_model_composition` predicate as Naive Mean's gate (`:915`), not the coarser
+     `n_models > 1` whole-frame precondition (`:744`, which only counts distinct qualifying models across
+     the entire frame before the per-key groupby runs). Pre-P1b these are, in effect, the identical
+     condition —
+     both need `LR_Base` and `LR_SM` present with a non-null forecast at the key, the only two non-baseline
+     models the pipeline reads for quarter today — so a fresh EM row always has a paired, visible Naive
+     Mean row from the same run, and this dedup does not drop Naive Mean. Until P1b ships, the card shows
+     **nothing** only at a key where at most one of `LR_Base`/`LR_SM` has a non-null forecast (so neither
+     EM nor Naive Mean forms) and the one row that exists, if any, is non-native (dropped by the
+     native-only rule below) — see the overview's "User-visible consequence" paragraph for the precise
+     population.
    - A row is **native** iff `date.day == issue_day` **, clamped to the issue month's length** (item 4
      already computes `quarter_issue_date` with this clamp — `clamped_issue_day =
      np.minimum(int(schedule.issue_day), days_in_issue_month)`; mirrors the producer,
@@ -238,9 +261,12 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
      `record_date = date` under that condition regardless of `model_short` (`:1264-1269` on PP-064's
      branch `fix_pp_quarter_calendar_window`, which shifts this from trunk's `:1199-1204`). This is not
      LR-only: postprocessing's own quarterly ensemble aggregation (`ensemble_calculator.py`) carries the
-     `date` column through with `agg("first")` for EM (`_create_aggregated_ensemble_forecasts:758`),
-     Skilled Mean (`_add_skilled_mean_aggregated_ens:865`) and Naive Mean
-     (`_add_naive_mean_aggregated_ens:906`) — so an ensemble row built (today) from a native LR member
+     `date` column through as a per-column `"first"` aggregation spec — not a bare `agg("first")` call,
+     which does not exist: a dict entry (`em_agg[dcol] = "first"`) for EM
+     (`_create_aggregated_ensemble_forecasts:758`), a named-aggregation tuple
+     (`sm_agg[dcol] = (dcol, "first")`) for Skilled Mean (`_add_skilled_mean_aggregated_ens:865`) and a
+     dict entry (`naive_agg[dcol] = "first"`) for Naive Mean (`_add_naive_mean_aggregated_ens:906`) — so
+     an ensemble row built (today) from a native LR member
      inherits that member's native `date`, gets stamped as `record_date` the same way, and is then
      classified native by the `is_native` predicate here. Test 15 already fixes this in place (flag-ON
      fresh `Naive Mean`/`Skilled Mean` rows dated at the issue date, i.e. native-shaped) — this bullet
@@ -388,7 +414,7 @@ changes are limited to the additive keyword arguments named in this plan. Keep:
    - Only in degraded mode (item 3) show the period and "issue date not available". A row's `date` is never
      shown as an issue date.
 
-**Behaviour after — bulletin input (accepted in the interim, overview decision E).** The three bulletin
+**Behaviour after — bulletin input (accepted in the interim, overview decision E, 2026-09-26).** The three bulletin
 blocks call the same function with `head(1)` on the latest `date`. After P1:
 - rolling-window, non-native LR, quarter `EM` and not-yet-eligible rows are no longer returned;
 - rows dated 2027-01-01 appear on Dec 25–31;
@@ -525,11 +551,21 @@ new `EM` row.
   `skipif` (`TEST_PENTAD`/`TEST_DECAD`/`TEST_LOCAL`).
 - `git diff --stat` is limited to the listed files.
 
-**Deploy.** Precondition: PP-064 Chunk C step 0's per-org `quarter.json`/`issue_day` read (see item 3's
-accepted limitation above) — confirm both orgs' schedule config resolves before deploying, so this card
-does not silently run in degraded mode. Rebuild the dashboard image, redeploy it and restart the dashboard
-container on kghm and tjhm **before 2026-12-25**. To check: the card exists only on the month horizon, for
-reservoir stations.
+**Deploy.** Merged (#528) and **presumed already live on both servers** via the dashboard's own daily
+frontend auto-pull (owner decision R4-merge-is-deploy; verify per org, PP-064 Chunk C step 0). **PP-064 A
+is presumed live independently too, but via a different mechanism**: it is a postprocessing (backend)
+change, so it reaches servers via Luigi's own backend auto-pull whenever the Docker Hub digest differs
+(`apps/pipeline/pipeline_docker.py:296-304`), not via the dashboard's frontend pull this card's own deploy
+uses. Verify each per org separately: the postprocessing image for PP-064 A, the dashboard image for
+FD-029 (PP-064 Chunk C step 0 records both). PP-065 P1b–P1d are still held on the integration branch (owner decision R4-integration-branch) — this
+card is already reading calendar-window PP-064-shaped rows, but the seven derived models and the Naive
+Mean / Skilled Mean rows PP-065 P1b writes are not there yet, and neither are P1b's fixes for degraded-mode
+schedule handling. Precondition for the in-window merge of `integ_quarter_p1b_p2` into trunk (the
+writer-paused window / `deploy.pp` — P1b itself merges into the integration branch earlier, as its own PR,
+not directly into trunk at this point): PP-064 Chunk
+C step 0's per-org `quarter.json`/`issue_day` read (see item 3's accepted limitation above) — confirm both
+orgs' schedule config resolves, so this card does not silently run in degraded mode once the derived rows
+start arriving. To check: the card exists only on the month horizon, for reservoir stations.
 
 ## Out of scope
 

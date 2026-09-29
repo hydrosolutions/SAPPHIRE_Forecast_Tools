@@ -104,9 +104,42 @@ Three layers can each carry a stale `horizon_type` definition; the live `422` pr
 
 ## Acceptance criteria
 
-- [ ] Root cause confirmed (deployed image SHA + live `horizontype` enum labels documented).
-- [ ] Quarterly hydrograph records (`horizon_type="quarter"`) are accepted by the target deployment's API and persisted.
-- [ ] Maintenance `preprocessing_runoff` run completes without the `422` abort.
-- [ ] `sapphire-api-client` write-path Literals are consistent for `quarter` (or a decision recorded if intentionally divergent).
-- [ ] Regression test added and passing under `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff`.
-- [ ] Error-handling policy for partial long-horizon writes decided and implemented.
+**Annotated 2026-09-28** (the Status line above already says "resolved 2026-06-12", but these boxes
+were never ticked; verified against trunk before annotating):
+
+- [x] Root cause confirmed. Not by deployed-image SHA (that diagnosis path was superseded) but by the
+  "Resolution update" section above: a stale `uvicorn` worker without `--reload`, not a stale image or
+  unapplied migration — confirmed directly, `docker restart sapphire-preprocessing-api` cleared it.
+- [ ] Quarterly hydrograph records (`horizon_type="quarter"`) are accepted by the target deployment's API
+  and persisted. Confirmed **locally** (2026-06-12, bind-mount restart) and the apps-side writer is merged
+  to trunk (PR #358, `df8b424`/`8a27768`; see PR-QHN-001). **Still open**: live confirmation on the actual
+  deployment servers, which pull `mabesa/sapphire-preprocessing:latest` and need the image-owner
+  rebuild+push sequence in `doc/prod/remediate_quarter_horizon_type_422.md` — the local bind-mount
+  diagnosis does not by itself prove server state (as the doc already says above). Owner B
+  (`sapphire-api-client`) is no longer a blocker for this (see next box), so nothing else is outstanding
+  but the server-side confirmation itself.
+- [ ] Maintenance `preprocessing_runoff` run completes without the `422` abort. Same status as the box
+  above: confirmed locally, server confirmation still pending.
+- [x] `sapphire-api-client` write-path Literals are consistent for `quarter` (verified 2026-09-28,
+  INFRA-019 resolved, PR #373). `HorizonTypeLiteral`/`VALID_HORIZONS` (`sapphire_api_client/validators.py:14-19`)
+  now include `"quarter"`. `preprocessing.py` (`read_hydrograph`, `:181`) and `short_term.py` (`:72, 189`)
+  validate directly against `VALID_HORIZONS`; the postprocessing read path validates in
+  `postprocessing_base.py` (`:65`) against `VALID_SKILL_METRIC_HORIZONS`
+  (`VALID_HORIZONS | VALID_LONG_FORECAST_HORIZONS`, a superset that still includes `"quarter"`) —
+  `postprocessing.py` itself imports `HorizonTypeLiteral` for type hints only and validates nothing.
+  Every one of these sets now derives from the one shared `HorizonTypeLiteral`, so the
+  `postprocessing_base.py` vs. `postprocessing.py`/`short_term.py` inconsistency this issue's root-cause
+  analysis originally found is gone, even though the validating sets themselves still differ. Every
+  `apps/*/pyproject.toml` is re-pinned to `4fd543e852f1eb0c834d8ab649a849a0a56d4e9b` (verified: all 8 apps
+  consistent).
+- [x] Regression test added and passing under `SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff`.
+  `apps/preprocessing_runoff/test/test_sync_long_horizon_hydrograph.py` covers `build_quarterly_records`'
+  `horizon_type == "quarter"` contract and the write orchestration (e.g.
+  `test_write_long_horizon_hydrograph_writes_quarterly_records`,
+  `test_orchestrator_continues_after_quarterly_api_write_failure`). **Caveat**: these tests mock the API
+  client (`MagicMock`), so they do not themselves exercise the deployed Postgres/FastAPI schema — that
+  end-to-end round-trip is the same open item as the two unchecked boxes above.
+- [x] Error-handling policy for partial long-horizon writes decided and implemented. Degrade gracefully on
+  a per-station API read/write failure rather than aborting the whole run — merged to trunk (PR #372,
+  commit `8ef2b0b5`, branch `fix_runoff_long_horizon_degrade_gracefully`); regression-tested by
+  `test_orchestrator_continues_after_quarterly_api_write_failure` above.

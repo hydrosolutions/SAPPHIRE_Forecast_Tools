@@ -8,11 +8,36 @@ the postprocessing *service* (sapphire/services) needs no change
 
 > **Scope expansion (2026-06-22):** an audit found the `apps/postprocessing_forecasts`
 > quarterly/seasonal **ensemble** pipeline writes `long_forecasts` with `horizon_value = quarter_in_year`
-> (1-4) for quarter and hardcoded `1` for season (`api_writer.py:1043-1067`), contradicting the
-> config-lead convention. This is the live source of the `QUARTER hv1-4` / `SEASON hv1` rows. Decision:
-> **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is a hard
-> prerequisite (phase P-PIPE) for the data cleanup, which would otherwise be regenerated. P-PIPE gets
-> its own planner+reviewer pass.
+> (1-4) for quarter and hardcoded `1` for season (`api_writer.py:1043-1067`, at the time of this audit),
+> contradicting the config-lead convention. This **was** the source of the `QUARTER hv1-4` / `SEASON hv1`
+> rows -- P-PIPE (below) has since fixed the writer, so existing `QUARTER hv1-4` rows in the DB are
+> legacy, not currently being added to. **Qualify "legacy":** under flag OFF the writer emits
+> `hv = quarter_horizon_value()` (the configured lead); under flag ON it passes each row's own
+> `horizon_value` through (`api_writer.py:1173-1174`), and the flag-ON reader can legitimately emit
+> several leads for the same quarter (`tests/test_quarterly_data_reader.py`
+> `test_monthly_aggregated_two_leads_survive`) -- **this evidence holds only for pre-P1b trunk.** PP-065
+> P1b (`high_prio_gi_draft_pp_quarter_derived_models.md`, owner decision R4-native-lr-precedence) admits
+> only **one native lead per (code, year, quarter, model) key**, and rewrites this same test accordingly
+> (PP-065's "Existing tests expected to change" list). Once P1b lands, "several leads for the same quarter"
+> no longer describes the reader's behaviour; re-check this claim against P1b's own multi-lead handling
+> before relying on it. So "legacy" means the pre-P-PIPE quarter-number rows
+> specifically -- it does **not** mean every row with `hv != config-lead` is legacy; a flag-ON multi-lead
+> row can have `hv != config-lead` and still be current. Decision: **cover the ensemble pipeline (option a)** -- fix it to emit the config-lead hv. This is
+> a hard prerequisite (phase P-PIPE) for the data cleanup, which would otherwise be regenerated. P-PIPE
+> gets its own planner+reviewer pass.
+>
+> **P-PIPE has landed (verified 2026-09-28).** **Flag OFF**, the writer now emits `horizon_value` = the
+> configured lead **for quarter**: `apps/postprocessing_forecasts/src/api_writer.py:1176`
+> (`horizon_value = quarter_horizon_value()`). **Flag ON**, it instead passes each row's own per-lead
+> `horizon_value` through when present (`:1173-1174`, `horizon_value = int(row["horizon_value"])`),
+> falling back to the configured lead only when the row has none (`:1176`) -- consistent with the
+> flag-ON/flag-OFF distinction already drawn above (~:14-20). **Season is different**: `:1192`
+> (`horizon_value = int(row[period_col])`) passes through the stored row's own `horizon_value`, with a
+> fallback of `1` only if that column is absent (`src/data_reader.py:3977-3981` --
+> `df["season_in_year"] = lead.astype(...)` when `"horizon_value"` is present, else `df["season_in_year"]
+> = 1`), rather than computing it from config the way the quarter branch does. The `:1043-1067` citation
+> above is historical -- the file has grown since this audit and that range no longer holds the
+> quarter/season branch.
 **Depends on**: MIG-007 (importer accepts `quarter`/`season`)
 **See also**: `doc/prod/longforecast_quarter_season_hv_convention.md` (question + service-owner answer);
 `doc/plans/archive/longforecast_hv_convention_plan.md` (phased plan, reviewed -> NO-GO on destructive
@@ -23,7 +48,9 @@ decision needed before any `long_forecasts` mutation)
 
 `horizon_value = operational_month_lead_time` from the config. The existing config-per-bucket
 mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-quarter mapping**.
-"Quarter" is a single quarterly product whose hv is just the config lead.
+"Quarter" is a single quarterly product whose hv is just the config lead. (This is about `horizon_value`
+only; the target-window contract, since owner-superseded to calendar quarters, is a separate question --
+pending DOC-009 row 3, P1b; needs D4 + owner sign-off.)
 
 - **Month**: hv = month lead. `month_0->0, month_1->1, month_2->2, month_3->3`. (Tajik filenames are
   off by one -- `month_1.json` carries lead 0 -- but the `operational_month_lead_time` value inside
@@ -37,7 +64,8 @@ mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-
 
 - The "quarter is 7 rolling windows / should map to calendar quarters Q1..Q3" reading was **wrong**.
   Quarter is one product; the 7 monthly issue windows in the hindcast CSV all share the deployment's
-  single quarter hv, distinguished by `date`/`valid_from`/`valid_to` in the natural key.
+  single quarter hv, distinguished by `date`/`valid_from`/`valid_to` in the natural key. Pending DOC-009
+  row 3 (P1b; needs D4 + owner sign-off).
 - "Tajik `QUARTER hv0` is an orphan bucket" was **wrong**: for Tajik, hv0 is the **correct** quarter
   bucket. The held Tajik quarter write should be reconsidered (likely proceed).
 - The Tajik `seasonal_april -> SEASON hv0` write already applied was **correct**.
@@ -67,6 +95,14 @@ mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-
 3. **Held Tajik quarter write.** Re-evaluate: under the convention Tajik quarter -> `QUARTER hv0`, so
    plan whether to proceed with the from-file quarter backfill to hv0 (and how it interacts with any
    existing rows).
+   - **Do NOT run this held backfill now (2026-09-28).** Since PP-064/PP-065 (owner, 2026-09-25/26),
+     calendar-quarter target windows are the product contract and the tjhm QUARTER population needs a
+     provenance-filtered cleanup first (PP-064 Chunk C decision F, by provenance -- native rows vs.
+     postprocessing aggregates holding LR values). Only the **reviewed decision-F re-import** (PP-064
+     Chunk C detail 3, canonical step 7 -- calendar-issue CSV rows only, 04-01/07-01) may write tjhm QUARTER rows in the
+     interim. Any broader from-file backfill (this item) waits for LTF-014 P2 (the hindcast write set,
+     D2) and must itself be calendar-window-filtered, or it would re-introduce the rolling-window rows
+     PP-064/FD-029 now exclude at read.
 4. **Importer verification (no code change expected).** Confirm via a dry-run / test that quarter and
    season configs produce the intended hv; add a regression test if useful.
 5. **Server parity.** Ensure the convention and any config additions / data cleanup propagate to the
@@ -86,4 +122,5 @@ mechanism is correct as-is: there is **no date-derivation** and **no 4-calendar-
   Jan/Feb/Mar seasonal configs (expected -- Tajik season is April-only).
 - `seasonal_april` write: `SEASON hv0` 62 -> 79 stations, additive (correct for the April issue).
 - `quarter` dry-run: would write `QUARTER hv0` (17 stations / 4876 rows) -- correct bucket for Tajik;
-  write currently held pending this plan.
+  write currently held pending this plan. **Held means held**: do not run it now -- see item 3's
+  2026-09-28 note above (PP-064 Chunk C decision F only, until LTF-014 P2).

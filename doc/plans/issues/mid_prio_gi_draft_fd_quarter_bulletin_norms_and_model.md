@@ -140,16 +140,27 @@ flow. Your changes must be purely additive or modify only the specific behavior 
    (the blocks call `get_long_forecasts_quarter` directly), so the helper reads
    `get_forecast_stats("quarter", code)` (`src/db.py:677`) and matches on `(code, quarter_in_year,
    model_short)` using raw model names (neither frame goes through `i18n_models` on this path).
-   - **Lead filter: mirror the flag branch of `_get_data_monthly`** (`src/db.py:1064-1091`, branch on
-     `skill_lead_aware_enabled()`), not its values: under flag OFF, monthly filters on
-     `horizon_value == 1` (`src/db.py:1088-1091`); quarter must use hv 0.
+   - **Lead filter: reuse `_get_data_monthly`'s own flag-OFF quarter-skill selection** (`src/db.py:1307`,
+     branch on `skill_lead_aware_enabled()`; the hv-0/fallback selection at `:1405-1522`), not just its
+     values, and **preferably factor it into a shared helper** so this plan and `_get_data_monthly` do not
+     re-implement the same rule twice:
      - flag ON: keep skill rows with `horizon_value == quarter_horizon_value()`;
-     - flag OFF: keep the sentinel rows `horizon_value == 0`. Flag-OFF quarter skill is grouped without hv
+     - flag OFF (since #528, FD-029): prefer the **hv-0 sentinel row** per `(code, quarter_in_year,
+       model_short)` when a live one exists (`src/db.py:1466`); for any key with no live hv-0 row, fall
+       back to the row at the **configured quarter lead** (`_resolve_quarter_horizon_value(None)`,
+       `:1442`, `:1467-1481`) — a flag-ON quarter recalc tombstones the legacy hv-0 rows
+       (`_drop_tombstone_rows`), so a DB whose last quarter recalc ran with the flag ON can have no live
+       hv-0 row at all; concatenate hv-0 rows ahead of the fallback rows, then dedup to one row per key
+       with `_dedup_quarter_skill_by_priority` (`:1277-1304`, first-in-frame-order wins, so the hv-0/
+       fallback concat order IS the priority). Flag-OFF quarter skill is grouped without hv
        (`apps/postprocessing_forecasts/src/skill_metrics.py:2642-2647`) and written at hv 0
        (`apps/postprocessing_forecasts/src/api_writer.py:661-669`), so filtering to the config lead (1 on
-       kghm) would find nothing;
+       kghm) alone would find nothing on a DB with no live hv-0 row;
      - if the `horizon_value` column is absent, keep all rows; if `quarter_horizon_value()` raises, log a
        WARNING and use no δ.
+     - **Test:** flag OFF, no live hv-0 row for a key, a configured-quarter-lead row present with `delta`
+       5.0 → the helper finds it via the fallback and `Q_MIN` is 95 (added 2026-09-28, mirrors #528; it
+       fails against a hv-0-only lookup, which is what this bullet described before #528).
    - If δ is missing, the bounds stay empty. **K = 10 (PP-065):** skill rows with fewer than 10 pairs are
      suppressed, so those models have no δ. tjhm may print empty ranges until more history is scored;
      PP-065 P2 measures how often.
@@ -170,6 +181,9 @@ flow. Your changes must be purely additive or modify only the specific behavior 
 2. **δ under flag OFF, kghm-shaped.** Flag OFF, `quarter.json` lead 1 / day 25, skill row at hv 0 with
    `delta` 5.0 → δ is found and `Q_MIN` is 95. Flag ON counterpart: skill rows at hv 0 (`delta` 9.0) and
    hv 1 (`delta` 5.0) → 5.0 is used.
+2b. **δ under flag OFF, no live hv-0 row (added: mirrors `_get_data_monthly`'s fallback, #528).** Flag
+   OFF, `quarter.json` lead 1 / day 25, no hv-0 skill row for the key, a skill row at the configured
+   quarter lead (hv 1) with `delta` 5.0 → the fallback finds it and `Q_MIN` is 95.
 3. **Flag-OFF kghm product selection.** Flag OFF, kghm schedule, Q1 2027: native LR rows dated 2026-12-25
    and `Skilled Mean` and GBT rows dated 2027-01-01 (`valid_from`) → with D6a = Skilled Mean the helper
    picks the Skilled Mean row; with D6a = GBT it picks the GBT row. Neither is dropped as non-native.
