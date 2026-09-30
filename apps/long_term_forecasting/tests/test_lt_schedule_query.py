@@ -368,6 +368,55 @@ class TestQuerySchedule:
         assert "quarter" not in result["active_modes"]
         assert "no models scheduled" in result["skipped_modes"]["quarter"]
 
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_quarter_schedule_kghm_active_at_exact_tolerance_boundary(self, mock_sl, mock_fc_cls):
+        """LTF-014 lock test: ISSUE_DAY_TOLERANCE (10) is inclusive.
+
+        Dec 15, 2026 is exactly 10 days before the Dec 25 scheduled issue
+        date for the kghm-like [3,6,9,12] quarter schedule — both
+        day_distance(15, 25) and the per-model nearest_scheduled_issue_date
+        check evaluate to exactly 10, and the mode must still be ACTIVE
+        under the unmodified query_schedule (`> ISSUE_DAY_TOLERANCE` /
+        `<= ISSUE_DAY_TOLERANCE` are the actual comparisons used).
+        """
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["quarter"],
+            issue_day=25,
+            models=["M1", "M2"],
+            forecast_months_map={"M1": [3, 6, 9, 12], "M2": [3, 6, 9, 12]},
+            horizon_type="quarter",
+        )
+
+        result = query_schedule(pd.Timestamp("2026-12-15"))
+
+        assert "quarter" in result["active_modes"]
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_quarter_schedule_kghm_skipped_one_day_past_tolerance_boundary(
+        self, mock_sl, mock_fc_cls
+    ):
+        """LTF-014 lock test: one day past ISSUE_DAY_TOLERANCE (10) is skipped.
+
+        Dec 14, 2026 is exactly 11 days before the Dec 25 scheduled issue
+        date for the same kghm-like [3,6,9,12] quarter schedule — one day
+        outside the inclusive 10-day tolerance — and must be SKIPPED under
+        the unmodified query_schedule.
+        """
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["quarter"],
+            issue_day=25,
+            models=["M1", "M2"],
+            forecast_months_map={"M1": [3, 6, 9, 12], "M2": [3, 6, 9, 12]},
+            horizon_type="quarter",
+        )
+
+        result = query_schedule(pd.Timestamp("2026-12-14"))
+
+        assert "quarter" not in result["active_modes"]
+        assert "quarter" in result["skipped_modes"]
+
     @pytest.mark.parametrize(
         "today",
         [
