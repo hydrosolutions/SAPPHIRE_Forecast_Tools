@@ -7,6 +7,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -318,6 +319,127 @@ class TestQuerySchedule:
         assert result["active_modes"] == []
         assert "monthly" in result["skipped_modes"]
         assert mock_fc_cls.return_value.load_forecast_config.call_count == 0
+
+    @pytest.mark.parametrize(
+        "today",
+        [
+            pytest.param("2026-12-25", id="kghm_quarter_dec25_active"),
+            pytest.param("2026-06-25", id="kghm_quarter_jun25_active"),
+        ],
+    )
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_quarter_schedule_kghm_active_on_scheduled_dates(self, mock_sl, mock_fc_cls, today):
+        """LTF-014 lock test: kghm-like quarter mode (issue day 25, both
+        models on [3,6,9,12]) is active on the new schedule's quarter dates
+        under the unmodified query_schedule. Forward-looking regression
+        protection only — production config has not changed yet.
+        """
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["quarter"],
+            issue_day=25,
+            models=["M1", "M2"],
+            forecast_months_map={"M1": [3, 6, 9, 12], "M2": [3, 6, 9, 12]},
+            horizon_type="quarter",
+        )
+
+        result = query_schedule(pd.Timestamp(today))
+
+        assert "quarter" in result["active_modes"]
+        assert "QUARTERLY" in result["skill_metric_types"]
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_quarter_schedule_kghm_skipped_off_quarter_month(self, mock_sl, mock_fc_cls):
+        """LTF-014 lock test: kghm-like quarter mode is skipped in May (not a
+        scheduled quarter month for [3,6,9,12]), with a "no models scheduled"
+        reason, under the unmodified query_schedule.
+        """
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["quarter"],
+            issue_day=25,
+            models=["M1", "M2"],
+            forecast_months_map={"M1": [3, 6, 9, 12], "M2": [3, 6, 9, 12]},
+            horizon_type="quarter",
+        )
+
+        result = query_schedule(pd.Timestamp("2026-05-25"))
+
+        assert "quarter" not in result["active_modes"]
+        assert "no models scheduled" in result["skipped_modes"]["quarter"]
+
+    @pytest.mark.parametrize(
+        "today",
+        [
+            pytest.param("2026-10-01", id="tjhm_quarter_oct1_active"),
+            pytest.param("2027-01-01", id="tjhm_quarter_jan1_active"),
+        ],
+    )
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_quarter_schedule_tjhm_active_on_scheduled_dates(self, mock_sl, mock_fc_cls, today):
+        """LTF-014 lock test: tjhm-like quarter mode (issue day 1, both
+        models on [1,4,7,10]) is active on the new schedule's quarter dates
+        under the unmodified query_schedule.
+        """
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["quarter"],
+            issue_day=1,
+            models=["M1", "M2"],
+            forecast_months_map={"M1": [1, 4, 7, 10], "M2": [1, 4, 7, 10]},
+            horizon_type="quarter",
+        )
+
+        result = query_schedule(pd.Timestamp(today))
+
+        assert "quarter" in result["active_modes"]
+        assert "QUARTERLY" in result["skill_metric_types"]
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_quarter_schedule_tjhm_skipped_off_quarter_month(self, mock_sl, mock_fc_cls):
+        """LTF-014 lock test: tjhm-like quarter mode is skipped in September
+        (not a scheduled quarter month for [1,4,7,10]) under the unmodified
+        query_schedule.
+        """
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["quarter"],
+            issue_day=1,
+            models=["M1", "M2"],
+            forecast_months_map={"M1": [1, 4, 7, 10], "M2": [1, 4, 7, 10]},
+            horizon_type="quarter",
+        )
+
+        result = query_schedule(pd.Timestamp("2026-09-01"))
+
+        assert "quarter" not in result["active_modes"]
+        assert "no models scheduled" in result["skipped_modes"]["quarter"]
+
+    @patch("lt_schedule_query.ForecastConfig")
+    @patch("lt_schedule_query.sl")
+    def test_quarter_schedule_mixed_config_or_across_models(self, mock_sl, mock_fc_cls):
+        """LTF-014 lock test: documents that scheduling is an OR across
+        models within a mode. If only ONE model's config is migrated to the
+        new quarter schedule ([3,6,9,12]) while the OTHER model's config
+        file is still on the old rolling schedule ([3,4,5,6,7,8,9]), the
+        mode as a whole still activates on the old schedule's dates — this
+        is exactly the trap the real rollout must watch for when editing
+        only one of two model config files.
+        """
+        mock_fc_cls.return_value = make_mock_config(
+            modes=["quarter"],
+            issue_day=25,
+            models=["M1", "M2"],
+            forecast_months_map={
+                "M1": [3, 6, 9, 12],  # migrated to new quarter schedule
+                "M2": [3, 4, 5, 6, 7, 8, 9],  # still on old rolling schedule
+            },
+            horizon_type="quarter",
+        )
+
+        result = query_schedule(pd.Timestamp("2026-05-25"))
+
+        assert "quarter" in result["active_modes"]
 
 
 class TestMainStdoutContract:

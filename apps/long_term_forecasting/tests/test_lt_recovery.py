@@ -312,6 +312,23 @@ class TestScheduledIssueDate:
         )
         assert resolve_scheduled_models(config, pd.Timestamp("2026-08-01")) == ["LR_Base"]
 
+    def test_quarter_schedule_tjhm_both_models_scheduled(self):
+        """LTF-014 lock test: tjhm-like quarter config (issue day 1, both
+        member models on [1,4,7,10]) already resolves both models as
+        scheduled on Oct 1 under the unmodified resolve_scheduled_models.
+        Forward-looking regression protection only — production config has
+        not changed yet.
+        """
+        config = FakeConfig(
+            models=["LR_Base", "SM_GBT"],
+            issue_day=1,
+            forecast_months={"LR_Base": [1, 4, 7, 10], "SM_GBT": [1, 4, 7, 10]},
+        )
+        assert resolve_scheduled_models(config, pd.Timestamp("2026-10-01")) == [
+            "LR_Base",
+            "SM_GBT",
+        ]
+
 
 class TestStationCodes:
     def test_non_empty_codes_pass(self):

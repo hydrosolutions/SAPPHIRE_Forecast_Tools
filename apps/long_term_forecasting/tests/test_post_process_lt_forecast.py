@@ -1377,6 +1377,79 @@ class TestAdjustForecastDatesDynamic:
         assert result["valid_from"].iloc[1] == pd.Timestamp("2024-05-01")
         assert result["valid_to"].iloc[1] == pd.Timestamp("2024-07-31")
 
+    @pytest.mark.parametrize(
+        "issue_date,lead_time,expected_valid_from,expected_valid_to",
+        [
+            # LTF-014: kghm-like quarter schedule, issue day 25, lead 1 month.
+            # Dec 25 issue -> Q1 of next year (Jan 1 - Mar 31).
+            pytest.param(
+                "2026-12-25",
+                1,
+                "2027-01-01",
+                "2027-03-31",
+                id="kghm_dec25_lead1_crosses_year_into_q1",
+            ),
+            # LTF-014: tjhm-like quarter schedule, issue day 1, lead 0 months.
+            # Oct 1 issue -> current quarter (Oct 1 - Dec 31).
+            pytest.param(
+                "2026-10-01",
+                0,
+                "2026-10-01",
+                "2026-12-31",
+                id="tjhm_oct1_lead0_q4_same_year",
+            ),
+            # LTF-014: tjhm-like quarter schedule, Jan 1 issue -> Q1 (Jan 1 - Mar 31).
+            pytest.param(
+                "2027-01-01",
+                0,
+                "2027-01-01",
+                "2027-03-31",
+                id="tjhm_jan1_lead0_q1_same_year",
+            ),
+            # LTF-014: kghm-like quarter schedule crossing into a leap year.
+            # Dec 25, 2027 issue, lead 1 -> Q1 2028 (2028 is a leap year, but
+            # valid_to must still land on Mar 31, unaffected by the Feb 29
+            # leap day since the quarter's last month is March).
+            pytest.param(
+                "2027-12-25",
+                1,
+                "2028-01-01",
+                "2028-03-31",
+                id="kghm_dec25_lead1_crosses_into_leap_year_q1",
+            ),
+        ],
+    )
+    def test_quarter_schedule_lock(
+        self, issue_date, lead_time, expected_valid_from, expected_valid_to
+    ):
+        """LTF-014 lock test: dynamic date adjustment already handles the
+        planned calendar-quarter schedules (kghm [3,6,9,12] lead=1,
+        tjhm [1,4,7,10] lead=0) correctly, using a fixed 3-month
+        horizon_length, including the leap-year edge case.
+
+        This is forward-looking regression protection: the production
+        forecast_months config has NOT changed yet (still the rolling
+        [3..9] schedule). This test proves the existing, unmodified
+        adjust_forecast_dates_dynamic code already produces the correct
+        quarter boundaries for the new schedule's example issue dates.
+        """
+        raw_forecast = pd.DataFrame(
+            {
+                "date": [pd.Timestamp(issue_date)],
+                "code": ["19999"],
+                "valid_from": [pd.Timestamp(issue_date)],
+                "valid_to": [pd.Timestamp(issue_date)],
+                "flag": ["O"],
+                "Q50": [100.0],
+            }
+        )
+
+        result = adjust_forecast_dates_dynamic(raw_forecast, lead_time=lead_time, horizon_length=3)
+
+        assert result["valid_from"].iloc[0] == pd.Timestamp(expected_valid_from)
+        assert result["valid_to"].iloc[0] == pd.Timestamp(expected_valid_to)
+        assert result["Q50"].iloc[0] == 100.0  # Q values unchanged
+
 
 class TestDynamicMultiMonthIntegration:
     """Integration tests for dynamic multi-month mode via post_process_lt_forecast."""

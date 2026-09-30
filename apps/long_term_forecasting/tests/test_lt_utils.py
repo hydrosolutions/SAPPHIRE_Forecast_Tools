@@ -77,6 +77,58 @@ class TestNearestScheduledIssueDate:
         # April 10 2024 is closer than April 10 2025
         assert result == pd.Timestamp("2024-04-10")
 
+    @pytest.mark.parametrize(
+        "today,issue_day,forecast_months,expected",
+        [
+            # LTF-014: kghm-like calendar-quarter schedule, issue day 25.
+            pytest.param(
+                pd.Timestamp("2026-12-20"),
+                25,
+                [3, 6, 9, 12],
+                pd.Timestamp("2026-12-25"),
+                id="kghm_quarter_before_issue_day_same_month",
+            ),
+            pytest.param(
+                pd.Timestamp("2027-01-10"),
+                25,
+                [3, 6, 9, 12],
+                pd.Timestamp("2026-12-25"),
+                id="kghm_quarter_after_issue_day_falls_back_to_prev_quarter",
+            ),
+            pytest.param(
+                pd.Timestamp("2026-10-25"),
+                25,
+                [3, 6, 9, 12],
+                pd.Timestamp("2026-09-25"),
+                id="kghm_quarter_off_month_falls_back_to_prev_quarter",
+            ),
+            # LTF-014: tjhm-like calendar-quarter schedule, issue day 1.
+            pytest.param(
+                pd.Timestamp("2026-12-30"),
+                1,
+                [1, 4, 7, 10],
+                pd.Timestamp("2027-01-01"),
+                id="tjhm_quarter_late_december_rolls_to_next_year_q1",
+            ),
+            pytest.param(
+                pd.Timestamp("2026-10-01"),
+                1,
+                [1, 4, 7, 10],
+                pd.Timestamp("2026-10-01"),
+                id="tjhm_quarter_exact_match",
+            ),
+        ],
+    )
+    def test_quarter_schedule_lock(self, today, issue_day, forecast_months, expected):
+        """LTF-014 lock test: nearest_scheduled_issue_date (unmodified) already
+        resolves the planned calendar-quarter month lists (kghm [3,6,9,12]
+        issue day 25; tjhm [1,4,7,10] issue day 1) to the correct nearest
+        scheduled issue date. Forward-looking regression protection only —
+        the production forecast_months config has not changed yet.
+        """
+        result = nearest_scheduled_issue_date(today, issue_day, forecast_months)
+        assert result == expected
+
 
 class TestCheckValidForecastIssueDate:
     """Tests for check_valid_forecast_issue_date."""
@@ -134,3 +186,67 @@ class TestCheckValidForecastIssueDate:
 
         # Early runs keep their date (no snap-back)
         assert result == pd.Timestamp("2024-03-07")
+
+    @patch("lt_utils.get_today")
+    def test_quarter_schedule_kghm_valid_issue_date(self, mock_get_today):
+        """LTF-014 lock test: kghm-like quarter config ([3,6,9,12], issue
+        day 25) already treats Dec 25 as a valid issue date under the
+        unmodified check_valid_forecast_issue_date. The involved date is in
+        the future relative to real wall-clock time, so both lt_utils.get_today
+        and pd.Timestamp.now are frozen to agree on "today" for this test only.
+        """
+        frozen_today = pd.Timestamp("2026-12-25")
+        mock_get_today.return_value = frozen_today
+        config = self._make_mock_config(issue_day=25, forecast_months=[3, 6, 9, 12])
+
+        with patch.object(pd.Timestamp, "now", return_value=frozen_today):
+            result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        assert result == pd.Timestamp("2026-12-25")
+
+    @patch("lt_utils.get_today")
+    def test_quarter_schedule_kghm_invalid_month_returns_none(self, mock_get_today):
+        """LTF-014 lock test: kghm-like quarter config ([3,6,9,12], issue
+        day 25) already rejects an off-schedule month (November is not a
+        scheduled quarter month) via the unmodified
+        check_valid_forecast_issue_date, returning None.
+        """
+        frozen_today = pd.Timestamp("2026-11-25")
+        mock_get_today.return_value = frozen_today
+        config = self._make_mock_config(issue_day=25, forecast_months=[3, 6, 9, 12])
+
+        with patch.object(pd.Timestamp, "now", return_value=frozen_today):
+            result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        assert result is None
+
+    @patch("lt_utils.get_today")
+    def test_quarter_schedule_tjhm_valid_issue_date(self, mock_get_today):
+        """LTF-014 lock test: tjhm-like quarter config ([1,4,7,10], issue
+        day 1) already treats Oct 1 as a valid issue date under the
+        unmodified check_valid_forecast_issue_date.
+        """
+        frozen_today = pd.Timestamp("2026-10-01")
+        mock_get_today.return_value = frozen_today
+        config = self._make_mock_config(issue_day=1, forecast_months=[1, 4, 7, 10])
+
+        with patch.object(pd.Timestamp, "now", return_value=frozen_today):
+            result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        assert result == pd.Timestamp("2026-10-01")
+
+    @patch("lt_utils.get_today")
+    def test_quarter_schedule_tjhm_invalid_month_returns_none(self, mock_get_today):
+        """LTF-014 lock test: tjhm-like quarter config ([1,4,7,10], issue
+        day 1) already rejects an off-schedule month (September is not a
+        scheduled quarter month) via the unmodified
+        check_valid_forecast_issue_date, returning None.
+        """
+        frozen_today = pd.Timestamp("2026-09-01")
+        mock_get_today.return_value = frozen_today
+        config = self._make_mock_config(issue_day=1, forecast_months=[1, 4, 7, 10])
+
+        with patch.object(pd.Timestamp, "now", return_value=frozen_today):
+            result = check_valid_forecast_issue_date(config, "LR_Base")
+
+        assert result is None
