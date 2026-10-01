@@ -967,6 +967,27 @@ class TestA10FirstYearQ1FlagOff:
 # ===========================================================================
 
 
+def _quarter_derivation_rows(issue_date, lead, model, values, code=CODE):
+    """One same-issue monthly triplet shaped for the raw API input to
+
+    derive_quarterly_from_monthly_same_issue (PP-065 P1b shared test
+    template, mirrored from tests/test_quarterly_data_reader.py): three
+    rows at horizon_value lead/lead+1/lead+2, all issued on `issue_date`,
+    whose `q50` (and `forecasted_discharge`) carry `values`.
+    """
+    return [
+        {
+            "code": code,
+            "date": issue_date,
+            "model_type": model,
+            "horizon_value": lead + i,
+            "q50": value,
+            "forecasted_discharge": value,
+        }
+        for i, value in enumerate(values)
+    ]
+
+
 def _quarter_and_month_api_fake(quarter_rows, monthly_rows):
     """Fake `_read_long_forecasts_api` serving BOTH sources, filtering by
 
@@ -993,43 +1014,43 @@ def _quarter_and_month_api_fake(quarter_rows, monthly_rows):
 
 
 class TestRegressionDirectPrecedenceSurvivesLowerBoundWidening:
-    def _monthly_rows(self):
-        # Two months (Jan, Feb 2026) per model -> QUARTER_MIN_MONTHS (2)
-        # satisfied -> aggregate_monthly_fc_to_quarterly synthesizes a
-        # Q1 2026 row per model, issued within 2025 so it survives the
-        # (unwidened) monthly read window [2025, 2025].
-        rows = []
-        for model, value in (("LR_Base", 200.0), ("LR_SM", 220.0)):
-            for month in (1, 2):
-                rows.append(
-                    {
-                        "code": CODE,
-                        "date": "2025-11-25",
-                        "model_type": model,
-                        "valid_from": f"2026-{month:02d}-01",
-                        "valid_to": f"2026-{month:02d}-28",
-                        "forecasted_discharge": value,
-                        "q50": value,
-                        "horizon_value": 1,
-                    }
-                )
-        return rows
+    """A genuine lower-bound-widening case (decision R4-native-lr-precedence):
+
+    the LR_Base direct row is issued 2024-12-25 -- kghm's native Q1-2025
+    issue date -- so with read window [2025, 2025] it survives only via
+    PP-064's own December-Q1-of-start_year exception, AND it is native. A
+    same-issue monthly LR triplet gives decision-G's fallback a real,
+    numerically distinguishable competing derived row for the same key,
+    so the direct row's win is genuinely proven, not merely "no
+    competitor happened to exist." The LR_SM row is left at its original
+    2025-12-25/Q1-2026 date: under flag OFF there is no target-year trim
+    on direct rows, so it survives ungated by the widening exception
+    (its own issue year equals start_year) -- kept as a "nothing else
+    disturbed it" control, asserted against the Q1-2026 slice.
+    """
 
     def _direct_rows(self):
         return [
-            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0),
+            _quarter_row("2025-01-01", "2025-03-31", "2024-12-25", model="LR_Base", q=100.0),
             _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_SM", q=120.0),
         ]
 
     def test_direct_next_year_q1_wins_over_monthly_derived(self, monkeypatch):
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
-        fake = _quarter_and_month_api_fake(self._direct_rows(), self._monthly_rows())
+        monthly_rows = _quarter_derivation_rows(
+            "2024-12-25", 1, "LR_Base", [200.0, 210.0, 220.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(self._direct_rows(), monthly_rows)
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
             result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
 
+        q1_2025 = result[(result["year"] == 2025) & (result["quarter_in_year"] == 1)]
+        lr_base = q1_2025[q1_2025["model_short"] == "LR_Base"]
+        assert len(lr_base) == 1
+        assert float(lr_base["forecasted_discharge"].iloc[0]) == 100.0
+
         q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
         got = dict(zip(q1_2026["model_short"], q1_2026["forecasted_discharge"], strict=False))
-        assert got.get("LR_Base") == 100.0
         assert got.get("LR_SM") == 120.0
 
 
@@ -1044,56 +1065,71 @@ class TestRegressionDirectPrecedenceSurvivesLowerBoundWidening:
 
 
 class TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim:
+    """Two distinct invariants (decision R4-native-lr-precedence): Test A
+
+    (native beats a competing decision-G fallback) and Test B
+    (a non-native, backfill-shaped row is dropped, not returned).
+    """
+
     def _direct_rows(self):
         # Issued 2025-01-10 (issue year 2025 == start_year), targeting
-        # Q4 2024 (target year 2024 < start_year) -- a backfill.
+        # Q4 2024 (target year 2024 < start_year) -- a backfill-shaped
+        # row: neither native (kghm's native Q4-2024 issue date is
+        # 2024-09-25).
         return [
             _quarter_row("2024-10-01", "2024-12-31", "2025-01-10", model="LR_Base", q=100.0),
             _quarter_row("2024-10-01", "2024-12-31", "2025-01-10", model="LR_SM", q=120.0),
         ]
 
-    def _monthly_rows(self):
-        # Two months (Oct, Nov 2024) per model, also issued 2025-01-10
-        # -> aggregate_monthly_fc_to_quarterly synthesizes a competing
-        # Q4 2024 row per model.
-        rows = []
-        for model, value in (("LR_Base", 200.0), ("LR_SM", 220.0)):
-            for month in (10, 11):
-                rows.append(
-                    {
-                        "code": CODE,
-                        "date": "2025-01-10",
-                        "model_type": model,
-                        "valid_from": f"2024-{month:02d}-01",
-                        "valid_to": f"2024-{month:02d}-28",
-                        "forecasted_discharge": value,
-                        "q50": value,
-                        "horizon_value": 1,
-                    }
-                )
-        return rows
+    def _direct_rows_native(self):
+        # Same values, re-dated to the genuine kghm native Q4-2024 issue
+        # date (day 25, lead 1 -> Oct/Nov/Dec 2024).
+        return [
+            _quarter_row("2024-10-01", "2024-12-31", "2024-09-25", model="LR_Base", q=100.0),
+            _quarter_row("2024-10-01", "2024-12-31", "2024-09-25", model="LR_SM", q=120.0),
+        ]
 
-    def test_direct_prior_year_backfill_wins_over_monthly_derived(self, monkeypatch):
+    def test_native_direct_row_suppresses_monthly_derived_fallback(self, monkeypatch):
+        """The monthly source spells the model "LR_BASE" (DB-form
+
+        uppercase) while the direct row spells it "LR_Base" -- same
+        canonical model, different literal spelling. This is deliberate
+        (out-of-loop review finding): with matching spellings, the later
+        generic keep="last" combine dedup would ALSO happen to produce
+        the right answer even if `_suppress_lr_fallback_covered_by_direct`
+        were a no-op (it dedups on the literal `model_short` string, not
+        the canonical one), making the assertions vacuous. A spelling
+        mismatch means only the dedicated suppression function -- which
+        compares canonical models -- can prevent the fallback row from
+        surviving alongside the native one.
+        """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
-        fake = _quarter_and_month_api_fake(self._direct_rows(), self._monthly_rows())
+        monthly_rows = _quarter_derivation_rows(
+            "2024-09-25", 1, "LR_BASE", [300.0, 310.0, 320.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(self._direct_rows_native(), monthly_rows)
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
-            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+            result = data_reader.read_quarterly_forecasts([CODE], 2024, 2024)
 
         q4_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 4)]
-        got = dict(zip(q4_2024["model_short"], q4_2024["forecasted_discharge"], strict=False))
-        assert got.get("LR_Base") == 100.0
-        assert got.get("LR_SM") == 120.0
+        lr_base_canon = q4_2024[
+            data_reader.canonical_model_short_series(q4_2024["model_short"]) == "LR_BASE"
+        ]
+        assert len(lr_base_canon) == 1
+        assert float(lr_base_canon["forecasted_discharge"].iloc[0]) == 100.0
+        assert 310.0 not in set(q4_2024["forecasted_discharge"])
+        lr_sm = q4_2024[q4_2024["model_short"] == "LR_SM"]
+        assert len(lr_sm) == 1
+        assert float(lr_sm["forecasted_discharge"].iloc[0]) == 120.0
 
-    def test_direct_prior_year_backfill_returned_without_monthly_source(self, monkeypatch):
+    def test_backfill_shaped_direct_row_is_dropped(self, monkeypatch):
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         fake = _quarter_and_month_api_fake(self._direct_rows(), [])
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
             result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
 
         q4_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 4)]
-        got = dict(zip(q4_2024["model_short"], q4_2024["forecasted_discharge"], strict=False))
-        assert got.get("LR_Base") == 100.0
-        assert got.get("LR_SM") == 120.0
+        assert q4_2024.empty
 
 
 # ===========================================================================
@@ -1107,7 +1143,16 @@ class TestRegressionBackfillPrecedenceSurvivesLowerBoundTrim:
 
 
 class TestUnparseableIssueDateKeptRegardlessOfTargetYear:
-    def test_unparseable_date_backfill_row_is_kept(self, monkeypatch):
+    def test_unparseable_date_dropped_by_native_row_rule(self, monkeypatch):
+        """CONTRACT CHANGE (decision R4-native-lr-precedence): PP-064's
+
+        year-mask still keeps a null/unparseable issue date unconditionally
+        (trunk's API-side year filter could not have excluded it by year
+        either) -- but the native-row rule for LR rows requires a
+        schedule-computed issue date to match exactly, which an
+        unparseable date can never do. The row is now dropped (counted
+        under a named exclusion reason), not returned.
+        """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         # Calendar Q2 2024 (target year < start_year=2025), issue date
         # unparseable -- the fake returns it unconditionally, as if the
@@ -1123,8 +1168,7 @@ class TestUnparseableIssueDateKeptRegardlessOfTargetYear:
             result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
 
         q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
-        assert len(q2_2024) == 1
-        assert float(q2_2024["forecasted_discharge"].iloc[0]) == 100.0
+        assert len(q2_2024) == 0
 
 
 # ===========================================================================
@@ -1141,27 +1185,19 @@ class TestUnparseableIssueDateKeptRegardlessOfTargetYear:
 
 class TestRegressionIssueYearMaskTooPermissive:
     def _monthly_q2_2025(self):
-        rows = []
-        for month in (4, 5):
-            rows.append(
-                {
-                    "code": CODE,
-                    "date": "2025-03-25",
-                    "model_type": "LR_Base",
-                    "valid_from": f"2025-{month:02d}-01",
-                    "valid_to": f"2025-{month:02d}-28",
-                    "forecasted_discharge": 200.0,
-                    "q50": 200.0,
-                    "horizon_value": 1,
-                }
-            )
-        return rows
+        # Full same-issue triplet (kghm's native Q2-2025 issue date,
+        # 2025-03-25): months 4/5/6 at hv 1/2/3 -> decision-G's LR
+        # fallback derives Q2 2025 = mean(200, 200, 200) = 200.0.
+        return _quarter_derivation_rows(
+            "2025-03-25", 1, "LR_Base", [200.0, 200.0, 200.0], code=CODE
+        )
 
     def test_stale_out_of_window_row_does_not_beat_monthly_derived(self, monkeypatch):
         """A direct Q2 2025 row issued 2024-12-25 (out-of-window, and NOT
 
         the Dec-Q1-of-start_year case) must be dropped -- trunk never read
-        it at all -- so the monthly-derived Q2 2025 value wins.
+        it at all -- so the monthly-derived (decision-G fallback) Q2 2025
+        value wins.
         """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         direct_rows = [
@@ -1178,18 +1214,19 @@ class TestRegressionIssueYearMaskTooPermissive:
     def test_stale_row_does_not_clobber_in_window_direct_row_regardless_of_api_order(
         self, monkeypatch
     ):
-        """Same as above, but an in-window direct Q2 2025 row (value 300,
+        """Same as above, but a genuine NATIVE Q2 2025 direct row (value
 
-        issued 2025-05-25) is ALSO present, placed FIRST in API order. The
-        stale out-of-window row (100, issued 2024-12-25) must still be
-        dropped, so drop_duplicates(keep="last") never sees it and the
-        in-window direct value wins over the monthly-derived one too --
-        exactly as on trunk, which never read the stale row regardless of
-        API order.
+        300, issued 2025-03-25, kghm's native Q2-2025 issue date) is ALSO
+        present, placed FIRST in API order. The stale out-of-window row
+        (100, issued 2024-12-25) must still be dropped, so
+        drop_duplicates(keep="last") never sees it, and the native direct
+        value wins over the decision-G fallback (200.0) too -- native
+        beats fallback (decision R4-native-lr-precedence), not merely "the
+        in-window row wins regardless of API order".
         """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         direct_rows = [
-            _quarter_row("2025-04-01", "2025-06-30", "2025-05-25", model="LR_Base", q=300.0),
+            _quarter_row("2025-04-01", "2025-06-30", "2025-03-25", model="LR_Base", q=300.0),
             _quarter_row("2025-04-01", "2025-06-30", "2024-12-25", model="LR_Base", q=100.0),
         ]
         fake = _quarter_and_month_api_fake(direct_rows, self._monthly_q2_2025())
@@ -1213,9 +1250,19 @@ class TestRegressionIssueYearMaskTooPermissive:
 
 class TestRegressionMixedTimezoneIssueDate:
     def test_read_quarterly_forecasts_flag_off_no_exception(self, monkeypatch):
+        """The Q1-2025 row is re-dated to 2024-12-25 (decision
+
+        R4-native-lr-precedence): a 2025-01-10 issue date is not native
+        (kghm's native Q1-2025 issue date is 2024-12-25) and would be
+        dropped, leaving an empty Q1 slice and an IndexError on
+        `.iloc[0]`. 2024-12-25's issue year (2024) is < start_year
+        (2025), but it targets Q1 of start_year, so it is admitted by the
+        Problem-7 December-Q1-of-start_year exception AND matches the
+        native schedule date exactly, so it is also classified native.
+        """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         rows = [
-            _quarter_row("2025-01-01", "2025-03-31", "2025-01-10", model="LR_Base", q=100.0),
+            _quarter_row("2025-01-01", "2025-03-31", "2024-12-25", model="LR_Base", q=100.0),
             _quarter_row(
                 "2025-04-01",
                 "2025-06-30",
@@ -1508,6 +1555,15 @@ class TestR5Observability:
         assert CODE not in drop_lines[0].message
 
     def test_read_quarterly_forecasts_warns_when_mask_columns_missing(self, monkeypatch, caplog):
+        """A `date` column entirely absent from `direct` is treated the
+
+        same as every row's `date` being null (PP-065 P1b): PP-064's own
+        missing-column guard fires its WARNING first (unmodified), then
+        this row still reaches the native-row helper afterward, which
+        drops it as unclassifiable (an LR row with no `date` can never be
+        native) -- a routine, INFO-logged exclusion, not a second
+        WARNING.
+        """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         row = {
             "horizon_type": "quarter",
@@ -1529,11 +1585,14 @@ class TestR5Observability:
             caplog.at_level(logging.WARNING, logger="src.data_reader"),
             patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake),
         ):
-            data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
+            result = data_reader.read_quarterly_forecasts([CODE], 2025, 2025)
 
         warn_lines = [r for r in caplog.records if "filter skipped" in r.message]
         assert len(warn_lines) == 1
         assert "date" in warn_lines[0].message
+        # The row is dropped as unclassifiable (no `date` to prove it
+        # native), not merely unfiltered-by-year.
+        assert len(result) == 0
 
     def test_read_latest_quarterly_forecasts_logs_dropped_future_issue_count(
         self, monkeypatch, caplog
@@ -2099,19 +2158,26 @@ class TestPP064aNativeQ1IssuanceRestriction:
     """The Problem-7 exception admits ONLY the native schedule issuance."""
 
     def test_persisted_monthly_derived_dec1_q1_row_does_not_clobber_jan1_rewrite(self, monkeypatch):
-        """Dev-DB regression: a null-valued Dec-1 Q1 row (NOT the native
+        """Dev-DB regression, updated for decision R4-native-lr-precedence:
 
-        Dec-25 issuance under the kghm-shaped fixture config, lead=1,
-        issue_day=25) must not win over the real Jan-1 rewrite.
+        NEITHER the Jan-1 rewrite (2026-01-01) NOR the null-valued Dec-1
+        backdated row (2025-12-01) is native (kghm's native Q1-2026 issue
+        date is 2025-12-25) -- both are non-native and would be dropped.
+        A genuine native-dated row (2025-12-25) is added; it wins, per
+        PP-065 P1b's own Tests list ("Native-row selection (kghm shape)":
+        a native row, a rewrite, and a persisted derived Dec-1 row for the
+        same LR Q1 -> the native row wins).
         """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         direct_rows = [
-            # Jan-1 rewrite: the real, in-window value.
+            # Jan-1 rewrite: non-native (day 1, not 25).
             _quarter_row("2026-01-01", "2026-03-31", "2026-01-01", model="LR_Base", q=2.4),
             # Persisted monthly-derived Q1 row, backdated to Dec 1 (NOT
             # the native Dec-25 issuance) -- higher API id / later in API
             # return order in the real bug, and null-valued (NaN).
             _quarter_row("2026-01-01", "2026-03-31", "2025-12-01", model="LR_Base", q=float("nan")),
+            # The genuine native issuance (day 25, lead 1 -> Jan 2026).
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=5.0),
         ]
         fake = _quarter_and_month_api_fake(direct_rows, _monthly_q1_2026_rows())
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
@@ -2119,17 +2185,19 @@ class TestPP064aNativeQ1IssuanceRestriction:
 
         q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
         assert len(q1_2026) == 1
-        assert float(q1_2026["forecasted_discharge"].iloc[0]) == 2.4
+        assert float(q1_2026["forecasted_discharge"].iloc[0]) == 5.0
 
     def test_persisted_monthly_derived_dec1_q1_row_with_real_value_still_loses(self, monkeypatch):
         """Same shape, but the Dec-1 row carries a real (non-null) value:
 
-        the Jan-1 rewrite must still win -- the Dec-1 row is not native.
+        the native Dec-25 row must still win -- neither the Jan-1 rewrite
+        nor the Dec-1 backdated row is native.
         """
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
         direct_rows = [
             _quarter_row("2026-01-01", "2026-03-31", "2026-01-01", model="LR_Base", q=2.4),
             _quarter_row("2026-01-01", "2026-03-31", "2025-12-01", model="LR_Base", q=1.9),
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=5.0),
         ]
         fake = _quarter_and_month_api_fake(direct_rows, _monthly_q1_2026_rows())
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
@@ -2137,7 +2205,7 @@ class TestPP064aNativeQ1IssuanceRestriction:
 
         q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
         assert len(q1_2026) == 1
-        assert float(q1_2026["forecasted_discharge"].iloc[0]) == 2.4
+        assert float(q1_2026["forecasted_discharge"].iloc[0]) == 5.0
 
     def test_native_issue_day_clamped_to_short_month_is_still_admitted(
         self, monkeypatch, kghm_quarter_config
@@ -2235,3 +2303,861 @@ class TestPP064aNativeQ1IssuanceRestriction:
         assert q1_2026.empty
         warn_lines = [r for r in caplog.records if "invalid issue_day" in r.message]
         assert len(warn_lines) == 1
+
+
+# ===========================================================================
+# PP-065 P1b: native-row selection, the shared helper used by both quarter
+# readers under both flags (decision R4-native-lr-precedence).
+# ===========================================================================
+
+
+class TestNativeRowSelectionKghmShape:
+    """A native row, a rewrite (date == valid_from) and a persisted
+
+    derived Dec-1 row for the same LR Q1 -> the native row wins, in both
+    readers; with and without an unrelated derived-model row; with
+    shuffled row order.
+    """
+
+    def _rows(self):
+        return [
+            # Rewrite: date == valid_from (non-native, day 1).
+            _quarter_row("2026-01-01", "2026-03-31", "2026-01-01", model="LR_Base", q=1.0),
+            # Persisted monthly-derived Q1 row, backdated to Dec 1
+            # (non-native).
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-01", model="LR_Base", q=2.0),
+            # The genuine native issuance (day 25, lead 1 -> Jan 2026).
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=3.0),
+        ]
+
+    @pytest.mark.parametrize("shuffle", [False, True])
+    @pytest.mark.parametrize("with_unrelated_derived_model", [False, True])
+    def test_read_quarterly_forecasts(self, monkeypatch, shuffle, with_unrelated_derived_model):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = self._rows()
+        if with_unrelated_derived_model:
+            rows = [
+                *rows,
+                _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="GBT", q=999.0),
+            ]
+        if shuffle:
+            rows = list(reversed(rows))
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q1_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 1)]
+        lr_base = q1_2026[q1_2026["model_short"] == "LR_Base"]
+        assert len(lr_base) == 1
+        assert float(lr_base["forecasted_discharge"].iloc[0]) == 3.0
+
+    @pytest.mark.parametrize("shuffle", [False, True])
+    def test_read_latest_quarterly_forecasts(self, monkeypatch, shuffle):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = self._rows()
+        if shuffle:
+            rows = list(reversed(rows))
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+
+        lr_base = result[result["model_short"] == "LR_Base"]
+        assert len(lr_base) == 1
+        assert float(lr_base["forecasted_discharge"].iloc[0]) == 3.0
+
+
+class TestNativeRowSelectionClampedIssueDay:
+    """`operational_issue_day` configured as 31, issue month a 30-day
+
+    month (June): a native row dated on the 30th (the producer's own
+    clamp) -> selected as native by the shared helper directly, and,
+    flag OFF only, through both readers. Not asserted end-to-end through
+    the readers under flag ON here (PP-066 owns that gap).
+    """
+
+    def test_helper_admits_clamped_day(self, kghm_quarter_config):
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 31})
+        )
+        from long_term_horizon_resolver import operational_schedule_for_mode
+
+        schedule = operational_schedule_for_mode("quarter")
+        direct = pd.DataFrame(
+            [
+                {
+                    "code": CODE,
+                    "model_short": "LR_Base",
+                    "date": "2026-06-30",  # June has 30 days -> clamp(31, 30) = 30.
+                    "valid_from": "2026-07-01",
+                    "valid_to": "2026-09-30",
+                }
+            ]
+        )
+        result = data_reader._select_native_quarter_lr_rows(direct, schedule)
+        assert len(result) == 1
+
+    def test_read_quarterly_forecasts_flag_off_admits_clamped_day(
+        self, monkeypatch, kghm_quarter_config
+    ):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 31})
+        )
+        rows = [_quarter_row("2026-07-01", "2026-09-30", "2026-06-30", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q3_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 3)]
+        assert len(q3_2026) == 1
+        assert float(q3_2026["forecasted_discharge"].iloc[0]) == 100.0
+
+    def test_read_latest_quarterly_forecasts_flag_off_admits_clamped_day(
+        self, monkeypatch, kghm_quarter_config
+    ):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 31})
+        )
+        rows = [_quarter_row("2026-07-01", "2026-09-30", "2026-06-30", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 7, 15)
+            )
+
+        assert len(result) == 1
+        assert float(result["forecasted_discharge"].iloc[0]) == 100.0
+
+
+class TestNativeRowHelperNoDateColumnAtAll:
+    """A `date` column entirely absent from the `direct` frame is treated
+
+    the same as every row's `date` being null (item 2's "Order (flag
+    ON)" bullet): every LR row is dropped and counted, with no
+    `KeyError`/exception -- at the helper level directly, and through
+    both readers under both flags. `test_read_quarterly_forecasts_warns_
+    when_mask_columns_missing` (TestR5Observability) already covers
+    `read_quarterly_forecasts` under flag OFF; this class covers the
+    remaining three combinations.
+    """
+
+    def test_helper_drops_lr_rows_with_no_date_column(self, kghm_quarter_config):
+        from long_term_horizon_resolver import operational_schedule_for_mode
+
+        schedule = operational_schedule_for_mode("quarter")
+        direct = pd.DataFrame(
+            [
+                {
+                    "code": CODE,
+                    "model_short": "LR_Base",
+                    "valid_from": "2026-01-01",
+                    "valid_to": "2026-03-31",
+                    # no "date" column at all.
+                }
+            ]
+        )
+        result = data_reader._select_native_quarter_lr_rows(direct, schedule)
+        assert len(result) == 0
+
+    def _fake(self, rows):
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(rows)
+
+        return fake
+
+    def _row_without_date(self):
+        return {
+            "horizon_type": "quarter",
+            "horizon_value": 1,
+            "code": CODE,
+            "model_type": "LR_Base",
+            "valid_from": "2026-01-01",
+            "valid_to": "2026-03-31",
+            "q50": 100.0,
+            # no "date" column at all.
+        }
+
+    def test_read_quarterly_forecasts_flag_on(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        with patch.object(
+            data_reader,
+            "_read_long_forecasts_api",
+            side_effect=self._fake([self._row_without_date()]),
+        ):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        assert result.empty
+
+    def test_read_latest_quarterly_forecasts_flag_off(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        with patch.object(
+            data_reader,
+            "_read_long_forecasts_api",
+            side_effect=self._fake([self._row_without_date()]),
+        ):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert result.empty
+
+    def test_read_latest_quarterly_forecasts_flag_on(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        with patch.object(
+            data_reader,
+            "_read_long_forecasts_api",
+            side_effect=self._fake([self._row_without_date()]),
+        ):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert result.empty
+
+
+class TestFlagOnUnparseableDateNoException:
+    """A direct LR row with an unparseable `date` is dropped under flag
+
+    ON, with NO exception raised -- a regression guard for the ordering
+    (the native-row helper's own drop must run BEFORE
+    select_operational_issuances, which does not use errors="coerce").
+    """
+
+    def _fake(self, rows):
+        # A plain fake, unlike _quarter_api_fake/_quarter_and_month_api_fake:
+        # those try to parse `r["date"]` themselves for year filtering,
+        # which would raise on "not-a-date" before the code under test
+        # ever gets a chance to -- defeating the point of this guard.
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(rows)
+
+        return fake
+
+    def test_read_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "not-a-date", model="LR_Base", q=100.0),
+        ]
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=self._fake(rows)):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        assert result.empty
+
+    def test_read_latest_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "not-a-date", model="LR_Base", q=100.0),
+        ]
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=self._fake(rows)):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert result.empty
+
+
+# ===========================================================================
+# PP-065 P1b: former Source 1 (LR aggregation) is now the unified
+# derive_quarterly_from_monthly_same_issue path -- bounded by
+# forecast_date under both flags, latest reader.
+# ===========================================================================
+
+
+class TestSource1ForecastDateBoundLatestReader:
+    @pytest.mark.parametrize("model", ["LR_Base", "GBT"])
+    def test_q4_2026_not_produced_when_issued_after_forecast_date(self, monkeypatch, model):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        monthly_rows = _quarter_derivation_rows(
+            "2026-09-25", 1, model, [100.0, 105.0, 110.0], code=CODE
+        )
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 6, 25)
+            )
+
+        q4_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 4)]
+        assert q4_2026.empty
+
+    @pytest.mark.parametrize("model", ["LR_Base", "GBT"])
+    def test_q1_2027_not_produced_when_issued_after_forecast_date(self, monkeypatch, model):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        monthly_rows = _quarter_derivation_rows(
+            "2026-12-25", 1, model, [100.0, 105.0, 110.0], code=CODE
+        )
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 6, 25)
+            )
+
+        q1_2027 = result[(result["year"] == 2027) & (result["quarter_in_year"] == 1)]
+        assert q1_2027.empty
+
+    def test_no_row_dated_after_forecast_date_reaches_derivation_flag_off(self, monkeypatch):
+        """An EARLIER triplet (issued before forecast_date) reaches the
+
+        derivation call; the LATER triplet (issued after forecast_date)
+        must not appear in any call's input at all -- proven on a spy,
+        covering both "filtered before the call" and "the call never
+        happens because everything was filtered" (both are correct; only
+        the latter is exercised when there is nothing else to derive).
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        monthly_rows = _quarter_derivation_rows(
+            "2026-03-25", 1, "LR_Base", [90.0, 95.0, 100.0], code=CODE
+        ) + _quarter_derivation_rows("2026-12-25", 1, "LR_Base", [100.0, 105.0, 110.0], code=CODE)
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with (
+            patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake),
+            patch(
+                "src.aggregation.derive_quarterly_from_monthly_same_issue",
+                wraps=aggregation.derive_quarterly_from_monthly_same_issue,
+            ) as spy,
+        ):
+            data_reader.read_latest_quarterly_forecasts([CODE], forecast_date=dt.date(2026, 6, 25))
+
+        assert spy.called
+        for call in spy.call_args_list:
+            monthly_arg = call.args[0]
+            assert (
+                monthly_arg.empty
+                or "date" not in monthly_arg.columns
+                or (pd.to_datetime(monthly_arg["date"]) <= pd.Timestamp("2026-06-25")).all()
+            )
+
+    def test_december_q1_survives_from_monthly_triplets_only(self, monkeypatch):
+        """The wide target-year trim (end_year + 1) admits a derived
+
+        next-year Q1 from a December issuance. Fails on the pre-P1b base
+        (which already contains PP-064 A, but had no derivation path at
+        all). Mutation: removing the target-year extension makes this
+        flag-ON case fail.
+        """
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        monthly_rows = _quarter_derivation_rows(
+            "2026-12-25", 1, "LR_Base", [100.0, 105.0, 110.0], code=CODE
+        )
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 12, 25)
+            )
+
+        assert not result.empty
+        assert set(result["year"]) == {2027}
+        assert set(result["quarter_in_year"]) == {1}
+        assert float(result["forecasted_discharge"].iloc[0]) == 105.0
+
+    def test_forecast_date_before_q1_issue_falls_back_to_q4(self, monkeypatch):
+        """forecast_date 2026-09-25 with Dec-25 rows present -> Q4, not
+
+        Q1: the Q1-2027 triplet (issued 2026-12-25) is dated after
+        forecast_date and must not be visible yet; the earlier Q4-2026
+        triplet (issued 2026-09-25) is the most recent one that IS.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        monthly_rows = _quarter_derivation_rows(
+            "2026-09-25", 1, "LR_Base", [90.0, 95.0, 100.0], code=CODE
+        ) + _quarter_derivation_rows("2026-12-25", 1, "LR_Base", [100.0, 105.0, 110.0], code=CODE)
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 9, 25)
+            )
+
+        assert not result.empty
+        assert set(result["year"]) == {2026}
+        assert set(result["quarter_in_year"]) == {4}
+        assert float(result["forecasted_discharge"].iloc[0]) == 95.0
+
+
+class TestModelFilterKeepsDerivedModelRows:
+    def test_gbt_survives_quarter_readers(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        monthly_rows = _quarter_derivation_rows(
+            "2026-03-25", 1, "GBT", [200.0, 205.0, 210.0], code=CODE
+        )
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        gbt = result[result["model_short"] == "GBT"]
+        assert len(gbt) == 1
+        assert float(gbt["forecasted_discharge"].iloc[0]) == 205.0
+
+    def test_season_reader_unaffected_still_filters_gbt(self):
+        raw_api = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "valid_from": pd.to_datetime(["2024-04-01", "2024-04-01"]),
+                "valid_to": ["2024-09-30", "2024-09-30"],
+                "model_type": ["LR_Base", "GBT"],
+                "q50": [30, 999],
+            }
+        )
+        with patch.object(data_reader, "_read_long_forecasts_api", return_value=raw_api):
+            result = data_reader.read_seasonal_forecasts([CODE], 2024, 2024)
+        assert "GBT" not in set(result["model_short"])
+
+
+class TestFreshDerivedRowSurvivesPersistedSameKey:
+    def test_gbt(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        # A persisted, legacy direct GBT QUARTER row at the same key.
+        direct_rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "2026-01-01", model="GBT", q=999.0),
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2025-12-25", 1, "GBT", [200.0, 205.0, 210.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        gbt = result[
+            (result["model_short"] == "GBT")
+            & (result["year"] == 2026)
+            & (result["quarter_in_year"] == 1)
+        ]
+        assert len(gbt) == 1
+        assert float(gbt["forecasted_discharge"].iloc[0]) == 205.0
+
+
+class TestDatasetBDropped:
+    """Legacy QUARTER rows of the seven models at hv 1-4 with
+
+    date == valid_from predate the P1a/P1b derivation mechanism and must
+    never be surfaced by either quarter reader.
+    """
+
+    def _rows(self):
+        return [
+            _quarter_row_with_horizon_value(
+                "2026-01-01", "2026-03-31", "2026-01-01", hv, model="GBT", q=999.0
+            )
+            for hv in (1, 2, 3, 4)
+        ]
+
+    def test_read_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        fake = _quarter_api_fake(self._rows())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        assert "GBT" not in set(result.get("model_short", []))
+
+    def test_read_latest_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        fake = _quarter_api_fake(self._rows())
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert "GBT" not in set(result.get("model_short", []))
+
+    def test_read_quarterly_combined_forecasts(self, monkeypatch):
+        """`read_quarterly_combined_forecasts` is filter-only (item 4): it
+
+        also drops direct rows of the seven `QUARTERLY_DERIVED_MODELS`,
+        with no monthly read/derivation of its own.
+        """
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        mock_df = pd.DataFrame(
+            {
+                "code": [CODE, CODE],
+                "year": [2026, 2026],
+                "quarter_in_year": [1, 1],
+                "model_short": ["GBT", "LR_Base"],
+                "forecasted_discharge": [999.0, 100.0],
+            }
+        )
+        with patch.object(
+            data_reader,
+            "_read_long_combined_forecasts_api",
+            return_value=mock_df,
+        ):
+            result = data_reader.read_quarterly_combined_forecasts()
+        assert "GBT" not in set(result.get("model_short", []))
+        assert "LR_Base" in set(result.get("model_short", []))
+
+
+class TestOutputSchemaFlagOff:
+    """Both readers return `date` and `horizon_value` under flag OFF now
+
+    (`_quarterly_fc_output_cols`'s flag-OFF branch): `horizon_value` is
+    null on the flag-OFF direct row (dropped from `direct` by
+    `_normalize_combined_forecasts` when the flag is off), and carried by
+    the PP-065 derived GBT row alongside it -- both columns must survive
+    the combine.
+    """
+
+    def test_read_quarterly_forecasts_returns_date_and_horizon_value(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        direct_rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2025-12-25", 1, "GBT", [200.0, 205.0, 210.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        assert "date" in result.columns
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].isna().any()  # the direct LR row
+        assert result["horizon_value"].notna().any()  # the derived GBT row
+
+    def test_read_latest_quarterly_forecasts_returns_date_and_horizon_value(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        direct_rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2025-12-25", 1, "GBT", [200.0, 205.0, 210.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert "date" in result.columns
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].isna().any()  # the direct LR row
+        assert result["horizon_value"].notna().any()  # the derived GBT row
+
+
+class TestOutputSchemaFlagOffDirectOnly:
+    """Out-of-loop review finding: with a direct-only result (no derived
+
+    row at all to carry `horizon_value` into the combine), the column
+    must still exist -- as all-null -- not be silently absent. Both
+    readers reindex onto the canonical output columns rather than
+    filtering to whatever columns happened to survive.
+    """
+
+    def test_read_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [_quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        assert not result.empty
+        assert "date" in result.columns
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].isna().all()
+
+    def test_read_latest_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        rows = [_quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert not result.empty
+        assert "date" in result.columns
+        assert "horizon_value" in result.columns
+        assert result["horizon_value"].isna().all()
+
+
+class TestDerivationWindowMatchesDirectWindow:
+    """Out-of-loop review finding: the monthly derivation's own issue-year
+
+    read window must match the reader's OWN direct-read window for the
+    active flag, or a native direct row that falls outside the (wider)
+    derivation window but inside the (narrower) direct window gets
+    treated as "absent" by the fallback-suppression check, letting a
+    stale monthly-derived fallback value win depending solely on which
+    side of a read-window boundary `forecast_date` falls -- with no
+    change to the underlying stored data.
+    """
+
+    def test_read_latest_quarterly_forecasts_flag_off_never_leaks_stale_fallback(self, monkeypatch):
+        # A native Q1-2026 direct row (issued 2025-12-25, kghm shape) with
+        # a same-issue monthly triplet that would derive a DIFFERENT
+        # value (310.0) if the native row were ever mistaken for absent.
+        # This reader's own flag-OFF direct branch has NO widening at
+        # all (pre-existing, unmodified by this diff), so once the 120-day
+        # rolling window ages past the native row's issue date, direct
+        # itself no longer sees it either -- by design, not a bug. The
+        # invariant under test is narrower: the derivation's read window
+        # must never be WIDER than direct's own, so a still-in-window
+        # native row is never mistaken for absent (310.0 must never
+        # appear), and an aged-out native row must not resurrect as a
+        # stale 310.0 fallback either -- the aged-out case is correctly
+        # EMPTY, matching what direct alone would already show.
+        direct_rows = [
+            _quarter_row("2026-01-01", "2026-03-31", "2025-12-25", model="LR_Base", q=100.0)
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2025-12-25", 1, "LR_Base", [300.0, 310.0, 320.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+
+        def read_lr_base_rows(forecast_date):
+            monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+            with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+                result = data_reader.read_latest_quarterly_forecasts(
+                    [CODE], forecast_date=forecast_date
+                )
+            return result[result["model_short"] == "LR_Base"]
+
+        # 120 days before 2026-04-30 is 2025-12-31 (start_year=2025): the
+        # native row is in-window -- its own value (100.0) must win, never
+        # the fallback (310.0).
+        in_window = read_lr_base_rows(dt.date(2026, 4, 30))
+        assert len(in_window) == 1
+        assert float(in_window["forecasted_discharge"].iloc[0]) == 100.0
+
+        # 120 days before 2026-05-01 is 2026-01-01 (start_year=2026): the
+        # native row has aged out of BOTH direct's and the derivation's
+        # read window (pre-existing, unmodified 120-day design) -- this
+        # must be empty, never a resurrected stale 310.0 fallback.
+        aged_out = read_lr_base_rows(dt.date(2026, 5, 1))
+        assert aged_out.empty
+        assert 310.0 not in set(aged_out["forecasted_discharge"])
+
+
+class TestStoredLeadMismatchNoDateColumnNoException:
+    """Out-of-loop review finding, round 2: a direct EM/ensemble row with
+
+    horizon_value set but no `date` column at all (e.g. an all-null `date`
+    already dropped upstream) must not crash
+    `_drop_stored_lead_mismatches` -- `pd.to_datetime(None, errors=
+    "coerce")` returns a bare `None`, not an empty/NaT Series, and a naive
+    `.dt` access on that raises AttributeError. The native-row helper
+    leaves non-LR rows (EM here) untouched, so this row reaches the
+    stored-leads filter regardless of nativity.
+    """
+
+    def test_read_quarterly_forecasts_flag_on_no_exception(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        row = {
+            "horizon_type": "quarter",
+            "horizon_value": 1,
+            "code": CODE,
+            "model_type": "EM",
+            "valid_from": "2026-01-01",
+            "valid_to": "2026-03-31",
+            "q50": 100.0,
+            # no "date" column at all.
+        }
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame([row])
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        # No exception; the EM row's own fate is not this test's concern.
+        assert isinstance(result, pd.DataFrame)
+
+    def test_read_latest_quarterly_forecasts_flag_on_no_exception(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        row = {
+            "horizon_type": "quarter",
+            "horizon_value": 1,
+            "code": CODE,
+            "model_type": "EM",
+            "valid_from": "2026-01-01",
+            "valid_to": "2026-03-31",
+            "q50": 100.0,
+            # no "date" column at all.
+        }
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type != "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame([row])
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 2, 1)
+            )
+        assert isinstance(result, pd.DataFrame)
+
+
+class TestClampedNativeRowNeverLosesToWrongFallbackValue:
+    """Out-of-loop review finding, round 2: under flag ON,
+
+    `select_operational_issuances` still matches the UNCLAMPED issue day
+    (PP-066's own, not-modified-here gap) -- so a native row valid only
+    via the producer's clamp (e.g. issue_day=31 in a 30-day month) is
+    correctly classified native by the shared helper, but then dropped by
+    `select_operational_issuances` anyway. The suppression fix (round 2)
+    must still prevent a competing decision-G fallback from silently
+    substituting a DIFFERENT, wrong value in that case -- the correct,
+    documented outcome (unchanged by this fix, and unchanged until
+    PP-066 lands) is that the key produces NO row at all, not the
+    fallback's average.
+    """
+
+    def test_read_quarterly_forecasts(self, monkeypatch, kghm_quarter_config):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 31})
+        )
+        # Native issuance clamped to June 30 (June has 30 days); a
+        # competing same-issue-day-31 monthly triplet elsewhere would
+        # derive a DIFFERENT value than the native row's own 100.0.
+        direct_rows = [
+            _quarter_row_with_horizon_value(
+                "2026-07-01", "2026-09-30", "2026-06-30", 1, model="LR_Base", q=100.0
+            )
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2026-06-30", 1, "LR_Base", [300.0, 310.0, 320.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        q3_2026 = result[(result["year"] == 2026) & (result["quarter_in_year"] == 3)]
+        lr_base = q3_2026[q3_2026["model_short"] == "LR_Base"]
+        # PP-066 not yet fixed: the native row itself does not survive
+        # select_operational_issuances' unclamped comparison. The
+        # assertion under test is narrower: whatever the outcome, it must
+        # never be the fallback's 310.0.
+        assert 310.0 not in set(lr_base["forecasted_discharge"])
+
+    def test_read_latest_quarterly_forecasts(self, monkeypatch, kghm_quarter_config):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 31})
+        )
+        direct_rows = [
+            _quarter_row_with_horizon_value(
+                "2026-07-01", "2026-09-30", "2026-06-30", 1, model="LR_Base", q=100.0
+            )
+        ]
+        monthly_rows = _quarter_derivation_rows(
+            "2026-06-30", 1, "LR_Base", [300.0, 310.0, 320.0], code=CODE
+        )
+        fake = _quarter_and_month_api_fake(direct_rows, monthly_rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_latest_quarterly_forecasts(
+                [CODE], forecast_date=dt.date(2026, 7, 15)
+            )
+
+        lr_base = result[result["model_short"] == "LR_Base"]
+        assert 310.0 not in set(lr_base["forecasted_discharge"])
+
+
+class TestNegativeLeadTimeNoDuplicateWarning:
+    """Out-of-loop review finding, round 2: a resolvable schedule with a
+
+    NEGATIVE `operational_month_lead_time` hits the same invalid-config
+    condition `derive_quarterly_from_monthly_same_issue` guards against
+    internally (`issue_day < 1 or lead < 0`) as an invalid `issue_day` --
+    the derivation must be skipped entirely (not called twice, once per
+    model set) so no duplicate WARNING is logged, matching the
+    issue_day < 1 case round 1 already fixed.
+    """
+
+    def test_read_quarterly_forecasts_flag_on_skips_derivation(
+        self, monkeypatch, kghm_quarter_config
+    ):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        (kghm_quarter_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": -1, "operational_issue_day": 25})
+        )
+        monthly_rows = _quarter_derivation_rows(
+            "2026-03-25", -1, "LR_Base", [100.0, 105.0, 110.0], code=CODE
+        )
+
+        def fake(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return pd.DataFrame(monthly_rows)
+
+        with patch(
+            "src.aggregation.derive_quarterly_from_monthly_same_issue",
+            wraps=aggregation.derive_quarterly_from_monthly_same_issue,
+        ) as spy:
+            with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+                data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+        spy.assert_not_called()
+
+
+class TestMissingQuarterConfigFilePropagates:
+    """A missing quarter.json (the mode IS supported, but its config file
+
+    is absent) is a misconfiguration that FAILS the run under both
+    flags -- pre-existing trunk behaviour, preserved by P1b's shared
+    schedule resolution (which deliberately does not catch
+    FileNotFoundError).
+    """
+
+    def test_flag_off(self, monkeypatch, kghm_quarter_config):
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+        (kghm_quarter_config / "quarter.json").unlink()
+        with patch.object(data_reader, "_read_long_forecasts_api", return_value=pd.DataFrame()):
+            with pytest.raises(FileNotFoundError):
+                data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+    def test_flag_on(self, monkeypatch, kghm_quarter_config):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        (kghm_quarter_config / "quarter.json").unlink()
+        with patch.object(data_reader, "_read_long_forecasts_api", return_value=pd.DataFrame()):
+            with pytest.raises(FileNotFoundError):
+                data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+
+class TestStoredLeadsControlPair:
+    """A direct LR row with the matching date and window but a wrong
+
+    stored hv, next to a valid control -> the bad row is dropped and
+    counted; the control keeps its stored hv.
+    """
+
+    def test_read_quarterly_forecasts(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        rows = [
+            _quarter_row_with_horizon_value(
+                "2026-01-01", "2026-03-31", "2025-12-25", 99, model="LR_Base", q=100.0
+            ),
+            _quarter_row_with_horizon_value(
+                "2026-01-01", "2026-03-31", "2025-12-25", 1, model="LR_SM", q=120.0
+            ),
+        ]
+        fake = _quarter_api_fake(rows)
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake):
+            result = data_reader.read_quarterly_forecasts([CODE], 2026, 2026)
+
+        assert "LR_Base" not in set(result["model_short"])
+        lr_sm = result[result["model_short"] == "LR_SM"]
+        assert len(lr_sm) == 1
+        assert int(lr_sm["horizon_value"].iloc[0]) == 1

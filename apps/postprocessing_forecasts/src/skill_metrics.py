@@ -197,10 +197,11 @@ def _long_term_threshold_overrides() -> dict:
 
 
 # Env var names and per-horizon defaults for the minimum n_pairs gate.
-# MONTH default = 4; QUARTER and SEASON default = 5.
+# MONTH default = 4; QUARTER default = 10 (PP-065 P1c decision 4); SEASON
+# default = 5.
 _LONG_TERM_MIN_PAIRS_ENV = {
     "MONTH": ("ieasyhydroforecast_min_pairs_long_term", 4),
-    "QUARTER": ("ieasyhydroforecast_min_pairs_long_term_quarter", 5),
+    "QUARTER": ("ieasyhydroforecast_min_pairs_long_term_quarter", 10),
     "SEASON": ("ieasyhydroforecast_min_pairs_long_term_season", 5),
 }
 
@@ -2630,6 +2631,7 @@ def _calculate_aggregated_skill_metrics(
     merge, point metrics, CRPS, EM, Skilled Mean, Naive Mean.
     """
     from src.ensemble_calculator import (
+        _skip_em_for_quarter,
         composition_agg,
         is_multi_model_composition,
     )
@@ -2741,68 +2743,69 @@ def _calculate_aggregated_skill_metrics(
     # --- 4. Ensemble Mean (EM) ---
     joint_forecasts = forecasts.copy()
 
-    model_keys = canonical_model_short_series(merged["model_short"])
-    em_merged = merged[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
-    em_merged = em_merged.dropna(subset=["forecasted_discharge"]).copy()
+    if not _skip_em_for_quarter(period_col):
+        model_keys = canonical_model_short_series(merged["model_short"])
+        em_merged = merged[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
+        em_merged = em_merged.dropna(subset=["forecasted_discharge"]).copy()
 
-    n_models = em_merged["model_short"].nunique()
-    if n_models > 1 and not em_merged.empty:
-        em_agg_dict = {
-            "forecasted_discharge": "mean",
-            "model_short": composition_agg,
-        }
-        if period_col not in time_group_cols:
-            em_agg_dict[period_col] = "first"
-        for qcol in _QUANTILE_COLS:
-            if qcol in em_merged.columns:
-                em_agg_dict[qcol] = "mean"
-        for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in em_merged.columns and dcol not in time_group_cols:
-                em_agg_dict[dcol] = "first"
+        n_models = em_merged["model_short"].nunique()
+        if n_models > 1 and not em_merged.empty:
+            em_agg_dict = {
+                "forecasted_discharge": "mean",
+                "model_short": composition_agg,
+            }
+            if period_col not in time_group_cols:
+                em_agg_dict[period_col] = "first"
+            for qcol in _QUANTILE_COLS:
+                if qcol in em_merged.columns:
+                    em_agg_dict[qcol] = "mean"
+            for dcol in ("valid_from", "valid_to", "date"):
+                if dcol in em_merged.columns and dcol not in time_group_cols:
+                    em_agg_dict[dcol] = "first"
 
-        em_avg = em_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
-        em_avg = enforce_quantile_monotonicity(
-            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
-        )
-        em_avg = em_avg.rename(columns={"model_short": "composition"})
-        em_avg["model_short"] = "EM"
-
-        em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
-
-        if not em_avg.empty:
-            em_with_obs = pd.merge(
-                em_avg,
-                observations[available_obs_cols],
-                on=merge_cols,
-                how="inner",
-                suffixes=("", "_obs"),
+            em_avg = em_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
+            em_avg = enforce_quantile_monotonicity(
+                em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
             )
-            if obs_suffix in em_with_obs.columns:
-                em_with_obs = em_with_obs.drop(columns=[obs_suffix])
+            em_avg = em_avg.rename(columns={"model_short": "composition"})
+            em_avg["model_short"] = "EM"
 
-            em_skill = (
-                em_with_obs.groupby([*metric_group_cols, "composition"])[
-                    ["discharge_avg", "forecasted_discharge", "delta"]
-                ]
-                .apply(
-                    calculate_all_skill_metrics,
-                    observed_col="discharge_avg",
-                    simulated_col="forecasted_discharge",
-                    delta_col="delta",
+            em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
+
+            if not em_avg.empty:
+                em_with_obs = pd.merge(
+                    em_avg,
+                    observations[available_obs_cols],
+                    on=merge_cols,
+                    how="inner",
+                    suffixes=("", "_obs"),
                 )
-                .reset_index()
-            )
+                if obs_suffix in em_with_obs.columns:
+                    em_with_obs = em_with_obs.drop(columns=[obs_suffix])
 
-            em_crps_df = _crps_records_for_groups(
-                em_with_obs,
-                metric_group_cols,
-                context=f"_calculate_aggregated_skill_metrics({period_col}) EM",
-            )
-            em_skill = em_skill.merge(em_crps_df, on=metric_group_cols, how="left")
+                em_skill = (
+                    em_with_obs.groupby([*metric_group_cols, "composition"])[
+                        ["discharge_avg", "forecasted_discharge", "delta"]
+                    ]
+                    .apply(
+                        calculate_all_skill_metrics,
+                        observed_col="discharge_avg",
+                        simulated_col="forecasted_discharge",
+                        delta_col="delta",
+                    )
+                    .reset_index()
+                )
 
-            skill_stats = pd.concat([skill_stats, em_skill], ignore_index=True)
-            em_avg["flag"] = 0
-            joint_forecasts = _append_to_joint(joint_forecasts, em_avg)
+                em_crps_df = _crps_records_for_groups(
+                    em_with_obs,
+                    metric_group_cols,
+                    context=f"_calculate_aggregated_skill_metrics({period_col}) EM",
+                )
+                em_skill = em_skill.merge(em_crps_df, on=metric_group_cols, how="left")
+
+                skill_stats = pd.concat([skill_stats, em_skill], ignore_index=True)
+                em_avg["flag"] = 0
+                joint_forecasts = _append_to_joint(joint_forecasts, em_avg)
 
     # --- 4b. Skilled Mean ---
     skill_stats, joint_forecasts = _add_skilled_mean_aggregated(
@@ -2851,6 +2854,62 @@ def _calculate_aggregated_skill_metrics(
     return skill_out, joint_out, ts_out
 
 
+def _quarter_group_cols_without_composition(
+    metric_group_cols: list[str], period_col: str
+) -> list[str]:
+    """Groupby key for an aggregated (quarter/season) Naive/Skilled Mean skill row.
+
+    Season (unchanged): scored per distinct per-year ``composition``, so
+    ``composition`` stays an extra groupby key alongside ``metric_group_cols``
+    — a (quarter, code[, hv]) key whose contributing models changed across
+    years scores each distinct composition as its own row, exactly as today.
+
+    Quarter (composition-free, PP-065 P1c decision 4): scored across ALL
+    years contributing to a (code, quarter[, hv]) key regardless of which
+    raw models formed the ensemble in any given year, so ``composition`` is
+    dropped from the groupby key entirely. Callers reattach a stable label
+    afterward via :func:`_quarter_composition_labels`.
+    """
+    if period_col == "quarter_in_year":
+        return list(metric_group_cols)
+    return [*metric_group_cols, "composition"]
+
+
+def _quarter_composition_labels(
+    df_with_composition: pd.DataFrame, metric_group_cols: list[str]
+) -> pd.DataFrame:
+    """Stable, non-null ``composition`` label per composition-free quarter group.
+
+    The sorted, deduplicated union of every individual model seen in any
+    per-year ``composition`` string across the grouped years — never
+    "first", never blank — so a (quarter, code[, hv]) key whose
+    contributing models changed across years still gets one coherent label
+    for the combined row.
+
+    Args:
+        df_with_composition: Frame with ``metric_group_cols`` and a
+            per-row ``composition`` string column (e.g. ``"LR, TFT"``).
+        metric_group_cols: Columns identifying the composition-free group.
+
+    Returns:
+        DataFrame with ``metric_group_cols`` plus a ``composition`` column,
+        one row per group.
+    """
+
+    def _union_models(compositions) -> str:
+        models: set[str] = set()
+        for comp in compositions:
+            if comp:
+                models.update(m.strip() for m in comp.split(",") if m.strip())
+        return ", ".join(sorted(models))
+
+    return (
+        df_with_composition.groupby(metric_group_cols)["composition"]
+        .apply(_union_models)
+        .reset_index()
+    )
+
+
 def _add_naive_mean_aggregated(
     skill_stats,
     merged,
@@ -2867,6 +2926,7 @@ def _add_naive_mean_aggregated(
     if metric_group_cols is None:
         metric_group_cols = [period_col, "code", "model_short"]
     from src.ensemble_calculator import (
+        _quarter_null_if_any_missing,
         composition_agg,
         is_multi_model_composition,
     )
@@ -2886,9 +2946,13 @@ def _add_naive_mean_aggregated(
     }
     if period_col not in time_group_cols:
         agg_dict[period_col] = "first"
+    # Quarter nulls a quantile column whenever ANY group member lacks it
+    # (e.g. a derived model with no quantiles at all); season keeps the
+    # unchanged skipna "mean". See _quarter_null_if_any_missing.
+    _qcol_agg = _quarter_null_if_any_missing if period_col == "quarter_in_year" else "mean"
     for qcol in _QUANTILE_COLS:
         if qcol in pool.columns:
-            agg_dict[qcol] = "mean"
+            agg_dict[qcol] = _qcol_agg
     for dcol in ("valid_from", "valid_to", "date"):
         if dcol in pool.columns and dcol not in time_group_cols:
             agg_dict[dcol] = "first"
@@ -2918,8 +2982,9 @@ def _add_naive_mean_aggregated(
     if naive_with_obs.empty:
         return skill_stats, joint_forecasts, timing_stats
 
+    naive_skill_group_cols = _quarter_group_cols_without_composition(metric_group_cols, period_col)
     naive_skill = (
-        naive_with_obs.groupby([*metric_group_cols, "composition"])[
+        naive_with_obs.groupby(naive_skill_group_cols)[
             ["discharge_avg", "forecasted_discharge", "delta"]
         ]
         .apply(
@@ -2937,6 +3002,13 @@ def _add_naive_mean_aggregated(
         context=f"_calculate_aggregated_skill_metrics({period_col}) Naive Mean",
     )
     naive_skill = naive_skill.merge(naive_crps_df, on=metric_group_cols, how="left")
+
+    if period_col == "quarter_in_year":
+        naive_skill = naive_skill.merge(
+            _quarter_composition_labels(naive_with_obs, metric_group_cols),
+            on=metric_group_cols,
+            how="left",
+        )
 
     parts = [df for df in [skill_stats, naive_skill] if not df.empty]
     skill_stats = pd.concat(parts, ignore_index=True) if parts else naive_skill
@@ -3052,10 +3124,9 @@ def _add_skilled_mean_aggregated(
     if obs_suffix in sm_with_obs.columns:
         sm_with_obs = sm_with_obs.drop(columns=[obs_suffix])
 
+    sm_skill_group_cols = _quarter_group_cols_without_composition(metric_group_cols, period_col)
     sm_skill = (
-        sm_with_obs.groupby([*metric_group_cols, "composition"])[
-            ["discharge_avg", "forecasted_discharge", "delta"]
-        ]
+        sm_with_obs.groupby(sm_skill_group_cols)[["discharge_avg", "forecasted_discharge", "delta"]]
         .apply(
             calculate_all_skill_metrics,
             observed_col="discharge_avg",
@@ -3071,6 +3142,13 @@ def _add_skilled_mean_aggregated(
         context=f"_calculate_aggregated_skill_metrics({period_col}) Skilled Mean",
     )
     sm_skill = sm_skill.merge(sm_crps_df, on=metric_group_cols, how="left")
+
+    if period_col == "quarter_in_year":
+        sm_skill = sm_skill.merge(
+            _quarter_composition_labels(sm_with_obs, metric_group_cols),
+            on=metric_group_cols,
+            how="left",
+        )
 
     skill_stats = pd.concat([skill_stats, sm_skill], ignore_index=True)
     sm_avg["flag"] = 0

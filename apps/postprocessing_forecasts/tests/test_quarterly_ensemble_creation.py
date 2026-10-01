@@ -168,39 +168,24 @@ def _set_thresholds(monkeypatch):
 
 
 class TestQuarterlyEnsembleEM:
-    def test_em_created(self):
+    """Quarter never forms an EM row (PP-065 P1c decision 3).
+
+    EM remains fully supported for season — see TestSeasonalEnsembleEM
+    below, unchanged. These tests lock the quarter-only removal across the
+    scenarios that used to produce EM (two skilled models, fixed-LR bypass
+    of failing skill thresholds, DB-form LR model names).
+    """
+
+    def test_no_em_with_two_skilled_models(self):
         skill = _two_model_quarterly_skill()
         fcst = _two_model_quarterly_fcst()
         result = create_quarterly_ensemble_forecasts(fcst, skill)
         em = result[result["model_short"] == "EM"]
-        assert not em.empty
+        assert em.empty
 
-    def test_em_discharge_is_mean(self):
-        skill = _two_model_quarterly_skill()
-        fcst = _two_model_quarterly_fcst()
-        result = create_quarterly_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
-        expected = (100.0 + 120.0) / 2
-        assert np.isclose(em.iloc[0]["forecasted_discharge"], expected)
-
-    def test_em_quantiles_averaged(self):
-        skill = _two_model_quarterly_skill()
-        fcst = _two_model_quarterly_fcst()
-        result = create_quarterly_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
-        # q50 = mean(100, 120) = 110
-        assert np.isclose(em.iloc[0]["q50"], 110.0)
-
-    def test_em_composition_string(self):
-        skill = _two_model_quarterly_skill()
-        fcst = _two_model_quarterly_fcst()
-        result = create_quarterly_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
-        comp = str(em.iloc[0]["composition"])
-        assert "LR_Base" in comp
-        assert "LR_SM" in comp
-
-    def test_em_uses_lr_mean_when_lr_skills_fail_thresholds(self):
+    def test_no_em_when_lr_skills_fail_thresholds(self):
+        """Fixed-LR EM membership bypasses the skill gate for LR_Base/LR_SM
+        on trunk, but quarter must never form EM regardless."""
         skill = _make_quarterly_skill(
             [
                 (1, "S1", "LR_Base", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
@@ -219,14 +204,12 @@ class TestQuarterlyEnsembleEM:
         result = create_quarterly_ensemble_forecasts(fcst, skill)
         em = result[result["model_short"] == "EM"]
 
-        assert len(em) == 1
-        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
-        assert np.isclose(em.iloc[0]["q05"], 85.0)
-        assert np.isclose(em.iloc[0]["q50"], 110.0)
-        assert np.isclose(em.iloc[0]["q95"], 130.0)
-        assert str(em.iloc[0]["composition"]) == "LR_Base, LR_SM"
+        assert em.empty, (
+            "Quarter must never form EM, even when both fixed-LR models "
+            "would otherwise qualify by AGGREGATED_EM_RAW_MODELS membership"
+        )
 
-    def test_em_accepts_db_form_lr_model_names(self):
+    def test_no_em_with_db_form_lr_model_names(self):
         skill = _make_quarterly_skill(
             [
                 (1, "S1", "LR_BASE", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
@@ -245,13 +228,12 @@ class TestQuarterlyEnsembleEM:
         result = create_quarterly_ensemble_forecasts(fcst, skill)
         em = result[result["model_short"] == "EM"]
 
-        assert len(em) == 1
-        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
-        assert np.isclose(em.iloc[0]["q50"], 110.0)
-        assert str(em.iloc[0]["composition"]) == "LR_BASE, LR_SM"
+        assert em.empty
 
     def test_em_not_created_single_model(self):
-        """Single model should not produce EM."""
+        """Single model should not produce EM (unaffected by the quarter
+        removal — this scenario was already EM-empty via the single-model
+        composition guard, and quarter now never forms EM regardless)."""
         skill = _make_quarterly_skill(
             [
                 (1, "S1", "LR_Base", 0.3, 0.95, 5.0, 0.90, 2.0, 10),

@@ -4,6 +4,7 @@ Phase 4b Step 5.
 """
 
 import json
+import logging
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -227,7 +228,9 @@ class TestQuarterlyEnsembleWriter:
             result = _write_quarterly_ensemble_to_api(data)
         assert result is True
         records = self.mock_client.write_long_forecasts.call_args[0][0]
-        assert len(records) == 2
+        # PP-065 item 3: quarter no longer writes EM rows, so only the
+        # Naive Mean row survives.
+        assert len(records) == 1
         assert records[0]["horizon_type"] == "quarter"
 
     def test_valid_from_valid_to(self):
@@ -236,7 +239,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["S1"],
                 "year": [2025],
                 "quarter_in_year": [2],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "forecasted_discharge": [100.0],
             }
         )
@@ -258,7 +261,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["PP4_Q_SENTINEL", "PP4_Q_SENTINEL"],
                 "year": [2025, 2025],
                 "quarter_in_year": [1, 2],
-                "model_short": ["EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean"],
                 "forecasted_discharge": [100.0, 110.0],
             }
         )
@@ -288,12 +291,15 @@ class TestQuarterlyEnsembleWriter:
         written using ITS OWN values, not quarter_horizon_value()/valid_from.
         """
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+        # PP-065 item 3: quarter no longer writes raw LR_Base/LR_SM rows, so
+        # this test uses a model the writer still keeps (its purpose is the
+        # flag-ON own-horizon_value/date behaviour, not the model identity).
         data = pd.DataFrame(
             {
                 "code": ["19999"],
                 "year": [2025],
                 "quarter_in_year": [1],
-                "model_short": ["LR_Base"],
+                "model_short": ["Naive Mean"],
                 "forecasted_discharge": [100.0],
                 "horizon_value": [3],
                 "date": ["2024-10-25"],
@@ -320,7 +326,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["19999"],
                 "year": [2025],
                 "quarter_in_year": [2],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "forecasted_discharge": [100.0],
             }
         )
@@ -349,7 +355,7 @@ class TestQuarterlyEnsembleWriter:
                 "code": ["19999", "19999"],
                 "year": [2024, 2024],
                 "month": [1, 2],
-                "model_short": ["EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean"],
                 "horizon_value": [1, 1],
                 "q05": [10.0, 20.0],
                 "q10": [15.0, 25.0],
@@ -376,6 +382,125 @@ class TestQuarterlyEnsembleWriter:
         d = pd.Timestamp(rec["date"])
         derived_lead = (vf.year - d.year) * 12 + (vf.month - d.month)
         assert derived_lead == rec["horizon_value"] == 1
+
+
+# ===================================================================
+# PP-065 item 3: quarter skips raw LR_Base/LR_SM and EM/ENSEMBLE_MEAN
+# rows; season is unaffected.
+# ===================================================================
+
+
+class TestQuarterSkipsRawLrAndEmRows:
+    """Quarter stops writing raw LR_Base/LR_SM and EM/ENSEMBLE_MEAN rows
+    (rev-3 PP-064 "B6"). Fallback-derived LR rows are native-shaped and
+    would pass the native-row precedence rule forever once persisted; the
+    stored EM row is re-dated to valid_from on every re-write under flag
+    OFF, which would mint a new EM key every run since date is part of
+    the unique key."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_api(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        _write_quarter_config(tmp_path, monkeypatch, lead=1)
+        self.mock_client = MagicMock()
+        self.mock_client.readiness_check.return_value = True
+
+    def test_lr_base_and_lr_sm_rows_are_skipped_and_logged(self, caplog):
+        data = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "model_short": ["LR_Base", "LR_SM"],
+                "forecasted_discharge": [100.0, 105.0],
+            }
+        )
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+            caplog.at_level(logging.WARNING, logger="src.api_writer"),
+        ):
+            result = _write_quarterly_ensemble_to_api(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+        assert "Skipped 2" in caplog.text
+
+    def test_em_and_ensemble_mean_rows_are_skipped_and_logged(self, caplog):
+        data = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "year": [2025, 2025],
+                "quarter_in_year": [1, 1],
+                "model_short": ["EM", "ENSEMBLE_MEAN"],
+                "forecasted_discharge": [100.0, 105.0],
+            }
+        )
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+            caplog.at_level(logging.WARNING, logger="src.api_writer"),
+        ):
+            result = _write_quarterly_ensemble_to_api(data)
+        assert result is False
+        self.mock_client.write_long_forecasts.assert_not_called()
+        assert "Skipped 2" in caplog.text
+
+    @pytest.mark.parametrize("model", ["GBT", "Naive Mean", "Skilled Mean"])
+    def test_derived_and_aggregate_models_are_still_written(self, model):
+        """Regression guard: the skip must not over-broaden past
+        LR_BASE/LR_SM/EM/ENSEMBLE_MEAN."""
+        data = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "year": [2025],
+                "quarter_in_year": [1],
+                "model_short": [model],
+                "forecasted_discharge": [100.0],
+            }
+        )
+        self.mock_client.write_long_forecasts.return_value = 1
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+        ):
+            result = _write_quarterly_ensemble_to_api(data)
+        assert result is True
+        records = self.mock_client.write_long_forecasts.call_args[0][0]
+        assert len(records) == 1
+
+
+class TestSeasonRawLrAndEmRowsUnaffected:
+    """The season branch of the shared function must be completely
+    unaffected by the quarter-only PP-065 item 3 skip: an EM or LR_Base
+    row through the season writer still produces a record."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_api(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_API_ENABLED", "true")
+        monkeypatch.delenv("SAPPHIRE_SEASON_START_MONTH", raising=False)
+        monkeypatch.delenv("SAPPHIRE_SEASON_END_MONTH", raising=False)
+        self.mock_client = MagicMock()
+        self.mock_client.readiness_check.return_value = True
+
+    def test_em_and_lr_base_rows_still_written_for_season(self):
+        data = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "season_year": [2025, 2025],
+                "season_in_year": [1, 1],
+                "model_short": ["EM", "LR_Base"],
+                "forecasted_discharge": [100.0, 95.0],
+            }
+        )
+        self.mock_client.write_long_forecasts.return_value = 2
+        with (
+            patch("src.api_writer.SAPPHIRE_API_AVAILABLE", True),
+            patch("src.api_writer._get_postprocessing_client", return_value=self.mock_client),
+        ):
+            result = _write_seasonal_ensemble_to_api(data)
+        assert result is True
+        records = self.mock_client.write_long_forecasts.call_args[0][0]
+        assert len(records) == 2
 
 
 # ===================================================================

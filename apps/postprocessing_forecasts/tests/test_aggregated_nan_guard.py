@@ -62,7 +62,10 @@ class TestAggregatedNanGuardQuarterly:
                 "code": ["12345", "NAN_STATION", "67890"],
                 "year": [2025, 2025, 2025],
                 "quarter_in_year": [2, 2, 2],
-                "model_short": ["EM", "EM", "EM"],
+                # PP-065 item 3: quarter no longer writes EM rows, so this
+                # NaN-guard fixture uses Naive Mean instead (a generic
+                # groupby key with no EM-specific handling).
+                "model_short": ["Naive Mean", "Naive Mean", "Naive Mean"],
                 "forecasted_discharge": [100.0, 200.0, 300.0],
                 "composition": ["GBT,LR", "GBT,LR", "GBT,LR"],
             }
@@ -103,7 +106,7 @@ class TestAggregatedNanGuardQuarterly:
                 "code": ["12345", "12345", "67890"],
                 "year": [2025, 2025, 2025],
                 "quarter_in_year": [2, 2, 2],
-                "model_short": ["EM", "EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean", "Naive Mean"],
                 "forecasted_discharge": [100.0, 200.0, 300.0],
                 "composition": ["GBT,LR", "GBT,LR", "GBT,LR"],
             }
@@ -120,6 +123,9 @@ class TestAggregatedNanGuardQuarterly:
 
     def test_all_nan_returns_false(self, caplog):
         """All rows have NaN year — function returns False and skips write."""
+        # Not switched to Naive Mean (unlike the other tests in this class):
+        # every row is dropped by the NaN-year guard before the PP-065
+        # item 3 model filter ever runs, so `result is False` either way.
         data = pd.DataFrame(
             {
                 "code": ["12345", "67890"],
@@ -144,7 +150,7 @@ class TestAggregatedNanGuardQuarterly:
                 "code": ["12345", "NAN_STATION", "67890"],
                 "year": [2025, 2025, 2025],
                 "quarter_in_year": [2, 2, 2],
-                "model_short": ["EM", "EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean", "Naive Mean"],
                 "forecasted_discharge": [100.0, np.nan, 300.0],
                 "composition": ["GBT,LR", "GBT,LR", "GBT,LR"],
             }

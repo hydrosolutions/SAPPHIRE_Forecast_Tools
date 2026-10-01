@@ -390,12 +390,15 @@ class TestQuarterEnsembleFlagBehaviour:
     deployment-configured quarter lead (quarter_horizon_value())."""
 
     def _quarter_df(self, horizon_value):
+        # PP-065 item 3: quarter no longer writes EM rows, so this
+        # flag-gated horizon_value fixture uses Naive Mean instead (a
+        # generic groupby key with no EM-specific handling).
         return pd.DataFrame(
             {
                 "code": [STATION],
                 "year": [2025],
                 "quarter_in_year": [2],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "horizon_value": [horizon_value],
                 "forecasted_discharge": [200.0],
                 "q50": [200.0],

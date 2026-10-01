@@ -27,6 +27,29 @@ DEPRECATED_MODEL_FORMS = [
 ]
 
 
+def _quarter_derivation_rows(issue_date, lead, model, values, code="S1"):
+    """One same-issue monthly triplet shaped for the raw API input to
+
+    derive_quarterly_from_monthly_same_issue (PP-065 P1b shared test
+    template): three rows at horizon_value lead/lead+1/lead+2, all
+    issued on `issue_date`, whose `q50` (and `forecasted_discharge`,
+    matching the real API's own convention) carry `values`. Real raw
+    LR/GBT monthly API rows do not reliably carry `q`, so this template
+    never sets it -- the derivation helper reads `q50` here.
+    """
+    return [
+        {
+            "code": code,
+            "date": issue_date,
+            "model_type": model,
+            "horizon_value": lead + i,
+            "q50": value,
+            "forecasted_discharge": value,
+        }
+        for i, value in enumerate(values)
+    ]
+
+
 @pytest.fixture(autouse=True)
 def long_term_horizon_config(monkeypatch, tmp_path):
     """Provide sentinel long-term resolver config for reader tests."""
@@ -131,39 +154,59 @@ class TestReadSeasonalObservations:
 
 
 class TestReadQuarterlyForecasts:
-    def test_aggregated_from_monthly(self):
-        """Quarterly forecasts still include aggregated monthly data."""
-        monthly = pd.DataFrame(
-            {
-                "code": ["S1"] * 3,
-                "year": [2024] * 3,
-                "month": [1, 2, 3],
-                "model_short": ["LR_Base"] * 3,
-                "q05": [10, 20, 30],
-                "q10": [15, 25, 35],
-                "q25": [20, 30, 40],
-                "q50": [30, 40, 50],
-                "q75": [40, 50, 60],
-                "q90": [50, 60, 70],
-                "q95": [60, 70, 80],
-                "forecasted_discharge": [30, 40, 50],
-            }
+    def test_aggregated_from_monthly(self, long_term_horizon_config):
+        """Quarterly forecasts include PP-065 derived rows from same-issue
+
+        monthly triplets: the seven QUARTERLY_DERIVED_MODELS
+        unconditionally, and LR as the decision-G fallback (the old
+        Source 1 monthly-aggregation path no longer exists; this is the
+        unified derivation path, item 2 of PP-065 P1b).
+        """
+        (long_term_horizon_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
         )
-        with (
-            patch.object(data_reader, "read_monthly_forecasts", return_value=monthly),
-            patch.object(
-                data_reader,
-                "_read_long_forecasts_api",
-                return_value=pd.DataFrame(),
-            ) as read_api,
-        ):
+        monthly_rows = (
+            _quarter_derivation_rows("2024-03-25", 1, "LR_Base", [100.0, 105.0, 110.0])
+            + _quarter_derivation_rows("2024-03-25", 1, "GBT", [200.0, 205.0, 210.0])
+            + _quarter_derivation_rows("2024-03-10", 1, "LR_Base", [900.0, 910.0, 920.0])
+        )
+        monthly_df = pd.DataFrame(monthly_rows)
+
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return monthly_df
+
+        with patch.object(
+            data_reader, "_read_long_forecasts_api", side_effect=mock_read_api
+        ) as read_api:
             result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
-        kwargs = read_api.call_args.kwargs
-        assert kwargs["horizon_type"] == "quarter"
-        assert kwargs["horizon_value"] == 1
-        assert not result.empty
+
+        # .call_args is the LAST call only; under the full derivation
+        # config _read_long_forecasts_api is invoked at least twice (the
+        # direct quarter read AND the monthly derivation input), so the
+        # quarter call must be selected from call_args_list, not the bare
+        # (last-call-only) call_args.
+        quarter_call = [
+            call for call in read_api.call_args_list if call.kwargs.get("horizon_type") == "quarter"
+        ][0]
+        assert quarter_call.kwargs["horizon_value"] == 1
+
         assert "quarter_in_year" in result.columns
         assert "model_short" in result.columns
+        q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2024) == 2
+        assert (
+            float(q2_2024.loc[q2_2024["model_short"] == "LR_Base", "forecasted_discharge"].iloc[0])
+            == 105.0
+        )
+        assert (
+            float(q2_2024.loc[q2_2024["model_short"] == "GBT", "forecasted_discharge"].iloc[0])
+            == 205.0
+        )
+        # The day-10 backfill triplet contributes nothing, not even
+        # blended into the mean.
+        assert not {900.0, 910.0, 920.0} & set(result["forecasted_discharge"])
 
     def test_empty_both_sources_returns_empty(self):
         with (
@@ -193,24 +236,19 @@ class TestReadQuarterlyForecasts:
         assert kwargs["horizon_type"] == "quarter"
         assert kwargs["horizon_value"] == 0
 
-    def test_direct_preferred_over_aggregated(self):
-        """When same model in both sources, direct wins."""
-        monthly = pd.DataFrame(
-            {
-                "code": ["S1"] * 3,
-                "year": [2024] * 3,
-                "month": [1, 2, 3],
-                "model_short": ["LR_Base"] * 3,
-                "q05": [10, 20, 30],
-                "q10": [15, 25, 35],
-                "q25": [20, 30, 40],
-                "q50": [30, 40, 50],
-                "q75": [40, 50, 60],
-                "q90": [50, 60, 70],
-                "q95": [60, 70, 80],
-                "forecasted_discharge": [30, 40, 50],
-            }
-        )
+    def test_direct_kept_unconditionally_in_degraded_mode(self):
+        """Degraded mode (no operational_issue_day): direct LR is kept
+
+        unconditionally, and no aggregated/derived row is produced.
+
+        Under P1b, read_quarterly_forecasts' old Source 1 call site
+        (read_monthly_forecasts -> aggregate_monthly_fc_to_quarterly) is
+        removed, so a monthly mock is dead code; the degraded config
+        (this class's autouse fixture writes lead-only, no issue_day)
+        also skips the new derivation entirely (shared-resolution
+        failure) -- there is nothing left to "win over". This replaces
+        the old "direct wins over aggregated" premise.
+        """
         direct_api = pd.DataFrame(
             {
                 "code": ["S1"],
@@ -232,10 +270,7 @@ class TestReadQuarterlyForecasts:
                 return direct_api
             return pd.DataFrame()
 
-        with (
-            patch.object(data_reader, "read_monthly_forecasts", return_value=monthly),
-            patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api),
-        ):
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api):
             result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
         # Direct wins: q50 should be 99, not the aggregated mean
         lr_base_rows = result[result["model_short"] == "LR_Base"]
@@ -243,7 +278,17 @@ class TestReadQuarterlyForecasts:
         assert lr_base_rows.iloc[0]["q50"] == 99
 
     def test_filters_deprecated_models_after_combining_sources(self):
-        """Quarterly reader keeps LR raw models and ensembles, dropping deprecated rows."""
+        """Degraded mode: direct LR/ensemble rows survive; the seven
+
+        derived-eligible models are dropped from the direct source
+        unconditionally (item 2's "Drop direct rows of the seven
+        models"), not via the old AGGREGATED_SUPPORTED_MODELS filter.
+        LR_Base no longer appears: it depended entirely on the dead old
+        aggregation path, and degraded mode also blocks the new
+        derivation from supplying it as a fallback. The "monthly" mock
+        below is unreachable dead code under P1b (kept to demonstrate
+        that it is inert).
+        """
         monthly = pd.DataFrame(
             {
                 "code": ["S1"] * 6,
@@ -287,8 +332,8 @@ class TestReadQuarterlyForecasts:
         ):
             result = data_reader.read_quarterly_forecasts(["S1"], 2024, 2024)
 
-        assert set(result["model_short"]) == {"LR_Base", "LR_SM", "EM"}
-        assert not {"GBT", "SM_GBT_Norm"} & set(result["model_short"])
+        assert set(result["model_short"]) == {"LR_SM", "EM"}
+        assert not {"GBT", "SM_GBT_Norm", "LR_Base"} & set(result["model_short"])
 
     def test_filter_accepts_db_form_lr_and_ensemble_names(self):
         direct_api = pd.DataFrame(
@@ -358,11 +403,16 @@ class TestReadQuarterlyForecasts:
 
 
 class TestReadQuarterlyForecastsLeadAware:
-    def test_direct_quarter_horizon_value_survives(self, monkeypatch, long_term_horizon_config):
-        """The direct-quarter branch's selected horizon_value must survive
+    def test_direct_quarter_stale_horizon_value_dropped(
+        self, monkeypatch, long_term_horizon_config
+    ):
+        """PP-065 P1b "Stored leads (flag ON)": a native-dated direct row
 
-        into the final read_quarterly_forecasts() output (previously
-        silently stripped by _QUARTERLY_FC_COLS / normalization).
+        (2023-12-25 is kghm's native Q1-2024 issue date) with a stale
+        stored horizon_value (99, derived lead is 1) is dropped BEFORE
+        select_operational_issuances runs, rather than having its
+        horizon_value normalized to the derived lead (the old contract
+        this test used to lock).
         """
         (long_term_horizon_config / "quarter.json").write_text(
             json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
@@ -395,58 +445,70 @@ class TestReadQuarterlyForecastsLeadAware:
                 return pd.DataFrame([operational_row])
             return pd.DataFrame()
 
-        with (
-            patch.object(data_reader, "read_monthly_forecasts", return_value=pd.DataFrame()),
-            patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake_api),
-        ):
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake_api):
             result = data_reader.read_quarterly_forecasts(["19999"], target_year, target_year)
 
-        assert len(result) == 1
-        assert result.iloc[0]["horizon_value"] == 1
+        assert len(result) == 0
 
     def test_monthly_aggregated_two_leads_survive(self, monkeypatch, long_term_horizon_config):
-        """Depends on Site 1 (aggregation.py): a monthly-aggregated-quarter
+        """The PP-065 derivation contract is unaffected by
 
-        source with two distinct leads must survive read_quarterly_forecasts
-        as two rows with distinct horizon_value.
+        SAPPHIRE_SKILL_LEAD_AWARE: identical to the flag-OFF template
+        (TestReadQuarterlyForecasts.test_aggregated_from_monthly) --
+        the flag only changes how OTHER code groups DIRECT rows, and
+        this fixture supplies no direct rows for the flag-ON Stored
+        leads/select_operational_issuances machinery to touch. Replaces
+        the old "two leads from one aggregated source" premise, which
+        the same-issue-triplet derivation does not have -- only one
+        native lead is admitted per key (decision R4-native-lr-precedence).
         """
         (long_term_horizon_config / "quarter.json").write_text(
             json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
         )
         monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        monthly = pd.DataFrame(
-            {
-                "code": ["19999"] * 4,
-                "year": [2024] * 4,
-                "month": [1, 2, 1, 2],
-                "model_short": ["LR_Base"] * 4,
-                "horizon_value": [0, 0, 1, 1],
-                "q05": [10, 20, 11, 21],
-                "q10": [15, 25, 16, 26],
-                "q25": [20, 30, 21, 31],
-                "q50": [30, 40, 31, 41],
-                "q75": [40, 50, 41, 51],
-                "q90": [50, 60, 51, 61],
-                "q95": [60, 70, 61, 71],
-                "forecasted_discharge": [30, 40, 31, 41],
-            }
+        monthly_rows = (
+            _quarter_derivation_rows(
+                "2024-03-25", 1, "LR_Base", [100.0, 105.0, 110.0], code="19999"
+            )
+            + _quarter_derivation_rows("2024-03-25", 1, "GBT", [200.0, 205.0, 210.0], code="19999")
+            + _quarter_derivation_rows(
+                "2024-03-10", 1, "LR_Base", [900.0, 910.0, 920.0], code="19999"
+            )
         )
-        with (
-            patch.object(data_reader, "read_monthly_forecasts", return_value=monthly),
-            patch.object(data_reader, "_read_long_forecasts_api", return_value=pd.DataFrame()),
-        ):
+        monthly_df = pd.DataFrame(monthly_rows)
+
+        def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
+            if horizon_type == "quarter":
+                return pd.DataFrame()
+            return monthly_df
+
+        with patch.object(data_reader, "_read_long_forecasts_api", side_effect=mock_read_api):
             result = data_reader.read_quarterly_forecasts(["19999"], 2024, 2024)
 
-        assert len(result) == 2
-        assert set(result["horizon_value"]) == {0, 1}
+        q2_2024 = result[(result["year"] == 2024) & (result["quarter_in_year"] == 2)]
+        assert len(q2_2024) == 2
+        assert (
+            float(q2_2024.loc[q2_2024["model_short"] == "LR_Base", "forecasted_discharge"].iloc[0])
+            == 105.0
+        )
+        assert (
+            float(q2_2024.loc[q2_2024["model_short"] == "GBT", "forecasted_discharge"].iloc[0])
+            == 205.0
+        )
+        assert not {900.0, 910.0, 920.0} & set(result["forecasted_discharge"])
 
     def test_dedup_keeps_distinct_leads_after_combining_sources(
         self, monkeypatch, long_term_horizon_config
     ):
-        """Two rows sharing (code, year, quarter, model) but differing only
+        """Obsolete premise (decision R4-native-lr-precedence): only one
 
-        in horizon_value (one from monthly-aggregation, one from the
-        direct-quarter source) must both survive the combine+dedup step.
+        native lead is admitted per (code, year, quarter, model) key now,
+        so two rows differing only by horizon_value can no longer both
+        survive. This now demonstrates the Stored-leads drop directly: the
+        one direct row is native-dated (2023-12-25, kghm's native Q1-2024
+        issue date) but carries a stale stored horizon_value (99, derived
+        lead is 1), so it is dropped; the "monthly" fixture is dead code
+        under P1b (the old Source 1 call site is removed).
         """
         (long_term_horizon_config / "quarter.json").write_text(
             json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
@@ -503,8 +565,7 @@ class TestReadQuarterlyForecastsLeadAware:
         ):
             result = data_reader.read_quarterly_forecasts(["19999"], 2024, 2024)
 
-        assert len(result) == 2
-        assert set(result["horizon_value"]) == {0, 1}
+        assert len(result) == 0
 
 
 # ===================================================================
@@ -651,64 +712,62 @@ class TestReadSeasonalForecasts:
 
 
 class TestReadLatestQuarterlyForecasts:
-    def test_returns_most_recent_quarter(self):
-        """Filters to the most recent quarter after combining sources."""
-        raw_monthly = pd.DataFrame(
-            {
-                "code": ["S1"] * 6,
-                "valid_from": pd.to_datetime(
-                    [
-                        "2024-01-01",
-                        "2024-02-01",
-                        "2024-03-01",
-                        "2024-04-01",
-                        "2024-05-01",
-                        "2024-06-01",
-                    ]
-                ),
-                "valid_to": pd.to_datetime(
-                    [
-                        "2024-01-31",
-                        "2024-02-29",
-                        "2024-03-31",
-                        "2024-04-30",
-                        "2024-05-31",
-                        "2024-06-30",
-                    ]
-                ),
-                "model_type": ["LR_Base"] * 6,
-                "q50": [100, 110, 120, 50, 60, 70],
-                "q05": [80, 90, 100, 30, 40, 50],
-                "q10": [85, 95, 105, 35, 45, 55],
-                "q25": [90, 100, 110, 40, 50, 60],
-                "q75": [110, 120, 130, 60, 70, 80],
-                "q90": [120, 130, 140, 70, 80, 90],
-                "q95": [130, 140, 150, 80, 90, 100],
-            }
+    def test_returns_most_recent_quarter(self, long_term_horizon_config):
+        """Filters to the most recent quarter after combining PP-065
+
+        derived rows from two distinct same-issue monthly triplets (an
+        older Q4-2024 issuance and the latest Q1-2025 issuance, plus a
+        day-10 backfill triplet that must contribute nothing).
+        """
+        import datetime as dt
+
+        (long_term_horizon_config / "quarter.json").write_text(
+            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
         )
+        monthly_rows = (
+            # Older Q4-2024 issuance (issued 2024-09-25).
+            _quarter_derivation_rows("2024-09-25", 1, "LR_Base", [90.0, 95.0, 100.0])
+            + _quarter_derivation_rows("2024-09-25", 1, "GBT", [190.0, 195.0, 200.0])
+            # Latest Q1-2025 issuance (issued 2024-12-25).
+            + _quarter_derivation_rows("2024-12-25", 1, "LR_Base", [100.0, 105.0, 110.0])
+            + _quarter_derivation_rows("2024-12-25", 1, "GBT", [200.0, 205.0, 210.0])
+            # Day-10 backfill triplet for the same Q1-2025 target -- must
+            # contribute nothing (wrong_issue_day).
+            + _quarter_derivation_rows("2024-12-10", 1, "LR_Base", [900.0, 910.0, 920.0])
+        )
+        monthly_df = pd.DataFrame(monthly_rows)
 
         def mock_read_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
-            if horizon_type == "month":
-                return raw_monthly
-            return pd.DataFrame()  # No direct quarterly data
+            if horizon_type == "quarter":
+                return pd.DataFrame()  # No direct quarterly data
+            return monthly_df
 
         with patch.object(
             data_reader,
             "_read_long_forecasts_api",
             side_effect=mock_read_api,
         ) as read_api:
-            import datetime as dt
-
             result = data_reader.read_latest_quarterly_forecasts(
-                ["S1"], forecast_date=dt.date(2024, 7, 1)
+                ["S1"], forecast_date=dt.date(2025, 1, 5)
             )
         quarter_call = [
             call for call in read_api.call_args_list if call.kwargs.get("horizon_type") == "quarter"
         ][0]
         assert quarter_call.kwargs["horizon_value"] == 1
         assert not result.empty
-        # Should be Q2 (latest quarter with data)
-        assert all(result["quarter_in_year"] == 2)
+        # Should be Q1-2025 (the latest quarter with data), not Q4-2024.
+        assert set(result["year"]) == {2025}
+        assert set(result["quarter_in_year"]) == {1}
+        assert (
+            float(result.loc[result["model_short"] == "LR_Base", "forecasted_discharge"].iloc[0])
+            == 105.0
+        )
+        assert (
+            float(result.loc[result["model_short"] == "GBT", "forecasted_discharge"].iloc[0])
+            == 205.0
+        )
+        assert not {90.0, 95.0, 100.0, 190.0, 195.0, 200.0} & set(result["forecasted_discharge"])
+        assert not {900.0, 910.0, 920.0} & set(result["forecasted_discharge"])
 
     def test_empty_api_returns_empty(self):
         with patch.object(data_reader, "_read_long_forecasts_api", return_value=None):
@@ -716,6 +775,18 @@ class TestReadLatestQuarterlyForecasts:
         assert result.empty
 
     def test_latest_filters_deprecated_models_after_combining_sources(self):
+        """Degraded mode (no operational_issue_day; raw_monthly also has no
+
+        `date` column). Under P1b, LR_Base's old raw-path aggregation is
+        superseded by the unified derivation mechanism, which needs a
+        `date` column to identify same-issue triplets -- absent here, and
+        degraded mode skips derivation outright regardless. LR_Base no
+        longer appears. LR_SM still survives (direct, native filter
+        disabled in degraded mode). LR_SM_DT is still absent, now via the
+        unconditional seven-model direct-row drop. GBT is still absent
+        (never in the direct "quarter" source; the monthly mock that used
+        to carry it is dead code).
+        """
         import datetime as dt
 
         raw_monthly = pd.DataFrame(
@@ -759,8 +830,8 @@ class TestReadLatestQuarterlyForecasts:
                 ["S1"], forecast_date=dt.date(2024, 7, 1)
             )
 
-        assert set(result["model_short"]) == {"LR_Base", "LR_SM"}
-        assert not {"GBT", "LR_SM_DT"} & set(result["model_short"])
+        assert set(result["model_short"]) == {"LR_SM"}
+        assert not {"GBT", "LR_SM_DT", "LR_Base"} & set(result["model_short"])
 
     def test_latest_accepts_db_form_lr_and_ensemble_names(self):
         import datetime as dt
@@ -856,12 +927,20 @@ class TestReadLatestQuarterlyForecastsLeadAware:
 
         self._config_quarter_lead1(long_term_horizon_config, monkeypatch)
 
-        # Operational Q1-2024 issuance made 2023-12-25 (lead 1, issue-day 25)
-        # with a STALE stored horizon_value (99). Its derived lead is 1.
-        operational = self._q1_row("2023-12-25", q50=100.0, horizon_value=99)
+        # Operational Q1-2024 issuance made 2023-12-25 (lead 1, issue-day 25).
+        # PP-065 P1b's native-row helper drops the day-10 backfill below
+        # BEFORE either the Stored-leads pre-filter or
+        # select_operational_issuances ever runs (it fails native-row
+        # selection outright, wrong issue day) -- so the stored
+        # horizon_value must already match the derived lead (1) here, or
+        # the Stored-leads pre-filter would drop the surviving day-25 row
+        # too, for the unrelated mismatched-stored-lead reason.
+        operational = self._q1_row("2023-12-25", q50=100.0, horizon_value=1)
         # Non-operational backfill for the SAME target and SAME derived
-        # lead (1) but a NON-matching issue day (10) -> must be dropped.
-        backfill = self._q1_row("2023-12-10", q50=200.0, horizon_value=99)
+        # lead (1) but a NON-matching issue day (10) -> dropped by the
+        # native-row helper, before select_operational_issuances' own
+        # issue-day matching would get a chance to.
+        backfill = self._q1_row("2023-12-10", q50=200.0, horizon_value=1)
 
         def fake_api(codes, start_year, end_year, horizon_type=None, horizon_value=None):
             # Direct rows only for the quarter source, and only when the
@@ -928,59 +1007,45 @@ class TestReadLatestQuarterlyForecastsLeadAware:
 
 
 class TestReadLatestQuarterlyForecastsSource1LeadAware:
-    """FINDING 1: read_latest_quarterly_forecasts Source 1 (monthly
+    """PP-065 P1b: read_latest_quarterly_forecasts' former Source 1
 
-    aggregation) must, under SAPPHIRE_SKILL_LEAD_AWARE, aggregate
-    OPERATIONALLY-SELECTED monthly rows (routed through
-    read_monthly_forecasts) rather than RAW monthly rows -- so a
-    same-target backfill/reissue monthly row cannot leak into the latest
-    quarterly output. Flag OFF keeps the raw path (backfill retained),
-    mirroring read_quarterly_forecasts' Source 1.
+    (monthly aggregation) is superseded by the unified derivation path
+    (derive_quarterly_from_monthly_same_issue). The derivation contract
+    is flag-independent (decision A) -- both flag states must produce
+    the SAME derived rows from the same-issue monthly triplets below;
+    the old FINDING-1 premise ("Source 1 must aggregate
+    OPERATIONALLY-SELECTED monthly rows, not RAW rows") and its
+    flag-OFF counterpart ("raw path keeps the backfill") are both
+    obsolete, since there is no longer a separate raw/operational
+    monthly-aggregation split for quarter at all.
     """
 
     def _config(self, config_dir, monkeypatch):
-        # month_1 (lead 1, issue day 25) drives Source-1 operational
-        # selection. The quarter mode must ALSO carry
-        # operational_issue_day so Source 2's flag-ON resolution does not
-        # fail loud (its API read is mocked empty to isolate Source 1).
-        (config_dir / "month_1.json").write_text(
-            json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
-        )
         (config_dir / "quarter.json").write_text(
             json.dumps({"operational_month_lead_time": 1, "operational_issue_day": 25})
         )
-        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "month_1,quarter")
-
-    def _month_row(self, valid_from, issue_date, q50, horizon_value=99):
-        return {
-            "horizon_type": "month",
-            "horizon_value": horizon_value,
-            "code": "19999",
-            "date": issue_date,
-            "model_type": "LR_Base",
-            "valid_from": valid_from,
-            "valid_to": valid_from,
-            "q50": q50,
-            "q05": q50 - 30,
-            "q10": q50 - 25,
-            "q25": q50 - 15,
-            "q75": q50 + 15,
-            "q90": q50 + 25,
-            "q95": q50 + 30,
-            "id": 1,
-            "model_type_description": "LR_Base",
-        }
 
     def _rows(self):
-        # Operational Q1-2024 monthly issuances (lead 1, issue-day 25):
-        #   month 1 issued 2023-12-25, month 2 issued 2024-01-25, q50=100.
-        op1 = self._month_row("2024-01-01", "2023-12-25", q50=100.0)
-        op2 = self._month_row("2024-02-01", "2024-01-25", q50=100.0)
-        # Same-target/same-lead BACKFILL at a NON-operational issue day
-        # (day 10). These must be excluded under the flag.
-        bf1 = self._month_row("2024-01-01", "2023-12-10", q50=500.0)
-        bf2 = self._month_row("2024-02-01", "2024-01-10", q50=500.0)
-        return [op1, op2, bf1, bf2]
+        # Older Q4-2024 issuance (issued 2024-09-25).
+        rows = _quarter_derivation_rows(
+            "2024-09-25", 1, "LR_Base", [90.0, 95.0, 100.0], code="19999"
+        )
+        rows += _quarter_derivation_rows(
+            "2024-09-25", 1, "GBT", [190.0, 195.0, 200.0], code="19999"
+        )
+        # Latest Q1-2025 issuance (issued 2024-12-25).
+        rows += _quarter_derivation_rows(
+            "2024-12-25", 1, "LR_Base", [100.0, 105.0, 110.0], code="19999"
+        )
+        rows += _quarter_derivation_rows(
+            "2024-12-25", 1, "GBT", [200.0, 205.0, 210.0], code="19999"
+        )
+        # Day-10 backfill triplet for the same Q1-2025 target -- must
+        # contribute nothing (wrong_issue_day).
+        rows += _quarter_derivation_rows(
+            "2024-12-10", 1, "LR_Base", [900.0, 910.0, 920.0], code="19999"
+        )
+        return rows
 
     def test_flag_on_source1_aggregates_only_operational_monthly(
         self, monkeypatch, long_term_horizon_config
@@ -994,27 +1059,38 @@ class TestReadLatestQuarterlyForecastsSource1LeadAware:
 
         def fake_api(codes, start_year, end_year, horizon_type="month", horizon_value=None):
             if horizon_type == "quarter":
-                return pd.DataFrame()  # isolate Source 1
+                return pd.DataFrame()  # isolate the derivation path
             return pd.DataFrame(rows)
 
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake_api):
             result = data_reader.read_latest_quarterly_forecasts(
-                ["19999"], forecast_date=dt.date(2024, 4, 15)
+                ["19999"], forecast_date=dt.date(2025, 1, 5)
             )
 
         assert not result.empty
         assert set(result["quarter_in_year"]) == {1}
-        assert set(result["year"]) == {2024}
-        # ONLY the operational rows (q50=100) survive: the aggregated Q1
-        # mean is 100, NOT the backfill-contaminated 300.
-        assert float(result.iloc[0]["forecasted_discharge"]) == 100.0
-        assert float(result.iloc[0]["q50"]) == 100.0
-        # ...carrying the DERIVED lead (1), not the stale stored 99.
-        assert int(result.iloc[0]["horizon_value"]) == 1
+        assert set(result["year"]) == {2025}
+        assert (
+            float(result.loc[result["model_short"] == "LR_Base", "forecasted_discharge"].iloc[0])
+            == 105.0
+        )
+        assert (
+            float(result.loc[result["model_short"] == "GBT", "forecasted_discharge"].iloc[0])
+            == 205.0
+        )
+        assert not {900.0, 910.0, 920.0} & set(result["forecasted_discharge"])
+        assert not {90.0, 95.0, 190.0, 195.0} & set(result["forecasted_discharge"])
 
-    def test_flag_off_source1_keeps_raw_path_backfill_retained(
+    def test_flag_off_backfill_triplet_excluded_by_wrong_issue_day(
         self, monkeypatch, long_term_horizon_config
     ):
+        """CONTRACT CHANGE: pre-P1b, the old flag-OFF "raw path" retained
+
+        the day-10 backfill triplet's mean (a same-target, same-lead
+        backfill at a non-operational issue day). Under P1b, the
+        unified derivation excludes it (wrong_issue_day) under BOTH
+        flags -- it is no longer retained.
+        """
         import datetime as dt
 
         self._config(long_term_horizon_config, monkeypatch)
@@ -1029,14 +1105,23 @@ class TestReadLatestQuarterlyForecastsSource1LeadAware:
 
         with patch.object(data_reader, "_read_long_forecasts_api", side_effect=fake_api):
             result = data_reader.read_latest_quarterly_forecasts(
-                ["19999"], forecast_date=dt.date(2024, 4, 15)
+                ["19999"], forecast_date=dt.date(2025, 1, 5)
             )
 
         assert not result.empty
         assert set(result["quarter_in_year"]) == {1}
-        # Flag OFF: raw path unchanged -- backfill (q50=500) is NOT
-        # excluded, so the Q1 mean over all four rows is 300.
-        assert float(result.iloc[0]["forecasted_discharge"]) == 300.0
+        assert set(result["year"]) == {2025}
+        # The day-10 backfill triplet's mean is no longer present anywhere
+        # in the result -- only the day-25 rows for Q1 2025 survive.
+        assert not {900.0, 910.0, 920.0} & set(result["forecasted_discharge"])
+        assert (
+            float(result.loc[result["model_short"] == "LR_Base", "forecasted_discharge"].iloc[0])
+            == 105.0
+        )
+        assert (
+            float(result.loc[result["model_short"] == "GBT", "forecasted_discharge"].iloc[0])
+            == 205.0
+        )
 
 
 class TestReadLatestSeasonalForecasts:
@@ -1406,3 +1491,157 @@ class TestCombinedForecastNormalization:
         result = data_reader._normalize_combined_forecasts(raw_api, "quarter")
 
         assert result.iloc[0]["horizon_value"] == 1
+
+
+class TestDropStoredLeadMismatchesNullBackfill:
+    """PP-065 P1b Finding 3 (out-of-loop review): a row whose stored
+
+    `horizon_value` is NULL is never flagged as a "mismatch" (nothing to
+    compare it against) and, before this fix, passed through with its
+    null `horizon_value` untouched -- even though
+    `_drop_stored_lead_mismatches`'s own docstring promises callers may
+    pass `lead_output_cols=()` to `select_operational_issuances`
+    afterward "since every row reaching it here already carries a
+    self-consistent stored lead". A null-hv row broke that promise: it
+    would exclude itself from flag-ON ensemble grouping (grouped by
+    `horizon_value`), preventing a Naive/Skilled Mean that should have
+    formed from a sibling row at the same lead.
+    """
+
+    def test_null_stored_horizon_value_backfilled_with_derived_lead(self):
+        direct = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "date": ["2025-12-25", "2025-12-25"],
+                "valid_from": ["2026-01-01", "2026-01-01"],
+                "valid_to": ["2026-03-31", "2026-03-31"],
+                "horizon_value": [None, 1],
+                "q50": [100.0, 110.0],
+            }
+        )
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        # Both rows share the same (issue date, target quarter), so both
+        # derive to lead 1 -- the null-hv row must be backfilled to the
+        # SAME lead as its sibling, not dropped and not left null.
+        assert len(result) == 2
+        lr_base = result[result["model_short"] == "LR_Base"]
+        lr_sm = result[result["model_short"] == "LR_SM"]
+        assert len(lr_base) == 1
+        assert int(lr_base.iloc[0]["horizon_value"]) == 1
+        assert int(lr_sm.iloc[0]["horizon_value"]) == 1
+        # The two rows now share a grouping key ensemble formation
+        # relies on under SAPPHIRE_SKILL_LEAD_AWARE.
+        assert set(result["horizon_value"]) == {1}
+
+    def test_null_stored_horizon_value_with_unparseable_date_stays_null(self):
+        """A null stored horizon_value with no derivable lead (missing
+
+        date) cannot be backfilled -- nothing to derive from -- and must
+        stay null rather than raise or fabricate a lead.
+        """
+        direct = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "date": [None],
+                "valid_from": ["2026-01-01"],
+                "valid_to": ["2026-03-31"],
+                "horizon_value": [None],
+                "q50": [100.0],
+            }
+        )
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert len(result) == 1
+        assert pd.isna(result.iloc[0]["horizon_value"])
+
+    def test_genuine_mismatch_still_dropped_not_backfilled(self):
+        """A row with a non-null, genuinely WRONG stored horizon_value
+
+        must still be dropped (this fix only changes the null-stored
+        case, per Finding 3's scope)."""
+        direct = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "date": ["2025-12-25"],
+                "valid_from": ["2026-01-01"],
+                "valid_to": ["2026-03-31"],
+                "horizon_value": [99],
+                "q50": [100.0],
+            }
+        )
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert result.empty
+
+
+class TestDropStoredLeadMismatchesMissingColumnBackfill:
+    """PP-065 P1b Finding A (confirm-fixes review, fix round 2): fix
+
+    round 1's null-lead backfill (`TestDropStoredLeadMismatchesNullBackfill`
+    above) only covered a `horizon_value` column that is PRESENT but
+    individually null. `_read_long_forecasts_api` drops an all-null
+    column outright, so a batch where EVERY row happens to have a null
+    stored lead arrives here with no `horizon_value` column at all --
+    before this fix, the function's early return skipped the backfill
+    entirely for that case, leaving every row's lead null and excluding
+    it from flag-ON ensemble grouping.
+    """
+
+    def test_missing_horizon_value_column_backfilled_with_derived_lead(self):
+        """`direct` has NO `horizon_value` column at all -- every row
+
+        must still end up with the correct derived lead in the output,
+        not null.
+        """
+        direct = pd.DataFrame(
+            {
+                "code": ["19999", "19999"],
+                "model_short": ["LR_Base", "LR_SM"],
+                "date": ["2025-12-25", "2025-12-25"],
+                "valid_from": ["2026-01-01", "2026-01-01"],
+                "valid_to": ["2026-03-31", "2026-03-31"],
+                "q50": [100.0, 110.0],
+            }
+        )
+        assert "horizon_value" not in direct.columns
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert len(result) == 2
+        assert "horizon_value" in result.columns
+        assert set(result["horizon_value"]) == {1}
+        lr_base = result[result["model_short"] == "LR_Base"]
+        lr_sm = result[result["model_short"] == "LR_SM"]
+        assert int(lr_base.iloc[0]["horizon_value"]) == 1
+        assert int(lr_sm.iloc[0]["horizon_value"]) == 1
+
+    def test_missing_horizon_value_column_with_unparseable_date_stays_null(self):
+        """With no `horizon_value` column and no derivable lead (missing
+
+        date), the row must stay null rather than raise or fabricate a
+        lead -- consistent with the present-column case.
+        """
+        direct = pd.DataFrame(
+            {
+                "code": ["19999"],
+                "model_short": ["LR_Base"],
+                "date": [None],
+                "valid_from": ["2026-01-01"],
+                "valid_to": ["2026-03-31"],
+                "q50": [100.0],
+            }
+        )
+        assert "horizon_value" not in direct.columns
+
+        result = data_reader._drop_stored_lead_mismatches(direct)
+
+        assert len(result) == 1
+        if "horizon_value" in result.columns:
+            assert pd.isna(result.iloc[0]["horizon_value"])

@@ -1150,11 +1150,29 @@ def _write_aggregated_forecasts_to_api(
 
         records = []
         dropped_calendar_rows = 0
+        skipped_aggregated_rows = 0
         for _, row in data.iterrows():
             code = str(row["code"]).replace(".0", "")
 
             # Map model_short to API model_type
             model_upper = str(row["model_short"]).upper()
+
+            # PP-065 item 3 (rev-3 PP-064 "B6"): quarter stops writing raw
+            # LR_Base/LR_SM rows and EM/ENSEMBLE_MEAN rows. Fallback-derived
+            # LR rows are native-shaped and would pass the native-row rule
+            # forever once persisted; the stored EM row is re-dated on every
+            # re-write under flag OFF, which would mint a new EM key each
+            # time since date is part of the unique key. Season is
+            # unaffected -- this branch only ever executes for quarter.
+            if horizon_type == "quarter" and model_upper in {
+                "LR_BASE",
+                "LR_SM",
+                "EM",
+                "ENSEMBLE_MEAN",
+            }:
+                skipped_aggregated_rows += 1
+                continue
+
             model_type = MODEL_TYPE_MAP.get(model_upper, str(row["model_short"]))
 
             # Compute valid_from / valid_to / horizon_value
@@ -1305,6 +1323,19 @@ def _write_aggregated_forecasts_to_api(
             logger.warning(
                 "Dropped %d %s forecast record(s) with a non-calendar quarter window",
                 dropped_calendar_rows,
+                label,
+            )
+
+        if skipped_aggregated_rows:
+            # WARNING, matching the dropped_calendar_rows pattern directly
+            # above: INFO never reaches the logs from production entry
+            # points (setup_library caps the root logger at WARNING on
+            # import -- INFRA-029), and this is a routine, per-call skip
+            # count operators should be able to see (PP-065 item 3).
+            logger.warning(
+                "Skipped %d %s forecast record(s) for LR_BASE/LR_SM/EM "
+                "(quarter no longer writes raw LR or EM rows)",
+                skipped_aggregated_rows,
                 label,
             )
 

@@ -214,7 +214,13 @@ class TestReadQuarterlyForecastsQ1Boundary:
         target_year = 2024
         operational_row = {
             "horizon_type": "quarter",
-            "horizon_value": 99,
+            # PP-065 P1b: horizon_value must already match the derived
+            # lead (1) here -- the "Stored leads (flag ON)" pre-filter
+            # drops a stored/derived mismatch BEFORE
+            # select_operational_issuances runs, and this test's purpose
+            # is the flag-ON Q1 boundary expansion picking up the
+            # prior-year issuance, not the mismatched-stored-lead case.
+            "horizon_value": 1,
             "code": CODE,
             "date": "2023-12-25",
             "model_type": "LR_Base",
