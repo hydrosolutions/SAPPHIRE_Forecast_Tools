@@ -313,20 +313,54 @@ PY
         #
         # Long-term forecasts are issued monthly/seasonally on deployment-
         # configured issue days (e.g. the 10th and 25th on one deployment,
-        # the 1st on another) — not every 5-10 days like short-term. Below,
-        # the due-date path (mirroring the short-term block above) resolves
-        # the actual configured issue days and only needs a window wide
-        # enough to reach back to the most recent one — at most ~1 month,
-        # since every mode's cron entry fires monthly (see the day-31 note
-        # in most_recent_issue_day below). 120 days comfortably covers that
-        # with margin AND still doubles as the old flat-staleness window
-        # used by the fallback path below when issue days can't be resolved
-        # — no widening needed, this one window serves both paths.
-        LT_SINCE=$(date -d '120 days ago' +%F 2>/dev/null || date -v-120d +%F 2>/dev/null)
+        # the 1st on another) — not every 5-10 days like short-term.
+        #
+        # The DUE-DATE computation below needs only ~1 month of lookback
+        # regardless of cadence (it is derived from the calendar + the
+        # configured issue days, not from the window; see the day-31 note in
+        # most_recent_issue_day below). But this window also bounds what the
+        # "latest on file" lookup can SEE, and that lookup must cover the
+        # SLOWEST cadence this script now groups by horizon_type: a single
+        # seasonal mode (e.g. a deployment with only "seasonal_april", not
+        # KGHM's four seasonal_* months) may legitimately produce output only
+        # once a year. 120 days would make that mode's genuinely-current
+        # last run invisible for 8+ months, reporting "no forecasts in the
+        # window" — technically still correct (not-yet-due months report OK
+        # regardless, via the "nothing scheduled this month" branch below),
+        # but needlessly alarming-looking next to an "OK" and useless as
+        # evidence during an overdue month. 400 days (a full year + ~5 weeks
+        # margin for run-day slip) guarantees a once-a-year mode's last real
+        # run is always inside the window, so "nothing published in the
+        # window" stays a meaningful signal rather than a window-sizing
+        # artifact — it remains the right test, just needs sizing to the
+        # true slowest cadence rather than the short-term-derived 120 days.
+        # Still bounded (not unbounded) for the same pagination-trap reason
+        # as lr-forecast above, and still doubles as the flat-staleness
+        # fallback's window when issue days can't be resolved at all.
+        #
+        # `limit` raised from 5000 to 20000 alongside the window widening:
+        # the no-ORDER-BY offset/limit trap bites harder the wider the
+        # window gets, because a longer start_date span can hold more total
+        # rows, making it MORE likely an unordered page of `limit` rows
+        # misses the genuinely newest ones for one or more horizon types —
+        # confirmed empirically against this repo's own (heavily-seeded, not
+        # production-representative) local dev DB: start_date=2025-01-01
+        # with limit=5000 returned an arbitrary 5000-row slice whose month
+        # max(date) was months staler, and whose quarter rows were absent
+        # entirely, versus the true values visible only above ~75000. A
+        # real deployment's actual row volume in a 400-day window cannot be
+        # verified here (station counts and discharge/forecast data are not
+        # committed to this repo), so 20000 (matching this script's existing
+        # runoff/?limit=20000 call above) is a judgment call, not a proof —
+        # if a deployment's real volume ever exceeds it, this inherits the
+        # same silent-truncation risk the pre-existing endpoints already
+        # have. The actual fix is adding ORDER BY to the API endpoint, which
+        # lives in sapphire/services/ and is out of scope for this script.
+        LT_SINCE=$(date -d '400 days ago' +%F 2>/dev/null || date -v-400d +%F 2>/dev/null)
         LTF_JSON="$HC_TMPDIR/ltf.json"
         VERDICTS_LT="$HC_TMPDIR/verdicts_lt"
         ERR_LT="$HC_TMPDIR/err_lt"
-        curl -s --max-time 30 "http://localhost:8003/long-forecast/?start_date=${LT_SINCE}&limit=5000" 2>/dev/null > "$LTF_JSON"
+        curl -s --max-time 30 "http://localhost:8003/long-forecast/?start_date=${LT_SINCE}&limit=20000" 2>/dev/null > "$LTF_JSON"
 
         # Resolve the per-mode operational issue days so staleness can be
         # judged against when a run was actually DUE, same as the short-term
@@ -349,11 +383,20 @@ PY
         LT_MODES=$(grep -E '^ieasyhydroforecast_ml_long_term_supported_modes=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d '\r')
         LT_CONFIG_DIR=""
         [ -n "$LT_SUBDIR" ] && LT_CONFIG_DIR="$(dirname "$ENV_FILE")/$LT_SUBDIR"
+        # The PARENT of LT_CONFIG_DIR -- needed separately below because
+        # model_folder resolves against it, not against LT_CONFIG_DIR itself
+        # (see the comment at mode_active_this_month's model_folder join).
+        # dirname($ENV_FILE) already equals that parent (same reasoning as
+        # LT_CONFIG_DIR above); computed directly here rather than via
+        # os.path.dirname(LT_CONFIG_DIR) in python, which would silently
+        # give the wrong answer if the configured subdirectory name were
+        # ever itself nested or carried a trailing slash.
+        LT_CONFIG_ROOT="$(dirname "$ENV_FILE")"
 
         # Same fix as the short-term block above: emit "LEVEL<TAB>message"
         # instead of printing the coloured label directly, so the verdict
         # flows through ok/warn/bad and the exit code stays authoritative.
-        HC_LTF_JSON="$LTF_JSON" HC_LT_CONFIG_DIR="$LT_CONFIG_DIR" HC_LT_MODES="$LT_MODES" HC_LT_SINCE_DAYS=120 \
+        HC_LTF_JSON="$LTF_JSON" HC_LT_CONFIG_DIR="$LT_CONFIG_DIR" HC_LT_CONFIG_ROOT="$LT_CONFIG_ROOT" HC_LT_MODES="$LT_MODES" HC_LT_SINCE_DAYS=400 \
             python3 - > "$VERDICTS_LT" 2>"$ERR_LT" << 'PY'
 import calendar, datetime, json, os
 
@@ -376,7 +419,7 @@ now = datetime.datetime.fromisoformat(_fake_now) if _fake_now else datetime.date
 # two in step if the convention ever changes.
 now_local_hour = now.hour
 today = now.date()
-LTF_WINDOW_DAYS = int(os.environ.get("HC_LT_SINCE_DAYS", "120"))
+LTF_WINDOW_DAYS = int(os.environ.get("HC_LT_SINCE_DAYS", "400"))
 
 
 def age(ds):
@@ -429,6 +472,11 @@ def fallback(reason):
 NON_OPERATIONAL_MODES = {"monthly"}
 
 config_dir = os.environ.get("HC_LT_CONFIG_DIR", "")
+# PARENT of config_dir, passed in separately from the shell (not derived
+# here with os.path.dirname(config_dir) -- see mode_active_this_month's
+# model_folder join for why that would be the wrong computation to make in
+# python).
+config_root = os.environ.get("HC_LT_CONFIG_ROOT", "")
 modes = [m.strip() for m in os.environ.get("HC_LT_MODES", "").split(",") if m.strip()]
 operational_modes = [m for m in modes if m not in NON_OPERATIONAL_MODES]
 
@@ -516,7 +564,18 @@ def mode_active_this_month(mode, mode_config):
     models_to_use = mode_config["models_to_use"]
     if not isinstance(models_to_use, dict):
         return False, f"{mode}.json 'models_to_use' is not a family->model map"
-    mode_model_root = os.path.join(config_dir, mode_config["model_folder"])
+    # model_folder resolves against config_root (the CONFIG directory), NOT
+    # against config_dir (the long_term_configs SUBdirectory the mode JSONs
+    # themselves live in) -- genuinely surprising, but that is what the real
+    # code does: config_forecast.py:38 CONFIG_PATH = the config directory;
+    # :55 LT_forecast_configs = CONFIG_PATH/LT_CONFIGS (== config_dir here,
+    # where <mode>.json is read from); :72 model_folder =
+    # os.path.join(CONFIG_PATH, model_folder) -- CONFIG_PATH, one level up
+    # from LT_forecast_configs, not LT_forecast_configs itself. Using
+    # config_dir here instead of config_root silently resolved to a path one
+    # directory too deep and made every model_folder lookup fail, defeating
+    # the forecast_months gating entirely (confirmed on the KGHM server).
+    mode_model_root = os.path.join(config_root, mode_config["model_folder"])
     for family, model_names in models_to_use.items():
         if not isinstance(model_names, list):
             return False, f"{mode}.json 'models_to_use[{family}]' is not a list"
@@ -550,55 +609,76 @@ def mode_active_this_month(mode, mode_config):
 # ieasyhydroforecast_ml_long_term_supported_modes without a corresponding
 # models_and_scalers/ tree on that deployment) must not discard every issue
 # day that WAS read correctly and drop the whole section to the old flat
-# 120-day window -- that threw away the valuable, successfully-resolved part
-# over a failure in the refinement.
+# staleness window -- that threw away the valuable, successfully-resolved
+# part over a failure in the refinement.
 #
 # So a gating failure for one mode does not touch fail_reason / fallback()
 # at all. Instead: that mode is folded in as ACTIVE (its issue day counts),
-# and the first such failure is recorded in gating_note so the verdict says
-# gating could not be fully applied, rather than silently guessing. This is
-# deliberately the conservative direction: an unreadable mode could in fact
-# be seasonal and not due this month, so treating it as active can produce a
-# false WARN -- but the alternative (treating it as inactive) risks the
-# opposite, silently hiding a genuinely missed run. A visible, explained
-# warning is recoverable (an operator reads the note and checks); a silently
-# dropped issue day is not. This check exists to catch missed runs, so that
-# asymmetry is why "active" is the default here, not "inactive".
-active_modes = []
-gating_fail_reason = None
+# and the first such failure PER HORIZON is recorded so that horizon's
+# verdict says gating could not be fully applied, rather than silently
+# guessing. This is deliberately the conservative direction: an unreadable
+# mode could in fact be seasonal and not due this month, so treating it as
+# active can produce a false WARN -- but the alternative (treating it as
+# inactive) risks the opposite, silently hiding a genuinely missed run. A
+# visible, explained warning is recoverable (an operator reads the note and
+# checks); a silently dropped issue day is not. This check exists to catch
+# missed runs, so that asymmetry is why "active" is the default here, not
+# "inactive".
+mode_active = {}
+mode_gating_reason = {}
 if fail_reason is None:
     for mode in mode_issue_days:
         active, reason = mode_active_this_month(mode, mode_configs[mode])
-        if reason is not None:
-            if gating_fail_reason is None:
-                gating_fail_reason = reason
-            active_modes.append(mode)  # conservative: can't tell -> count it
-            continue
-        if active:
-            active_modes.append(mode)
-gating_note = f" (seasonal gating unavailable: {gating_fail_reason})" if gating_fail_reason else ""
+        mode_gating_reason[mode] = reason
+        mode_active[mode] = True if reason is not None else active  # conservative: can't tell -> count it
 
 if fail_reason is not None:
     fallback(fail_reason)
-elif not active_modes:
-    # Every configured mode read fine (gating_fail_reason is None whenever
-    # active_modes is empty -- a gating failure always adds its mode to
-    # active_modes), and forecast_months excludes all of them this month:
-    # genuinely nothing is due right now. Report OK, not a staleness WARN
-    # for a run that was never going to happen this month.
-    note = f" (forecast_months excludes month {current_month} for every configured mode)"
-    if latest is not None:
-        emit("OK", f"long-term forecasts: no long-term run scheduled this month{note}; latest on file is {latest} ({latest_age} days old)")
-    else:
-        emit("OK", f"long-term forecasts: no long-term run scheduled this month{note}; no forecasts in the last {LTF_WINDOW_DAYS} days either")
 else:
-    issue_days = set()
-    for mode in active_modes:
-        issue_days.update(mode_issue_days[mode])
+    # --- Group by horizon type ----------------------------------------
+    # Source of truth for why this grouping matters: the long_forecasts
+    # table (sapphire/services/postprocessing/app/models.py HorizonType,
+    # ~line 21-29) holds three distinct horizons -- "month", "quarter",
+    # "season" -- produced by different modes on different schedules. A
+    # single flat max(date)/single due-date across all of them lets a
+    # current monthly forecast mask a dead seasonal or quarterly pipeline
+    # (e.g. month_1 ran yesterday, seasonal_april hasn't run since April --
+    # the old flat check would still say OK). Each mode declares its own
+    # horizon via get_horizon_type() (config_forecast.py:269-276, default
+    # "month" when the key is absent) -- confirmed on the KGHM server:
+    # quarter.json -> "quarter", seasonal_april.json -> "season",
+    # month_1.json -> absent -> "month" (the documented default). The API
+    # rows carry the identical lowercase strings in their own horizon_type
+    # field (HorizonType enum values), so grouping both sides on that raw
+    # string needs no translation table.
+    modes_by_horizon = {}
+    for mode in mode_issue_days:
+        h = mode_configs[mode].get("horizon_type") or "month"
+        modes_by_horizon.setdefault(h, []).append(mode)
+
+    ltf_by_horizon = {}
+    for r in ltf:
+        h = r.get("horizon_type", "?")
+        ltf_by_horizon.setdefault(h, []).append(r)
+
+    configured_horizons = set(modes_by_horizon)
+    # Rows for a horizon no configured mode declares are not evidence of
+    # anything this check can judge (no schedule to compare against) --
+    # ignore them for verdict purposes, but say so once rather than letting
+    # them silently vanish from the output.
+    unconfigured = sorted(set(ltf_by_horizon) - configured_horizons)
+    if unconfigured:
+        parts = ", ".join(f"{h!r} ({len(ltf_by_horizon[h])} row(s))" for h in unconfigured)
+        emit("OK", f"long-term forecasts: ignoring rows with horizon_type {parts} -- not declared by any configured mode's horizon_type")
+
+    # Only qualify the message with "(horizon)" when there is more than one
+    # to disambiguate -- a single-horizon deployment's output must stay
+    # exactly as before (same wording the companion document already shows).
+    multi_horizon = len(configured_horizons) > 1
 
     GRACE_CUTOFF_HOUR = 12  # same convention/value as the short-term block above
 
-    def issue_days_in_month(d):
+    def issue_days_in_month(d, issue_days):
         # Day-of-month issue days that can actually occur in THIS month — a
         # mode configured for day 31 simply never fires in a 30-day month
         # (or February), exactly like cron's own day-of-month field: no
@@ -609,42 +689,76 @@ else:
         last_day = calendar.monthrange(d.year, d.month)[1]
         return sorted(dd for dd in issue_days if dd <= last_day)
 
-    def most_recent_issue_day(d, _depth=0):
+    def most_recent_issue_day(d, issue_days, _depth=0):
         if _depth > 36:  # ~3 years of recursion guard; issue_days is non-empty here
             return None
-        for b in reversed(issue_days_in_month(d)):
+        for b in reversed(issue_days_in_month(d, issue_days)):
             if b <= d.day:
                 return datetime.date(d.year, d.month, b)
         prev_month_last = d.replace(day=1) - datetime.timedelta(days=1)
-        return most_recent_issue_day(prev_month_last, _depth + 1)
+        return most_recent_issue_day(prev_month_last, issue_days, _depth + 1)
 
-    def expected_issue_day():
+    def expected_issue_day(issue_days):
         """The issue day whose long-term forecast should already exist,
         given today's local calendar date and the current local hour."""
-        candidate = most_recent_issue_day(today)
+        candidate = most_recent_issue_day(today, issue_days)
         if candidate == today and now_local_hour < GRACE_CUTOFF_HOUR:
             # Still within today's grace window on an issue day: today's run
             # may not have happened yet, so the forecast actually due is
             # still the previous issue day's.
-            candidate = most_recent_issue_day(today - datetime.timedelta(days=1))
+            candidate = most_recent_issue_day(today - datetime.timedelta(days=1), issue_days)
         return candidate
 
-    due = expected_issue_day()
-    if due is None:
-        fallback("could not resolve a due date from the configured issue days")
-    elif latest is None:
-        emit("WARN", f"long-term forecasts: no forecasts in the last {LTF_WINDOW_DAYS} days, but a run was due {due.isoformat()}{gating_note}")
-    else:
-        try:
-            latest_date = datetime.date.fromisoformat(latest[:10])
-        except Exception:
-            latest_date = None
-        if latest_date is not None and latest_date >= due:
-            # `latest_age` is shown for operator context only — the due-date
-            # comparison above is what decides OK/WARN, not age.
-            emit("OK", f"long-term forecasts: latest {latest} ({latest_age} days old){gating_note}")
+    def emit_horizon_verdict(label, h, modes_h):
+        active_modes_h = [m for m in modes_h if mode_active[m]]
+        reason_h = next((mode_gating_reason[m] for m in modes_h if mode_gating_reason[m] is not None), None)
+        gating_note = f" (seasonal gating unavailable: {reason_h})" if reason_h else ""
+        rows_h = ltf_by_horizon.get(h, [])
+        latest_h = max((r.get("date", "") for r in rows_h), default=None)
+        latest_age_h = age(latest_h) if latest_h else None
+
+        if not active_modes_h:
+            # Every configured mode in this horizon read fine (reason_h is
+            # None whenever active_modes_h is empty -- a gating failure
+            # always counts its mode as active), and forecast_months
+            # excludes all of them this month: genuinely nothing is due
+            # right now. Report OK, not a staleness WARN for a run that was
+            # never going to happen this month.
+            note = f" (forecast_months excludes month {current_month} for every configured mode)"
+            if latest_h is not None:
+                emit("OK", f"{label} forecasts: no long-term run scheduled this month{note}; latest on file is {latest_h} ({latest_age_h} days old)")
+            else:
+                emit("OK", f"{label} forecasts: no long-term run scheduled this month{note}; no forecasts in the last {LTF_WINDOW_DAYS} days either")
+            return
+
+        issue_days_h = set()
+        for m in active_modes_h:
+            issue_days_h.update(mode_issue_days[m])
+
+        due = expected_issue_day(issue_days_h)
+        if due is None:
+            # Not reachable in practice (active_modes_h non-empty guarantees
+            # issue_days_h non-empty, so the recursion above always finds a
+            # match well within its depth guard) -- kept as a labelled,
+            # non-crashing safety net rather than an unhandled exception.
+            emit("WARN", f"{label} forecasts: could not resolve a due date from issue days {sorted(issue_days_h)} (unexpected)")
+        elif latest_h is None:
+            emit("WARN", f"{label} forecasts: no forecasts in the last {LTF_WINDOW_DAYS} days, but a run was due {due.isoformat()}{gating_note}")
         else:
-            emit("WARN", f"long-term forecasts: newest is {latest}, but a run was due {due.isoformat()}{gating_note}")
+            try:
+                latest_date = datetime.date.fromisoformat(latest_h[:10])
+            except Exception:
+                latest_date = None
+            if latest_date is not None and latest_date >= due:
+                # `latest_age_h` is shown for operator context only — the
+                # due-date comparison above is what decides OK/WARN, not age.
+                emit("OK", f"{label} forecasts: latest {latest_h} ({latest_age_h} days old){gating_note}")
+            else:
+                emit("WARN", f"{label} forecasts: newest is {latest_h}, but a run was due {due.isoformat()}{gating_note}")
+
+    for h in sorted(configured_horizons):
+        label = f"long-term ({h})" if multi_horizon else "long-term"
+        emit_horizon_verdict(label, h, modes_by_horizon[h])
 PY
         RC_LT=$?
         if [ "$RC_LT" -ne 0 ]; then
