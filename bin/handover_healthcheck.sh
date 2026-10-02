@@ -313,36 +313,306 @@ PY
         #
         # Long-term forecasts are issued monthly/seasonally on deployment-
         # configured issue days (e.g. the 10th and 25th on one deployment,
-        # the 1st on another) — not every 5-10 days like short-term — so the
-        # window and staleness threshold here are deliberately much wider
-        # than the short-term check's 45-day window / 11-day warn above:
-        # look back 120 days and warn only past 45 days old, so a normal
-        # monthly/seasonal gap is never reported as a problem.
+        # the 1st on another) — not every 5-10 days like short-term. Below,
+        # the due-date path (mirroring the short-term block above) resolves
+        # the actual configured issue days and only needs a window wide
+        # enough to reach back to the most recent one — at most ~1 month,
+        # since every mode's cron entry fires monthly (see the day-31 note
+        # in most_recent_issue_day below). 120 days comfortably covers that
+        # with margin AND still doubles as the old flat-staleness window
+        # used by the fallback path below when issue days can't be resolved
+        # — no widening needed, this one window serves both paths.
         LT_SINCE=$(date -d '120 days ago' +%F 2>/dev/null || date -v-120d +%F 2>/dev/null)
         LTF_JSON="$HC_TMPDIR/ltf.json"
         VERDICTS_LT="$HC_TMPDIR/verdicts_lt"
         ERR_LT="$HC_TMPDIR/err_lt"
         curl -s --max-time 30 "http://localhost:8003/long-forecast/?start_date=${LT_SINCE}&limit=5000" 2>/dev/null > "$LTF_JSON"
+
+        # Resolve the per-mode operational issue days so staleness can be
+        # judged against when a run was actually DUE, same as the short-term
+        # block above, instead of only a flat day count.
+        # `ieasyhydroforecast_ml_long_term_configuration` is a DIRECTORY NAME
+        # (apps/long_term_forecasting/config_forecast.py:39,55 joins it onto
+        # the config root), not a path itself, so it must be joined onto the
+        # config directory. That root is awkward to resolve from here via its
+        # own env var (config_forecast.py:38 reads
+        # `ieasyhydroforecast_configuration_path`, a path that is itself
+        # relative, e.g. `../../../<data>/config` — see
+        # doc/prod/long_term_recovery_runbook.md:148). This script already
+        # knows the config directory without resolving that relative path at
+        # all: $ENV_FILE lives at <data>/config/.env_develop_*, so
+        # dirname($ENV_FILE) IS that same directory (confirmed against
+        # sapphire/.env_kghm, where `ieasyforecast_configuration_path` and
+        # `ieasyhydroforecast_configuration_path` are both set to the
+        # identical value).
+        LT_SUBDIR=$(grep -E '^ieasyhydroforecast_ml_long_term_configuration=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d '\r')
+        LT_MODES=$(grep -E '^ieasyhydroforecast_ml_long_term_supported_modes=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d '\r')
+        LT_CONFIG_DIR=""
+        [ -n "$LT_SUBDIR" ] && LT_CONFIG_DIR="$(dirname "$ENV_FILE")/$LT_SUBDIR"
+
         # Same fix as the short-term block above: emit "LEVEL<TAB>message"
         # instead of printing the coloured label directly, so the verdict
         # flows through ok/warn/bad and the exit code stays authoritative.
-        HC_LTF_JSON="$LTF_JSON" python3 - > "$VERDICTS_LT" 2>"$ERR_LT" << 'PY'
-import json, datetime, os
+        HC_LTF_JSON="$LTF_JSON" HC_LT_CONFIG_DIR="$LT_CONFIG_DIR" HC_LT_MODES="$LT_MODES" HC_LT_SINCE_DAYS=120 \
+            python3 - > "$VERDICTS_LT" 2>"$ERR_LT" << 'PY'
+import calendar, datetime, json, os
+
+
 def load(p):
     try: return json.load(open(p))
     except Exception: return []
-today = datetime.date.today()
+
+
+# Test-only clock override: see the matching note on the short-term block
+# above (HC_FAKE_NOW). Interpreted as LOCAL time there too.
+_fake_now = os.environ.get("HC_FAKE_NOW")
+now = datetime.datetime.fromisoformat(_fake_now) if _fake_now else datetime.datetime.now()
+# Same LOCAL-hour convention as the short-term block above — see the
+# comment there (cron reads crontab hours in the server's own local
+# timezone; doc/deployment.md's "Set up cron job" section, ~line 927, has
+# operators pick the local hour that lands the run in the morning local
+# time). Duplicated rather than imported because this runs in its own
+# `python3` subprocess, separate from the short-term block's — keep the
+# two in step if the convention ever changes.
+now_local_hour = now.hour
+today = now.date()
+LTF_WINDOW_DAYS = int(os.environ.get("HC_LT_SINCE_DAYS", "120"))
+
+
 def age(ds):
     try: return (today - datetime.date.fromisoformat(ds[:10])).days
     except Exception: return None
+
+
+def emit(level, msg): print(f"{level}\t{msg}")
+
+
 ltf = load(os.environ["HC_LTF_JSON"])
-if not ltf:
-    print("WARN\tno long-term forecasts in the last 120 days — long-term forecasting is configured but appears to have stopped publishing")
+latest = max((r.get("date", "") for r in ltf), default=None)
+latest_age = age(latest) if latest else None
+
+
+def fallback(reason):
+    # The original flat 120-day-window / 45-day-warn behaviour, used
+    # whenever the due-date path below could not be evaluated. Must never
+    # itself WARN just because configuration was unreadable — a deployment
+    # that runs long-term fine but stores its config somewhere unexpected
+    # must not start failing its health check — so this degrades to the
+    # same check that ran before this due-date logic existed.
+    note = (f" [due-date check unavailable: {reason}; "
+            f"using {LTF_WINDOW_DAYS}-day staleness check instead]")
+    if latest is None:
+        emit("WARN", "no long-term forecasts in the last "
+             f"{LTF_WINDOW_DAYS} days — long-term forecasting is configured "
+             f"but appears to have stopped publishing{note}")
+    else:
+        level = "OK" if latest_age is not None and latest_age <= 45 else "WARN"
+        emit(level, f"long-term forecasts: latest {latest} ({latest_age} days old){note}")
+
+
+# --- Resolve per-mode operational_issue_day --------------------------------
+# Source of truth: apps/long_term_forecasting/config_forecast.py
+# (get_operational_issue_day, ~line 227) and
+# apps/long_term_forecasting/lt_schedule_query.py (NON_OPERATIONAL_MODES,
+# ~line 57). This health check cannot import apps/ (different interpreter
+# and paths — same reason as the short-term block above), so the rule is
+# reimplemented here from the on-disk mode JSONs directly — keep in sync if
+# the long-term schedule config shape ever changes.
+#
+# NON_OPERATIONAL_MODES: "monthly" is deliberately kept in
+# ieasyhydroforecast_ml_long_term_supported_modes by some deployments so
+# other tooling can reference it, but lt_schedule_query.py excludes it from
+# scheduling — it is never an operationally issued mode. Treating its
+# configured day as a due date would invent a deadline nothing is ever
+# expected to meet, exactly the false-alarm failure mode this check exists
+# to avoid.
+NON_OPERATIONAL_MODES = {"monthly"}
+
+config_dir = os.environ.get("HC_LT_CONFIG_DIR", "")
+modes = [m.strip() for m in os.environ.get("HC_LT_MODES", "").split(",") if m.strip()]
+operational_modes = [m for m in modes if m not in NON_OPERATIONAL_MODES]
+
+
+def as_int_days(value):
+    """operational_issue_day is annotated list[int] in config_forecast.py,
+    but get_operational_issue_day() does int(...) on it, so in production it
+    is a single int. Handle both shapes defensively — a deployment config
+    may legitimately carry either."""
+    if isinstance(value, list):
+        return [int(v) for v in value]
+    return [int(value)]
+
+
+mode_configs = {}
+mode_issue_days = {}
+fail_reason = None
+
+if not config_dir:
+    fail_reason = "ieasyhydroforecast_ml_long_term_configuration not set in env"
+elif not os.path.isdir(config_dir):
+    fail_reason = f"config directory {config_dir} not found"
+elif not operational_modes:
+    fail_reason = "no operational long-term modes in ieasyhydroforecast_ml_long_term_supported_modes"
 else:
-    latest = max(r.get("date", "") for r in ltf)
-    a = age(latest)
-    level = "OK" if a is not None and a <= 45 else "WARN"
-    print(f"{level}\tlong-term forecasts: latest {latest} ({a} days old)")
+    for mode in operational_modes:
+        mode_path = os.path.join(config_dir, f"{mode}.json")
+        try:
+            with open(mode_path) as f:
+                mode_config = json.load(f)
+        except Exception as e:
+            fail_reason = f"{mode}.json unreadable/invalid ({e.__class__.__name__})"
+            break
+        if "operational_issue_day" not in mode_config:
+            fail_reason = f"{mode}.json missing 'operational_issue_day'"
+            break
+        try:
+            mode_issue_days[mode] = as_int_days(mode_config["operational_issue_day"])
+        except Exception as e:
+            fail_reason = f"{mode}.json 'operational_issue_day' not parseable as int ({e.__class__.__name__})"
+            break
+        mode_configs[mode] = mode_config
+    if fail_reason is None and not mode_issue_days:
+        fail_reason = "no operational_issue_day values resolved from any configured mode"
+
+# --- Per-mode forecast_months gating ---------------------------------------
+# Source of truth: apps/long_term_forecasting/lt_schedule_query.py:107-124
+# (query_schedule's "any_model_scheduled" check) and
+# apps/long_term_forecasting/config_forecast.py:278-288 (get_forecast_months
+# default). A mode's operational_issue_day fires monthly in cron regardless
+# of whether the mode's models actually produce anything that month (e.g. a
+# seasonal mode restricted to April-September) — counting it as "due" every
+# month would warn every single off-month, exactly the recurring false alarm
+# this check exists to avoid. So before a mode's issue day is allowed into
+# the due-date union, at least one of its models must be scheduled in the
+# CURRENT calendar month.
+#
+# Deliberately NOT replicated: lt_schedule_query.ISSUE_DAY_TOLERANCE (a
+# +/-N-day window around the issue day, currently 10, commented there as
+# "temporarily relaxed ... must be changed back to 5 for operational use").
+# That number is in flux and owned by lt_schedule_query.py; re-deriving it
+# here would make this script a second, competing schedule authority — see
+# doc/plans/issues/high_prio_gi_draft_infra_validate_pipeline_gated_day_false_fail.md
+# (option (b)) for why that pattern is explicitly flagged as a problem. This
+# check only asks "is this calendar month in forecast_months", not "is today
+# within N days of the issue day".
+ALL_MONTHS = set(range(1, 13))
+current_month = today.month
+
+
+def mode_active_this_month(mode, mode_config):
+    """Return (active, fail_reason). `active` is only meaningful when
+    fail_reason is None. Mirrors query_schedule's per-model scan: a mode is
+    active this month if ANY of its models is unrestricted or lists the
+    current month in forecast_months. An unreadable/malformed model config
+    is NOT evidence either way -- per the same fallback discipline as the
+    operational_issue_day read above, it must not be guessed, so it is
+    reported as a failure that degrades the whole section to the flat
+    staleness check, not as "inactive"."""
+    if "model_folder" not in mode_config or "models_to_use" not in mode_config:
+        return False, f"{mode}.json missing 'model_folder' or 'models_to_use' (needed to check forecast_months)"
+    models_to_use = mode_config["models_to_use"]
+    if not isinstance(models_to_use, dict):
+        return False, f"{mode}.json 'models_to_use' is not a family->model map"
+    mode_model_root = os.path.join(config_dir, mode_config["model_folder"])
+    for family, model_names in models_to_use.items():
+        if not isinstance(model_names, list):
+            return False, f"{mode}.json 'models_to_use[{family}]' is not a list"
+        for model_name in model_names:
+            general_config_path = os.path.join(mode_model_root, family, model_name, "general_config.json")
+            try:
+                with open(general_config_path) as f:
+                    general_config = json.load(f)
+            except Exception as e:
+                return False, (f"{mode}/{family}/{model_name}/general_config.json "
+                                f"unreadable/invalid ({e.__class__.__name__})")
+            forecast_months = general_config.get("forecast_months")
+            # Absent, or covering all twelve months, means NO restriction
+            # (config_forecast.py:286-288's default) -- active regardless of
+            # which month it is.
+            if not forecast_months or set(forecast_months) >= ALL_MONTHS:
+                return True, None
+            if current_month in set(forecast_months):
+                return True, None
+    # Every model's config was read successfully; none scheduled this month.
+    # This is a legitimate "not due", not a failure.
+    return False, None
+
+
+active_modes = []
+if fail_reason is None:
+    for mode in mode_issue_days:
+        active, reason = mode_active_this_month(mode, mode_configs[mode])
+        if reason is not None:
+            fail_reason = reason
+            break
+        if active:
+            active_modes.append(mode)
+
+if fail_reason is not None:
+    fallback(fail_reason)
+elif not active_modes:
+    # Every configured mode read fine, but forecast_months excludes all of
+    # them this month: genuinely nothing is due right now. Report OK, not a
+    # staleness WARN for a run that was never going to happen this month.
+    note = f" (forecast_months excludes month {current_month} for every configured mode)"
+    if latest is not None:
+        emit("OK", f"long-term forecasts: no long-term run scheduled this month{note}; latest on file is {latest} ({latest_age} days old)")
+    else:
+        emit("OK", f"long-term forecasts: no long-term run scheduled this month{note}; no forecasts in the last {LTF_WINDOW_DAYS} days either")
+else:
+    issue_days = set()
+    for mode in active_modes:
+        issue_days.update(mode_issue_days[mode])
+
+    GRACE_CUTOFF_HOUR = 12  # same convention/value as the short-term block above
+
+    def issue_days_in_month(d):
+        # Day-of-month issue days that can actually occur in THIS month — a
+        # mode configured for day 31 simply never fires in a 30-day month
+        # (or February), exactly like cron's own day-of-month field: no
+        # wrap, no clamp, the run is just skipped that month. The recursion
+        # in most_recent_issue_day below then looks to the previous month,
+        # matching that real-world behaviour rather than inventing an
+        # end-of-month substitute day the production schedule does not use.
+        last_day = calendar.monthrange(d.year, d.month)[1]
+        return sorted(dd for dd in issue_days if dd <= last_day)
+
+    def most_recent_issue_day(d, _depth=0):
+        if _depth > 36:  # ~3 years of recursion guard; issue_days is non-empty here
+            return None
+        for b in reversed(issue_days_in_month(d)):
+            if b <= d.day:
+                return datetime.date(d.year, d.month, b)
+        prev_month_last = d.replace(day=1) - datetime.timedelta(days=1)
+        return most_recent_issue_day(prev_month_last, _depth + 1)
+
+    def expected_issue_day():
+        """The issue day whose long-term forecast should already exist,
+        given today's local calendar date and the current local hour."""
+        candidate = most_recent_issue_day(today)
+        if candidate == today and now_local_hour < GRACE_CUTOFF_HOUR:
+            # Still within today's grace window on an issue day: today's run
+            # may not have happened yet, so the forecast actually due is
+            # still the previous issue day's.
+            candidate = most_recent_issue_day(today - datetime.timedelta(days=1))
+        return candidate
+
+    due = expected_issue_day()
+    if due is None:
+        fallback("could not resolve a due date from the configured issue days")
+    elif latest is None:
+        emit("WARN", f"long-term forecasts: no forecasts in the last {LTF_WINDOW_DAYS} days, but a run was due {due.isoformat()}")
+    else:
+        try:
+            latest_date = datetime.date.fromisoformat(latest[:10])
+        except Exception:
+            latest_date = None
+        if latest_date is not None and latest_date >= due:
+            # `latest_age` is shown for operator context only — the due-date
+            # comparison above is what decides OK/WARN, not age.
+            emit("OK", f"long-term forecasts: latest {latest} ({latest_age} days old)")
+        else:
+            emit("WARN", f"long-term forecasts: newest is {latest}, but a run was due {due.isoformat()}")
 PY
         RC_LT=$?
         if [ "$RC_LT" -ne 0 ]; then

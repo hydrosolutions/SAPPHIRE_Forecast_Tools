@@ -882,6 +882,19 @@ cd "$REPO" && bash bin/run_pentadal_forecasts.sh "$ENV_FILE"
 River data has stopped arriving. This is the usual cause of stale forecasts, and it is almost
 always the iEasyHydro connection — see that section below.
 
+**`[WARN] long-term forecasts: newest is <date>, but a run was due <date>`**
+
+A scheduled long-term run was missed. The check reads this deployment's own issue days from its
+long-term configuration, so the due date is the real one, not a guess.
+
+Two messages here are **not** problems:
+
+- `no long-term run scheduled this month` — a seasonal mode that does not run in the current
+  month. Nothing is wrong.
+- `[due-date check unavailable: …]` — the configuration could not be read, so it fell back to a
+  simple 120-day staleness check. The forecast itself may be perfectly current. Worth fixing the
+  config path it names, but not urgent.
+
 **`[WARN] no long-term forecasts in the last 120 days`**
 
 Long-term forecasting is configured but has stopped. Check its own log:
