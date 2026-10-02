@@ -891,9 +891,14 @@ Two messages here are **not** problems:
 
 - `no long-term run scheduled this month` — a seasonal mode that does not run in the current
   month. Nothing is wrong.
-- `[due-date check unavailable: …]` — the configuration could not be read, so it fell back to a
-  simple 120-day staleness check. The forecast itself may be perfectly current. Worth fixing the
-  config path it names, but not urgent.
+- `(seasonal gating unavailable: …)` — the due date is still correct; only the check for
+  whether a *seasonal* mode runs this month could not be made, because the model config it names
+  is missing. If the warning turns out to be about a seasonal mode that does not run now, it is
+  a false alarm — and the missing file is worth looking at, since that model may not be running
+  at all.
+- `[due-date check unavailable: …]` — stronger: the schedule itself could not be read, so it
+  fell back to a simple 120-day staleness check. The forecast may be perfectly current. Worth
+  fixing the config path it names, but not urgent.
 
 **`[WARN] no long-term forecasts in the last 120 days`**
 

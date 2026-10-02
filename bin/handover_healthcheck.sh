@@ -503,11 +503,14 @@ def mode_active_this_month(mode, mode_config):
     """Return (active, fail_reason). `active` is only meaningful when
     fail_reason is None. Mirrors query_schedule's per-model scan: a mode is
     active this month if ANY of its models is unrestricted or lists the
-    current month in forecast_months. An unreadable/malformed model config
-    is NOT evidence either way -- per the same fallback discipline as the
-    operational_issue_day read above, it must not be guessed, so it is
-    reported as a failure that degrades the whole section to the flat
-    staleness check, not as "inactive"."""
+    current month in forecast_months.
+
+    An unreadable/malformed model config is NOT evidence either way -- but
+    unlike an unreadable operational_issue_day (which discards the one
+    thing this check has no substitute for), a failure here degrades only
+    THIS mode's gating, not the issue days already resolved for every other
+    mode. See the caller: a mode this function can't evaluate is folded in
+    as active (the conservative choice -- see the comment there)."""
     if "model_folder" not in mode_config or "models_to_use" not in mode_config:
         return False, f"{mode}.json missing 'model_folder' or 'models_to_use' (needed to check forecast_months)"
     models_to_use = mode_config["models_to_use"]
@@ -538,22 +541,51 @@ def mode_active_this_month(mode, mode_config):
     return False, None
 
 
+# The issue days resolved above and the forecast_months gating below are two
+# INDEPENDENT things that must fail independently. Issue days are the part
+# this check has no substitute for (that's what `fallback()` is for, already
+# handled above via `fail_reason`). Gating is a refinement on top of that --
+# one mode's model tree being absent on a given host (observed in practice:
+# a seasonal/monthly mode present in
+# ieasyhydroforecast_ml_long_term_supported_modes without a corresponding
+# models_and_scalers/ tree on that deployment) must not discard every issue
+# day that WAS read correctly and drop the whole section to the old flat
+# 120-day window -- that threw away the valuable, successfully-resolved part
+# over a failure in the refinement.
+#
+# So a gating failure for one mode does not touch fail_reason / fallback()
+# at all. Instead: that mode is folded in as ACTIVE (its issue day counts),
+# and the first such failure is recorded in gating_note so the verdict says
+# gating could not be fully applied, rather than silently guessing. This is
+# deliberately the conservative direction: an unreadable mode could in fact
+# be seasonal and not due this month, so treating it as active can produce a
+# false WARN -- but the alternative (treating it as inactive) risks the
+# opposite, silently hiding a genuinely missed run. A visible, explained
+# warning is recoverable (an operator reads the note and checks); a silently
+# dropped issue day is not. This check exists to catch missed runs, so that
+# asymmetry is why "active" is the default here, not "inactive".
 active_modes = []
+gating_fail_reason = None
 if fail_reason is None:
     for mode in mode_issue_days:
         active, reason = mode_active_this_month(mode, mode_configs[mode])
         if reason is not None:
-            fail_reason = reason
-            break
+            if gating_fail_reason is None:
+                gating_fail_reason = reason
+            active_modes.append(mode)  # conservative: can't tell -> count it
+            continue
         if active:
             active_modes.append(mode)
+gating_note = f" (seasonal gating unavailable: {gating_fail_reason})" if gating_fail_reason else ""
 
 if fail_reason is not None:
     fallback(fail_reason)
 elif not active_modes:
-    # Every configured mode read fine, but forecast_months excludes all of
-    # them this month: genuinely nothing is due right now. Report OK, not a
-    # staleness WARN for a run that was never going to happen this month.
+    # Every configured mode read fine (gating_fail_reason is None whenever
+    # active_modes is empty -- a gating failure always adds its mode to
+    # active_modes), and forecast_months excludes all of them this month:
+    # genuinely nothing is due right now. Report OK, not a staleness WARN
+    # for a run that was never going to happen this month.
     note = f" (forecast_months excludes month {current_month} for every configured mode)"
     if latest is not None:
         emit("OK", f"long-term forecasts: no long-term run scheduled this month{note}; latest on file is {latest} ({latest_age} days old)")
@@ -601,7 +633,7 @@ else:
     if due is None:
         fallback("could not resolve a due date from the configured issue days")
     elif latest is None:
-        emit("WARN", f"long-term forecasts: no forecasts in the last {LTF_WINDOW_DAYS} days, but a run was due {due.isoformat()}")
+        emit("WARN", f"long-term forecasts: no forecasts in the last {LTF_WINDOW_DAYS} days, but a run was due {due.isoformat()}{gating_note}")
     else:
         try:
             latest_date = datetime.date.fromisoformat(latest[:10])
@@ -610,9 +642,9 @@ else:
         if latest_date is not None and latest_date >= due:
             # `latest_age` is shown for operator context only — the due-date
             # comparison above is what decides OK/WARN, not age.
-            emit("OK", f"long-term forecasts: latest {latest} ({latest_age} days old)")
+            emit("OK", f"long-term forecasts: latest {latest} ({latest_age} days old){gating_note}")
         else:
-            emit("WARN", f"long-term forecasts: newest is {latest}, but a run was due {due.isoformat()}")
+            emit("WARN", f"long-term forecasts: newest is {latest}, but a run was due {due.isoformat()}{gating_note}")
 PY
         RC_LT=$?
         if [ "$RC_LT" -ne 0 ]; then
