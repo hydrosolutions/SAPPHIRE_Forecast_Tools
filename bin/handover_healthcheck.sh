@@ -161,15 +161,89 @@ if curl -sf --max-time 5 http://localhost:8000/health/ready >/dev/null 2>&1; the
     # itself, so the visible output is byte-identical but the counters (and
     # exit code) are now correct.
     HC_LRF_JSON="$LRF_JSON" HC_RO_JSON="$RO_JSON" python3 - > "$VERDICTS_ST" 2>"$ERR_ST" << 'PY'
-import json, collections, datetime, os
+import json, collections, calendar, datetime, os
+
 def load(p):
     try: return json.load(open(p))
     except Exception: return []
-today = datetime.date.today()
+
+# Test-only clock override: set HC_FAKE_NOW (ISO 8601, e.g.
+# "2026-09-25T02:00:00") to exercise the grace-period logic below without
+# touching the system clock. Interpreted as LOCAL time, exactly like the
+# production `datetime.datetime.now()` path below. Unset in production,
+# where this is exactly the previous `datetime.date.today()` behaviour.
+_fake_now = os.environ.get("HC_FAKE_NOW")
+now = datetime.datetime.fromisoformat(_fake_now) if _fake_now else datetime.datetime.now()
+# Use the server's LOCAL hour, not a UTC conversion. cron interprets
+# crontab hours in the server's own local timezone, and doc/deployment.md
+# (see "Set up cron job", ~line 927) has operators pick the LOCAL hour that
+# lands the run in the morning local time on their deployment -- the
+# documented "UTC schedule" is a conversion aid for picking that local
+# hour, not something every deployment's cron actually fires at. The run
+# always happens in the morning LOCAL time, at a DIFFERENT UTC hour per
+# deployment; comparing against a fixed UTC hour would be correct for only
+# one timezone and wrong for the rest. A local-hour cutoff is correct on
+# every deployment without needing to know its timezone at all.
+now_local_hour = now.hour
+today = now.date()
+
 def age(ds):
     try: return (today - datetime.date.fromisoformat(ds[:10])).days
     except Exception: return None
+
 def emit(level, msg): print(f"{level}\t{msg}")
+
+# --- Forecast issue-day rule -------------------------------------------
+# Source of truth: apps/validate_pipeline/validate_pipeline.py
+# (is_pentad_forecast_day, is_decad_forecast_day, most_recent_pentad_boundary,
+# ~lines 120-145) and apps/linear_regression/linear_regression.py
+# get_forecast_days_for_month (~line 435). This health check cannot import
+# apps/ (different interpreter/paths), so the rule is reimplemented here —
+# keep the two definitions in step if the issue-day schedule ever changes.
+#   PENTAD issue days: 5, 10, 15, 20, 25, last day of month
+#   DECAD  issue days: 10, 20, last day of month
+PENTAD_FIXED_DAYS = (5, 10, 15, 20, 25)
+DECAD_FIXED_DAYS = (10, 20)
+
+def _issue_days(d, fixed_days):
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return sorted(set(fixed_days) | {last_day})
+
+def most_recent_issue_day(d, fixed_days):
+    """Most recent issue day <= d, wrapping into the previous month."""
+    for b in reversed(_issue_days(d, fixed_days)):
+        if b <= d.day:
+            return datetime.date(d.year, d.month, b)
+    prev_month_last = d.replace(day=1) - datetime.timedelta(days=1)
+    return most_recent_issue_day(prev_month_last, fixed_days)
+
+# Grace period: the run for issue day D happens ON day D, in the morning,
+# LOCAL time on whatever deployment this is (doc/deployment.md's cron
+# section has operators pick local cron hours that land the run in
+# "morning local time" -- see the note above). Expecting D's forecast
+# immediately at midnight would false-alarm every single issue day before
+# cron has even run — worse than the bug being fixed, since people stop
+# reading a check that cries wolf. GRACE_CUTOFF_HOUR=12 (local noon) is
+# comfortably past any "morning local" run on every deployment in
+# doc/deployment.md's timezone table, while still catching a genuinely
+# missed run the same day it was missed rather than days later. Change
+# GRACE_CUTOFF_HOUR to retune the buffer -- keep it in LOCAL hours, not UTC
+# (see the note above on why local, not UTC, is correct here).
+GRACE_CUTOFF_HOUR = 12
+
+def expected_issue_day(today_, now_local_hour, fixed_days):
+    """The issue day whose forecast should already exist, given today's
+    local calendar date and the current local hour."""
+    candidate = most_recent_issue_day(today_, fixed_days)
+    if candidate == today_ and now_local_hour < GRACE_CUTOFF_HOUR:
+        # Still within today's grace window on an issue day: today's run may
+        # not have happened yet, so the forecast actually due is still the
+        # previous issue day's.
+        candidate = most_recent_issue_day(today_ - datetime.timedelta(days=1), fixed_days)
+    return candidate
+
+HORIZON_FIXED_DAYS = {"pentad": PENTAD_FIXED_DAYS, "decade": DECAD_FIXED_DAYS}
+
 lrf = load(os.environ["HC_LRF_JSON"])
 if not lrf:
     emit("FAIL", "no forecasts in the last 45 days — the pipeline has stopped publishing")
@@ -178,8 +252,25 @@ else:
     for r in lrf: m[r.get("horizon_type","?")].append(r.get("date",""))
     for k, v in sorted(m.items()):
         latest = max(v); a = age(latest)
-        level = "OK" if a is not None and a <= 11 else "WARN"
-        emit(level, f"{k} forecasts: latest {latest} ({a} days old)")
+        fixed_days = HORIZON_FIXED_DAYS.get(k)
+        if fixed_days is None:
+            # Unknown horizon_type (neither pentad nor decade) - fall back
+            # to the old flat threshold so an unexpected value can't crash
+            # the health check.
+            level = "OK" if a is not None and a <= 11 else "WARN"
+            emit(level, f"{k} forecasts: latest {latest} ({a} days old)")
+            continue
+        due = expected_issue_day(today, now_local_hour, fixed_days)
+        try:
+            latest_date = datetime.date.fromisoformat(latest[:10])
+        except Exception:
+            latest_date = None
+        if latest_date is not None and latest_date >= due:
+            # `a` (age) is shown for operator context only -- due-date
+            # comparison above is what decides OK/WARN, not age.
+            emit("OK", f"{k} forecasts: latest {latest} ({a} days old)")
+        else:
+            emit("WARN", f"{k} forecasts: newest is {latest}, but a run was due {due.isoformat()}")
 ro = load(os.environ["HC_RO_JSON"])
 if not ro:
     emit("WARN", "no discharge data in the last 45 days — check the iEasyHydro connection")

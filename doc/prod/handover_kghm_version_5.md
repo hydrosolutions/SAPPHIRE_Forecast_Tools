@@ -850,10 +850,14 @@ the page answers.
 
 Serious. Work through the steps under "Recent pipeline runs" below rather than guessing.
 
-**`[WARN] pentad forecasts: latest <date> (N days old)`**
+**`[WARN] pentad forecasts: newest is <date>, but a run was due <date>`**
 
-Compare against the last issue day — the 5th, 10th, 15th, 20th, 25th, or last day of the
-month. A forecast older than the most recent issue day means a run was missed.
+A scheduled run was missed. The check works out when a forecast was due — pentad on the 5th,
+10th, 15th, 20th, 25th and last day of the month; decad on the 10th, 20th and last day — and
+tells you which one is missing, so you do not have to work it out.
+
+It allows until midday local time on an issue day before saying anything, because that day's
+run happens in the morning. So this message means the run should already have finished.
 
 1. Look for a failure log:
 
