@@ -26,8 +26,36 @@
 #       sets these globals:
 #         MAIL_SMTP_SERVER, MAIL_SMTP_PORT, MAIL_SMTP_USER, MAIL_SMTP_PASS,
 #         MAIL_SENDER, MAIL_RECIPIENTS, MAIL_ORG
-#       MAIL_ORG falls back to `hostname` when ieasyhydroforecast_organization
-#       is absent or empty in the env file.
+#       MAIL_ORG resolution order:
+#         1. $SAPPHIRE_ALERT_ORG from the environment, if set and non-empty
+#            after sanitisation (see below) -- mail-subject label override.
+#         2. ieasyhydroforecast_organization from the env file.
+#         3. `hostname`, when ieasyhydroforecast_organization is absent or
+#            empty in the env file (and SAPPHIRE_ALERT_ORG is unset/empty).
+#
+#       Why an override exists instead of just changing the organisation:
+#       ieasyhydroforecast_organization is a pipeline identity, not a label --
+#       it also drives timeout configuration selection, dashboard URL
+#       derivation and station filtering elsewhere in the system. A
+#       demo/staging box that intentionally runs a copy of another
+#       deployment's configuration (same env file, same
+#       ieasyhydroforecast_organization) cannot change that value just to get
+#       a distinct mail subject without breaking those other behaviours.
+#       SAPPHIRE_ALERT_ORG lets an operator relabel mail subjects only, e.g.
+#       by adding Environment="SAPPHIRE_ALERT_ORG=kghm-demo" to the systemd
+#       unit, without touching any config the pipeline itself reads.
+#
+#       SAPPHIRE_ALERT_ORG is sanitised before use: it lands in a mail
+#       header (the "[SAPPHIRE <org>] " subject prefix), and unlike the env
+#       file -- which an operator controls and formats carefully -- it comes
+#       from the environment, so a stray newline could inject arbitrary mail
+#       headers and non-ASCII bytes have previously reached production and
+#       arrived mangled. Bytes outside printable ASCII (0x20-0x7E, which
+#       excludes CR/LF and tabs along with any non-ASCII byte) are stripped,
+#       not rejected outright, so a mostly-clean value (e.g. trailing CRLF
+#       from how the unit file quoted it) still works; if stripping leaves it
+#       empty, resolution falls through to the env file / hostname exactly as
+#       if SAPPHIRE_ALERT_ORG had never been set.
 #
 #   mail_config_is_complete
 #       Returns 0 when MAIL_SMTP_SERVER/PORT/USER/PASS, MAIL_SENDER and
@@ -97,9 +125,18 @@ mail_resolve_config() {
     MAIL_SENDER=$(grep -m1      -E '^SAPPHIRE_PIPELINE_SENDER_EMAIL='     "$env_file" | cut -d= -f2-)
     MAIL_RECIPIENTS=$(grep -m1  -E '^SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=' "$env_file" | cut -d= -f2-)
 
+    # Mail-only deployment-label override: see "MAIL_ORG resolution order"
+    # above. Stripped to printable ASCII (0x20-0x7E) so neither a non-ASCII
+    # byte nor an injected CR/LF header can reach the Subject line composed
+    # in mail_send; an empty result after stripping is treated the same as
+    # "unset" and falls through below.
+    MAIL_ORG=$(printf '%s' "${SAPPHIRE_ALERT_ORG:-}" | tr -cd '\40-\176')
+
     # Same prefer-org-fallback-hostname approach used by all three callers
     # already; tr set strips a trailing \r and any quoting around the value.
-    MAIL_ORG=$(grep -m1 -E '^ieasyhydroforecast_organization=' "$env_file" | cut -d= -f2- | tr -d '\r"'\''')
+    if [ -z "$MAIL_ORG" ]; then
+        MAIL_ORG=$(grep -m1 -E '^ieasyhydroforecast_organization=' "$env_file" | cut -d= -f2- | tr -d '\r"'\''')
+    fi
     [ -z "$MAIL_ORG" ] && MAIL_ORG=$(hostname)
 
     # Explicit success return: none of the current callers use `set -e`, but
