@@ -142,10 +142,18 @@ echo "  note: a '(unhealthy)' label on sapphire-dashboard is a known false alarm
 head_ "Data freshness"
 [ "$SERVER_MODE" -eq 0 ] && echo "  (local database — dates below reflect test data, not production)"
 if curl -sf --max-time 5 http://localhost:8000/health/ready >/dev/null 2>&1; then
-    # The API applies offset/limit with NO ORDER BY (crud.py), so a plain
-    # "limit=N" returns an ARBITRARY page — on a large table that is the oldest
-    # rows, and max(date) over it is meaningless. Always bound by start_date so
-    # only recent rows can come back.
+    # The API orders by id, not by date (crud.py get_lr_forecast does
+    # .order_by(LRForecast.id)), so a capped response returns the OLDEST rows
+    # and max(date) over it is meaningless. start_date keeps the row count
+    # small enough that the cap is not reached.
+    #
+    # KNOWN LIMIT: unlike the long-term block below, this is still a single
+    # capped request. A deployment with more than `limit` short-term forecast
+    # rows inside the window would silently read a truncated page and could
+    # report a healthy pipeline as stale. On a real deployment the 45-day
+    # window held ~2,200 rows against a 5,000 cap, so there is headroom today
+    # but no guarantee as stations are added. The durable fix is to page this
+    # the way fetch_window_latest() does, or to order the endpoint by date.
     SINCE=$(date -d '45 days ago' +%F 2>/dev/null || date -v-45d +%F 2>/dev/null)
     LRF_JSON="$HC_TMPDIR/lrf.json"
     RO_JSON="$HC_TMPDIR/ro.json"
@@ -305,12 +313,6 @@ PY
     # and doc/configuration.md), so its presence in the env is the signal.
     if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] \
        && grep -qE '^ieasyhydroforecast_ml_long_term_configuration=.+' "$ENV_FILE" 2>/dev/null; then
-        # Same pagination trap as lr-forecast above (offset/limit, no ORDER
-        # BY) — bound by start_date so an arbitrary old page can't masquerade
-        # as "no recent data". Without start_date, an unbounded limit=N on a
-        # large table returns the oldest rows, not the newest, and max(date)
-        # would report a healthy long-term pipeline as months stale.
-        #
         # Long-term forecasts are issued monthly/seasonally on deployment-
         # configured issue days (e.g. the 10th and 25th on one deployment,
         # the 1st on another) — not every 5-10 days like short-term.
@@ -318,49 +320,37 @@ PY
         # The DUE-DATE computation below needs only ~1 month of lookback
         # regardless of cadence (it is derived from the calendar + the
         # configured issue days, not from the window; see the day-31 note in
-        # most_recent_issue_day below). But this window also bounds what the
+        # most_recent_issue_day below). But the window also bounds what the
         # "latest on file" lookup can SEE, and that lookup must cover the
         # SLOWEST cadence this script now groups by horizon_type: a single
         # seasonal mode (e.g. a deployment with only "seasonal_april", not
         # KGHM's four seasonal_* months) may legitimately produce output only
-        # once a year. 120 days would make that mode's genuinely-current
-        # last run invisible for 8+ months, reporting "no forecasts in the
-        # window" — technically still correct (not-yet-due months report OK
-        # regardless, via the "nothing scheduled this month" branch below),
-        # but needlessly alarming-looking next to an "OK" and useless as
-        # evidence during an overdue month. 400 days (a full year + ~5 weeks
-        # margin for run-day slip) guarantees a once-a-year mode's last real
-        # run is always inside the window, so "nothing published in the
-        # window" stays a meaningful signal rather than a window-sizing
-        # artifact — it remains the right test, just needs sizing to the
-        # true slowest cadence rather than the short-term-derived 120 days.
-        # Still bounded (not unbounded) for the same pagination-trap reason
-        # as lr-forecast above, and still doubles as the flat-staleness
-        # fallback's window when issue days can't be resolved at all.
+        # once a year. 400 days (a full year + ~5 weeks margin for run-day
+        # slip) guarantees a once-a-year mode's last real run is always
+        # inside the window.
         #
-        # `limit` raised from 5000 to 20000 alongside the window widening:
-        # the no-ORDER-BY offset/limit trap bites harder the wider the
-        # window gets, because a longer start_date span can hold more total
-        # rows, making it MORE likely an unordered page of `limit` rows
-        # misses the genuinely newest ones for one or more horizon types —
-        # confirmed empirically against this repo's own (heavily-seeded, not
-        # production-representative) local dev DB: start_date=2025-01-01
-        # with limit=5000 returned an arbitrary 5000-row slice whose month
-        # max(date) was months staler, and whose quarter rows were absent
-        # entirely, versus the true values visible only above ~75000. A
-        # real deployment's actual row volume in a 400-day window cannot be
-        # verified here (station counts and discharge/forecast data are not
-        # committed to this repo), so 20000 (matching this script's existing
-        # runoff/?limit=20000 call above) is a judgment call, not a proof —
-        # if a deployment's real volume ever exceeds it, this inherits the
-        # same silent-truncation risk the pre-existing endpoints already
-        # have. The actual fix is adding ORDER BY to the API endpoint, which
-        # lives in sapphire/services/ and is out of scope for this script.
-        LT_SINCE=$(date -d '400 days ago' +%F 2>/dev/null || date -v-400d +%F 2>/dev/null)
-        LTF_JSON="$HC_TMPDIR/ltf.json"
+        # There is NO single curl here, and no `limit` to size against real
+        # volume -- a single capped request was tried (limit raised 5000 ->
+        # 20000) and it broke in production anyway: crud.py's
+        # get_long_forecast() orders by LongForecast.id (insertion order),
+        # not by date, so ANY fixed `limit` response is an arbitrary PREFIX
+        # of whatever rows exist in the window, not necessarily the newest.
+        # Confirmed on the KGHM server: start_date=400d/limit=20000 came back
+        # as exactly 20000 rows (the cap) with a "month" max(date) months
+        # staler than the true value, which only appeared once the window
+        # was narrowed enough (45 days, 2229 rows) to fit under any
+        # reasonable cap. Raising `limit` again would be the same bet with a
+        # bigger number. The python block below instead queries per
+        # horizon_type (narrowing what each query even considers) and PAGES
+        # each query with skip/limit until a page comes back short,
+        # accumulating only a running max date -- correct regardless of how
+        # much data accumulates, bounded by a page-count ceiling so a
+        # pathological volume can't loop forever. See the Python comments
+        # for why order_by(id) makes multi-page accumulation safe at all,
+        # and HC_LT_PAGE_LIMIT / HC_LT_MAX_PAGES for the request-count
+        # tuning knobs.
         VERDICTS_LT="$HC_TMPDIR/verdicts_lt"
         ERR_LT="$HC_TMPDIR/err_lt"
-        curl -s --max-time 30 "http://localhost:8003/long-forecast/?start_date=${LT_SINCE}&limit=20000" 2>/dev/null > "$LTF_JSON"
 
         # Resolve the per-mode operational issue days so staleness can be
         # judged against when a run was actually DUE, same as the short-term
@@ -396,14 +386,9 @@ PY
         # Same fix as the short-term block above: emit "LEVEL<TAB>message"
         # instead of printing the coloured label directly, so the verdict
         # flows through ok/warn/bad and the exit code stays authoritative.
-        HC_LTF_JSON="$LTF_JSON" HC_LT_CONFIG_DIR="$LT_CONFIG_DIR" HC_LT_CONFIG_ROOT="$LT_CONFIG_ROOT" HC_LT_MODES="$LT_MODES" HC_LT_SINCE_DAYS=400 \
+        HC_LT_CONFIG_DIR="$LT_CONFIG_DIR" HC_LT_CONFIG_ROOT="$LT_CONFIG_ROOT" HC_LT_MODES="$LT_MODES" HC_LT_SINCE_DAYS=400 \
             python3 - > "$VERDICTS_LT" 2>"$ERR_LT" << 'PY'
-import calendar, datetime, json, os
-
-
-def load(p):
-    try: return json.load(open(p))
-    except Exception: return []
+import calendar, datetime, json, os, urllib.error, urllib.parse, urllib.request
 
 
 # Test-only clock override: see the matching note on the short-term block
@@ -420,6 +405,7 @@ now = datetime.datetime.fromisoformat(_fake_now) if _fake_now else datetime.date
 now_local_hour = now.hour
 today = now.date()
 LTF_WINDOW_DAYS = int(os.environ.get("HC_LT_SINCE_DAYS", "400"))
+LTF_SINCE_DATE = (today - datetime.timedelta(days=LTF_WINDOW_DAYS)).isoformat()
 
 
 def age(ds):
@@ -430,18 +416,112 @@ def age(ds):
 def emit(level, msg): print(f"{level}\t{msg}")
 
 
-ltf = load(os.environ["HC_LTF_JSON"])
-latest = max((r.get("date", "") for r in ltf), default=None)
-latest_age = age(latest) if latest else None
+# --- Safe "latest date in the window" retrieval -----------------------------
+# A single capped request is unsound no matter how large the cap: crud.py's
+# get_long_forecast() does `.order_by(LongForecast.id)` (insertion order),
+# NOT date order, so a `limit`-truncated response is an arbitrary PREFIX of
+# however many rows exist in the window -- not necessarily the newest ones.
+# Confirmed on the KGHM server: start_date=400d/limit=20000 came back as
+# exactly 20000 rows (the cap) with a "month" max(date) months staler than
+# the true value (2026-06-25 reported vs. 2026-09-10 actual) -- raising
+# `limit` again would be the same bet with a bigger number, and it would
+# break again as data accumulates.
+#
+# The fix has two parts:
+#   1) Query per horizon_type. The endpoint filters server-side on it
+#      (sapphire/services/postprocessing/app/main.py's read_long_forecast
+#      and crud.py's get_long_forecast both accept and apply it), so each
+#      query only ever considers rows for ONE horizon -- narrowing the
+#      row count before paging even starts, and only for horizons this
+#      deployment actually configures.
+#   2) PAGE each per-horizon query with skip/limit until a page comes back
+#      SHORT (fewer rows than the limit -- exhausted), accumulating only a
+#      running max date, never holding every row in memory. This is safe
+#      specifically because order_by(id) is STABLE and deterministic:
+#      repeated skip/limit calls enumerate every matching row exactly once,
+#      with no gaps and no duplicates, regardless of date order. An
+#      endpoint with no order_by at all could reshuffle pages between
+#      calls and this scheme would not be trustworthy -- it is the
+#      stability of the ordering, not its column, that makes multi-page
+#      accumulation correct here.
+PAGE_LIMIT = int(os.environ.get("HC_LT_PAGE_LIMIT", "5000"))
+# Ceiling so a pathological volume can't page forever. 10 pages * 5000 =
+# 50,000 rows for a SINGLE horizon_type within the window -- well above the
+# ~20,000-30,000 rows measured for ALL horizons COMBINED on KGHM today
+# (8,842 rows/120 days extrapolated to the 400-day window), while still
+# bounded. If real per-horizon volume ever exceeds this, the right fix is to
+# raise MAX_PAGES (each page is one cheap indexed query) -- never to guess
+# an answer from a partial scan.
+MAX_PAGES = int(os.environ.get("HC_LT_MAX_PAGES", "10"))
+
+# Test-only data source override: HC_LT_FAKE_PAGES_DIR points to a directory
+# holding pre-staged page files named "<horizon_type_or_ALL>__page<N>.json"
+# (0-indexed) so paging behaviour -- including hitting MAX_PAGES -- can be
+# exercised deterministically without a live multi-thousand-row database.
+# Unset in production, where real HTTP calls are made.
+_FAKE_PAGES_DIR = os.environ.get("HC_LT_FAKE_PAGES_DIR")
+API_BASE = "http://localhost:8003"
+
+
+def _fetch_page(horizon_type, skip):
+    if _FAKE_PAGES_DIR:
+        tag = horizon_type if horizon_type else "ALL"
+        path = os.path.join(_FAKE_PAGES_DIR, f"{tag}__page{skip // PAGE_LIMIT}.json")
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return []
+    params = {"start_date": LTF_SINCE_DATE, "skip": skip, "limit": PAGE_LIMIT}
+    if horizon_type:
+        params["horizon_type"] = horizon_type
+    url = f"{API_BASE}/long-forecast/?{urllib.parse.urlencode(params)}"
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
+def fetch_window_latest(horizon_type):
+    """Page through /long-forecast/ (optionally filtered to one
+    horizon_type) within the LTF_SINCE_DATE window, returning
+    (max_date_or_None, reliable, unreliable_reason). reliable=False means
+    either a request failed or MAX_PAGES was hit before a page came back
+    short -- in both cases max_date must NOT be trusted; the caller reports
+    that this horizon (or, for the unfiltered fallback case, the whole
+    check) could not be evaluated reliably rather than passing through a
+    possibly-wrong date. Silence or a confident-but-wrong answer are both
+    worse than saying so."""
+    max_date = None
+    skip = 0
+    for _ in range(MAX_PAGES):
+        try:
+            rows = _fetch_page(horizon_type, skip)
+        except Exception as e:
+            return None, False, f"request failed: {e.__class__.__name__}"
+        if not rows:
+            return max_date, True, None
+        page_max = max((r.get("date", "") for r in rows), default=None)
+        if page_max and (max_date is None or page_max > max_date):
+            max_date = page_max
+        if len(rows) < PAGE_LIMIT:
+            return max_date, True, None
+        skip += PAGE_LIMIT
+    return max_date, False, f"more than {MAX_PAGES * PAGE_LIMIT} rows in the {LTF_WINDOW_DAYS}-day window"
 
 
 def fallback(reason):
-    # The original flat 120-day-window / 45-day-warn behaviour, used
-    # whenever the due-date path below could not be evaluated. Must never
-    # itself WARN just because configuration was unreadable — a deployment
-    # that runs long-term fine but stores its config somewhere unexpected
-    # must not start failing its health check — so this degrades to the
-    # same check that ran before this due-date logic existed.
+    # The original flat window / 45-day-warn behaviour, used whenever the
+    # due-date path below could not be evaluated. Must never itself WARN
+    # just because configuration was unreadable — a deployment that runs
+    # long-term fine but stores its config somewhere unexpected must not
+    # start failing its health check — so this degrades to the same check
+    # that ran before this due-date logic existed. Unfiltered (no
+    # horizon_type) since the schedule itself -- and therefore which
+    # horizons are even configured -- could not be resolved here.
+    latest, reliable, unreliable_reason = fetch_window_latest(None)
+    if not reliable:
+        emit("WARN", f"long-term forecasts: could not be evaluated reliably ({unreliable_reason}); due-date check was also unavailable: {reason}")
+        return
+    latest_age = age(latest) if latest else None
     note = (f" [due-date check unavailable: {reason}; "
             f"using {LTF_WINDOW_DAYS}-day staleness check instead]")
     if latest is None:
@@ -656,20 +736,17 @@ else:
         h = mode_configs[mode].get("horizon_type") or "month"
         modes_by_horizon.setdefault(h, []).append(mode)
 
-    ltf_by_horizon = {}
-    for r in ltf:
-        h = r.get("horizon_type", "?")
-        ltf_by_horizon.setdefault(h, []).append(r)
-
     configured_horizons = set(modes_by_horizon)
-    # Rows for a horizon no configured mode declares are not evidence of
-    # anything this check can judge (no schedule to compare against) --
-    # ignore them for verdict purposes, but say so once rather than letting
-    # them silently vanish from the output.
-    unconfigured = sorted(set(ltf_by_horizon) - configured_horizons)
-    if unconfigured:
-        parts = ", ".join(f"{h!r} ({len(ltf_by_horizon[h])} row(s))" for h in unconfigured)
-        emit("OK", f"long-term forecasts: ignoring rows with horizon_type {parts} -- not declared by any configured mode's horizon_type")
+    # A previous version also flagged rows whose horizon_type matched no
+    # configured mode (fetched via one unfiltered query). That is no longer
+    # done: detecting a horizon_type this deployment never declares would
+    # need an unfiltered scan of the whole window -- exactly the
+    # single-capped-request problem this rewrite removes. Querying only the
+    # CONFIGURED horizons (one request-and-page sequence per horizon, see
+    # fetch_window_latest above) is deliberately traded for that visibility;
+    # correctness and bounded cost for the horizons this check can actually
+    # judge against a schedule matter more than noticing a stray horizon_type
+    # it has no schedule for anyway.
 
     # Only qualify the message with "(horizon)" when there is more than one
     # to disambiguate -- a single-horizon deployment's output must stay
@@ -713,8 +790,11 @@ else:
         active_modes_h = [m for m in modes_h if mode_active[m]]
         reason_h = next((mode_gating_reason[m] for m in modes_h if mode_gating_reason[m] is not None), None)
         gating_note = f" (seasonal gating unavailable: {reason_h})" if reason_h else ""
-        rows_h = ltf_by_horizon.get(h, [])
-        latest_h = max((r.get("date", "") for r in rows_h), default=None)
+
+        latest_h, reliable_h, unreliable_reason = fetch_window_latest(h)
+        if not reliable_h:
+            emit("WARN", f"{label} forecasts: could not be evaluated reliably ({unreliable_reason}) -- not reporting an unverified date")
+            return
         latest_age_h = age(latest_h) if latest_h else None
 
         if not active_modes_h:
