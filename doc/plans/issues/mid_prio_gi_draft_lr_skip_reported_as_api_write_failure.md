@@ -6,7 +6,7 @@
 the diagnosis is misleading. Not yet established: whether exiting non-zero on missing
 upstream input is itself wrong.
 **Labels**: `linear_regression`, `error-classification`, `false-fail`, `maintenance`, `observability`
-**Discovered**: 2026-07-23, local pipeline health review (taj, `maxat_sapphire_2` @ `16fb9a9b`).
+**Discovered**: 2026-07-23, local pipeline health review (taj, `maxat_sapphire_2` @ `16fb9a9b`). Recurred in production 2026-10-05 (kghm, operational pentad).
 **Replaces the archived tracking entry for LR-005 Issue B.** LR-005 (Archived, Low)
 already identified this same guard, its early return, and that its message is
 misleading, and explicitly noted Issue B "remains". This entry is **not a distinct root
@@ -16,7 +16,7 @@ log-wording fix LR-005 asked for. LR-005's NaN-vs-no-row distinction is carried
 forward below. Reopening LR-005 instead of keeping this file is an acceptable
 alternative — **decide before implementing; do not track both.**
 **Related**: **LR-007** (Complete) — silent API write failures; this is the opposite
-direction, over-reporting. **INFRA-022** — same class: correct behaviour reported as failure.
+direction, over-reporting. **INFRA-022** — same class: correct behaviour reported as failure. **PREPQ-024** — upstream cause in this recurrence; **P-062** — downstream blast radius
 
 ---
 
@@ -180,3 +180,39 @@ ieasyhydroforecast_env_file_path=<env> SAPPHIRE_PREDICTION_MODE=DECAD \
 # -> "Skipping LR decad write: no data for forecast year ..." then
 #    "CRITICAL: API write failed ... API database is now behind CSV" and exit 1
 ```
+
+## Production recurrence — kghm operational pentad, 2026-10-05
+
+The same guard fired in **operational** mode (not maintenance) on a pentad issue day.
+Cause: iEasyHydro HF had no WDDA for the two predictor days (2026-10-03/04, data not
+entered), so preprocessing wrote nothing for them (upstream: PREPQ-024). LR logged the usual skip WARNING, then:
+
+```
+ERROR - CRITICAL: API write failed for write_linreg_pentad_forecast_data on 2026-10-05. Data written to CSV only. API database is now behind CSV.
+```
+
+Full sequence: see P-062. Exit 1; the pipeline's own `execute_with_retries` retried
+(default `max_retries=2`, `apps/pipeline/src/timeout_manager.py:102`; not Luigi's retry);
+`LinearRegression` FAILED. The CRITICAL "database
+behind CSV" is the misleading diagnosis this issue describes: the skip was a data gap,
+not an API failure.
+
+**Blast radius in operational mode is now verified** (code read plus the run's Luigi
+summary): `PostProcessingForecasts.requires()` lists `LinearRegression` first
+(`apps/pipeline/pipeline_docker.py:811-835`), so LR exit 1 means
+`PostProcessingForecasts(PENTAD)` never runs. The successful TFT/TIDE/TSMIXER outputs
+are not published as PENTAD rows, and `RunPentadalWorkflow` and the completion
+notification stay pending. Tracked in **P-062**. The maintenance-mode blast radius
+remains "Not verified", as stated above.
+
+### Evidence for the policy question
+
+This case argues that exiting non-zero on missing upstream input has a real cost: it
+blocks other models' publication. The decision remains the owner's. Two coherent
+combinations:
+
+- (i) LR exits 0 on a skip (logged as a data-gap WARNING) and PREPQ-024 owns the alert
+  for the missing data.
+- (ii) LR keeps exiting non-zero and P-062 decouples `PostProcessingForecasts` from LR.
+
+Not decided here.
