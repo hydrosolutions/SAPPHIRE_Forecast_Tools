@@ -100,12 +100,12 @@ if [ -n "$SUMMARY_LINE" ]; then
     if [ "${N_FAIL:-0}" -gt 0 ]; then
         SUBJECT="[SAPPHIRE $ORG] $N_FAIL FAILED, $N_WARN $(plural "$N_WARN" warning warnings)"
     elif [ "${N_WARN:-0}" -gt 0 ]; then
-        SUBJECT="[SAPPHIRE $ORG] OK — $N_PASS passed, $N_WARN $(plural "$N_WARN" warning warnings)"
+        SUBJECT="[SAPPHIRE $ORG] OK - $N_PASS passed, $N_WARN $(plural "$N_WARN" warning warnings)"
     else
-        SUBJECT="[SAPPHIRE $ORG] OK — $N_PASS passed"
+        SUBJECT="[SAPPHIRE $ORG] OK - $N_PASS passed"
     fi
 else
-    SUBJECT="[SAPPHIRE $ORG] status unknown — see body"
+    SUBJECT="[SAPPHIRE $ORG] status unknown - see body"
 fi
 
 # --- Compose the body --------------------------------------------------------

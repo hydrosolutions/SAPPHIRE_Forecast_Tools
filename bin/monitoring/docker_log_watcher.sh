@@ -34,6 +34,12 @@ else
   exit 1
 fi
 
+# Deployment identifier for alert subjects, same prefer-org-fallback-hostname
+# approach as bin/email_healthcheck_report.sh, but read directly from the
+# variable the source above already exported instead of re-grepping the file.
+ORG="${ieasyhydroforecast_organization:-}"
+[ -z "$ORG" ] && ORG=$(hostname)
+
 SMTP_SERVER=${SAPPHIRE_PIPELINE_SMTP_SERVER}
 SMTP_PORT=${SAPPHIRE_PIPELINE_SMTP_PORT}
 SMTP_USER=${SAPPHIRE_PIPELINE_SMTP_USERNAME}
@@ -83,7 +89,7 @@ send_alert() {
 
     # Send the email with error and log context
     {
-        echo "Subject: Dashboard Error Detected ($container)"
+        echo "Subject: [SAPPHIRE $ORG] Dashboard Error Detected ($container)"
         echo "To: $RECIPIENT"
         echo "From: $SENDER"
         echo "Content-Type: text/plain; charset=UTF-8"

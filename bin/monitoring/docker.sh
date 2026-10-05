@@ -71,6 +71,12 @@ else
   exit 1
 fi
 
+# Deployment identifier for alert subjects, same prefer-org-fallback-hostname
+# approach as bin/email_healthcheck_report.sh, but read directly from the
+# variable the source above already exported instead of re-grepping the file.
+ORG="${ieasyhydroforecast_organization:-}"
+[ -z "$ORG" ] && ORG=$(hostname)
+
 SMTP_SERVER=${SAPPHIRE_PIPELINE_SMTP_SERVER}
 SMTP_PORT=${SAPPHIRE_PIPELINE_SMTP_PORT}
 SMTP_USER=${SAPPHIRE_PIPELINE_SMTP_USERNAME}
@@ -88,6 +94,7 @@ fi
 
 send_alert() {
     subject="$1"
+    subject="[SAPPHIRE $ORG] $1"
     body="$2"
     log_file="$3"
 
