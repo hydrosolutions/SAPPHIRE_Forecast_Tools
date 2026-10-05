@@ -871,6 +871,47 @@ ls -lt "$DATA_DIR"/intermediate_data/docker_logs/failure_log_* 2>/dev/null | hea
 grep -E "ERROR|CRITICAL|Error:" $(ls -t "$DATA_DIR"/intermediate_data/docker_logs/failure_log_* | head -1) | tail -15
 ```
 
+**If the log ends with `CRITICAL: API write failed for write_linreg_pentad_forecast_data`**
+
+In this case the message is misleading. The database is fine. Linear regression had no recent
+river data to work from, so it wrote nothing. Confirm by looking a few lines above it:
+
+```bash
+grep -E "Skipping LR pentad write|site.predictor: nan" $(ls -t "$DATA_DIR"/intermediate_data/docker_logs/failure_log_* | head -1) | tail -3
+```
+
+`Skipping LR pentad write: no data for forecast year … Daily discharge data may be missing`
+means the observations for the last day or two are not in iEasyHydro HF. This happens most
+often after a weekend or holiday. To see which days are missing:
+
+```bash
+docker exec sapphire-preprocessing-db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
+SELECT date, count(discharge) AS stations FROM runoffs
+WHERE horizon_type::text ILIKE '\''day'\'' AND date >= CURRENT_DATE - 7
+GROUP BY 1 ORDER BY 1;"'
+```
+
+A pentad forecast needs the three days before the issue date. If any of those rows is
+missing, or shows far fewer stations than the others, the data has not been entered.
+
+- **Do not re-run the pentad straight away.** It fails the same way until the data exists, and
+  the re-run fetches only yesterday's data, never the day before.
+- **Ask the forecasters to enter the missing days in iEasyHydro HF.** This is not a fault you
+  or the Provider can fix.
+- **Once they confirm the data is entered**, fetch the missing days and then re-run:
+
+  ```bash
+  cd "$REPO" && bash bin/daily_preprunoff_maintenance.sh "$ENV_FILE"
+  cd "$REPO" && bash bin/run_pentadal_forecasts.sh "$ENV_FILE"
+  ```
+
+  This is the one time to run `daily_preprunoff_maintenance.sh` by hand. Never add it to cron.
+- **If no one re-runs it, this forecast is lost.** The evening maintenance loads the late data,
+  but no new pentad run follows until the next issue day.
+
+**The health check can't catch this early.** It warns about stale discharge only after 7 days,
+so a two-day gap still shows `discharge data current`. The pentad warning is the first sign.
+
 3. Re-run by hand once the cause is fixed:
 
 ```bash
@@ -1203,7 +1244,7 @@ Also check your email for alerts, and ask a forecaster whether today's numbers l
 
 ### 5.2 Can you fix it yourself?
 
-Only the six below. Anything else — go straight to 5.3. This list is deliberately short: each
+Only the seven below. Anything else — go straight to 5.3. This list is deliberately short: each
 entry says exactly when it applies and how you know it worked.
 
 | If the check says | You may | Check it worked |
@@ -1214,6 +1255,7 @@ entry says exactly when it applies and how you know it worked.
 | `env permissions are 644` | `chmod 600 "$ENV_FILE"` | Re-run the health check |
 | Disk over 80% | `docker builder prune -f` then `docker image prune -f` | `df -h /` below 80% |
 | A monitoring unit is installed but inactive | Restart it: see Chapter 4, "Monitoring" | `systemctl is-active` → `active` |
+| `pentad forecasts: newest is …` and the failure log shows `Skipping LR pentad write` | Ask the forecasters to enter the missing days in iEasyHydro HF, then run the two commands in Chapter 4, "Data freshness" (fetch, then re-run) | Health check shows pentad forecasts `OK` |
 
 **Stop and escalate instead — do not attempt these alone:**
 
