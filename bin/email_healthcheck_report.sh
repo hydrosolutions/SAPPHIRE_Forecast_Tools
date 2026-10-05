@@ -29,6 +29,13 @@ set -uo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HEALTHCHECK="$SCRIPT_DIR/handover_healthcheck.sh"
 
+# Shared SMTP alerting plumbing (env-file resolution, completeness check,
+# compose-and-send) used by bin/monitoring/docker.sh and
+# bin/monitoring/docker_log_watcher.sh too; see bin/monitoring/lib/mail.sh.
+# This script already derived SMTP settings by grepping the env file rather
+# than sourcing it, so unlike those two this is not a behaviour change here.
+source "$SCRIPT_DIR/monitoring/lib/mail.sh"
+
 # --- Locate the deployment env file -----------------------------------------
 # Same detection scheme as bin/handover_healthcheck.sh, deliberately not
 # reinvented: an explicit --env-file wins, otherwise the first
@@ -72,14 +79,21 @@ REDACTED_OUTPUT=$(printf '%s\n' "$PLAIN_OUTPUT" | awk '
     }
 }')
 
-# --- Organisation name for the subject ---------------------------------------
+# --- Organisation name for the subject, and (while the file is open anyway)
+# the SMTP settings used later --------------------------------------------
 # Prefer the deployment's own org id; fall back to the hostname when the env
-# file is missing or does not set it.
-ORG=""
+# file is missing or does not set it. mail_resolve_config also sets
+# MAIL_SMTP_SERVER/PORT/USER/PASS, MAIL_SENDER and MAIL_RECIPIENTS from the
+# same file read, reused by the completeness check and send below -- it is
+# only called here, when $ENV_FILE is already confirmed to exist, so a
+# missing file never reaches grep (matching the old guarded ORG lookup
+# rather than letting grep itself report "No such file or directory").
 if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
-    ORG=$(grep -m1 -E '^ieasyhydroforecast_organization=' "$ENV_FILE" | cut -d= -f2- | tr -d '\r"'\''')
+    mail_resolve_config "$ENV_FILE"
+else
+    MAIL_ORG=$(hostname)
 fi
-[ -z "$ORG" ] && ORG=$(hostname)
+ORG="$MAIL_ORG"
 
 # --- Parse the check's own summary line for pass/warn/fail counts ----------
 # handover_healthcheck.sh's final printf emits (post ANSI-strip):
@@ -92,20 +106,22 @@ SUMMARY_LINE=$(printf '%s\n' "$PLAIN_OUTPUT" \
 
 plural() { [ "$1" = "1" ] && printf '%s' "$2" || printf '%s' "$3"; }
 
+# SUBJECT holds the TEXT only -- mail_send below adds the
+# "[SAPPHIRE $MAIL_ORG] " prefix, same as it does for the other two callers.
 SUBJECT=""
 if [ -n "$SUMMARY_LINE" ]; then
     N_PASS=$(printf '%s' "$SUMMARY_LINE" | grep -oE '[0-9]+ passed'  | grep -oE '[0-9]+')
     N_WARN=$(printf '%s' "$SUMMARY_LINE" | grep -oE '[0-9]+ warning' | grep -oE '[0-9]+')
     N_FAIL=$(printf '%s' "$SUMMARY_LINE" | grep -oE '[0-9]+ failure' | grep -oE '[0-9]+')
     if [ "${N_FAIL:-0}" -gt 0 ]; then
-        SUBJECT="[SAPPHIRE $ORG] $N_FAIL FAILED, $N_WARN $(plural "$N_WARN" warning warnings)"
+        SUBJECT="$N_FAIL FAILED, $N_WARN $(plural "$N_WARN" warning warnings)"
     elif [ "${N_WARN:-0}" -gt 0 ]; then
-        SUBJECT="[SAPPHIRE $ORG] OK - $N_PASS passed, $N_WARN $(plural "$N_WARN" warning warnings)"
+        SUBJECT="OK - $N_PASS passed, $N_WARN $(plural "$N_WARN" warning warnings)"
     else
-        SUBJECT="[SAPPHIRE $ORG] OK - $N_PASS passed"
+        SUBJECT="OK - $N_PASS passed"
     fi
 else
-    SUBJECT="[SAPPHIRE $ORG] status unknown - see body"
+    SUBJECT="status unknown - see body"
 fi
 
 # --- Compose the body --------------------------------------------------------
@@ -118,44 +134,27 @@ if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
-# Same six variables, same style as bin/monitoring/docker.sh's send_alert().
-SMTP_SERVER=$(grep -m1 -E '^SAPPHIRE_PIPELINE_SMTP_SERVER='     "$ENV_FILE" | cut -d= -f2-)
-SMTP_PORT=$(grep -m1   -E '^SAPPHIRE_PIPELINE_SMTP_PORT='       "$ENV_FILE" | cut -d= -f2-)
-SMTP_USER=$(grep -m1   -E '^SAPPHIRE_PIPELINE_SMTP_USERNAME='   "$ENV_FILE" | cut -d= -f2-)
-SMTP_PASS=$(grep -m1   -E '^SAPPHIRE_PIPELINE_SMTP_PASSWORD='   "$ENV_FILE" | cut -d= -f2-)
-SENDER=$(grep -m1      -E '^SAPPHIRE_PIPELINE_SENDER_EMAIL='    "$ENV_FILE" | cut -d= -f2-)
-RECIPIENTS=$(grep -m1  -E '^SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=' "$ENV_FILE" | cut -d= -f2-)
-
-if [ -z "$SMTP_SERVER" ] || [ -z "$SMTP_PORT" ] || [ -z "$SMTP_USER" ] \
-   || [ -z "$SMTP_PASS" ] || [ -z "$SENDER" ] || [ -z "$RECIPIENTS" ]; then
+# MAIL_SMTP_*/MAIL_SENDER/MAIL_RECIPIENTS were already resolved by
+# mail_resolve_config above (same six variables, same grep-not-source style
+# bin/monitoring/docker.sh and docker_log_watcher.sh now also use).
+if ! mail_config_is_complete; then
     echo "[ERROR] SMTP configuration incomplete in $ENV_FILE (need all 6 SAPPHIRE_PIPELINE_SMTP_*/SENDER_EMAIL/EMAIL_RECIPIENTS vars) -- mail NOT sent" >&2
     exit 1
 fi
 
 if ! command -v msmtp >/dev/null 2>&1; then
-    echo "[ERROR] msmtp not found on PATH -- cannot send mail (health check verdict was: $SUBJECT)" >&2
+    echo "[ERROR] msmtp not found on PATH -- cannot send mail (health check verdict was: [SAPPHIRE $MAIL_ORG] $SUBJECT)" >&2
     exit 1
 fi
 
 # --- Send ---------------------------------------------------------------
-# Password goes to a mode-600 temp file for --passwordeval, never on the
-# command line -- same fix bin/monitoring/docker.sh's send_alert() applies.
-PASS_FILE=$(mktemp "${TMPDIR:-/tmp}/sapphire_hc_mail_pass.XXXXXX") || {
-    echo "[ERROR] could not create a temp file for the SMTP password -- mail NOT sent" >&2
-    exit 1
-}
-chmod 600 "$PASS_FILE"
-printf '%s' "$SMTP_PASS" > "$PASS_FILE"
-
-# msmtp wants one recipient per argument; the env var is comma separated.
-RECIPIENT_ARGS=${RECIPIENTS//,/ }
-
-SEND_OUT=$( { printf 'Subject: %s\nTo: %s\nFrom: %s\n\n%s\n' "$SUBJECT" "$RECIPIENTS" "$SENDER" "$BODY" \
-    | msmtp --host="$SMTP_SERVER" --port="$SMTP_PORT" --auth=on \
-            --user="$SMTP_USER" --passwordeval="cat $PASS_FILE" \
-            --tls=on --tls-starttls=on --from="$SENDER" $RECIPIENT_ARGS ; } 2>&1 )
+# mail_send applies the "[SAPPHIRE $MAIL_ORG] " subject prefix, handles the
+# password temp file, the comma-to-space recipient split and --from; see
+# bin/monitoring/lib/mail.sh. $BODY is passed through verbatim (no `echo -e`
+# -- this script never interpreted backslash escapes in the body, and
+# mail_send doesn't either).
+SEND_OUT=$(mail_send "$SUBJECT" "$BODY" 2>&1)
 SEND_RC=$?
-rm -f "$PASS_FILE"
 
 if [ "$SEND_RC" -ne 0 ]; then
     echo "[ERROR] msmtp failed (exit $SEND_RC) -- mail NOT sent. msmtp output:" >&2

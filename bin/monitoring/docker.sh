@@ -60,67 +60,52 @@ rotate_logs() {
     fi
 }
 
+# Shared SMTP alerting plumbing (env-file resolution, completeness check,
+# compose-and-send). See bin/monitoring/lib/mail.sh for what it does and the
+# deliberate grep-not-source behaviour change it makes versus the old
+# `set -o allexport; source` below. Derive our own directory rather than
+# assuming cwd, since this runs under systemd with an absolute ExecStart and
+# no particular working directory.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$SCRIPT_DIR/lib/mail.sh"
+
 # Load configuration from .env file
 ENV_FILE="${DOCKER_MONITOR_ENV_PATH:-./apps/config/.env}"  # fallback if not set
-if [ -f "$ENV_FILE" ]; then
-  set -o allexport
-  source "$ENV_FILE"
-  set +o allexport
-else
+if [ ! -f "$ENV_FILE" ]; then
   echo "[ERROR] .env file not found at $ENV_FILE"
   exit 1
 fi
 
-# Deployment identifier for alert subjects, same prefer-org-fallback-hostname
-# approach as bin/email_healthcheck_report.sh, but read directly from the
-# variable the source above already exported instead of re-grepping the file.
-ORG="${ieasyhydroforecast_organization:-}"
-[ -z "$ORG" ] && ORG=$(hostname)
-
-SMTP_SERVER=${SAPPHIRE_PIPELINE_SMTP_SERVER}
-SMTP_PORT=${SAPPHIRE_PIPELINE_SMTP_PORT}
-SMTP_USER=${SAPPHIRE_PIPELINE_SMTP_USERNAME}
-SMTP_PASS=${SAPPHIRE_PIPELINE_SMTP_PASSWORD}
-SENDER=${SAPPHIRE_PIPELINE_SENDER_EMAIL}
-RECIPIENT=${SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS}
+# Resolves MAIL_SMTP_*, MAIL_SENDER, MAIL_RECIPIENTS and MAIL_ORG (the
+# prefer-org-fallback-hostname deployment identifier used in alert subjects)
+# from $ENV_FILE -- see bin/monitoring/lib/mail.sh.
+mail_resolve_config "$ENV_FILE"
 
 mkdir -p "$LOG_DIR"
 
 # Test if the smtp configuration is complete
-if [[ -z "$SMTP_SERVER" || -z "$SMTP_PORT" || -z "$SMTP_USER" || -z "$SMTP_PASS" || -z "$SENDER" || -z "$RECIPIENT" ]]; then
+if ! mail_config_is_complete; then
     echo "[ERROR] SMTP configuration is incomplete. Please check your .env file."
     exit 1
 fi
 
 send_alert() {
     subject="$1"
-    subject="[SAPPHIRE $ORG] $1"
     body="$2"
     log_file="$3"
 
-    # Use a file for the password instead of exposing it in process arguments
-    PASS_FILE=$(mktemp)
-    echo "$SMTP_PASS" > "$PASS_FILE"
-    chmod 600 "$PASS_FILE"
-
-    # The To: header keeps the comma-separated form (correct for mail
-    # headers), but msmtp takes each recipient as its own argument, so the
-    # commas are converted to spaces only for the argument list below.
-    RECIPIENT_ARGS=${RECIPIENT//,/ }
-
-    {
-        echo "Subject: $subject"
-        echo "To: $RECIPIENT"
-        echo "From: $SENDER"
-        echo
+    # Pre-render the body exactly as the old inline `{ ... } | msmtp` block
+    # did (echo -e over the message, then -- same echo -e treatment -- over
+    # the attached log file content if present), since mail_send prints
+    # whatever body text it is given verbatim; see bin/monitoring/lib/mail.sh
+    # for why that escape-interpretation step stays here rather than inside
+    # the shared helper.
+    rendered_body=$(
         echo -e "$body"
-        [ -f "$log_file" ] && echo -e "\n---- Logs ----\n$(cat $log_file)"
-    } | msmtp --host=$SMTP_SERVER --port=$SMTP_PORT --auth=on \
-              --user=$SMTP_USER --passwordeval="cat $PASS_FILE" \
-              --tls=on --tls-starttls=on --from="$SENDER" $RECIPIENT_ARGS
-    
-    # Clean up the temporary password file
-    rm -f "$PASS_FILE"
+        [ -f "$log_file" ] && echo -e "\n---- Logs ----\n$(cat "$log_file")"
+    )
+
+    mail_send "$subject" "$rendered_body"
 }
 
 # NOTE: `docker events` has no "name=" filter key (it is silently ignored,

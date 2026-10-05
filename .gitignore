@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# ...but bin/monitoring/lib holds shared shell helpers, not a Python venv.
+!bin/monitoring/lib/
 parts/
 sdist/
 var/

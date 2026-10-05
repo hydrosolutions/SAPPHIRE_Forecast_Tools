@@ -23,32 +23,29 @@ cleanup() {
 # Set up trap for signals
 trap cleanup SIGTERM SIGINT SIGHUP
 
+# Shared SMTP alerting plumbing (env-file resolution, completeness check,
+# compose-and-send). See bin/monitoring/lib/mail.sh for what it does and the
+# deliberate grep-not-source behaviour change it makes versus the old
+# `set -o allexport; source` below. Derive our own directory rather than
+# assuming cwd, since this runs under systemd with an absolute ExecStart and
+# no particular working directory.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$SCRIPT_DIR/lib/mail.sh"
+
 # Load configuration from .env file
 ENV_FILE="${DOCKER_MONITOR_ENV_PATH:-./apps/config/.env}"
-if [ -f "$ENV_FILE" ]; then
-  set -o allexport
-  source "$ENV_FILE"
-  set +o allexport
-else
+if [ ! -f "$ENV_FILE" ]; then
   echo "[ERROR] .env file not found at $ENV_FILE"
   exit 1
 fi
 
-# Deployment identifier for alert subjects, same prefer-org-fallback-hostname
-# approach as bin/email_healthcheck_report.sh, but read directly from the
-# variable the source above already exported instead of re-grepping the file.
-ORG="${ieasyhydroforecast_organization:-}"
-[ -z "$ORG" ] && ORG=$(hostname)
-
-SMTP_SERVER=${SAPPHIRE_PIPELINE_SMTP_SERVER}
-SMTP_PORT=${SAPPHIRE_PIPELINE_SMTP_PORT}
-SMTP_USER=${SAPPHIRE_PIPELINE_SMTP_USERNAME}
-SMTP_PASS=${SAPPHIRE_PIPELINE_SMTP_PASSWORD}
-SENDER=${SAPPHIRE_PIPELINE_SENDER_EMAIL}
-RECIPIENT=${SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS}
+# Resolves MAIL_SMTP_*, MAIL_SENDER, MAIL_RECIPIENTS and MAIL_ORG (the
+# prefer-org-fallback-hostname deployment identifier used in alert subjects)
+# from $ENV_FILE -- see bin/monitoring/lib/mail.sh.
+mail_resolve_config "$ENV_FILE"
 
 # Test if the SMTP configuration is complete
-if [[ -z "$SMTP_SERVER" || -z "$SMTP_PORT" || -z "$SMTP_USER" || -z "$SMTP_PASS" || -z "$SENDER" || -z "$RECIPIENT" ]]; then
+if ! mail_config_is_complete; then
     echo "[ERROR] SMTP configuration is incomplete. Please check your .env file."
     exit 1
 fi
@@ -76,24 +73,13 @@ send_alert() {
     # Capture the last 1000 lines of logs from the container
     echo "Capturing last 1000 lines of logs from $container for context..."
     LOG_CONTEXT=$(docker logs --tail 1000 "$container" 2>&1)
-    
-    # Use a file for the password instead of exposing it in process arguments
-    PASS_FILE=$(mktemp)
-    echo "$SMTP_PASS" > "$PASS_FILE"
-    chmod 600 "$PASS_FILE"
-    
-    # The To: header keeps the comma-separated form (correct for mail
-    # headers), but msmtp takes each recipient as its own argument, so the
-    # commas are converted to spaces only for the argument list below.
-    RECIPIENT_ARGS=${RECIPIENT//,/ }
 
-    # Send the email with error and log context
-    {
-        echo "Subject: [SAPPHIRE $ORG] Dashboard Error Detected ($container)"
-        echo "To: $RECIPIENT"
-        echo "From: $SENDER"
-        echo "Content-Type: text/plain; charset=UTF-8"
-        echo
+    # Pre-render the body exactly as the old inline `{ ... } | msmtp` block
+    # did: `echo -e` over $message, but plain `echo` (no escape
+    # interpretation) over the log context -- mail_send prints whatever body
+    # text it is given verbatim, so that distinction has to stay here; see
+    # bin/monitoring/lib/mail.sh for why.
+    rendered_body=$(
         echo -e "$message"
         echo
         echo "================= LOG CONTEXT (LAST 1000 LINES) ================="
@@ -101,13 +87,11 @@ send_alert() {
         echo "$LOG_CONTEXT"
         echo
         echo "==============================================================="
-    } | msmtp --host=$SMTP_SERVER --port=$SMTP_PORT --auth=on \
-              --user=$SMTP_USER --passwordeval="cat $PASS_FILE" \
-              --tls=on --tls-starttls=on --from="$SENDER" $RECIPIENT_ARGS
-              
-    # Clean up temporary password file
-    rm -f "$PASS_FILE"
-    
+    )
+
+    mail_send "Dashboard Error Detected ($container)" "$rendered_body" \
+        "Content-Type: text/plain; charset=UTF-8"
+
     echo "Alert sent with log context for container $container"
 }
 
