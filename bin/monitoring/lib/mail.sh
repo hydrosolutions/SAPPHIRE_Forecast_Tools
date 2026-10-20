@@ -27,11 +27,15 @@
 #         MAIL_SMTP_SERVER, MAIL_SMTP_PORT, MAIL_SMTP_USER, MAIL_SMTP_PASS,
 #         MAIL_SENDER, MAIL_RECIPIENTS, MAIL_ORG
 #       MAIL_ORG resolution order:
-#         1. $SAPPHIRE_ALERT_ORG from the environment, if set and non-empty
-#            after sanitisation (see below) -- mail-subject label override.
-#         2. ieasyhydroforecast_organization from the env file.
-#         3. `hostname`, when ieasyhydroforecast_organization is absent or
-#            empty in the env file (and SAPPHIRE_ALERT_ORG is unset/empty).
+#         1. $SAPPHIRE_ALERT_ORG from the process environment, if set and
+#            non-empty after sanitisation (see below) -- mail-subject label
+#            override (e.g. systemd Environment= line).
+#         2. A SAPPHIRE_ALERT_ORG= line in the env file, sanitised the same
+#            way. Needed because cron-run scripts (the healthcheck) do not
+#            see the systemd unit's Environment= lines.
+#         3. ieasyhydroforecast_organization from the env file.
+#         4. `hostname`, when none of the above yields a non-empty value.
+#       An empty result after sanitising falls through to the next step.
 #
 #       Why an override exists instead of just changing the organisation:
 #       ieasyhydroforecast_organization is a pipeline identity, not a label --
@@ -45,8 +49,14 @@
 #       by adding Environment="SAPPHIRE_ALERT_ORG=kghm-demo" to the systemd
 #       unit, without touching any config the pipeline itself reads.
 #
-#       SAPPHIRE_ALERT_ORG is sanitised before use: it lands in a mail
-#       header (the "[SAPPHIRE <org>] " subject prefix), and unlike the env
+#       Cleaning (_mail_clean_label, applied to steps 1-3; mirrored by
+#       NotificationManager.get_alert_label): env-file values (steps 2, 3)
+#       first lose CR, quotes and an inline " # comment"; all values then
+#       keep printable ASCII only, lose '[' and ']', and are trimmed.
+#
+#       SAPPHIRE_ALERT_ORG (steps 1 and 2) is sanitised before use: it lands
+#       in a mail header (the "[SAPPHIRE <org> <CATEGORY>] " subject
+#       prefix), and unlike the env
 #       file -- which an operator controls and formats carefully -- it comes
 #       from the environment, so a stray newline could inject arbitrary mail
 #       headers and non-ASCII bytes have previously reached production and
@@ -63,9 +73,11 @@
 #       anything or exit -- callers keep their own error message and exit
 #       behaviour, which differ script to script.
 #
-#   mail_send <subject_text> <body> [extra_headers]
+#   mail_send <category> <subject_text> <body> [extra_headers]
 #       Composes and sends one message via msmtp:
-#         - Subject: "[SAPPHIRE $MAIL_ORG] <subject_text>"
+#         - Subject: "[SAPPHIRE $MAIL_ORG <category>] <subject_text>"
+#           where <category> is one of DOCKER, DASHBOARD, PIPELINE,
+#           HEALTHCHECK (sanitised to printable ASCII, like MAIL_ORG)
 #         - To / From headers, any caller-supplied extra_headers lines
 #           (e.g. "Content-Type: text/plain; charset=UTF-8") after From
 #         - blank line, then body, printed verbatim (no further escape
@@ -115,6 +127,20 @@
 # only the failure mode/message changes, not whether the script proceeds.
 # =============================================================================
 
+# Reads a label on stdin, writes the cleaned label on stdout. With the
+# argument "file" (env-file values) it first drops CR and quotes and an
+# inline comment (whitespace followed by '#' to end of line). Then, always:
+# keep printable ASCII only, delete '[' and ']' (so a label cannot imitate
+# another server's "[SAPPHIRE ...]" prefix), trim surrounding whitespace.
+# Mirrors NotificationManager.get_alert_label in the pipeline.
+_mail_clean_label() {
+    if [ "${1:-}" = file ]; then
+        tr -d '\r"'\''' | sed -E 's/[[:space:]]+#.*$//'
+    else
+        cat
+    fi | tr -cd '\40-\176' | tr -d '[]' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
 mail_resolve_config() {
     local env_file="$1"
 
@@ -130,12 +156,19 @@ mail_resolve_config() {
     # byte nor an injected CR/LF header can reach the Subject line composed
     # in mail_send; an empty result after stripping is treated the same as
     # "unset" and falls through below.
-    MAIL_ORG=$(printf '%s' "${SAPPHIRE_ALERT_ORG:-}" | tr -cd '\40-\176')
+    MAIL_ORG=$(printf '%s' "${SAPPHIRE_ALERT_ORG:-}" | _mail_clean_label)
+
+    # Same override read from the env file, for callers (cron) that cannot
+    # see the systemd Environment= line. Quotes/CR are removed first, then
+    # the printable-ASCII filter is applied.
+    if [ -z "$MAIL_ORG" ]; then
+        MAIL_ORG=$(grep -m1 -E '^SAPPHIRE_ALERT_ORG=' "$env_file" | cut -d= -f2- | _mail_clean_label file)
+    fi
 
     # Same prefer-org-fallback-hostname approach used by all three callers
     # already; tr set strips a trailing \r and any quoting around the value.
     if [ -z "$MAIL_ORG" ]; then
-        MAIL_ORG=$(grep -m1 -E '^ieasyhydroforecast_organization=' "$env_file" | cut -d= -f2- | tr -d '\r"'\''')
+        MAIL_ORG=$(grep -m1 -E '^ieasyhydroforecast_organization=' "$env_file" | cut -d= -f2- | _mail_clean_label file)
     fi
     [ -z "$MAIL_ORG" ] && MAIL_ORG=$(hostname)
 
@@ -152,11 +185,13 @@ mail_config_is_complete() {
 }
 
 mail_send() {
-    local subject_text="$1"
-    local body="$2"
-    local extra_headers="${3:-}"
+    local category
+    category=$(printf '%s' "$1" | tr -cd '\40-\176' | tr -d '[]')
+    local subject_text="$2"
+    local body="$3"
+    local extra_headers="${4:-}"
 
-    local subject="[SAPPHIRE $MAIL_ORG] $subject_text"
+    local subject="[SAPPHIRE $MAIL_ORG $category] $subject_text"
 
     # Use a file for the password instead of exposing it in process arguments
     local pass_file

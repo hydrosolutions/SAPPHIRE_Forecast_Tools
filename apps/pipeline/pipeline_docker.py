@@ -1369,10 +1369,13 @@ class SendPipelineCompletionNotification(luigi.Task):
 
             # Create notification messages
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            subject = f"{ORGANIZATION.upper()} {task_params['timeout_config']} Forecast Pipeline Complete - {current_time}"
+            subject = NotificationManager.format_subject(
+                "PIPELINE", f"Forecast pipeline complete - {current_time}"
+            )
 
             # Base message
             message = f"Sapphire Forecast Pipeline for {ORGANIZATION.upper()} completed successfully at {current_time}.\n\n"
+            message += f"Timeout profile: {task_params['timeout_config']}\n\n"
 
             # Add custom message if provided
             if self.custom_message:

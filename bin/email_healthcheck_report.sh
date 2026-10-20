@@ -107,7 +107,8 @@ SUMMARY_LINE=$(printf '%s\n' "$PLAIN_OUTPUT" \
 plural() { [ "$1" = "1" ] && printf '%s' "$2" || printf '%s' "$3"; }
 
 # SUBJECT holds the TEXT only -- mail_send below adds the
-# "[SAPPHIRE $MAIL_ORG] " prefix, same as it does for the other two callers.
+# "[SAPPHIRE $MAIL_ORG HEALTHCHECK] " prefix, same as it does for the other
+# two callers (with their own category).
 SUBJECT=""
 if [ -n "$SUMMARY_LINE" ]; then
     N_PASS=$(printf '%s' "$SUMMARY_LINE" | grep -oE '[0-9]+ passed'  | grep -oE '[0-9]+')
@@ -143,17 +144,17 @@ if ! mail_config_is_complete; then
 fi
 
 if ! command -v msmtp >/dev/null 2>&1; then
-    echo "[ERROR] msmtp not found on PATH -- cannot send mail (health check verdict was: [SAPPHIRE $MAIL_ORG] $SUBJECT)" >&2
+    echo "[ERROR] msmtp not found on PATH -- cannot send mail (health check verdict was: [SAPPHIRE $MAIL_ORG HEALTHCHECK] $SUBJECT)" >&2
     exit 1
 fi
 
 # --- Send ---------------------------------------------------------------
-# mail_send applies the "[SAPPHIRE $MAIL_ORG] " subject prefix, handles the
+# mail_send applies the "[SAPPHIRE $MAIL_ORG HEALTHCHECK] " subject prefix, handles the
 # password temp file, the comma-to-space recipient split and --from; see
 # bin/monitoring/lib/mail.sh. $BODY is passed through verbatim (no `echo -e`
 # -- this script never interpreted backslash escapes in the body, and
 # mail_send doesn't either).
-SEND_OUT=$(mail_send "$SUBJECT" "$BODY" 2>&1)
+SEND_OUT=$(mail_send HEALTHCHECK "$SUBJECT" "$BODY" 2>&1)
 SEND_RC=$?
 
 if [ "$SEND_RC" -ne 0 ]; then

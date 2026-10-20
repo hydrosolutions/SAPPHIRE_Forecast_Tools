@@ -4,6 +4,44 @@ class NotificationManager:
     """Utility class to handle sending notifications at the end of the pipeline."""
 
     @staticmethod
+    def get_alert_label() -> str:
+        """
+        Resolve the deployment label used in alert email subjects.
+
+        Order: SAPPHIRE_ALERT_ORG, then ieasyhydroforecast_organization,
+        then "unknown". Each value is reduced to printable ASCII
+        (0x20-0x7E), stripped of '[' and ']', and trimmed; an empty result falls through. The
+        hostname is deliberately not used (it is a container id inside
+        Docker). Case is preserved.
+
+        Returns:
+            The sanitised deployment label.
+        """
+        for var in ("SAPPHIRE_ALERT_ORG", "ieasyhydroforecast_organization"):
+            raw = os.getenv(var) or ""
+            cleaned = "".join(
+                c for c in raw if " " <= c <= "~" and c not in "[]"
+            ).strip()
+            if cleaned:
+                return cleaned
+        return "unknown"
+
+    @staticmethod
+    def format_subject(category: str, text: str) -> str:
+        """
+        Build an alert subject of the form "[SAPPHIRE <label> <CATEGORY>] <text>".
+
+        Args:
+            category: Alert category, e.g. "PIPELINE".
+            text: Subject text following the prefix.
+
+        Returns:
+            The formatted subject line.
+        """
+        label = NotificationManager.get_alert_label()
+        return f"[SAPPHIRE {label} {category}] {text}"
+
+    @staticmethod
     def send_email(recipients, subject, message, attachment_paths=None):
         """
         Send an email notification
@@ -91,13 +129,12 @@ class NotificationManager:
             print("No email recipients configured for failure notifications")
             return False
             
-        # Get organization name
-        organization = os.getenv('ieasyhydroforecast_organization', 'unknown')
-            
         # Create subject line
         import datetime
         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        subject = f"❌ ERROR: {organization.upper()} Pipeline - {task_name} Failed - {current_time}"
+        subject = NotificationManager.format_subject(
+            "PIPELINE", f"❌ {task_name} failed - {current_time}"
+        )
         
         # Create message body
         message = [

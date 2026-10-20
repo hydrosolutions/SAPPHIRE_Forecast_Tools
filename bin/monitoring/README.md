@@ -50,3 +50,21 @@ When adding a new monitoring script:
 2. Support common flags: `-f` (file), `-n` (lines), `-t` (tail), `-h` (help)
 3. Use consistent exit codes (see above)
 4. Update this README
+
+## Alert email subjects and `SAPPHIRE_ALERT_ORG`
+
+All alert emails use the subject form
+
+    [SAPPHIRE <label> <CATEGORY>] <text>
+
+where `<CATEGORY>` is `DOCKER`, `DASHBOARD`, `PIPELINE` or `HEALTHCHECK`.
+
+`<label>` is resolved in this order (shell scripts): `SAPPHIRE_ALERT_ORG` in
+the process environment (e.g. a systemd `Environment=` line), then a
+`SAPPHIRE_ALERT_ORG=` line in the env file, then
+`ieasyhydroforecast_organization`, then the hostname. Cron-run scripts such
+as `email_healthcheck_report.sh` do not see systemd `Environment=` lines, so
+on a demo/staging box put `SAPPHIRE_ALERT_ORG=kghm-demo` in the env file.
+The pipeline (Python) uses the same order minus the hostname (it would be a
+container id) and falls back to `unknown`. The env file is loaded into the
+container environment, so the same line labels pipeline emails.

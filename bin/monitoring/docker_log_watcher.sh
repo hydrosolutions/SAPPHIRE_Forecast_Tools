@@ -89,7 +89,7 @@ send_alert() {
         echo "==============================================================="
     )
 
-    mail_send "Dashboard Error Detected ($container)" "$rendered_body" \
+    mail_send DASHBOARD "Error detected ($container)" "$rendered_body" \
         "Content-Type: text/plain; charset=UTF-8"
 
     echo "Alert sent with log context for container $container"

@@ -7,6 +7,7 @@ Covers:
 
 import os
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
@@ -120,3 +121,50 @@ class TestSendFailureNotification:
         )
 
         assert result is True
+
+
+class TestAlertLabel:
+    """Test NotificationManager.get_alert_label() and format_subject()."""
+
+    def test_alert_org_beats_organization(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_ALERT_ORG", "kghm-demo")
+        monkeypatch.setenv("ieasyhydroforecast_organization", "kghm")
+        assert NotificationManager.get_alert_label() == "kghm-demo"
+
+    def test_organization_fallback_keeps_case(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_ALERT_ORG", raising=False)
+        monkeypatch.setenv("ieasyhydroforecast_organization", "tjHM")
+        assert NotificationManager.get_alert_label() == "tjHM"
+
+    def test_unknown_fallback(self, monkeypatch):
+        monkeypatch.delenv("SAPPHIRE_ALERT_ORG", raising=False)
+        monkeypatch.delenv("ieasyhydroforecast_organization", raising=False)
+        assert NotificationManager.get_alert_label() == "unknown"
+
+    def test_non_ascii_and_newlines_stripped(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_ALERT_ORG", " kg\r\nhm\u00e9\t ")
+        assert NotificationManager.get_alert_label() == "kghm"
+
+    def test_brackets_removed(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_ALERT_ORG", "kghm] [SAPPHIRE tjhm")
+        assert NotificationManager.get_alert_label() == "kghm SAPPHIRE tjhm"
+
+    def test_all_garbage_falls_through(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_ALERT_ORG", "\r\n\u00e9\u0416")
+        monkeypatch.setenv("ieasyhydroforecast_organization", "uzhm")
+        assert NotificationManager.get_alert_label() == "uzhm"
+
+    def test_format_subject(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_ALERT_ORG", "kghm")
+        assert (
+            NotificationManager.format_subject("PIPELINE", "hello")
+            == "[SAPPHIRE kghm PIPELINE] hello"
+        )
+
+    def test_failure_notification_subject(self, monkeypatch):
+        monkeypatch.setenv("SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS", "a@example.com")
+        monkeypatch.setenv("SAPPHIRE_ALERT_ORG", "kghm")
+        with patch.object(NotificationManager, "send_email", return_value=True) as m:
+            NotificationManager.send_failure_notification("LinearRegression", "boom")
+        subject = m.call_args.kwargs["subject"]
+        assert subject.startswith("[SAPPHIRE kghm PIPELINE] \u274c LinearRegression failed - ")

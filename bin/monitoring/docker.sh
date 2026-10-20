@@ -105,7 +105,7 @@ send_alert() {
         [ -f "$log_file" ] && echo -e "\n---- Logs ----\n$(cat "$log_file")"
     )
 
-    mail_send "$subject" "$rendered_body"
+    mail_send DOCKER "$subject" "$rendered_body"
 }
 
 # NOTE: `docker events` has no "name=" filter key (it is silently ignored,
@@ -171,9 +171,9 @@ while IFS='|' read -r container_id action name; do
     docker logs --tail 1000 "$container_id" &> "$log_file" 2>/dev/null
 
     if [[ "$action" == *"die"* ]]; then
-        send_alert "Docker ALERT: $name crashed" "Container $name exited at $timestamp" "$log_file"
+        send_alert "$name crashed" "Container $name exited at $timestamp" "$log_file"
     elif [[ "$action" == *"unhealthy"* ]]; then
-        send_alert "Docker ALERT: $name became unhealthy" "Container $name is unhealthy as of $timestamp" "$log_file"
+        send_alert "$name became unhealthy" "Container $name is unhealthy as of $timestamp" "$log_file"
     fi
     
     # Perform log rotation every 10 events
