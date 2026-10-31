@@ -168,10 +168,11 @@ def create_ensemble_forecasts(
         on=merge_keys,
         how="inner",
     )
-    # Drop NaN forecasts
+    # Drop NaN and inf forecasts (MR-H: inf central excluded)
     qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
+    qualifying = qualifying[np.isfinite(qualifying["forecasted_discharge"].astype(float))].copy()
 
-    # --- PP-027: Gate A diagnostic — codes lost at skill-merge + NaN drop ---
+    # --- PP-027: Gate A diagnostic — codes lost at skill-merge + NaN/inf drop ---
     _input_codes = set(forecasts["code"].unique())
     _post_merge_codes = set(qualifying["code"].unique()) if not qualifying.empty else set()
     _gate_a_skipped = _input_codes - _post_merge_codes
@@ -203,6 +204,24 @@ def create_ensemble_forecasts(
     # Also average quantile columns when present (vincentization —
     # same pattern as monthly ensembles at line 276-278).
     from src.skill_metrics import _QUANTILE_COLS
+
+    # ALL 4 quantile columns must be present and finite for every contributor (MR-H).
+    # Missing any q-col entirely => no eligible contributors => no EM.
+    _all_em_qcols = ["q05", "q25", "q75", "q95"]
+    _em_missing_qcols = [q for q in _all_em_qcols if q not in qualifying.columns]
+    if _em_missing_qcols:
+        logger.info(
+            "EM: quantile columns absent %s; no eligible contributors.",
+            _em_missing_qcols,
+        )
+        return forecasts.copy(), skill_stats.copy()
+    qualifying = qualifying.dropna(subset=_all_em_qcols)
+    _em_q_finite = np.isfinite(qualifying[_all_em_qcols].values.astype(float)).all(axis=1)
+    qualifying = qualifying[_em_q_finite].copy()
+
+    if qualifying.empty:
+        logger.info("No qualifying forecasts after requiring finite quantile fields")
+        return forecasts.copy(), skill_stats.copy()
 
     agg_dict = {
         "forecasted_discharge": "mean",

@@ -1281,3 +1281,165 @@ def _check_ml_forecast_consistency(
         logger.info(f"ML forecast consistency check passed ({model_type}, {horizon_type})")
 
     return is_consistent
+
+
+_CANONICAL_GENERATION_MODELS: frozenset[str] = frozenset({"TFT", "TIDE", "TSMIXER"})
+
+
+def canonical_ml_mode(model: str, requested_mode: str) -> str:
+    """Return canonical generation mode for asset selection and target count.
+
+    TFT, TiDE, and TSMixer always return "DECAD" regardless of requested_mode,
+    producing 11 targets and using the _Decad scaler assets. ARIMA and other
+    models return requested_mode unchanged. Empty/None inputs pass through so
+    callers can still validate mode before this call.
+    """
+    if not model or not requested_mode:
+        return requested_mode
+    if model.upper() in _CANONICAL_GENERATION_MODELS:
+        return "DECAD"
+    return requested_mode
+
+
+# ─── Recovery preview: strict reader helpers (P1a, read-only) ────────────────
+
+# One (issue_date, model, code) unit has at most 11 daily target rows.
+# Responses exceeding this bound indicate a bad query, data-model mismatch,
+# or a runaway loop — block rather than accumulate unboundedly.
+_MAX_RECOVERY_UNIT_ROWS: int = 11
+
+
+class RecoveryReadError(Exception):
+    """Raised when a strict unit read for recovery preview fails or is incomplete.
+
+    Distinguishes a confirmed-empty API response (empty DataFrame returned)
+    from a transport failure, mid-stream page failure, or malformed response
+    (this exception raised). Callers must treat RecoveryReadError as "cannot
+    determine eligibility" and block the unit, not treat it as "no rows".
+    """
+
+
+def read_unit_for_recovery_preview(
+    client,
+    api_model_type: str,
+    issue_date: str,
+    code: str,
+    page_size: int = _API_PAGE_SIZE,
+) -> pd.DataFrame:
+    """Read all DAY rows for (issue_date, model, code), retaining API column names.
+
+    Unlike _read_ml_forecasts_from_api this helper:
+    - Does NOT rename any column (date = issue date, target = target date,
+      q05/q25/forecasted_discharge/q75/q95 as returned by the API).
+    - Raises RecoveryReadError on any transport error, including failure that
+      occurs after the first page has already been received.
+    - Returns an empty DataFrame ONLY when the API confirms no rows exist
+      (HTTP 200 with zero rows on the first page).
+    - Enforces a bounded read: responses exceeding _MAX_RECOVERY_UNIT_ROWS rows
+      raise RecoveryReadError rather than accumulating indefinitely.
+
+    Args:
+        client: SapphirePostprocessingClient, already constructed and ready.
+        api_model_type: API-format model name ("TFT", "TiDE", "TSMixer").
+        issue_date: ISO date string; used as both start_date and end_date.
+        code: Station code string.
+        page_size: Rows per pagination page. Must be a positive integer.
+
+    Returns:
+        DataFrame with raw API column names. Empty DataFrame on confirmed-empty
+        response (no rows exist for this unit).
+
+    Raises:
+        RecoveryReadError: page_size ≤ 0, transport error, mid-stream failure,
+            or response exceeds the expected fan bound (_MAX_RECOVERY_UNIT_ROWS).
+    """
+    if page_size <= 0:
+        raise RecoveryReadError(f"page_size must be a positive integer, got {page_size!r}")
+
+    # Required fields must be present as dict keys in every row of the raw JSON
+    # response.  Calling client.read_short_term_forecasts() converts None values
+    # to NaN via pd.DataFrame, making explicit-null eligibility indistinguishable
+    # from a field that was never present.  Using _get() preserves key presence.
+    _REQUIRED_UNIT_COLS = frozenset(
+        {
+            "horizon_type",
+            "code",
+            "model_type",
+            "date",
+            "target",
+            "flag",
+            "q05",
+            "q25",
+            "forecasted_discharge",
+            "q75",
+            "q95",
+        }
+    )
+    all_rows: list[dict] = []
+    skip = 0
+    total_rows = 0
+    try:
+        while True:
+            raw = client._get(
+                "/forecast/",
+                params={
+                    "horizon": "day",
+                    "model": api_model_type,
+                    "code": code,
+                    "start_date": issue_date,
+                    "end_date": issue_date,
+                    "skip": skip,
+                    "limit": page_size,
+                },
+            )
+            if not isinstance(raw, list):
+                raise RecoveryReadError(
+                    f"Malformed response: expected list, got {type(raw).__name__!r} for unit "
+                    f"(model={api_model_type}, code={code}, issue={issue_date})"
+                )
+            if len(raw) == 0:
+                break
+            # Validate every row as a dict with all required keys BEFORE accumulation.
+            # pd.concat would fill missing keys with NaN, silently producing candidates
+            # from rows with absent fields.
+            for row_idx, item in enumerate(raw):
+                if not isinstance(item, dict):
+                    raise RecoveryReadError(
+                        f"Malformed row {row_idx} at skip={skip}: expected dict, "
+                        f"got {type(item).__name__!r} for unit "
+                        f"(model={api_model_type}, code={code}, issue={issue_date})"
+                    )
+                _missing_keys = _REQUIRED_UNIT_COLS - set(item.keys())
+                if _missing_keys:
+                    raise RecoveryReadError(
+                        f"Row {row_idx} at skip={skip} missing required fields "
+                        f"{sorted(_missing_keys)} for unit "
+                        f"(model={api_model_type}, code={code}, issue={issue_date})"
+                    )
+            total_rows += len(raw)
+            if total_rows > _MAX_RECOVERY_UNIT_ROWS:
+                raise RecoveryReadError(
+                    f"Response exceeded expected fan bound of {_MAX_RECOVERY_UNIT_ROWS} rows "
+                    f"for unit (model={api_model_type}, code={code}, issue={issue_date}); "
+                    f"got {total_rows} rows"
+                )
+            all_rows.extend(raw)
+            if len(raw) < page_size:
+                break  # last page
+            skip += page_size
+    except RecoveryReadError:
+        raise
+    except Exception as exc:
+        if all_rows:
+            # Failed after receiving data — result is incomplete
+            raise RecoveryReadError(
+                f"Read failed mid-stream for unit (model={api_model_type}, "
+                f"code={code}, issue={issue_date}) after receiving {len(all_rows)} row(s): {exc}"
+            ) from exc
+        raise RecoveryReadError(
+            f"Read failed for unit (model={api_model_type}, code={code}, issue={issue_date}): {exc}"
+        ) from exc
+
+    if not all_rows:
+        return pd.DataFrame()
+    return pd.DataFrame(all_rows)

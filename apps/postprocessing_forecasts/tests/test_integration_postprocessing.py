@@ -160,13 +160,18 @@ def pentad_forecasts():
             zip(PENTAD_DATES, PENTAD_IN_YEAR, PENTAD_IN_MONTH, strict=False)
         ):
             for model_short in ("LR", "TFT", "TiDE"):
+                d = discharges[(station, i)][model_short]
                 rows.append(
                     {
                         "code": station,
                         "date": date,
                         "pentad_in_year": pentad,
                         "pentad_in_month": pim,
-                        "forecasted_discharge": discharges[(station, i)][model_short],
+                        "forecasted_discharge": d,
+                        "q05": d * 0.9,
+                        "q25": d * 0.95,
+                        "q75": d * 1.05,
+                        "q95": d * 1.1,
                         "model_short": model_short,
                     }
                 )
@@ -571,6 +576,10 @@ class TestOperationalDataRouting:
                     "pentad_in_year": pentad,
                     "pentad_in_month": pim,
                     "forecasted_discharge": 100.0 + i * 20,
+                    "q05": (100.0 + i * 20) * 0.9,
+                    "q25": (100.0 + i * 20) * 0.95,
+                    "q75": (100.0 + i * 20) * 1.05,
+                    "q95": (100.0 + i * 20) * 1.1,
                     "model_short": "LR",
                 }
             )
@@ -581,6 +590,10 @@ class TestOperationalDataRouting:
                     "pentad_in_year": pentad,
                     "pentad_in_month": pim,
                     "forecasted_discharge": 110.0 + i * 20,
+                    "q05": (110.0 + i * 20) * 0.9,
+                    "q25": (110.0 + i * 20) * 0.95,
+                    "q75": (110.0 + i * 20) * 1.05,
+                    "q95": (110.0 + i * 20) * 1.1,
                     "model_short": "TFT",
                 }
             )
@@ -640,6 +653,10 @@ class TestOperationalDataRouting:
                 "pentad_in_year": [1, 1],
                 "pentad_in_month": ["1", "1"],
                 "forecasted_discharge": [100.0, 110.0],
+                "q05": [90.0, 99.0],
+                "q25": [95.0, 104.5],
+                "q75": [105.0, 115.5],
+                "q95": [110.0, 121.0],
                 "model_short": ["LR", "TFT"],
             }
         )
@@ -731,6 +748,10 @@ class TestOperationalDataRouting:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 100.0,
+                    "q05": 90.0,
+                    "q25": 95.0,
+                    "q75": 105.0,
+                    "q95": 110.0,
                     "model_short": "LR",
                 },
                 {
@@ -739,6 +760,10 @@ class TestOperationalDataRouting:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 110.0,
+                    "q05": 99.0,
+                    "q25": 104.5,
+                    "q75": 115.5,
+                    "q95": 121.0,
                     "model_short": "TFT",
                 },
                 {
@@ -747,6 +772,10 @@ class TestOperationalDataRouting:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 200.0,
+                    "q05": 180.0,
+                    "q25": 190.0,
+                    "q75": 210.0,
+                    "q95": 220.0,
                     "model_short": "LR",
                 },
                 {
@@ -755,6 +784,10 @@ class TestOperationalDataRouting:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 210.0,
+                    "q05": 189.0,
+                    "q25": 199.5,
+                    "q75": 220.5,
+                    "q95": 231.0,
                     "model_short": "TFT",
                 },
                 {
@@ -763,6 +796,10 @@ class TestOperationalDataRouting:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 300.0,
+                    "q05": 270.0,
+                    "q25": 285.0,
+                    "q75": 315.0,
+                    "q95": 330.0,
                     "model_short": "LR",
                 },
             ]
@@ -983,13 +1020,18 @@ class TestDecadalOperationalPipeline:
                 )
             ):
                 for ms in ("LR", "TFT"):
+                    d = discharges[(station, i)][ms]
                     rows.append(
                         {
                             "code": station,
                             "date": date,
                             "decad_in_year": decad,
                             "decad_in_month": dim,
-                            "forecasted_discharge": discharges[(station, i)][ms],
+                            "forecasted_discharge": d,
+                            "q05": d * 0.9,
+                            "q25": d * 0.95,
+                            "q75": d * 1.05,
+                            "q95": d * 1.1,
                             "model_short": ms,
                         }
                     )
@@ -1349,6 +1391,10 @@ class TestMaintenanceFullGapFill:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 100.0,
+                    "q05": 90.0,
+                    "q25": 95.0,
+                    "q75": 105.0,
+                    "q95": 110.0,
                     "model_short": "LR",
                 },
                 {
@@ -1357,6 +1403,10 @@ class TestMaintenanceFullGapFill:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 110.0,
+                    "q05": 99.0,
+                    "q25": 104.5,
+                    "q75": 115.5,
+                    "q95": 121.0,
                     "model_short": "TFT",
                 },
             ]
@@ -1518,6 +1568,10 @@ class TestMultiStationMultiGapMaintenance:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 100.0,
+                    "q05": 90.0,
+                    "q25": 95.0,
+                    "q75": 105.0,
+                    "q95": 110.0,
                     "model_short": "LR",
                 },
                 {
@@ -1526,6 +1580,10 @@ class TestMultiStationMultiGapMaintenance:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 110.0,
+                    "q05": 99.0,
+                    "q25": 104.5,
+                    "q75": 115.5,
+                    "q95": 121.0,
                     "model_short": "TFT",
                 },
                 {
@@ -1534,6 +1592,10 @@ class TestMultiStationMultiGapMaintenance:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 200.0,
+                    "q05": 180.0,
+                    "q25": 190.0,
+                    "q75": 210.0,
+                    "q95": 220.0,
                     "model_short": "LR",
                 },
                 {
@@ -1542,6 +1604,10 @@ class TestMultiStationMultiGapMaintenance:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 220.0,
+                    "q05": 198.0,
+                    "q25": 209.0,
+                    "q75": 231.0,
+                    "q95": 242.0,
                     "model_short": "TFT",
                 },
             ]
@@ -1702,6 +1768,10 @@ class TestSkillMetricsFallback:
                 "pentad_in_year": [1, 1],
                 "pentad_in_month": ["1", "1"],
                 "forecasted_discharge": [100.0, 110.0],
+                "q05": [90.0, 99.0],
+                "q25": [95.0, 104.5],
+                "q75": [105.0, 115.5],
+                "q95": [110.0, 121.0],
                 "model_short": ["LR", "TFT"],
             }
         )
@@ -1895,6 +1965,10 @@ class TestSingleModelEnsembleBug:
                 "pentad_in_year": [1, 1, 1],
                 "pentad_in_month": ["1", "1", "1"],
                 "forecasted_discharge": [100.0, 110.0, 90.0],
+                "q05": [90.0, 99.0, 81.0],
+                "q25": [95.0, 104.5, 85.5],
+                "q75": [105.0, 115.5, 94.5],
+                "q95": [110.0, 121.0, 99.0],
                 "model_short": ["LR", "TFT", "TiDE"],
             }
         )
@@ -1973,6 +2047,10 @@ class TestNeuralEnsembleExclusion:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 100.0,
+                    "q05": 90.0,
+                    "q25": 95.0,
+                    "q75": 105.0,
+                    "q95": 110.0,
                     "model_short": "LR",
                 },
                 {
@@ -1981,6 +2059,10 @@ class TestNeuralEnsembleExclusion:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 110.0,
+                    "q05": 99.0,
+                    "q25": 104.5,
+                    "q75": 115.5,
+                    "q95": 121.0,
                     "model_short": "TFT",
                 },
                 {
@@ -2169,6 +2251,10 @@ class TestEdgeCaseInputs:
                 "pentad_in_year": [1, 1],
                 "pentad_in_month": ["1", "1"],
                 "forecasted_discharge": [100.0, 110.0],
+                "q05": [90.0, 99.0],
+                "q25": [95.0, 104.5],
+                "q75": [105.0, 115.5],
+                "q95": [110.0, 121.0],
                 "model_short": ["LR", "TFT"],
             }
         )
@@ -2190,13 +2276,18 @@ class TestYearAndMonthBoundaries:
         orows = []
         for date, pentad, pim in zip(dates, pentads, pims, strict=False):
             for ms in ("LR", "TFT"):
+                d = 100.0 if ms == "LR" else 110.0
                 frows.append(
                     {
                         "code": station,
                         "date": date,
                         "pentad_in_year": pentad,
                         "pentad_in_month": pim,
-                        "forecasted_discharge": 100.0 if ms == "LR" else 110.0,
+                        "forecasted_discharge": d,
+                        "q05": d * 0.9,
+                        "q25": d * 0.95,
+                        "q75": d * 1.05,
+                        "q95": d * 1.1,
                         "model_short": ms,
                     }
                 )
@@ -2418,6 +2509,8 @@ class TestQuantileFields:
                 "forecasted_discharge": [100.0, 110.0],
                 "model_short": ["LR", "TFT"],
                 "q05": [80.0, 90.0],
+                "q25": [90.0, 100.0],
+                "q75": [110.0, 120.0],
                 "q95": [120.0, 130.0],
             }
         )
@@ -3173,6 +3266,10 @@ class TestEnsembleSkillMetricVerification:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 100.0,
+                    "q05": 90.0,
+                    "q25": 95.0,
+                    "q75": 105.0,
+                    "q95": 110.0,
                     "model_short": "LR",
                 },
                 {
@@ -3181,6 +3278,10 @@ class TestEnsembleSkillMetricVerification:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 105.0,
+                    "q05": 94.5,
+                    "q25": 99.75,
+                    "q75": 110.25,
+                    "q95": 115.5,
                     "model_short": "LR",
                 },
                 {
@@ -3189,6 +3290,10 @@ class TestEnsembleSkillMetricVerification:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 115.0,
+                    "q05": 103.5,
+                    "q25": 109.25,
+                    "q75": 120.75,
+                    "q95": 126.5,
                     "model_short": "LR",
                 },
                 # TFT
@@ -3198,6 +3303,10 @@ class TestEnsembleSkillMetricVerification:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 110.0,
+                    "q05": 99.0,
+                    "q25": 104.5,
+                    "q75": 115.5,
+                    "q95": 121.0,
                     "model_short": "TFT",
                 },
                 {
@@ -3206,6 +3315,10 @@ class TestEnsembleSkillMetricVerification:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 115.0,
+                    "q05": 103.5,
+                    "q25": 109.25,
+                    "q75": 120.75,
+                    "q95": 126.5,
                     "model_short": "TFT",
                 },
                 {
@@ -3214,6 +3327,10 @@ class TestEnsembleSkillMetricVerification:
                     "pentad_in_year": 1,
                     "pentad_in_month": "1",
                     "forecasted_discharge": 125.0,
+                    "q05": 112.5,
+                    "q25": 118.75,
+                    "q75": 131.25,
+                    "q95": 137.5,
                     "model_short": "TFT",
                 },
             ]
@@ -3343,13 +3460,18 @@ class TestMultiEntityEnsembleSkillStats:
             for di, date in enumerate(dates):
                 for station in ["15001", "15002"]:
                     for ms in ("LR", "TFT"):
+                        d = fc_vals[(di, ms)]
                         frows.append(
                             {
                                 "code": station,
                                 "date": date,
                                 "pentad_in_year": pentad,
                                 "pentad_in_month": pim,
-                                "forecasted_discharge": fc_vals[(di, ms)],
+                                "forecasted_discharge": d,
+                                "q05": d * 0.9,
+                                "q25": d * 0.95,
+                                "q75": d * 1.05,
+                                "q95": d * 1.1,
                                 "model_short": ms,
                             }
                         )
@@ -3465,13 +3587,18 @@ class TestLeapYearBoundary:
 
         for date, pentad, pim in zip(dates, pentads, pims, strict=False):
             for ms in ("LR", "TFT"):
+                d = 100.0 if ms == "LR" else 110.0
                 frows.append(
                     {
                         "code": "15001",
                         "date": date,
                         "pentad_in_year": pentad,
                         "pentad_in_month": pim,
-                        "forecasted_discharge": 100.0 if ms == "LR" else 110.0,
+                        "forecasted_discharge": d,
+                        "q05": d * 0.9,
+                        "q25": d * 0.95,
+                        "q75": d * 1.05,
+                        "q95": d * 1.1,
                         "model_short": ms,
                     }
                 )
@@ -3574,13 +3701,18 @@ class TestDecadalMaintenanceFullGapFill:
         rows = []
         for date_str, has_em in [("2026-01-10", True), ("2026-01-20", False)]:
             for ms in ("LR", "TFT"):
+                d = 100.0 if ms == "LR" else 110.0
                 rows.append(
                     {
                         "code": "15001",
                         "date": date_str,
                         "decad_in_year": 1,
                         "decad_in_month": "1",
-                        "forecasted_discharge": 100.0 if ms == "LR" else 110.0,
+                        "forecasted_discharge": d,
+                        "q05": d * 0.9,
+                        "q25": d * 0.95,
+                        "q75": d * 1.05,
+                        "q95": d * 1.1,
                         "model_short": ms,
                     }
                 )
@@ -3643,6 +3775,10 @@ class TestDecadalMaintenanceFullGapFill:
                     "decad_in_year": 1,
                     "decad_in_month": "1",
                     "forecasted_discharge": 100.0,
+                    "q05": 90.0,
+                    "q25": 95.0,
+                    "q75": 105.0,
+                    "q95": 110.0,
                     "model_short": "LR",
                 },
                 {
@@ -3651,6 +3787,10 @@ class TestDecadalMaintenanceFullGapFill:
                     "decad_in_year": 1,
                     "decad_in_month": "1",
                     "forecasted_discharge": 110.0,
+                    "q05": 99.0,
+                    "q25": 104.5,
+                    "q75": 115.5,
+                    "q95": 121.0,
                     "model_short": "TFT",
                 },
             ]
@@ -3945,13 +4085,18 @@ class TestPeriodAwareEnsemble:
         (code, date) pairs. The key assertion: EM values differ by pentad.
         """
         # Two pentads on different dates for the same station
+        _ds = [100.0, 110.0, 200.0, 210.0]
         forecasts = pd.DataFrame(
             {
                 "code": ["15001"] * 4,
                 "date": pd.to_datetime(["2026-01-05", "2026-01-05", "2026-01-10", "2026-01-10"]),
                 "pentad_in_year": [1, 1, 2, 2],
                 "pentad_in_month": ["1", "1", "2", "2"],
-                "forecasted_discharge": [100.0, 110.0, 200.0, 210.0],
+                "forecasted_discharge": _ds,
+                "q05": [d * 0.9 for d in _ds],
+                "q25": [d * 0.95 for d in _ds],
+                "q75": [d * 1.05 for d in _ds],
+                "q95": [d * 1.1 for d in _ds],
                 "model_short": ["LR", "TFT", "LR", "TFT"],
             }
         )
@@ -3995,13 +4140,18 @@ class TestPeriodAwareEnsemble:
 
     def test_same_period_same_date_averaged_correctly(self, env_setup):
         """Forecasts with same (period, date, code) are correctly averaged."""
+        _ds2 = [100.0, 120.0]
         forecasts = pd.DataFrame(
             {
                 "code": ["15001"] * 2,
                 "date": pd.to_datetime(["2026-01-05"] * 2),
                 "pentad_in_year": [1, 1],
                 "pentad_in_month": ["1", "1"],
-                "forecasted_discharge": [100.0, 120.0],
+                "forecasted_discharge": _ds2,
+                "q05": [d * 0.9 for d in _ds2],
+                "q25": [d * 0.95 for d in _ds2],
+                "q75": [d * 1.05 for d in _ds2],
+                "q95": [d * 1.1 for d in _ds2],
                 "model_short": ["LR", "TFT"],
             }
         )

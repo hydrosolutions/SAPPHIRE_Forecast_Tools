@@ -2345,10 +2345,20 @@ class TestNormalizeMlForecasts:
             {
                 "code": ["10001"] * 5,
                 "date": ["2024-01-05"] * 5,
+                "target": [
+                    "2024-01-06",
+                    "2024-01-07",
+                    "2024-01-08",
+                    "2024-01-09",
+                    "2024-01-10",
+                ],
                 "forecasted_discharge": [10.0, 20.0, 30.0, 40.0, 50.0],
                 "q05": [5.0, 10.0, 15.0, 20.0, 25.0],
+                "q25": [8.0, 16.0, 24.0, 32.0, 40.0],
+                "q75": [12.0, 24.0, 36.0, 48.0, 60.0],
                 "q95": [15.0, 30.0, 45.0, 60.0, 75.0],
                 "flag": [0, 0, 1, 0, 0],
+                "horizon_type": ["day"] * 5,
             }
         )
         result = _normalize_ml_forecasts(raw, "TFT", "pentad")
@@ -2368,9 +2378,15 @@ class TestNormalizeMlForecasts:
         ]:
             raw = pd.DataFrame(
                 {
-                    "code": ["10001"],
-                    "date": ["2024-01-05"],
-                    "forecasted_discharge": [50.0],
+                    "code": ["10001"] * 3,
+                    "date": ["2024-01-05"] * 3,
+                    "target": ["2024-01-06", "2024-01-07", "2024-01-08"],
+                    "forecasted_discharge": [50.0, 50.0, 50.0],
+                    "q05": [5.0, 5.0, 5.0],
+                    "q25": [8.0, 8.0, 8.0],
+                    "q75": [12.0, 12.0, 12.0],
+                    "q95": [15.0, 15.0, 15.0],
+                    "horizon_type": ["day"] * 3,
                 }
             )
             result = _normalize_ml_forecasts(raw, api_name, "pentad")
@@ -2380,9 +2396,21 @@ class TestNormalizeMlForecasts:
         """Period columns are computed with +1 day offset."""
         raw = pd.DataFrame(
             {
-                "code": ["10001"],
-                "date": ["2024-01-05"],  # +1 = Jan 6 -> pentad 2
-                "forecasted_discharge": [50.0],
+                "code": ["10001"] * 5,
+                "date": ["2024-01-05"] * 5,  # +1 = Jan 6 -> pentad 2
+                "target": [
+                    "2024-01-06",
+                    "2024-01-07",
+                    "2024-01-08",
+                    "2024-01-09",
+                    "2024-01-10",
+                ],
+                "forecasted_discharge": [50.0] * 5,
+                "q05": [1.0] * 5,
+                "q25": [2.0] * 5,
+                "q75": [8.0] * 5,
+                "q95": [9.0] * 5,
+                "horizon_type": ["day"] * 5,
             }
         )
         result = _normalize_ml_forecasts(raw, "TFT", "pentad")
@@ -2418,16 +2446,41 @@ class TestNormalizeMlForecasts:
 
     def test_multiple_codes_aggregated_separately(self):
         """Different codes are aggregated independently."""
+        # 5 rows per code; means chosen to preserve original assertions (15.0, 150.0)
+        # code 10001: (10+20+15+25+5)/5 = 15.0; code 10002: (100+200+150+100+200)/5 = 150.0
         raw = pd.DataFrame(
             {
-                "code": ["10001", "10001", "10002", "10002"],
-                "date": [
-                    "2024-01-05",
-                    "2024-01-05",
-                    "2024-01-05",
-                    "2024-01-05",
+                "code": ["10001"] * 5 + ["10002"] * 5,
+                "date": ["2024-01-05"] * 10,
+                "target": [
+                    "2024-01-06",
+                    "2024-01-07",
+                    "2024-01-08",
+                    "2024-01-09",
+                    "2024-01-10",
+                    "2024-01-06",
+                    "2024-01-07",
+                    "2024-01-08",
+                    "2024-01-09",
+                    "2024-01-10",
                 ],
-                "forecasted_discharge": [10.0, 20.0, 100.0, 200.0],
+                "forecasted_discharge": [
+                    10.0,
+                    20.0,
+                    15.0,
+                    25.0,
+                    5.0,
+                    100.0,
+                    200.0,
+                    150.0,
+                    100.0,
+                    200.0,
+                ],
+                "q05": [1.0] * 10,
+                "q25": [2.0] * 10,
+                "q75": [8.0] * 10,
+                "q95": [9.0] * 10,
+                "horizon_type": ["day"] * 10,
             }
         )
         result = _normalize_ml_forecasts(raw, "TFT", "pentad")
@@ -2846,9 +2899,21 @@ class TestReadIndividualModelForecasts:
         )
         ml_raw = pd.DataFrame(
             {
-                "code": ["10001"],
-                "date": ["2024-01-05"],
-                "forecasted_discharge": [52.0],
+                "code": ["10001"] * 5,
+                "date": ["2024-01-05"] * 5,
+                "target": [
+                    "2024-01-06",
+                    "2024-01-07",
+                    "2024-01-08",
+                    "2024-01-09",
+                    "2024-01-10",
+                ],
+                "forecasted_discharge": [52.0] * 5,
+                "q05": [1.0] * 5,
+                "q25": [2.0] * 5,
+                "q75": [8.0] * 5,
+                "q95": [9.0] * 5,
+                "horizon_type": ["day"] * 5,
             }
         )
 

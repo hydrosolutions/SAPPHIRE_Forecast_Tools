@@ -680,11 +680,10 @@ class TestMachineLearningBareTargetModes:
         assert "BOTH" in out
         assert not any("module=machine_learning" in ln for ln in synth_tree.calls())
 
-    def test_explicit_pentad_runs_once_for_pentad(self, synth_tree):
-        """Acceptance criterion 7 (positive counterpart to criterion 6, so
-        an implementation that errors on every bare invocation cannot
-        pass): an explicit single-valued mode runs ML exactly once, for
-        that mode.
+    def test_explicit_pentad_runs_once_as_canonical_decad(self, synth_tree):
+        """ML-020 P0: any valid requested mode runs ML exactly once as the
+        canonical DECAD generation. PENTAD input must produce a single DECAD
+        ML call, not a PENTAD call.
         """
         result = run_main(
             synth_tree, "machine_learning", extra_env={"SAPPHIRE_PREDICTION_MODE": "PENTAD"}
@@ -692,7 +691,7 @@ class TestMachineLearningBareTargetModes:
 
         assert result.returncode == 0, result.stdout + result.stderr
         modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert modes == ["PENTAD"]
+        assert modes == ["DECAD"]
 
     def test_explicit_decad_runs_once_for_decad(self, synth_tree):
         result = run_main(
@@ -703,15 +702,17 @@ class TestMachineLearningBareTargetModes:
         modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
         assert modes == ["DECAD"]
 
-    def test_both_mode_runs_pentad_then_decad_in_order(self, synth_tree):
-        """Acceptance criterion 7: BOTH runs PENTAD then DECAD, in order."""
+    def test_both_mode_runs_canonical_decad_once(self, synth_tree):
+        """ML-020 P0: BOTH input runs the canonical DECAD generation exactly
+        once, not a PENTAD call followed by a DECAD call.
+        """
         result = run_main(
             synth_tree, "machine_learning", extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH"}
         )
 
         assert result.returncode == 0, result.stdout + result.stderr
         modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert modes == ["PENTAD", "DECAD"]
+        assert modes == ["DECAD"]
 
     def test_invalid_prediction_mode_errors_and_never_invokes(self, synth_tree):
         """resolve_ml_bare_target_modes keeps its pre-existing rejection of
@@ -727,39 +728,22 @@ class TestMachineLearningBareTargetModes:
         assert "JUNK" in out
         assert not any("module=machine_learning" in ln for ln in synth_tree.calls())
 
-    def test_both_mode_first_failure_does_not_stop_second_mode(self, synth_tree):
-        """ML-021 decision 4 -- DELIBERATELY INVERTED from
-        `test_both_mode_first_failure_stops_second_mode`, which used to pin
-        the opposite (stop-on-first-failure) behaviour right here.
-
-        The owner decision: with SAPPHIRE_PREDICTION_MODE=BOTH, a PENTAD ML
-        failure must no longer prevent DECAD from running (and writing its
-        own CSV backup) -- the failure is still recorded and the overall
-        run still exits non-zero, but the loop over modes no longer breaks
-        early. See "Owner decisions taken 2026-09-08" / decision 4 and
-        "Scope of decision 4 -- which loops" in
-        doc/plans/issues/high_prio_gi_draft_ml_forecast_api_write_silent_success.md.
-        This pins the bare `machine_learning` target's mode loop
-        (run_locally.sh's `machine_learning)` case, `ML_BARE_RESOLVED_MODES`
-        loop) -- the one test_partial_both_mode_run_validates_only_attempted_modes
-        used to assume broke early too.
+    def test_ml_failure_surfaces_as_nonzero_exit(self, synth_tree):
+        """ML-020 P0: a DECAD ML failure on the bare `machine_learning`
+        target surfaces as a nonzero exit (the failure is recorded, not
+        swallowed), and exactly one ML call is made.
         """
         synth_tree.override(
             "machine_learning",
-            (
-                'if [ "$script" = "recalculate_nan_forecasts.py" ] '
-                '&& [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then exit 1; fi'
-            ),
+            'if [ "$script" = "recalculate_nan_forecasts.py" ]; then exit 1; fi',
         )
         result = run_main(
             synth_tree, "machine_learning", extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH"}
         )
 
-        # The failure still surfaces -- ML-021 does not swallow it.
         assert result.returncode != 0
-        # But DECAD now runs too, unlike before this change.
         modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert modes == ["PENTAD", "DECAD"]
+        assert modes == ["DECAD"]
 
     @staticmethod
     def _validation_calls(tree: SynthTree) -> list[str]:
@@ -802,31 +786,17 @@ class TestMachineLearningBareTargetModes:
 
         assert ml_modes, "machine_learning stub was never invoked"
         assert validation_modes, "validate_pipeline.py was never invoked"
-        assert ml_modes == ["PENTAD", "DECAD"], ml_modes
+        # ML-020 P0: one canonical DECAD run regardless of BOTH input.
+        assert ml_modes == ["DECAD"], ml_modes
         assert validation_modes == ml_modes
 
-    def test_full_both_mode_run_validates_every_attempted_mode(self, synth_tree):
-        """ML-021 decision 4 -- DELIBERATELY INVERTED from
-        `test_partial_both_mode_run_validates_only_attempted_modes`, which
-        used to pin validation covering PENTAD only, precisely BECAUSE the
-        old code broke the mode loop before DECAD ever ran.
-
-        Since decision 4 removed that early break (see the sibling test
-        `test_both_mode_first_failure_does_not_stop_second_mode` and
-        doc/plans/issues/high_prio_gi_draft_ml_forecast_api_write_silent_success.md
-        "Scope of decision 4 -- which loops"), DECAD now always runs too --
-        so `ran_modes` in the `machine_learning)` dispatch case always
-        equals `ML_BARE_RESOLVED_MODES`, and validation must cover both
-        modes, not just the one that failed. Validating a mode that never
-        ran would still be wrong; it just no longer happens here because
-        nothing stops DECAD from running any more.
+    def test_decad_run_validates_under_decad(self, synth_tree):
+        """ML-020 P0: the single DECAD run is validated under DECAD. A failed
+        ML run still triggers validation (at the mode ML actually ran under).
         """
         synth_tree.override(
             "machine_learning",
-            (
-                'if [ "$script" = "recalculate_nan_forecasts.py" ] '
-                '&& [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then exit 1; fi'
-            ),
+            'if [ "$script" = "recalculate_nan_forecasts.py" ]; then exit 1; fi',
         )
         result = run_main(
             synth_tree, "machine_learning", extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH"}
@@ -834,21 +804,11 @@ class TestMachineLearningBareTargetModes:
 
         assert result.returncode != 0
         validation_modes = [_mode_of(ln) for ln in self._validation_calls(synth_tree)]
-        assert validation_modes == ["PENTAD", "DECAD"]
+        assert validation_modes == ["DECAD"]
 
-    def test_both_mode_validation_failure_gets_its_own_log_and_label(self, synth_tree):
-        """INFRA-037 defect 1 regression: run_module_validation used to
-        derive both its log path and its summary-row label from `$module`
-        alone, so calling it once per mode (PENTAD, then DECAD) made the
-        second call truncate the first call's log file and reuse the exact
-        same row label. With PENTAD failing and DECAD passing, the operator
-        got a FAIL row for PENTAD whose "error details" tail showed DECAD's
-        successful output, with no way to tell the two rows apart.
-
-        Both modes actually run here (unlike the partial-run test above),
-        so validate_pipeline.py is invoked twice under the same module,
-        each echoing a distinctive marker and exiting with a different
-        code.
+    def test_decad_validation_failure_is_reported_with_label(self, synth_tree):
+        """ML-020 P0: the single DECAD validation failure surfaces with its
+        own labelled row and error details.
         """
         synth_tree.override(
             "postprocessing_forecasts",
@@ -856,13 +816,9 @@ class TestMachineLearningBareTargetModes:
                 """\
                 case "$script" in
                     */validate_pipeline.py)
-                        if [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then
-                            echo "PENTAD_VALIDATION_MARKER"
-                            exit 1
-                        fi
                         if [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then
-                            echo "DECAD_VALIDATION_MARKER"
-                            exit 0
+                            echo "DECAD_VALIDATION_FAILURE_MARKER"
+                            exit 1
                         fi
                         ;;
                 esac
@@ -875,48 +831,27 @@ class TestMachineLearningBareTargetModes:
         out = result.stdout + result.stderr
 
         assert result.returncode != 0
-        # Both modes ran and were validated.
+        # One DECAD validation ran.
         validation_modes = [_mode_of(ln) for ln in self._validation_calls(synth_tree)]
-        assert validation_modes == ["PENTAD", "DECAD"]
+        assert validation_modes == ["DECAD"]
 
-        # Each mode gets its own, distinguishable summary row -- not two
-        # identically-labelled "api_validation (machine_learning)" rows.
-        assert "api_validation (machine_learning PENTAD): FAIL" in out
-        assert "api_validation (machine_learning DECAD): PASS" in out
+        assert "api_validation (machine_learning DECAD): FAIL" in out
 
-        # The failing row's own error-details tail must show PENTAD's own
-        # output, not DECAD's (which would mean DECAD's later call
-        # truncated/overwrote PENTAD's log file).
         assert "VALIDATION ERROR DETAILS" in out
         details = out.split("VALIDATION ERROR DETAILS", 1)[1]
-        assert "PENTAD_VALIDATION_MARKER" in details
-        assert "DECAD_VALIDATION_MARKER" not in details
+        assert "DECAD_VALIDATION_FAILURE_MARKER" in details
 
-    def test_both_mode_produces_two_distinctly_labelled_module_rows(self, synth_tree):
-        """Owner decision 2026-09-09 -- the row-label half of the
-        MODULE-row collision documented in INFRA-037's "Known limitation"
-        section, companion to
-        test_both_mode_validation_failure_gets_its_own_log_and_label above
-        (which pins the same fix for VALIDATION rows). run_machine_learning
-        now suffixes its recorded PIPELINE SUMMARY row label with the
-        horizon, the same way run_module_validation already suffixes its
-        own.
-
-        Before this fix, calling run_machine_learning twice under
-        SAPPHIRE_PREDICTION_MODE=BOTH (PENTAD then DECAD, via
-        ML_BARE_RESOLVED_MODES) recorded two identically-labelled
-        "machine_learning" rows -- with PENTAD failing and DECAD passing,
-        the operator saw "machine_learning: FAIL" and "machine_learning:
-        PASS" with no way to tell which horizon broke.
+    def test_decad_failure_produces_labelled_module_row(self, synth_tree):
+        """ML-020 P0: the single canonical DECAD run produces a suffixed
+        PIPELINE SUMMARY row and a MODULE ERROR DETAILS heading on failure.
+        Anti-vacuity: the old unsuffixed 'machine_learning' label must not appear.
         """
         synth_tree.override(
             "machine_learning",
             (
-                'if [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then\n'
-                "    echo PENTAD_MODULE_FAILURE_MARKER_71ac\n"
+                'if [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
+                "    echo DECAD_MODULE_FAILURE_MARKER_71ac\n"
                 "    exit 1\n"
-                'elif [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
-                "    echo DECAD_MODULE_SUCCESS_MARKER_9d3e\n"
                 "fi"
             ),
         )
@@ -927,22 +862,16 @@ class TestMachineLearningBareTargetModes:
 
         assert result.returncode != 0, out
         ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert ml_modes == ["PENTAD", "DECAD"]
+        assert ml_modes == ["DECAD"]
 
-        # Each horizon gets its own, distinguishable MODULE row.
-        assert "machine_learning (PENTAD): FAIL" in out, out
-        assert "machine_learning (DECAD): PASS" in out, out
+        assert "machine_learning (DECAD): FAIL" in out, out
         # Anti-vacuity: the old collapsed, unsuffixed label must not appear.
         assert "machine_learning: FAIL" not in out, out
-        assert "machine_learning: PASS" not in out, out
 
-        # MODULE ERROR DETAILS reuses the row label as its per-failure
-        # heading, and must show PENTAD's own output only.
         assert "MODULE ERROR DETAILS" in out, out
         details = out.split("MODULE ERROR DETAILS", 1)[1]
-        assert "--- machine_learning (PENTAD) ---" in details, details
-        assert "PENTAD_MODULE_FAILURE_MARKER_71ac" in details, details
-        assert "DECAD_MODULE_SUCCESS_MARKER_9d3e" not in details, details
+        assert "--- machine_learning (DECAD) ---" in details, details
+        assert "DECAD_MODULE_FAILURE_MARKER_71ac" in details, details
 
 
 class TestStaleMlModeEnvVarIsInert:
@@ -961,13 +890,11 @@ class TestStaleMlModeEnvVarIsInert:
     dispatched modes are governed by SAPPHIRE_PREDICTION_MODE alone.
     """
 
-    def test_stale_ml_mode_decad_does_not_suppress_pentad_under_both(self, synth_tree):
-        """ML_MODE=DECAD used to mean "only run ML for DECAD" via the now-
-        removed should_skip_ml_for_mode. With SAPPHIRE_PREDICTION_MODE=BOTH
-        on `short-term`, ML must run for PENTAD then DECAD regardless --
-        the exact sequence, not just "DECAD happened somewhere", so a
-        reinstated ML_MODE=DECAD filter (which would silently drop PENTAD)
-        is caught.
+    def test_stale_ml_mode_decad_does_not_affect_canonical_decad(self, synth_tree):
+        """ML_MODE=DECAD is inert. With SAPPHIRE_PREDICTION_MODE=BOTH on
+        `short-term`, ML must run once as canonical DECAD (ML-020 P0) --
+        ML_MODE has no effect. A reinstated ML_MODE filter would either drop
+        the DECAD run or add a spurious PENTAD run; this test catches both.
         """
         result = run_main(
             synth_tree,
@@ -977,7 +904,7 @@ class TestStaleMlModeEnvVarIsInert:
 
         assert result.returncode == 0, result.stdout + result.stderr
         ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert ml_modes == ["PENTAD", "DECAD"], ml_modes
+        assert ml_modes == ["DECAD"], ml_modes
 
     def test_stale_ml_mode_pentad_does_not_suppress_decad(self, synth_tree):
         """ML_MODE=PENTAD used to mean "only run ML for PENTAD". With
@@ -1011,7 +938,7 @@ class TestStaleMlModeEnvVarIsInert:
         assert result.returncode == 0, out
         assert "ML_MODE" not in out, out
         ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert ml_modes == ["PENTAD"], ml_modes
+        assert ml_modes == ["DECAD"], ml_modes
 
 
 # ---------------------------------------------------------------------------
@@ -1090,28 +1017,15 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
         calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
         assert len(calls) == 1, synth_tree.calls()
 
-    def test_pentad_ml_failure_does_not_stop_decad_in_short_term_pipeline(self, synth_tree):
-        """Decision 4, exercised through a DIFFERENT entry point than the
-        bare `machine_learning` target already covered by
-        `TestMachineLearningBareTargetModes.
-        test_both_mode_first_failure_does_not_stop_second_mode` above:
-        `run_short_term_pipeline`'s own mode loop (run_locally.sh's
-        `for mode in "${modes_to_run[@]}"` under the `short-term` target,
-        "Scope of decision 4" list entry ":1528"). SAPPHIRE_PREDICTION_MODE
-        alone drives which modes run here: SAPPHIRE_PREDICTION_MODE=BOTH
-        selects the PENTAD+DECAD horizon loop, and (since the per-mode ML
-        override variable was removed) that is now the only gate on
-        whether the ML step runs for either mode. If the `continue` this
-        test pins were
-        reverted back to the old `PIPELINE_ABORTED=true; return 1`, DECAD's
-        machine_learning call would never happen.
+    def test_ml_decad_failure_blocks_lr_pp_for_all_modes_by_default(self, synth_tree):
+        """ML-020 P0: run_short_term_pipeline's shared DECAD ML run fails,
+        and with CONTINUE_ON_ERROR=false (the default), LR and postprocessing
+        must not run for any horizon -- the ml_failed gate blocks both PENTAD
+        and DECAD LR/PP steps. The overall run exits nonzero.
         """
         synth_tree.override(
             "machine_learning",
-            (
-                'if [ "$script" = "recalculate_nan_forecasts.py" ] '
-                '&& [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then exit 1; fi'
-            ),
+            'if [ "$script" = "recalculate_nan_forecasts.py" ]; then exit 1; fi',
         )
         result = run_main(
             synth_tree,
@@ -1120,8 +1034,17 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
         )
 
         assert result.returncode != 0, result.stdout + result.stderr
+        # One DECAD ML call, zero LR or postprocessing operational calls.
         ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert ml_modes == ["PENTAD", "DECAD"]
+        assert ml_modes == ["DECAD"]
+        assert not any("module=linear_regression" in ln for ln in synth_tree.calls()), (
+            "LR must not run when shared ML DECAD fails (CONTINUE_ON_ERROR=false)"
+        )
+        # postprocessing_operational.py (not validate_pipeline.py) must not run.
+        assert not any(
+            "module=postprocessing_forecasts" in ln and "postprocessing_operational.py" in ln
+            for ln in synth_tree.calls()
+        ), "postprocessing_forecasts (operational) must not run when shared ML DECAD fails"
 
     def test_continue_on_error_still_runs_lr_and_postprocessing_after_ml_failure(self, synth_tree):
         """Regression pin for a defect found in review of decision 4's first
@@ -1148,9 +1071,10 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
 
         Uses a single mode (PENTAD only, no BOTH) so this is purely about
         whether THIS horizon's LR/postprocessing still run after ITS OWN
-        ML failure -- not about reaching a second horizon (that is what
-        test_pentad_ml_failure_does_not_stop_decad_in_short_term_pipeline
-        above pins).
+        ML failure -- the BOTH case (ensuring a second horizon also runs)
+        is pinned by
+        test_both_mode_short_term_continue_on_error_runs_lr_pp_for_both_horizons
+        below.
         """
         synth_tree.override(
             "machine_learning",
@@ -1174,43 +1098,18 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
             synth_tree.calls()
         )
 
-    def test_pentad_failure_log_is_not_overwritten_by_decad_success(self, synth_tree):
-        """Regression pin for the log-truncation defect ML-021 introduced:
-        run_machine_learning sets CURRENT_MODULE_LOG to a FIXED path
-        (`machine_learning.log`) and truncates it on every call. Since
-        decision 4 lets DECAD run after a PENTAD failure, both invocations
-        in one `SAPPHIRE_PREDICTION_MODE=BOTH` run used to share that one
-        file -- DECAD's (successful) output would truncate and overwrite
-        PENTAD's, so print_summary's MODULE ERROR DETAILS block would tail
-        DECAD's output underneath the PENTAD FAIL row, hiding the actual
-        failure cause.
-
-        The stub echoes a distinctive marker per horizon before deciding
-        the exit code, so the two invocations' captured output is
-        distinguishable regardless of which log file each one lands in.
-        MODULE ERROR DETAILS must show the PENTAD failure marker and must
-        NOT show the DECAD success marker. Reverting the per-invocation log
-        suffix (back to the fixed `machine_learning.log` path) makes this
-        fail: DECAD's marker would appear in (and PENTAD's would vanish
-        from) the details tail.
-
-        Extended 2026-09-09 (owner decision, row-label half of the
-        MODULE-row collision documented in INFRA-037's "Known limitation"
-        section): also pins that the PIPELINE SUMMARY rows themselves --
-        not just their log content -- are now distinguishable, and that
-        MODULE ERROR DETAILS' per-failure heading (which reuses the
-        recorded row label verbatim) names the failing horizon. Before
-        this, both rows/the heading read as the bare, unsuffixed
-        "machine_learning" for either horizon.
+    def test_ml_decad_failure_log_shows_in_error_details(self, synth_tree):
+        """ML-020 P0: with the shared DECAD ML run failing on `short-term`,
+        MODULE ERROR DETAILS shows the DECAD failure output, the PIPELINE
+        SUMMARY row label carries the (DECAD) suffix, and the unsuffixed
+        'machine_learning' label does not appear.
         """
         synth_tree.override(
             "machine_learning",
             (
-                'if [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then\n'
-                "    echo PENTAD_ML_FAILURE_MARKER_c9f3\n"
+                'if [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
+                "    echo DECAD_ML_FAILURE_MARKER_c9f3\n"
                 "    exit 1\n"
-                'elif [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
-                "    echo DECAD_ML_SUCCESS_MARKER_a716\n"
                 "fi"
             ),
         )
@@ -1222,69 +1121,29 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
         out = result.stdout + result.stderr
 
         assert result.returncode != 0, out
-        # Sanity: both horizons actually ran (decision 4).
         ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert ml_modes == ["PENTAD", "DECAD"]
+        assert ml_modes == ["DECAD"]
 
         assert "MODULE ERROR DETAILS" in out, out
         details = out.split("MODULE ERROR DETAILS", 1)[1]
-        assert "PENTAD_ML_FAILURE_MARKER_c9f3" in details, details
-        assert "DECAD_ML_SUCCESS_MARKER_a716" not in details, details
+        assert "DECAD_ML_FAILURE_MARKER_c9f3" in details, details
 
-        # The two PIPELINE SUMMARY rows are now distinguishable by label.
-        assert "machine_learning (PENTAD): FAIL" in out, out
-        assert "machine_learning (DECAD): PASS" in out, out
-        # Anti-vacuity: the old collapsed, unsuffixed labels must be gone.
+        assert "machine_learning (DECAD): FAIL" in out, out
+        assert "--- machine_learning (DECAD) ---" in details, details
+        # Anti-vacuity: the old collapsed, unsuffixed label must not appear.
         assert "machine_learning: FAIL" not in out, out
-        assert "machine_learning: PASS" not in out, out
 
-        # MODULE ERROR DETAILS' heading is the recorded row label verbatim
-        # -- it must name PENTAD, not just say "machine_learning".
-        assert "--- machine_learning (PENTAD) ---" in details, details
-        assert "--- machine_learning (DECAD) ---" not in details, details
-
-    def test_pentad_maintenance_failure_log_is_not_overwritten_by_decad_success(self, synth_tree):
-        """Maintenance-path counterpart to
-        test_pentad_failure_log_is_not_overwritten_by_decad_success above:
-        the same log-truncation defect was fixed independently in
-        run_maintenance_machine_learning's own CURRENT_MODULE_LOG path
-        (``${ERROR_DIR}/machine_learning_maintenance_${mode}.log``,
-        unsuffixed -- ``machine_learning_maintenance.log`` -- before the
-        fix).
-
-        Driven through the standalone ``maintenance:machine_learning``
-        target (run_locally.sh's own dispatch case, not ``maintenance`` or
-        ``daily``) because it is the target that loops
-        run_maintenance_machine_learning over both PENTAD and DECAD by
-        itself (its own local ``modes_to_run`` array, built from
-        SAPPHIRE_PREDICTION_MODE=BOTH -- see run_locally.sh's `case "$1"`
-        block) without also requiring run_maintenance_linear_regression /
-        run_maintenance_postprocessing_forecasts to run, which keeps this
-        test focused on exactly the function under test -- the same way
-        the sibling test above isolates run_machine_learning via
-        `short-term`. SAPPHIRE_PREDICTION_MODE=BOTH alone is sufficient
-        now that the per-mode ML override variable is gone; before removal
-        its DECAD default would have skipped PENTAD's ML step entirely.
-
-        The stub echoes a distinctive marker per horizon before deciding
-        the exit code, so the two invocations' captured output is
-        distinguishable regardless of which log file each one lands in.
-        MODULE ERROR DETAILS must show the PENTAD maintenance failure
-        marker and must NOT show the DECAD maintenance success marker.
-        Reverting the per-invocation log suffix in
-        run_maintenance_machine_learning (back to the fixed
-        `machine_learning_maintenance.log` path) makes this fail: DECAD's
-        marker would appear in (and PENTAD's would vanish from) the
-        details tail.
+    def test_maintenance_ml_decad_failure_log_shows_in_error_details(self, synth_tree):
+        """ML-020 P0: `maintenance:machine_learning` runs canonical DECAD
+        once. A DECAD failure shows its output in MODULE ERROR DETAILS with
+        the (DECAD) suffix label. The old unsuffixed label must not appear.
         """
         synth_tree.override(
             "machine_learning",
             (
-                'if [ "$SAPPHIRE_PREDICTION_MODE" = "PENTAD" ]; then\n'
-                "    echo PENTAD_ML_MAINTENANCE_FAILURE_MARKER_e214\n"
+                'if [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
+                "    echo DECAD_ML_MAINTENANCE_FAILURE_MARKER_e214\n"
                 "    exit 1\n"
-                'elif [ "$SAPPHIRE_PREDICTION_MODE" = "DECAD" ]; then\n'
-                "    echo DECAD_ML_MAINTENANCE_SUCCESS_MARKER_b58a\n"
                 "fi"
             ),
         )
@@ -1296,53 +1155,24 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
         out = result.stdout + result.stderr
 
         assert result.returncode != 0, out
-        # Sanity: both horizons actually ran.
         ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert ml_modes == ["PENTAD", "DECAD"]
+        assert ml_modes == ["DECAD"]
 
         assert "MODULE ERROR DETAILS" in out, out
         details = out.split("MODULE ERROR DETAILS", 1)[1]
-        assert "PENTAD_ML_MAINTENANCE_FAILURE_MARKER_e214" in details, details
-        assert "DECAD_ML_MAINTENANCE_SUCCESS_MARKER_b58a" not in details, details
+        assert "DECAD_ML_MAINTENANCE_FAILURE_MARKER_e214" in details, details
 
-        # Fix 3 (out-of-loop review, round-final): the maintenance FAIL-row
-        # label was pinned only via test_daily_produces_four_distinctly_
-        # labelled_ml_rows_in_order's PASS path -- reverting the failure
-        # record_result call in run_maintenance_machine_learning back to the
-        # old literal "machine_learning (maintenance)" (dropping the
-        # horizon suffix on FAIL specifically) left the whole suite green.
-        # Pin both the PIPELINE SUMMARY row and the MODULE ERROR DETAILS
-        # heading here, the same way the operational counterpart
-        # (test_pentad_failure_log_is_not_overwritten_by_decad_success
-        # above) pins run_machine_learning's FAIL row.
-        assert "machine_learning (maintenance) (PENTAD): FAIL" in out, out
-        assert "machine_learning (maintenance) (DECAD): PASS" in out, out
-        # Anti-vacuity: the old collapsed, unsuffixed maintenance labels
-        # must be gone.
+        assert "machine_learning (maintenance) (DECAD): FAIL" in out, out
+        assert "--- machine_learning (maintenance) (DECAD) ---" in details, details
+        # Anti-vacuity: the old collapsed, unsuffixed maintenance label must not appear.
         assert "machine_learning (maintenance): FAIL" not in out, out
-        assert "machine_learning (maintenance): PASS" not in out, out
 
-        # MODULE ERROR DETAILS' heading is the recorded row label verbatim
-        # -- it must name PENTAD, not just "machine_learning (maintenance)".
-        assert "--- machine_learning (maintenance) (PENTAD) ---" in details, details
-        assert "--- machine_learning (maintenance) (DECAD) ---" not in details, details
-
-    def test_aggregate_maintenance_target_runs_ml_maintenance_for_resolved_horizon(
-        self, synth_tree
-    ):
-        """Acceptance criterion 5: the aggregate `maintenance` target
-        (run_locally.sh's `maintenance)` case -> run_maintenance_pipeline,
-        the `:1736`-shaped dispatch site) must actually run ML maintenance
-        for its resolved horizon -- distinct from the standalone
-        `maintenance:machine_learning` target's own site (`:2585`-shaped,
-        covered by
-        TestSkipSummaryRows.test_maintenance_ml_unset_mode_runs_pentad_not_silent_noop),
-        which is a different case branch in main() entirely. With
-        SAPPHIRE_PREDICTION_MODE unset, run_maintenance_pipeline's own
-        mode loop defaults to PENTAD (WARN); before the per-mode ML
-        override variable was removed, that PENTAD default could be
-        silently filtered back out by the same class of defect ML-022
-        documents for the standalone target.
+    def test_aggregate_maintenance_target_runs_ml_maintenance_as_canonical_decad(self, synth_tree):
+        """ML-020 P0: the aggregate `maintenance` target (run_locally.sh's
+        `maintenance)` case -> run_maintenance_pipeline) must run ML
+        maintenance exactly once as canonical DECAD, regardless of
+        SAPPHIRE_PREDICTION_MODE. With it unset, the canonical DECAD still
+        runs (no WARN-and-default-PENTAD needed since the mode is fixed).
         """
         result = run_main(synth_tree, "maintenance")
         out = result.stdout + result.stderr
@@ -1350,50 +1180,409 @@ class TestMachineLearningExitFiveAndHorizonContinuation:
         assert result.returncode == 0, out
         calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
         assert calls, "the aggregate maintenance target ran no ML maintenance at all"
-        assert [_mode_of(ln) for ln in calls] == ["PENTAD"]
-        # Owner decision 2026-09-09: the row label now carries the horizon
-        # suffix too (not just the log file), even for a single-mode run.
-        assert "machine_learning (maintenance) (PENTAD): PASS" in out, out
+        assert [_mode_of(ln) for ln in calls] == ["DECAD"]
+        assert "machine_learning (maintenance) (DECAD): PASS" in out, out
 
-    def test_daily_produces_four_distinctly_labelled_ml_rows_in_order(self, synth_tree):
-        """Owner decision 2026-09-09: the collision this whole file's
-        Group B/aggregate-maintenance tests above were building toward,
-        pinned end to end through the target that actually surfaces it in
-        production. Removing ML_MODE (this branch) made `daily` run
-        machine_learning for BOTH horizons unconditionally -- Phase 3 loops
-        `for mode in PENTAD DECAD` calling run_machine_learning, and Phase
-        4 loops the same way calling run_maintenance_machine_learning. That
-        is FOUR calls to two functions in one `daily` run, and before this
-        fix every one of them recorded the same, unsuffixed label
-        ("machine_learning" x2, "machine_learning (maintenance)" x2) --
-        two visually-identical PASS/FAIL pairs in PIPELINE SUMMARY with no
-        way to tell PENTAD from DECAD.
-
-        Asserts the exact row order too (Phase 3 PENTAD, Phase 3 DECAD,
-        Phase 4 PENTAD, Phase 4 DECAD), matching the phases' own fixed
-        `for mode in PENTAD DECAD` loops -- not just presence/absence of
-        each label.
+    def test_daily_produces_two_distinctly_labelled_ml_rows_in_order(self, synth_tree):
+        """ML-020 P0: `daily` runs ML once per phase (Phase 3 operational,
+        Phase 4 maintenance), both as canonical DECAD -- two calls total,
+        not four. Each produces a (DECAD)-suffixed PIPELINE SUMMARY row;
+        the old unsuffixed labels must not appear.
         """
         result = run_main(synth_tree, "daily")
         out = result.stdout + result.stderr
 
         assert result.returncode == 0, out
         ml_calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert len(ml_calls) == 4, ml_calls
-        assert [_mode_of(ln) for ln in ml_calls] == ["PENTAD", "DECAD", "PENTAD", "DECAD"]
+        assert len(ml_calls) == 2, ml_calls
+        assert [_mode_of(ln) for ln in ml_calls] == ["DECAD", "DECAD"]
 
         expected_rows = [
-            "machine_learning (PENTAD): PASS",
             "machine_learning (DECAD): PASS",
-            "machine_learning (maintenance) (PENTAD): PASS",
             "machine_learning (maintenance) (DECAD): PASS",
         ]
         positions = [out.index(row) for row in expected_rows]
         assert positions == sorted(positions), (expected_rows, out)
-        # Anti-vacuity: the old collapsed, unsuffixed labels must not
-        # appear anywhere in the summary.
+        # Anti-vacuity: the old collapsed, unsuffixed labels must not appear.
         assert "machine_learning: PASS" not in out, out
         assert "machine_learning (maintenance): PASS" not in out, out
+
+    def test_both_mode_short_term_continue_on_error_runs_lr_pp_for_both_horizons(self, synth_tree):
+        """BOTH mode + --continue-on-error on `short-term`: when the shared
+        DECAD ML run fails, LR and postprocessing run for BOTH the PENTAD
+        and DECAD horizons (the ml_failed gate only skips them when
+        CONTINUE_ON_ERROR=false). One canonical DECAD ML call; overall run
+        still exits nonzero.
+
+        Companion to test_ml_decad_failure_blocks_lr_pp_for_all_modes_by_
+        default (default/fail-fast) and to
+        test_continue_on_error_still_runs_lr_and_postprocessing_after_ml_
+        failure (PENTAD single-horizon case). This test pins that the second
+        horizon (DECAD) is also reached under --continue-on-error.
+        """
+        synth_tree.override(
+            "machine_learning",
+            'if [ "$script" = "recalculate_nan_forecasts.py" ]; then exit 1; fi',
+        )
+        result = run_main(
+            synth_tree,
+            "short-term",
+            continue_on_error=True,
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH"},
+        )
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert ml_modes == ["DECAD"]
+        # Operational LR (no --hindcast, identified by empty args field) must
+        # run for BOTH PENTAD and DECAD horizons.
+        op_lr = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=linear_regression" in ln and "args= lt_forecast_mode=" in ln
+        ]
+        assert len(op_lr) == 2, (
+            f"LR must run for both PENTAD and DECAD horizons under --continue-on-error, "
+            f"got: {op_lr}"
+        )
+        assert any("mode=PENTAD" in ln for ln in op_lr)
+        assert any("mode=DECAD" in ln for ln in op_lr)
+        # Operational postprocessing (postprocessing_operational.py) must run for both.
+        op_pp = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=postprocessing_forecasts" in ln
+            and "script=postprocessing_operational.py" in ln
+        ]
+        assert len(op_pp) == 2, (
+            f"postprocessing_forecasts (operational) must run for both horizons, got: {op_pp}"
+        )
+        assert any("mode=PENTAD" in ln for ln in op_pp)
+        assert any("mode=DECAD" in ln for ln in op_pp)
+
+    def test_both_mode_maintenance_ml_failure_blocks_lr_pp_for_all_horizons_by_default(
+        self, synth_tree
+    ):
+        """BOTH mode + default (CONTINUE_ON_ERROR=false) on aggregate
+        `maintenance`: ML maintenance fails for the shared DECAD run.
+        LR and postprocessing maintenance must not run for EITHER the
+        PENTAD or DECAD horizon (ml_maint_failed=true + CONTINUE_ON_ERROR=
+        false causes both per-mode loop iterations to skip via `continue`).
+        Overall run exits nonzero; one canonical DECAD ML call; label
+        carries the (DECAD) suffix.
+        """
+        synth_tree.override(
+            "machine_learning",
+            'if [ "$script" = "recalculate_nan_forecasts.py" ]; then exit 1; fi',
+        )
+        result = run_main(
+            synth_tree,
+            "maintenance",
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert ml_modes == ["DECAD"]
+        assert "machine_learning (maintenance) (DECAD): FAIL" in out, out
+        # LR maintenance (args=--hindcast) must not run for either PENTAD or DECAD.
+        assert not any(
+            "module=linear_regression" in ln and "args=--hindcast" in ln
+            for ln in synth_tree.calls()
+        ), (
+            "LR maintenance must not run when ML maintenance DECAD fails "
+            f"(CONTINUE_ON_ERROR=false): {synth_tree.calls()}"
+        )
+        # PP maintenance (postprocessing_maintenance.py) must not run for either horizon.
+        assert not any(
+            "module=postprocessing_forecasts" in ln and "script=postprocessing_maintenance.py" in ln
+            for ln in synth_tree.calls()
+        ), (
+            "postprocessing_forecasts (maintenance) must not run when ML maintenance "
+            f"DECAD fails: {synth_tree.calls()}"
+        )
+
+    def test_both_mode_maintenance_continue_on_error_runs_lr_pp_for_both_horizons(self, synth_tree):
+        """BOTH mode + --continue-on-error on aggregate `maintenance`: ML
+        maintenance fails for the shared DECAD run. With the flag, the
+        ml_maint_failed gate does NOT skip the per-mode loop iterations --
+        LR and postprocessing maintenance run for BOTH PENTAD and DECAD.
+        Overall run still exits nonzero; one canonical DECAD ML call.
+        """
+        synth_tree.override(
+            "machine_learning",
+            'if [ "$script" = "recalculate_nan_forecasts.py" ]; then exit 1; fi',
+        )
+        result = run_main(
+            synth_tree,
+            "maintenance",
+            continue_on_error=True,
+            extra_env={"SAPPHIRE_PREDICTION_MODE": "BOTH"},
+        )
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        ml_modes = [_mode_of(ln) for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert ml_modes == ["DECAD"]
+        # LR maintenance (args=--hindcast) must run for both PENTAD and DECAD.
+        lr_maint = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=linear_regression" in ln and "args=--hindcast" in ln
+        ]
+        assert len(lr_maint) == 2, (
+            f"LR maintenance must run for PENTAD and DECAD under --continue-on-error, "
+            f"got: {lr_maint}"
+        )
+        assert any("mode=PENTAD" in ln for ln in lr_maint)
+        assert any("mode=DECAD" in ln for ln in lr_maint)
+        # PP maintenance (postprocessing_maintenance.py) must run for both horizons.
+        pp_maint = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=postprocessing_forecasts" in ln
+            and "script=postprocessing_maintenance.py" in ln
+        ]
+        assert len(pp_maint) == 2, (
+            f"postprocessing_forecasts (maintenance) must run for both horizons, got: {pp_maint}"
+        )
+        assert any("mode=PENTAD" in ln for ln in pp_maint)
+        assert any("mode=DECAD" in ln for ln in pp_maint)
+
+    def test_daily_phase3_ml_failure_skips_operational_lr_pp_but_phase4_still_runs(
+        self, synth_tree
+    ):
+        """daily: Phase 3 canonical DECAD ML fails (first ML call, count=1);
+        Phase 4 ML maintenance (second ML call, count=2) succeeds.
+        With CONTINUE_ON_ERROR=false, Phase 3's LR/PP are skipped for both
+        PENTAD and DECAD (ml_phase3_failed=true causes both loop iterations
+        to skip via `continue`). Phase 4 is independent: its own ML
+        maintenance succeeds, and LR/PP maintenance run for both horizons.
+
+        Discriminates Phase 3 from Phase 4 by script signature:
+        Phase 3 LR has no --hindcast (args= lt_forecast_mode=...);
+        Phase 3 PP uses postprocessing_operational.py.
+        Phase 4 LR has args=--hindcast; Phase 4 PP uses
+        postprocessing_maintenance.py.
+
+        The Phase 3 failure is staged via a call-count check on the shared
+        call log: the printf in the stub writes the current call to the log
+        BEFORE the decision runs, so on the first ML call the count is 1
+        (fail), and on the second call the count is 2 (succeed).
+        """
+        call_log = str(synth_tree.call_log)
+        synth_tree.override(
+            "machine_learning",
+            textwrap.dedent(
+                f"""\
+                ml_calls=$(grep -c "module=machine_learning" "{call_log}" 2>/dev/null || echo 0)
+                if [ "$ml_calls" -le 1 ] && [ "$script" = "recalculate_nan_forecasts.py" ]; then
+                    exit 1
+                fi
+                """
+            ),
+        )
+        result = run_main(synth_tree, "daily")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        ml_calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert len(ml_calls) == 2, (
+            f"expected Phase 3 (fail) + Phase 4 (pass) = 2 ML calls, got {ml_calls}"
+        )
+        assert "machine_learning (DECAD): FAIL" in out, out
+        assert "machine_learning (maintenance) (DECAD): PASS" in out, out
+        # Phase 3 operational LR (empty args, no --hindcast) must NOT have run.
+        assert not any(
+            "module=linear_regression" in ln and "args= lt_forecast_mode=" in ln
+            for ln in synth_tree.calls()
+        ), (
+            "Phase 3 operational LR must not run when Phase 3 ML fails "
+            f"(CONTINUE_ON_ERROR=false): {synth_tree.calls()}"
+        )
+        # Phase 3 operational PP (postprocessing_operational.py) must NOT have run.
+        assert not any(
+            "module=postprocessing_forecasts" in ln and "script=postprocessing_operational.py" in ln
+            for ln in synth_tree.calls()
+        ), f"Phase 3 operational PP must not run when Phase 3 ML fails: {synth_tree.calls()}"
+        # Phase 4 LR maintenance (--hindcast) must have run for both horizons.
+        lr_maint = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=linear_regression" in ln and "args=--hindcast" in ln
+        ]
+        assert len(lr_maint) == 2, (
+            f"Phase 4 LR maintenance must run for PENTAD and DECAD, got {lr_maint}"
+        )
+        # Phase 4 PP maintenance must have run.
+        assert any(
+            "module=postprocessing_forecasts" in ln and "script=postprocessing_maintenance.py" in ln
+            for ln in synth_tree.calls()
+        ), "Phase 4 PP maintenance must still run after Phase 3 ML failure"
+
+    def test_daily_phase4_ml_maintenance_failure_does_not_undo_phase3_results(self, synth_tree):
+        """daily: Phase 3 canonical DECAD ML succeeds (first ML call,
+        count=1); Phase 4 ML maintenance fails (second ML call, count=2).
+        Phase 3 LR/PP already ran before Phase 4 started -- operational LR
+        runs for both PENTAD and DECAD, operational PP runs for both
+        horizons. With CONTINUE_ON_ERROR=false, Phase 4 LR/PP maintenance
+        are skipped.
+
+        Mirror of test_daily_phase3_ml_failure_skips_operational_lr_pp_
+        but_phase4_still_runs: here Phase 4 is the failing phase and Phase 3
+        is the one whose completed results are unaffected.
+        """
+        call_log = str(synth_tree.call_log)
+        synth_tree.override(
+            "machine_learning",
+            textwrap.dedent(
+                f"""\
+                ml_calls=$(grep -c "module=machine_learning" "{call_log}" 2>/dev/null || echo 0)
+                if [ "$ml_calls" -ge 2 ] && [ "$script" = "recalculate_nan_forecasts.py" ]; then
+                    exit 1
+                fi
+                """
+            ),
+        )
+        result = run_main(synth_tree, "daily")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        ml_calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert len(ml_calls) == 2, (
+            f"expected Phase 3 (pass) + Phase 4 (fail) = 2 ML calls, got {ml_calls}"
+        )
+        assert "machine_learning (DECAD): PASS" in out, out
+        assert "machine_learning (maintenance) (DECAD): FAIL" in out, out
+        # Phase 3 operational LR ran for BOTH PENTAD and DECAD.
+        op_lr = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=linear_regression" in ln and "args= lt_forecast_mode=" in ln
+        ]
+        assert len(op_lr) == 2, f"Phase 3 LR must have run for both PENTAD and DECAD, got {op_lr}"
+        assert any("mode=PENTAD" in ln for ln in op_lr)
+        assert any("mode=DECAD" in ln for ln in op_lr)
+        # Phase 3 operational PP ran for BOTH horizons.
+        op_pp = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=postprocessing_forecasts" in ln
+            and "script=postprocessing_operational.py" in ln
+        ]
+        assert len(op_pp) == 2, f"Phase 3 PP must have run for PENTAD and DECAD, got {op_pp}"
+        # Phase 4 LR maintenance (--hindcast) must NOT have run.
+        assert not any(
+            "module=linear_regression" in ln and "args=--hindcast" in ln
+            for ln in synth_tree.calls()
+        ), (
+            "Phase 4 LR maintenance must not run when Phase 4 ML fails "
+            f"(CONTINUE_ON_ERROR=false): {synth_tree.calls()}"
+        )
+        # Phase 4 PP maintenance must NOT have run.
+        assert not any(
+            "module=postprocessing_forecasts" in ln and "script=postprocessing_maintenance.py" in ln
+            for ln in synth_tree.calls()
+        ), f"Phase 4 PP maintenance must not run when Phase 4 ML fails: {synth_tree.calls()}"
+
+    def test_daily_phase3_ml_failure_continue_on_error_runs_phase3_operational_lr_pp(
+        self, synth_tree
+    ):
+        """daily + --continue-on-error: Phase 3 ML fails (first call), but
+        LR and postprocessing run for BOTH PENTAD and DECAD (the
+        ml_phase3_failed gate does NOT skip when CONTINUE_ON_ERROR=true).
+        Phase 4 ML maintenance also runs independently. Overall exit is
+        nonzero.
+        """
+        call_log = str(synth_tree.call_log)
+        synth_tree.override(
+            "machine_learning",
+            textwrap.dedent(
+                f"""\
+                ml_calls=$(grep -c "module=machine_learning" "{call_log}" 2>/dev/null || echo 0)
+                if [ "$ml_calls" -le 1 ] && [ "$script" = "recalculate_nan_forecasts.py" ]; then
+                    exit 1
+                fi
+                """
+            ),
+        )
+        result = run_main(synth_tree, "daily", continue_on_error=True)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        ml_calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert len(ml_calls) == 2, (
+            f"expected 2 ML calls (Phase 3 fail + Phase 4 pass), got {ml_calls}"
+        )
+        # Phase 3 operational LR runs for BOTH horizons despite ML failure.
+        op_lr = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=linear_regression" in ln and "args= lt_forecast_mode=" in ln
+        ]
+        assert len(op_lr) == 2, (
+            f"Phase 3 LR must run for PENTAD and DECAD under --continue-on-error, got {op_lr}"
+        )
+        assert any("mode=PENTAD" in ln for ln in op_lr)
+        assert any("mode=DECAD" in ln for ln in op_lr)
+        # Phase 4 LR maintenance also ran (Phase 4 ML succeeded).
+        assert any(
+            "module=linear_regression" in ln and "args=--hindcast" in ln
+            for ln in synth_tree.calls()
+        ), "Phase 4 LR maintenance must also run"
+
+    def test_daily_phase4_ml_maintenance_failure_continue_on_error_runs_phase4_maintenance_lr_pp(
+        self, synth_tree
+    ):
+        """daily + --continue-on-error: Phase 4 ML maintenance fails (second
+        call), but LR and postprocessing maintenance run for BOTH PENTAD and
+        DECAD (the ml_phase4_failed gate does NOT skip when
+        CONTINUE_ON_ERROR=true). Phase 3 already completed successfully.
+        Overall exit is nonzero.
+        """
+        call_log = str(synth_tree.call_log)
+        synth_tree.override(
+            "machine_learning",
+            textwrap.dedent(
+                f"""\
+                ml_calls=$(grep -c "module=machine_learning" "{call_log}" 2>/dev/null || echo 0)
+                if [ "$ml_calls" -ge 2 ] && [ "$script" = "recalculate_nan_forecasts.py" ]; then
+                    exit 1
+                fi
+                """
+            ),
+        )
+        result = run_main(synth_tree, "daily", continue_on_error=True)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, out
+        assert "machine_learning (maintenance) (DECAD): FAIL" in out, out
+        ml_calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
+        assert len(ml_calls) == 2, ml_calls
+        # Phase 4 LR maintenance (--hindcast) must run for PENTAD and DECAD.
+        lr_maint = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=linear_regression" in ln and "args=--hindcast" in ln
+        ]
+        assert len(lr_maint) == 2, (
+            f"Phase 4 LR maintenance must run for PENTAD and DECAD, got {lr_maint}"
+        )
+        assert any("mode=PENTAD" in ln for ln in lr_maint)
+        assert any("mode=DECAD" in ln for ln in lr_maint)
+        # Phase 4 PP maintenance must run for both horizons.
+        pp_maint = [
+            ln
+            for ln in synth_tree.calls()
+            if "module=postprocessing_forecasts" in ln
+            and "script=postprocessing_maintenance.py" in ln
+        ]
+        assert len(pp_maint) == 2, (
+            f"Phase 4 PP maintenance must run for PENTAD and DECAD, got {pp_maint}"
+        )
+        assert any("mode=PENTAD" in ln for ln in pp_maint)
+        assert any("mode=DECAD" in ln for ln in pp_maint)
 
 
 # ---------------------------------------------------------------------------
@@ -1599,21 +1788,11 @@ class TestLongHorizonSyncExitCodeHandling:
             "ran -- only the maintenance call (args=--hindcast) appeared, meaning Phase 3 "
             "was skipped and only Phase 4 executed"
         )
-        # Strengthened per the stale-ML_MODE review finding: the `any(...)`
-        # checks above only prove "some machine_learning call happened",
-        # which is also satisfied if a reinstated ML_MODE=DECAD-only filter
-        # silently dropped every PENTAD call. Pin the exact sequence
-        # instead. ML_MODELS/ML_SCRIPTS are single-entry in this harness
-        # (see run_main's docstring), so each phase's `for mode in PENTAD
-        # DECAD` loop produces exactly one machine_learning call per mode:
-        # Phase 3 (operational) contributes the first two calls, Phase 4
-        # (maintenance) the next two -- the stub cannot otherwise
-        # distinguish which phase a machine_learning call came from (see
-        # the docstring above), so this splits the flat call sequence
-        # positionally rather than by a per-call marker.
+        # ML-020 P0: pin the exact sequence -- Phase 3 (operational) runs
+        # DECAD once, Phase 4 (maintenance) runs DECAD once -- two total.
         ml_modes = [_mode_of(ln) for ln in calls if "module=machine_learning" in ln]
-        assert ml_modes == ["PENTAD", "DECAD", "PENTAD", "DECAD"], (
-            f"expected Phase 3 (PENTAD, DECAD) then Phase 4 (PENTAD, DECAD), got {ml_modes}"
+        assert ml_modes == ["DECAD", "DECAD"], (
+            f"expected Phase 3 (DECAD) then Phase 4 (DECAD), got {ml_modes}"
         )
 
     def test_maintenance_continues_past_exit_six_failure(self, synth_tree):
@@ -2273,33 +2452,13 @@ class TestModeDomainRegressionGuards:
         )
         assert any("module=preprocessing_runoff" in ln for ln in synth_tree.calls())
 
-        # Fix 4 (out-of-loop review, round-final): pin the exact per-horizon
-        # SKIP labels and row cardinality too, not just "ML was not
-        # invoked". `daily`'s Phase 3 (operational) and Phase 4
-        # (maintenance) loops each call record_skip once per horizon
-        # (run_locally.sh's `for mode in PENTAD DECAD` loops), so a
-        # ML-skipping org must get exactly four suffixed SKIP rows -- two
-        # operational, two maintenance. Reverting either loop's record_skip
-        # label back to the old collapsed "machine_learning"/"machine_
-        # learning (maintenance)" (dropping the horizon suffix) previously
-        # left this test green.
+        # ML-020 P0: each phase runs ML once as canonical DECAD -- one
+        # operational SKIP row and one maintenance SKIP row (two total).
+        assert f"machine_learning (DECAD): SKIP (not required for {org} org)" in out, out
         assert (
-            f"machine_learning (PENTAD): SKIP (not required for {org} org, mode=PENTAD)" in out
+            f"machine_learning (maintenance) (DECAD): SKIP (not required for {org} org)" in out
         ), out
-        assert f"machine_learning (DECAD): SKIP (not required for {org} org, mode=DECAD)" in out, (
-            out
-        )
-        assert (
-            f"machine_learning (maintenance) (PENTAD): SKIP (not required for {org} org, mode=PENTAD)"
-            in out
-        ), out
-        assert (
-            f"machine_learning (maintenance) (DECAD): SKIP (not required for {org} org, mode=DECAD)"
-            in out
-        ), out
-        assert out.count("machine_learning (PENTAD): SKIP") == 1, out
         assert out.count("machine_learning (DECAD): SKIP") == 1, out
-        assert out.count("machine_learning (maintenance) (PENTAD): SKIP") == 1, out
         assert out.count("machine_learning (maintenance) (DECAD): SKIP") == 1, out
 
     def test_unset_prediction_mode_on_short_term_still_warns_and_defaults(self, synth_tree):
@@ -2582,31 +2741,20 @@ class TestSkipSummaryRows:
             synth_tree.calls()
         )
 
-    def test_maintenance_ml_unset_mode_runs_pentad_not_silent_noop(self, synth_tree):
-        """ML-022's headline defect, closed by the per-mode ML override
-        variable's removal: with SAPPHIRE_PREDICTION_MODE unset,
-        `maintenance:machine_learning` used to default modes_to_run to
-        (PENTAD) via a WARN, then silently filter that single element back
-        out through a per-mode skip check comparing it against a second
-        variable's own, DIFFERENT default -- leaving RESULTS_MODULE empty
-        and `exit_code` untouched, so the target reported success (exit 0)
-        having run no ML maintenance at all.
-
-        That second variable and its filter no longer exist, so the
-        resolved PENTAD default now runs for real. Reinstating the
-        deleted per-mode skip check at this call site must make this
-        test fail.
+    def test_maintenance_ml_unset_mode_runs_canonical_decad(self, synth_tree):
+        """ML-020 P0: with SAPPHIRE_PREDICTION_MODE unset,
+        `maintenance:machine_learning` runs the canonical DECAD generation
+        once (no PENTAD default, no WARN). The (DECAD)-suffixed row must
+        appear in PIPELINE SUMMARY.
         """
         result = run_main(synth_tree, "maintenance:machine_learning")
         out = result.stdout + result.stderr
 
         assert result.returncode == 0, out
         calls = [ln for ln in synth_tree.calls() if "module=machine_learning" in ln]
-        assert calls, "maintenance:machine_learning ran no ML maintenance for the default mode"
-        assert [_mode_of(ln) for ln in calls] == ["PENTAD"]
-        # Owner decision 2026-09-09: the row label now carries the horizon
-        # suffix too (not just the log file), even for a single-mode run.
-        assert "machine_learning (maintenance) (PENTAD): PASS" in out, out
+        assert calls, "maintenance:machine_learning ran no ML maintenance"
+        assert [_mode_of(ln) for ln in calls] == ["DECAD"]
+        assert "machine_learning (maintenance) (DECAD): PASS" in out, out
         assert "SKIP" not in out, out
 
     def test_maintenance_ml_org_skip_prints_a_summary_at_all(self, synth_tree):
@@ -2640,19 +2788,8 @@ class TestSkipSummaryRows:
 
     @pytest.mark.parametrize("org", ["demo", "uzhm"])
     def test_aggregate_maintenance_org_skip_pins_ml_label(self, synth_tree, org):
-        """Fix 4 gap (out-of-loop review, round-final): the aggregate
-        `maintenance` target's own ML org-skip label (run_maintenance_
-        pipeline -- distinct from the standalone `maintenance:machine_
-        learning` target pinned just above, and from
-        test_aggregate_maintenance_target_runs_ml_maintenance_for_resolved_horizon,
-        which only covers the enabled-org PASS path) had no test at all
-        pinning its SKIP label or row cardinality. With
-        SAPPHIRE_PREDICTION_MODE unset, run_maintenance_pipeline's own mode
-        loop defaults to PENTAD (WARN) -- exactly one horizon, so exactly
-        one suffixed SKIP row is expected. Reverting the record_skip label
-        at that call site back to the old collapsed "machine_learning
-        (maintenance)" (dropping the horizon suffix) previously left the
-        whole suite green.
+        """ML-020 P0: the aggregate `maintenance` target's ML org-skip
+        records one (DECAD)-suffixed SKIP row (canonical DECAD, run once).
         """
         result = run_main(
             synth_tree,
@@ -2663,23 +2800,18 @@ class TestSkipSummaryRows:
 
         assert result.returncode == 0, out
         assert (
-            f"machine_learning (maintenance) (PENTAD): SKIP (not required for {org} org, "
-            "mode=PENTAD)" in out
+            f"machine_learning (maintenance) (DECAD): SKIP (not required for {org} org)" in out
         ), out
-        assert out.count("machine_learning (maintenance) (PENTAD): SKIP") == 1, out
+        assert out.count("machine_learning (maintenance) (DECAD): SKIP") == 1, out
         assert not any("module=machine_learning" in ln for ln in synth_tree.calls()), (
             synth_tree.calls()
         )
 
-    def test_short_term_both_mode_org_skip_records_one_row_per_horizon(self, synth_tree):
-        """D2's no-dedup accounting, pinned end to end: uzhm skips
-        machine_learning at the org level, and SAPPHIRE_PREDICTION_MODE=BOTH
-        drives run_short_term_pipeline's per-mode loop over PENTAD and
-        DECAD. An enabled run_machine_learning would record one PASS row
-        per horizon here, so a skipped one must record one SKIP row per
-        horizon too -- not a single deduplicated row. Vacuous unless the
-        target genuinely loops two modes, which is why BOTH is used rather
-        than a single mode.
+    def test_short_term_org_skip_records_one_decad_skip_row(self, synth_tree):
+        """ML-020 P0: uzhm skips machine_learning at the org level. With
+        SAPPHIRE_PREDICTION_MODE=BOTH, run_short_term_pipeline runs ML
+        once as canonical DECAD (not once per horizon), so exactly one
+        (DECAD)-suffixed SKIP row is recorded.
         """
         result = run_main(
             synth_tree,
@@ -2692,19 +2824,10 @@ class TestSkipSummaryRows:
         out = result.stdout + result.stderr
 
         assert result.returncode == 0, out
-        # Owner decision 2026-09-09: the SKIP row label now also carries
-        # the horizon suffix, for consistency with the PASS/FAIL rows this
-        # target's run_machine_learning would otherwise have recorded (see
-        # apps/run_locally.sh's run_machine_learning/
-        # run_maintenance_machine_learning). The REASON text keeps its own
-        # `mode=` field unchanged.
-        assert "machine_learning (PENTAD): SKIP (not required for uzhm org, mode=PENTAD)" in out, (
-            out
-        )
-        assert "machine_learning (DECAD): SKIP (not required for uzhm org, mode=DECAD)" in out, out
-        assert out.count("machine_learning (PENTAD): SKIP") == 1, out
+        assert "machine_learning (DECAD): SKIP (not required for uzhm org)" in out, out
         assert out.count("machine_learning (DECAD): SKIP") == 1, out
-        assert "Modules: 5 passed, 0 failed, 3 skipped" in out, out
+        # preprocessing_gateway (uzhm skip) + machine_learning DECAD (uzhm skip) = 2 skips
+        assert "Modules: 5 passed, 0 failed, 2 skipped" in out, out
         assert not any("module=machine_learning" in ln for ln in synth_tree.calls()), (
             synth_tree.calls()
         )

@@ -119,13 +119,18 @@ def _make_modelled_df(
     for date in dates:
         for station in stations:
             for model_short in models:
+                d = discharge_values.get(model_short, 100.0)
                 rows.append(
                     {
                         "code": station,
                         "date": date,
                         period_col: 1,
                         period_in_month_col: "1",
-                        "forecasted_discharge": discharge_values.get(model_short, 100.0),
+                        "forecasted_discharge": d,
+                        "q05": d * 0.9,
+                        "q25": d * 0.95,
+                        "q75": d * 1.05,
+                        "q95": d * 1.1,
                         "model_short": model_short,
                     }
                 )

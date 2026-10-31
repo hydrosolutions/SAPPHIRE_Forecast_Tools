@@ -608,7 +608,8 @@ def make_ml_forecast():
         )
     else:
         logger.debug("Prediction mode: %s", PREDICTION_MODE)
-        if PREDICTION_MODE == "PENTAD":
+        gen_mode = utils_ml_forecast.canonical_ml_mode(MODEL_TO_USE, PREDICTION_MODE)
+        if gen_mode == "PENTAD":
             forecast_horizon = 6
         else:
             forecast_horizon = 11
@@ -635,7 +636,7 @@ def make_ml_forecast():
 
     PATH_TO_SCALER = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_" + MODEL_TO_USE)
     # Append Decad to the scaler path if the prediction mode is DECAD
-    if PREDICTION_MODE == "DECAD" and MODEL_TO_USE != "ARIMA":
+    if gen_mode == "DECAD" and MODEL_TO_USE != "ARIMA":
         PATH_TO_SCALER = PATH_TO_SCALER + "_Decad"
 
     PATH_TO_SCALER = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_SCALER)

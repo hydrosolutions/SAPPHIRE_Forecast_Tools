@@ -43,9 +43,11 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 from scr import utils_ml_forecast
 from scr.utils_ml_forecast import (
+    _CANONICAL_GENERATION_MODELS,
     SAPPHIRE_API_AVAILABLE,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    canonical_ml_mode,
     get_permitted_station_codes,
 )
 
@@ -110,6 +112,10 @@ def call_hindcast_script(
         print("Error output:")
         print(result.stderr)
         print()
+        raise RuntimeError(
+            f"Hindcast subprocess failed with return code "
+            f"{result.returncode} for {MODEL_TO_USE} {PREDICTION_MODE}"
+        )
 
     # --------------------------------------------------------------------
     # GET THE HINDCAST
@@ -120,7 +126,7 @@ def call_hindcast_script(
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     PATH_HINDCAST = os.path.join(PATH_FORECAST, "hindcast", MODEL_TO_USE)
 
-    file_name = f"{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv"
+    file_name = f"{MODEL_TO_USE}_{canonical_ml_mode(MODEL_TO_USE, PREDICTION_MODE)}_hindcast_daily_{start_date}_{end_date}.csv"
 
     hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
 
@@ -273,19 +279,48 @@ def main():
     # --------------------------------------------------------------------
     # Call the hindcast script
     # --------------------------------------------------------------------
+    # For canonical models (TFT/TiDE/TSMixer): one DECAD hindcast for the
+    # union of all genuinely missing codes, then distribute per horizon.
+    # ARIMA uses the original per-horizon pair of calls.
+    _is_canonical = MODEL_TO_USE.upper() in _CANONICAL_GENERATION_MODELS
+    if _is_canonical and (len(new_codes_pentad) > 0 or len(new_codes_decad) > 0):
+        new_codes_union = sorted(set(new_codes_pentad) | set(new_codes_decad))
+        logger.info(
+            "Canonical model %s: single DECAD hindcast for union %s",
+            MODEL_TO_USE,
+            new_codes_union,
+        )
+        _union_hindcast = call_hindcast_script(
+            start_date, end_date, new_codes_union, MODEL_TO_USE, intermediate_data_path, "DECAD"
+        )
+        _union_hindcast["forecast_date"] = pd.to_datetime(_union_hindcast["forecast_date"])
+        _union_hindcast["date"] = pd.to_datetime(_union_hindcast["date"])
+    else:
+        _union_hindcast = None
+
     # Pentad
     if len(new_codes_pentad) > 0:
-        logger.info("Starting Hindcast Pentad in daily intervall")
-        pentad_hindcast_daily = call_hindcast_script(
-            start_date, end_date, new_codes_pentad, MODEL_TO_USE, intermediate_data_path, "PENTAD"
-        )
+        if _is_canonical:
+            logger.info("Pentad hindcast: filtering union for codes %s", new_codes_pentad)
+            pentad_hindcast_daily = _union_hindcast[
+                _union_hindcast["code"].astype(str).isin([str(c) for c in new_codes_pentad])
+            ].copy()
+        else:
+            logger.info("Starting Hindcast Pentad in daily intervall")
+            pentad_hindcast_daily = call_hindcast_script(
+                start_date,
+                end_date,
+                new_codes_pentad,
+                MODEL_TO_USE,
+                intermediate_data_path,
+                "PENTAD",
+            )
+            pentad_hindcast_daily["forecast_date"] = pd.to_datetime(
+                pentad_hindcast_daily["forecast_date"]
+            )
+            pentad_hindcast_daily["date"] = pd.to_datetime(pentad_hindcast_daily["date"])
 
         logger.info("Pentad hindcast daily is generated")
-        pentad_hindcast_daily["forecast_date"] = pd.to_datetime(
-            pentad_hindcast_daily["forecast_date"]
-        )
-        pentad_hindcast_daily["date"] = pd.to_datetime(pentad_hindcast_daily["date"])
-
         # Append the new pentad forecast to the existing pentad forecast
         pentad_forecast = pd.concat([pentad_forecast, pentad_hindcast_daily], ignore_index=True)
         # Sort by forecast_date and date
@@ -314,19 +349,24 @@ def main():
     else:
         logger.info("No new codes for pentad forecast")
 
+    # Decad
     if len(new_codes_decad) > 0:
-        # Decad
-        logger.info("Starting Hindcast Decad in daily intervall")
-        decad_hindcast_daily = call_hindcast_script(
-            start_date, end_date, new_codes_decad, MODEL_TO_USE, intermediate_data_path, "DECAD"
-        )
+        if _is_canonical:
+            logger.info("Decad hindcast: filtering union for codes %s", new_codes_decad)
+            decad_hindcast_daily = _union_hindcast[
+                _union_hindcast["code"].astype(str).isin([str(c) for c in new_codes_decad])
+            ].copy()
+        else:
+            logger.info("Starting Hindcast Decad in daily intervall")
+            decad_hindcast_daily = call_hindcast_script(
+                start_date, end_date, new_codes_decad, MODEL_TO_USE, intermediate_data_path, "DECAD"
+            )
+            decad_hindcast_daily["forecast_date"] = pd.to_datetime(
+                decad_hindcast_daily["forecast_date"]
+            )
+            decad_hindcast_daily["date"] = pd.to_datetime(decad_hindcast_daily["date"])
 
         logger.info("Decad hindcast daily is generated")
-        decad_hindcast_daily["forecast_date"] = pd.to_datetime(
-            decad_hindcast_daily["forecast_date"]
-        )
-        decad_hindcast_daily["date"] = pd.to_datetime(decad_hindcast_daily["date"])
-
         # Append the new decad forecast to the existing decad forecast
         decad_forecast = pd.concat([decad_forecast, decad_hindcast_daily], ignore_index=True)
         # Sort by forecast_date and date
@@ -352,7 +392,6 @@ def main():
         print(
             f"The forecast files for model decadal {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}"
         )
-
     else:
         logger.info("No new codes for decad forecast")
 

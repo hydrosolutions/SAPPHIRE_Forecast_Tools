@@ -214,6 +214,25 @@ def _read_output_csv(data_dir, filename):
     return pd.read_csv(path)
 
 
+def _add_lr_quantiles(data_dir, horizon="pentad"):
+    """Add synthetic quantile columns to LR linreg CSV so LR is EM-eligible (MR-H).
+
+    Uses the same 90/95/105/110 % convention as the generated combined CSV.
+    Only modifies the copy in tmp_path — original test_data/ is unchanged.
+    """
+    fname = f"forecast_{horizon}_linreg.csv"
+    path = os.path.join(data_dir, fname)
+    if not os.path.exists(path):
+        return
+    df = pd.read_csv(path)
+    if "q05" not in df.columns:
+        df["q05"] = df["forecasted_discharge"] * 0.9
+        df["q25"] = df["forecasted_discharge"] * 0.95
+        df["q75"] = df["forecasted_discharge"] * 1.05
+        df["q95"] = df["forecasted_discharge"] * 1.1
+        df.to_csv(path, index=False)
+
+
 # ---------------------------------------------------------------------------
 # Discharge calculation helpers (matching generate_test_data.py)
 # ---------------------------------------------------------------------------
@@ -251,6 +270,8 @@ class TestOperationalIntegration:
         99003: No EM (only LR passes — single model)
         """
         tmp_path, data_dir = integration_env
+        # MR-H: LR needs q-cols to be an EM contributor under the strict contract.
+        _add_lr_quantiles(data_dir, "pentad")
 
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
@@ -317,6 +338,8 @@ class TestOperationalIntegration:
     def test_decad_multi_station_ensemble_with_csv_roundtrip(self, integration_env):
         """Decad mode produces correct EM for stations with passing models."""
         tmp_path, data_dir = integration_env
+        # MR-H: LR needs q-cols to be an EM contributor under the strict contract.
+        _add_lr_quantiles(data_dir, "decad")
 
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "DECAD"}):
             with patch.dict(sys.modules, {}):
