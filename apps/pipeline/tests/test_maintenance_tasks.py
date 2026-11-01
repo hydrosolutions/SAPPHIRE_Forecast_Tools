@@ -187,7 +187,11 @@ class TestPostProcessingMaintenance:
         assert modes == {"PENTAD", "DECAD"}
 
     def test_includes_ml_when_enabled(self, mock_env, monkeypatch):
-        """Includes MLMaintenance tasks when ML models are enabled."""
+        """Includes MLMaintenance tasks when ML models are enabled.
+
+        ML-020 P0: one canonical DECAD task per model (not one per mode),
+        so TFT+TIDE => 2 ML tasks total, both DECAD.
+        """
         import pipeline_docker
 
         monkeypatch.setattr(pipeline_docker, "RUN_ML_MODELS", "True")
@@ -195,13 +199,13 @@ class TestPostProcessingMaintenance:
         task = pipeline_docker.PostProcessingMaintenance()
         deps = task.requires()
         ml_tasks = [d for d in deps if isinstance(d, pipeline_docker.MLMaintenance)]
-        # TFT,TIDE x PENTAD,DECAD = 4 ML tasks
-        assert len(ml_tasks) == 4
+        # TFT,TIDE x DECAD = 2 ML tasks (ML-020 P0: canonical DECAD only)
+        assert len(ml_tasks) == 2
         combos = {(d.model_type, d.prediction_mode) for d in ml_tasks}
-        assert ("TFT", "PENTAD") in combos
         assert ("TFT", "DECAD") in combos
-        assert ("TIDE", "PENTAD") in combos
         assert ("TIDE", "DECAD") in combos
+        assert ("TFT", "PENTAD") not in combos
+        assert ("TIDE", "PENTAD") not in combos
 
     def test_excludes_ml_when_disabled(self, mock_env):
         """Excludes ML tasks when ML models are disabled."""

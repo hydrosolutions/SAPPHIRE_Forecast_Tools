@@ -3838,13 +3838,12 @@ def calculate_neural_ensemble_forecast(forecasts):
         logger.warning("Cannot calculate neural ensemble forecast: %s.", "; ".join(guard_reasons))
         return forecasts
 
-    # Define the models we're interested in
+    # Define the models we're interested in (exact aliases, not substrings)
     target_models = ["TiDE", "TFT", "TSMixer", "TIDE", "TSMIXER"]
 
-    # Filter forecasts to include only the target models if they exist
-    available_target_models = [
-        model for model in target_models if any(forecasts["model_short"].str.contains(model))
-    ]
+    # Exact-alias matching: model_short must equal an alias exactly
+    _ne_actual = set(forecasts["model_short"].values)
+    available_target_models = [m for m in target_models if m in _ne_actual]
 
     if not available_target_models:
         logger.warning(
@@ -3852,46 +3851,54 @@ def calculate_neural_ensemble_forecast(forecasts):
         )
         return forecasts
 
-    filtered_forecasts = forecasts[
-        forecasts["model_short"].str.contains("|".join(available_target_models))
-    ]
+    # Exact-alias filter (isin, not str.contains)
+    filtered_forecasts = forecasts[forecasts["model_short"].isin(available_target_models)].copy()
 
-    # Create a dataframe with unique date and codes from filtered forecasts
-    ensemble_mean = (
-        filtered_forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]
-        .drop_duplicates(keep="last")
-        .copy()
-    )
+    # ALL 5 fields (central + q05/q25/q75/q95) must be present and finite (MR-H).
+    # Missing any quantile column entirely => no eligible contributors.
+    _ne_all_qcols = ("q05", "q25", "q75", "q95")
+    _ne_missing_qcols = [q for q in _ne_all_qcols if q not in filtered_forecasts.columns]
+    if _ne_missing_qcols:
+        logger.warning(
+            "NE pentad: quantile columns absent %s; no eligible contributors.",
+            _ne_missing_qcols,
+        )
+        return forecasts
 
-    # Add model columns to the ensemble_mean dataframe
-    model_names = ", ".join(sorted(set(available_target_models)))
+    _ne_group_cols = ["date", "code", "pentad_in_month", "pentad_in_year"]
+
+    eligible = filtered_forecasts.dropna(subset=["forecasted_discharge"]).copy()
+    eligible = eligible[np.isfinite(eligible["forecasted_discharge"])].copy()
+
+    # Exclude any row where any required quantile field is NaN or inf.
+    _q_arr = eligible[list(_ne_all_qcols)].values.astype(float)
+    eligible = eligible[np.isfinite(_q_arr).all(axis=1)].copy()
+
+    if eligible.empty:
+        logger.warning("NE pentad: no eligible rows after finite-field filter.")
+        return forecasts
+
+    # Per-group composition and aggregation over the same eligible contributors
+
+    def _ne_compose(s):
+        return ", ".join(sorted(s.unique()))
+
+    _ne_agg = {"forecasted_discharge": "mean", "model_short": _ne_compose}
+    for _q in _ne_all_qcols:
+        _ne_agg[_q] = "mean"
+
+    ensemble_mean = eligible.groupby(_ne_group_cols).agg(_ne_agg).reset_index()
+    ensemble_mean = ensemble_mean.rename(columns={"model_short": "composition"})
     ensemble_mean["model_short"] = "NE"
-    ensemble_mean["composition"] = model_names
-
-    # Calculate the ensemble mean over the filtered models
-    agg_dict = {"forecasted_discharge": "mean"}
-    for qcol in ("q05", "q25", "q75", "q95"):
-        if qcol in filtered_forecasts.columns:
-            agg_dict[qcol] = "mean"
-
-    ensemble_mean_q = (
-        filtered_forecasts.groupby(["date", "code", "pentad_in_month", "pentad_in_year"])
-        .agg(agg_dict)
-        .reset_index()
-    )
-
-    # Merge ensemble_mean_q into ensemble_mean
-    ensemble_mean = pd.merge(
-        ensemble_mean,
-        ensemble_mean_q,
-        on=["date", "code", "pentad_in_month", "pentad_in_year"],
-        how="left",
-    )
 
     # Append ensemble_mean to original forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
 
-    logger.info(f"Calculated ensemble forecast for models: {model_names}")
+    logger.info(
+        "Calculated NE pentad forecast: %d eligible rows, %d output groups.",
+        len(eligible),
+        len(ensemble_mean),
+    )
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
     logger.debug(
         f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].head()}"
@@ -3923,13 +3930,12 @@ def calculate_neural_ensemble_forecast_decade(forecasts):
         logger.warning("Cannot calculate neural ensemble forecast: %s.", "; ".join(guard_reasons))
         return forecasts
 
-    # Define the models we're interested in
+    # Define the models we're interested in (exact aliases, not substrings)
     target_models = ["TiDE", "TFT", "TSMixer", "TIDE", "TSMIXER"]
 
-    # Filter forecasts to include only the target models if they exist
-    available_target_models = [
-        model for model in target_models if any(forecasts["model_short"].str.contains(model))
-    ]
+    # Exact-alias matching: model_short must equal an alias exactly
+    _ne_actual = set(forecasts["model_short"].values)
+    available_target_models = [m for m in target_models if m in _ne_actual]
 
     if not available_target_models:
         logger.warning(
@@ -3937,46 +3943,54 @@ def calculate_neural_ensemble_forecast_decade(forecasts):
         )
         return forecasts
 
-    filtered_forecasts = forecasts[
-        forecasts["model_short"].str.contains("|".join(available_target_models))
-    ]
+    # Exact-alias filter (isin, not str.contains)
+    filtered_forecasts = forecasts[forecasts["model_short"].isin(available_target_models)].copy()
 
-    # Create a dataframe with unique date and codes from filtered forecasts
-    ensemble_mean = (
-        filtered_forecasts[["date", "code", "decad_in_month", "decad_in_year"]]
-        .drop_duplicates(keep="last")
-        .copy()
-    )
+    # ALL 5 fields (central + q05/q25/q75/q95) must be present and finite (MR-H).
+    # Missing any quantile column entirely => no eligible contributors.
+    _ne_all_qcols = ("q05", "q25", "q75", "q95")
+    _ne_missing_qcols = [q for q in _ne_all_qcols if q not in filtered_forecasts.columns]
+    if _ne_missing_qcols:
+        logger.warning(
+            "NE decade: quantile columns absent %s; no eligible contributors.",
+            _ne_missing_qcols,
+        )
+        return forecasts
 
-    # Add model columns to the ensemble_mean dataframe
-    model_names = ", ".join(sorted(set(available_target_models)))
+    _ne_group_cols = ["date", "code", "decad_in_month", "decad_in_year"]
+
+    eligible = filtered_forecasts.dropna(subset=["forecasted_discharge"]).copy()
+    eligible = eligible[np.isfinite(eligible["forecasted_discharge"])].copy()
+
+    # Exclude any row where any required quantile field is NaN or inf.
+    _q_arr = eligible[list(_ne_all_qcols)].values.astype(float)
+    eligible = eligible[np.isfinite(_q_arr).all(axis=1)].copy()
+
+    if eligible.empty:
+        logger.warning("NE decade: no eligible rows after finite-field filter.")
+        return forecasts
+
+    # Per-group composition and aggregation over the same eligible contributors
+
+    def _ne_compose(s):
+        return ", ".join(sorted(s.unique()))
+
+    _ne_agg = {"forecasted_discharge": "mean", "model_short": _ne_compose}
+    for _q in _ne_all_qcols:
+        _ne_agg[_q] = "mean"
+
+    ensemble_mean = eligible.groupby(_ne_group_cols).agg(_ne_agg).reset_index()
+    ensemble_mean = ensemble_mean.rename(columns={"model_short": "composition"})
     ensemble_mean["model_short"] = "NE"
-    ensemble_mean["composition"] = model_names
-
-    # Calculate the ensemble mean over the filtered models
-    agg_dict = {"forecasted_discharge": "mean"}
-    for qcol in ("q05", "q25", "q75", "q95"):
-        if qcol in filtered_forecasts.columns:
-            agg_dict[qcol] = "mean"
-
-    ensemble_mean_q = (
-        filtered_forecasts.groupby(["date", "code", "decad_in_month", "decad_in_year"])
-        .agg(agg_dict)
-        .reset_index()
-    )
-
-    # Merge ensemble_mean_q into ensemble_mean
-    ensemble_mean = pd.merge(
-        ensemble_mean,
-        ensemble_mean_q,
-        on=["date", "code", "decad_in_month", "decad_in_year"],
-        how="left",
-    )
 
     # Append ensemble_mean to original forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
 
-    logger.info(f"Calculated decadal ensemble forecast for models: {model_names}")
+    logger.info(
+        "Calculated NE decade forecast: %d eligible rows, %d output groups.",
+        len(eligible),
+        len(ensemble_mean),
+    )
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
     logger.debug(
         f"Forecasts:\n{forecasts.loc[:, ['date', 'code', 'model_short', 'forecasted_discharge']].head()}"
@@ -4124,10 +4138,28 @@ def calculate_virtual_stations_data(
             # Get the data for the contributing station
             data_contributing_station = data_df[data_df[code_col] == contributing_station].copy()
 
-            # Multiply the discharge data with the weight
-            data_contributing_station[discharge_col] = (
-                data_contributing_station[discharge_col] * weight
+            # Detect duplicate (date, model) rows — would Cartesian-expand the merge.
+            # Unsupported: negative weights, cyclic references, nested virtual sources.
+            _dup_mask = data_contributing_station.duplicated(
+                subset=[date_col, model_col], keep=False
             )
+            if _dup_mask.any():
+                _n_dup = int(_dup_mask.sum())
+                logger.warning(
+                    "Virtual %s: source %s has %d duplicate (date, model) row(s); "
+                    "those keys will produce NaN output and be dropped.",
+                    station,
+                    contributing_station,
+                    _n_dup,
+                )
+                data_contributing_station = data_contributing_station[~_dup_mask].copy()
+
+            # Apply weight to discharge and all quantile cols present in this contributor
+            _virt_base_cols = [discharge_col] + [
+                q for q in ("q05", "q25", "q75", "q95") if q in data_contributing_station.columns
+            ]
+            for _virt_col in _virt_base_cols:
+                data_contributing_station[_virt_col] = data_contributing_station[_virt_col] * weight
 
             # Add the data to the virtual station if data_virtual_station exists
             if "data_virtual_station" not in locals():
@@ -4137,28 +4169,62 @@ def calculate_virtual_stations_data(
                 # Change the name to the name of the virtual station
                 # data_virtual_station['name'] = f'Virtual hydropost {station}'
             else:
-                # Merge the data for the contributing station with the data_virtual_station
+                # All quantity cols in either frame; fill absent cols with NaN so
+                # partial sums propagate NaN when a contributor lacks a field.
+                _virt_all_qty = [discharge_col] + [
+                    q
+                    for q in ("q05", "q25", "q75", "q95")
+                    if q in data_virtual_station.columns or q in data_contributing_station.columns
+                ]
+                for _virt_col in _virt_all_qty:
+                    if _virt_col not in data_virtual_station.columns:
+                        data_virtual_station[_virt_col] = np.nan
+                    if _virt_col not in data_contributing_station.columns:
+                        data_contributing_station[_virt_col] = np.nan
+                # Merge on (date_col, model_col) — not just date_col — to avoid
+                # Cartesian product across models.
+                _virt_merge_on = [date_col, model_col]
                 data_virtual_station = pd.merge(
                     data_virtual_station,
-                    data_contributing_station,
-                    on=date_col,
+                    data_contributing_station[[*_virt_merge_on, *_virt_all_qty]],
+                    on=_virt_merge_on,
                     how="outer",
                     suffixes=("", "_y"),
                 )
-                # Add discharge_y to discharge and discard all _y columns
-                data_virtual_station[discharge_col] = (
-                    data_virtual_station[discharge_col] + data_virtual_station[discharge_col + "_y"]
-                )
+                # Sum all quantity cols; NaN propagates for missing contributors
+                for _virt_col in _virt_all_qty:
+                    if _virt_col + "_y" in data_virtual_station.columns:
+                        data_virtual_station[_virt_col] = (
+                            data_virtual_station[_virt_col] + data_virtual_station[_virt_col + "_y"]
+                        )
                 data_virtual_station.drop(
-                    columns=[col for col in data_virtual_station.columns if "_y" in col],
+                    columns=[c for c in data_virtual_station.columns if c.endswith("_y")],
                     inplace=True,
                 )
+                # Restore virtual station code (outer join may produce NaN for right-only rows)
+                data_virtual_station[code_col] = station
 
             # print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
 
         # Discard the name column
         if "name" in data_virtual_station.columns:
             data_virtual_station.drop(columns=["name"], inplace=True)
+
+        # All four quantile columns must be present — five-quantity contract.
+        # Central-only or partial-quantile inputs produce no virtual key.
+        _VIRT_QCOLS = ("q05", "q25", "q75", "q95")
+        if not all(q in data_virtual_station.columns for q in _VIRT_QCOLS):
+            del data_virtual_station
+            # Remove placeholder row added by add_hydroposts (NaN model_short).
+            # Authoritative rows with real model_short values are preserved.
+            data_df = data_df[data_df[model_col].notna()]
+            continue
+
+        # Drop (date, model) keys where any required field is non-finite.
+        # Handles missing contributors (outer join → NaN) and inf values.
+        _virt_req = [discharge_col] + list(_VIRT_QCOLS)
+        _virt_vals = data_virtual_station[_virt_req].values.astype(float)
+        data_virtual_station = data_virtual_station[np.isfinite(_virt_vals).all(axis=1)].copy()
 
         # Get the number of models in the data_df
         models = data_df[model_col].unique()
@@ -4168,22 +4234,19 @@ def calculate_virtual_stations_data(
         if station in data_df[code_col].values:
             parts_to_add = []
             for model in models:
-                # Get the data for the virtual station
-                data_station = data_df[
-                    (data_df[code_col] == station) & (data_df[model_col] == model)
-                ].copy()
+                # Anti-join on (station, model, date): add rows absent from data_df,
+                # including interior historical gaps; preserves authoritative existing rows.
+                _existing_dates = set(
+                    data_df.loc[
+                        (data_df[code_col] == station) & (data_df[model_col] == model),
+                        date_col,
+                    ]
+                )
+                _dvs_model = data_virtual_station[data_virtual_station[model_col] == model].copy()
+                _new_rows = _dvs_model[~_dvs_model[date_col].isin(_existing_dates)]
+                if not _new_rows.empty:
+                    parts_to_add.append(_new_rows)
 
-                # Get the latest date for which we have data in the data_df for the virtual station
-                last_date_station = data_station[date_col].max()
-
-                # Get the data for the date from the other stations
-                data_virtual_station = data_virtual_station[
-                    data_virtual_station[date_col] >= last_date_station
-                ].copy()
-
-                parts_to_add.append(data_virtual_station.copy())
-
-            # Concat once after loop instead of per-model (avoid O(N²) loop concat)
             if parts_to_add:
                 data_df = pd.concat([data_df] + parts_to_add, ignore_index=True)
 

@@ -137,32 +137,116 @@ class TestRunMLModel:
 
 
 class TestRunAllMLModels:
-    """Test RunAllMLModels wrapper task."""
+    """Test RunAllMLModels wrapper task.
 
-    def test_yields_all_model_horizon_combos(self, mock_env):
-        """RunAllMLModels yields model x horizon combinations."""
+    ML-020 P0: RunAllMLModels always yields canonical DECAD tasks regardless of
+    the prediction_mode parameter. Luigi deduplicates at runtime when both
+    PENTAD and DECAD workflows share the same task identity.
+    """
+
+    def test_yields_canonical_decad_tasks_for_all_models(self, mock_env):
+        """RunAllMLModels(ALL) yields one DECAD task per model, not PENTAD+DECAD."""
         from pipeline_docker import RunAllMLModels, RunMLModel
 
         task = RunAllMLModels(prediction_mode="ALL")
         deps = list(task.requires())
 
-        # Should yield PreprocessingRunoff, gateway, and model tasks
         ml_tasks = [d for d in deps if isinstance(d, RunMLModel)]
-        # With TFT,TIDE models and PENTAD,DECAD modes → 4 ML tasks
-        assert len(ml_tasks) == 4
+        # With TFT,TIDE models → 2 DECAD tasks (no PENTAD tasks)
+        assert len(ml_tasks) == 2
+        for t in ml_tasks:
+            assert t.prediction_mode == "DECAD", (
+                f"Expected canonical DECAD, got {t.prediction_mode} for {t.model_type}"
+            )
 
-    def test_single_mode_yields_subset(self, mock_env):
-        """RunAllMLModels with single mode yields only that mode."""
+    def test_pentad_mode_still_canonical_decad(self, mock_env):
+        """RunAllMLModels(PENTAD) yields canonical DECAD tasks, not PENTAD."""
         from pipeline_docker import RunAllMLModels, RunMLModel
 
         task = RunAllMLModels(prediction_mode="PENTAD")
         deps = list(task.requires())
 
         ml_tasks = [d for d in deps if isinstance(d, RunMLModel)]
-        # With TFT,TIDE models and PENTAD only → 2 ML tasks
         assert len(ml_tasks) == 2
         for t in ml_tasks:
-            assert t.prediction_mode == "PENTAD"
+            assert t.prediction_mode == "DECAD", (
+                f"RunAllMLModels(PENTAD) must produce canonical DECAD, got {t.prediction_mode}"
+            )
+
+    def test_all_modes_produce_identical_task_identity(self, mock_env):
+        """ALL/PENTAD/DECAD all produce the exact same canonical DECAD RunMLModel tasks."""
+        from pipeline_docker import RunAllMLModels, RunMLModel
+
+        def ml_identities(mode):
+            task = RunAllMLModels(prediction_mode=mode)
+            return {
+                (d.model_type, d.prediction_mode, d.run_mode)
+                for d in task.requires()
+                if isinstance(d, RunMLModel)
+            }
+
+        identities_all = ml_identities("ALL")
+        identities_pentad = ml_identities("PENTAD")
+        identities_decad = ml_identities("DECAD")
+
+        assert identities_all == identities_pentad == identities_decad, (
+            f"Task identities differ: ALL={identities_all}, "
+            f"PENTAD={identities_pentad}, DECAD={identities_decad}"
+        )
+        # Confirm all are DECAD
+        for _model_type, mode, run_mode in identities_all:
+            assert mode == "DECAD"
+            assert run_mode == "forecast"
+
+    def test_pentadal_workflow_ml_same_identity_as_decadal_workflow(self, mock_env, monkeypatch):
+        """RunPentadalWorkflow and RunDecadalWorkflow produce identical DECAD ML task objects."""
+        import pipeline_docker
+
+        monkeypatch.setattr(pipeline_docker, "RUN_ML_MODELS", "True")
+
+        pentad_wf = pipeline_docker.RunPentadalWorkflow(send_notifications=False)
+        decad_wf = pipeline_docker.RunDecadalWorkflow(send_notifications=False)
+
+        def ml_identities(deps):
+            return {
+                (d.model_type, d.prediction_mode, d.run_mode)
+                for d in deps
+                if isinstance(d, pipeline_docker.RunMLModel)
+            }
+
+        pentad_ml = ml_identities(pentad_wf.requires())
+        decad_ml = ml_identities(decad_wf.requires())
+
+        assert pentad_ml == decad_ml, (
+            f"Workflow ML identities diverge: PENTAD={pentad_ml}, DECAD={decad_ml}"
+        )
+        for _, mode, _ in pentad_ml:
+            assert mode == "DECAD"
+
+    def test_postprocessing_pentad_and_decad_same_ml_identity(self, mock_env, monkeypatch):
+        """PostProcessingForecasts(PENTAD) and (DECAD) depend on same canonical DECAD ML tasks."""
+        import pipeline_docker
+
+        monkeypatch.setattr(pipeline_docker, "RUN_ML_MODELS", "True")
+
+        pp_pentad = pipeline_docker.PostProcessingForecasts(prediction_mode="PENTAD")
+        pp_decad = pipeline_docker.PostProcessingForecasts(prediction_mode="DECAD")
+
+        def ml_identities(deps):
+            return {
+                (d.model_type, d.prediction_mode, d.run_mode)
+                for d in deps
+                if isinstance(d, pipeline_docker.RunMLModel)
+            }
+
+        pentad_ml = ml_identities(pp_pentad.requires())
+        decad_ml = ml_identities(pp_decad.requires())
+
+        assert pentad_ml == decad_ml, (
+            f"PostProcessingForecasts ML identities diverge: PENTAD={pentad_ml}, DECAD={decad_ml}"
+        )
+        for _, mode, _ in pentad_ml:
+            assert mode == "DECAD"
 
 
 class TestPostProcessingForecasts:

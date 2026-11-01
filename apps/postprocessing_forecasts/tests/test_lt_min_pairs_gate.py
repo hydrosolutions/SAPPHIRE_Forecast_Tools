@@ -689,13 +689,18 @@ class TestShortTermUnchanged:
         skill_rows = []
         for i in range(n_years):
             for model, _nse in [("LR", 0.95), ("TFT", 0.90)]:
+                d = 100.0 + i
                 fcst_rows.append(
                     {
                         "code": STATION,
                         "date": pd.Timestamp(f"{2010 + i}-01-26"),
                         period_col: pentad,
                         "model_short": model,
-                        "forecasted_discharge": 100.0 + i,
+                        "forecasted_discharge": d,
+                        "q05": d * 0.9,
+                        "q25": d * 0.95,
+                        "q75": d * 1.05,
+                        "q95": d * 1.1,
                         "pentad_in_month": 1,
                     }
                 )

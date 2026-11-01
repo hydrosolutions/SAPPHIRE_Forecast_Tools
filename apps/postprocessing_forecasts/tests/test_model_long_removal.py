@@ -106,13 +106,18 @@ def forecasts_two_models():
             "2024-01-10",
         ]
     )
+    discharges = [100.0, 110.0, 120.0, 130.0]
     return pd.DataFrame(
         {
             "code": ["10001"] * 4,
             "date": dates,
             "pentad_in_year": [1, 1, 2, 2],
             "pentad_in_month": ["1", "1", "2", "2"],
-            "forecasted_discharge": [100.0, 110.0, 120.0, 130.0],
+            "forecasted_discharge": discharges,
+            "q05": [d * 0.9 for d in discharges],
+            "q25": [d * 0.95 for d in discharges],
+            "q75": [d * 1.05 for d in discharges],
+            "q95": [d * 1.1 for d in discharges],
             "model_short": ["LR", "TFT", "LR", "TFT"],
         }
     )

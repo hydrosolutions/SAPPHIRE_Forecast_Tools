@@ -46,13 +46,18 @@ def skill_stats_pentad():
 def forecasts_pentad():
     """Forecast data for two models across multiple dates."""
     dates = pd.to_datetime(["2024-01-05", "2024-01-05", "2024-01-10", "2024-01-10"])
+    discharges = [100.0, 110.0, 120.0, 130.0]
     return pd.DataFrame(
         {
             "code": ["10001"] * 4,
             "date": dates,
             "pentad_in_year": [1, 1, 2, 2],
             "pentad_in_month": ["1", "1", "2", "2"],  # string like tl.get_pentad
-            "forecasted_discharge": [100.0, 110.0, 120.0, 130.0],
+            "forecasted_discharge": discharges,
+            "q05": [d * 0.9 for d in discharges],
+            "q25": [d * 0.95 for d in discharges],
+            "q75": [d * 1.05 for d in discharges],
+            "q95": [d * 1.1 for d in discharges],
             "model_short": ["LR", "TFT", "LR", "TFT"],
         }
     )
@@ -315,6 +320,10 @@ class TestCreateEnsembleForecasts:
                 "decad_in_year": [1, 1],
                 "decad_in_month": ["1", "1"],  # string like tl.get_decad_in_month
                 "forecasted_discharge": [100.0, 110.0],
+                "q05": [90.0, 99.0],
+                "q25": [95.0, 104.5],
+                "q75": [105.0, 115.5],
+                "q95": [110.0, 121.0],
                 "model_short": ["LR", "TFT"],
             }
         )
@@ -555,22 +564,70 @@ class TestEnsembleQuantilePropagation:
     def test_ensemble_quantile_model_mix_asymmetry(
         self, forecasts_with_quantiles, skill_stats_three_models
     ):
-        """EM point forecast uses all 3 models; EM quantiles use only 2 ML models.
+        """EM excludes LR from ALL fields when LR has NaN quantiles.
 
-        This asymmetry is expected: LR contributes to the point forecast
-        but not to quantiles (it has NaN quantiles).
+        Because LR has NaN quantiles, the consistent-population policy excludes
+        LR from forecasted_discharge as well as quantiles.  The values here
+        happen to coincide with the old behaviour (mean(110,90)=100, same as
+        mean(100,110,90)=100) but the composition no longer includes LR.
         """
         with patch.dict(os.environ, _ENSEMBLE_ENV):
             joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
 
         em = joint[joint["model_short"] == "EM"].iloc[0]
-        # Point forecast: mean(100, 110, 90) = 100.0 (all 3 models)
+        # Point forecast uses TFT+TiDE only (LR excluded — NaN quantiles)
         assert em["forecasted_discharge"] == pytest.approx(100.0)
-        # q25: mean(95, 75) = 85.0 (only TFT + TiDE)
+        # q25: mean(95, 75) = 85.0 (TFT + TiDE only)
         assert em["q25"] == pytest.approx(85.0)
+        # LR must not appear in composition since it was excluded
+        assert "LR" not in em["composition"]
+
+    def test_incomplete_lr_excluded_from_point_forecast(self):
+        """LR with NaN quantiles is excluded from point forecast (not just q-cols).
+
+        When LR contributes a high value (200) and TFT+TiDE have lower values,
+        including LR would raise the EM point forecast above the TFT+TiDE mean.
+        After the fix the point forecast equals mean(110, 90)=100, not
+        mean(200, 110, 90)=133.3.
+        """
+        skill_stats = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1, 1],
+                "code": ["A", "A", "A"],
+                "model_short": ["LR", "TFT", "TiDE"],
+                "sdivsigma": [0.3, 0.4, 0.5],
+                "nse": [0.9, 0.85, 0.82],
+                "delta": [5.0, 5.0, 5.0],
+                "accuracy": [0.9, 0.85, 0.85],
+                "mae": [5.0, 8.0, 10.0],
+                "n_pairs": [20, 20, 20],
+            }
+        )
+        forecasts = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1, 1],
+                "pentad_in_month": [1, 1, 1],
+                "date": pd.Timestamp("2025-01-05"),
+                "code": ["A", "A", "A"],
+                "model_short": ["LR", "TFT", "TiDE"],
+                "forecasted_discharge": [200.0, 110.0, 90.0],
+                "q05": [np.nan, 80.0, 60.0],
+                "q25": [np.nan, 95.0, 75.0],
+                "q75": [np.nan, 125.0, 105.0],
+                "q95": [np.nan, 140.0, 120.0],
+            }
+        )
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts, skill_stats)
+
+        em = joint[joint["model_short"] == "EM"].iloc[0]
+        # LR excluded → mean(110, 90) = 100.0, NOT mean(200, 110, 90) ≈ 133.3
+        assert em["forecasted_discharge"] == pytest.approx(100.0)
+        assert em["q25"] == pytest.approx(85.0)
+        assert "LR" not in em["composition"]
 
     def test_ensemble_no_quantiles_backward_compatible(self):
-        """Ensemble creation works when input has no quantile columns."""
+        """No EM when input has no quantile columns (MR-H: no central-only exception)."""
         skill_stats = pd.DataFrame(
             {
                 "pentad_in_year": [1, 1],
@@ -598,8 +655,8 @@ class TestEnsembleQuantilePropagation:
             joint, _ = self._make_ensemble(forecasts, skill_stats)
 
         em_rows = joint[joint["model_short"] == "EM"]
-        assert not em_rows.empty
-        assert em_rows["forecasted_discharge"].iloc[0] == pytest.approx(105.0)
+        # No q-cols present → no eligible contributors → no EM (MR-H)
+        assert em_rows.empty, "EM must not be created when quantile columns are entirely absent"
 
     def test_joint_output_preserves_individual_quantiles(
         self, forecasts_with_quantiles, skill_stats_three_models
@@ -624,6 +681,112 @@ class TestEnsembleQuantilePropagation:
         lr = joint[joint["model_short"] == "LR"].iloc[0]
         for qcol in ("q05", "q25", "q75", "q95"):
             assert pd.isna(lr[qcol]), f"LR {qcol} should be NaN"
+
+    def test_ensemble_missing_whole_quantile_column_produces_no_em(self):
+        """If any of q05/q25/q75/q95 is missing as a column, no EM is produced (MR-H)."""
+        skill_stats = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.9],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.9],
+                "mae": [5.0, 5.0],
+                "n_pairs": [20, 20],
+            }
+        )
+        # q75 is absent — only q05/q25/q95 present
+        forecasts = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "pentad_in_month": [1, 1],
+                "date": pd.Timestamp("2025-01-05"),
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "forecasted_discharge": [100.0, 110.0],
+                "q05": [80.0, 85.0],
+                "q25": [90.0, 95.0],
+                "q95": [120.0, 130.0],
+            }
+        )
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts, skill_stats)
+
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert em_rows.empty, "EM must not be created when q75 column is entirely absent"
+
+    def test_ensemble_all_null_quantiles_produces_no_em(self):
+        """All q-col values are NaN for every row → no EM (MR-H)."""
+        skill_stats = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.9],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.9],
+                "mae": [5.0, 5.0],
+                "n_pairs": [20, 20],
+            }
+        )
+        forecasts = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "pentad_in_month": [1, 1],
+                "date": pd.Timestamp("2025-01-05"),
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "forecasted_discharge": [100.0, 110.0],
+                "q05": [np.nan, np.nan],
+                "q25": [np.nan, np.nan],
+                "q75": [np.nan, np.nan],
+                "q95": [np.nan, np.nan],
+            }
+        )
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts, skill_stats)
+
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert em_rows.empty, "EM must not be created when all q-col values are NaN"
+
+    def test_ensemble_inf_central_excluded(self):
+        """A row with inf forecasted_discharge is excluded from EM (MR-H)."""
+        skill_stats = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "sdivsigma": [0.3, 0.4],
+                "nse": [0.9, 0.9],
+                "delta": [5.0, 5.0],
+                "accuracy": [0.9, 0.9],
+                "mae": [5.0, 5.0],
+                "n_pairs": [20, 20],
+            }
+        )
+        forecasts = pd.DataFrame(
+            {
+                "pentad_in_year": [1, 1],
+                "pentad_in_month": [1, 1],
+                "date": pd.Timestamp("2025-01-05"),
+                "code": ["A", "A"],
+                "model_short": ["LR", "TFT"],
+                "forecasted_discharge": [np.inf, 110.0],
+                "q05": [80.0, 85.0],
+                "q25": [90.0, 95.0],
+                "q75": [110.0, 120.0],
+                "q95": [120.0, 130.0],
+            }
+        )
+        with patch.dict(os.environ, _ENSEMBLE_ENV):
+            joint, _ = self._make_ensemble(forecasts, skill_stats)
+
+        # LR excluded (inf central) → only TFT → single model → no EM
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert em_rows.empty, "Single-model ensemble after inf exclusion must be discarded"
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +870,10 @@ class TestEMSkipDiagnosticLogging:
                 "code": ["A", "A", "B"],
                 "model_short": ["LR", "TFT", "LR"],
                 "forecasted_discharge": [100.0, 110.0, 90.0],
+                "q05": [90.0, 99.0, 81.0],
+                "q25": [95.0, 104.5, 85.5],
+                "q75": [105.0, 115.5, 94.5],
+                "q95": [110.0, 121.0, 99.0],
             }
         )
         with patch.dict(os.environ, _ENSEMBLE_ENV):

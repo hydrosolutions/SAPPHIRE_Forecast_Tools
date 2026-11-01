@@ -10,8 +10,10 @@ recalculation entry point to read monthly observations and forecasts.
 import calendar
 import datetime as dt
 import logging
+import math
 import os
 import re
+import time
 
 import pandas as pd
 from long_term_horizon_resolver import (
@@ -1843,6 +1845,58 @@ def _is_decad_boundary(d) -> bool:
     return d.day in (10, 20, last_day)
 
 
+def _calendar_days_in_next_period(issue_date, horizon_type: str) -> int:
+    """Return calendar days in the period immediately following *issue_date*.
+
+    *issue_date* must be a boundary day for the given *horizon_type*.
+    Handles February, month-ends, Dec 31, and leap years correctly.
+    """
+    d_day = issue_date.day
+    d_year = issue_date.year
+    d_month = issue_date.month
+    last_of_month = calendar.monthrange(d_year, d_month)[1]
+    if horizon_type == "pentad":
+        if d_day in (5, 10, 15, 20):
+            return 5
+        if d_day == 25:
+            return last_of_month - 25
+        return 5  # EOM: next period is 1st–5th of following month
+    # decad
+    if d_day == 10:
+        return 10
+    if d_day == 20:
+        return last_of_month - 20
+    return 10  # EOM: next period is 1st–10th of following month
+
+
+def _period_in_month_for_date(d: dt.date, horizon_type: str) -> int:
+    """Return period-in-month (1-based) for a period-start date."""
+    if horizon_type == "pentad":
+        if d.day <= 5:
+            return 1
+        elif d.day <= 10:
+            return 2
+        elif d.day <= 15:
+            return 3
+        elif d.day <= 20:
+            return 4
+        elif d.day <= 25:
+            return 5
+        return 6
+    # decade
+    if d.day <= 10:
+        return 1
+    elif d.day <= 20:
+        return 2
+    return 3
+
+
+def _period_in_year_for_date(d: dt.date, horizon_type: str) -> int:
+    """Return period-in-year (1-based) for a period-start date."""
+    periods_per_month = 6 if horizon_type == "pentad" else 3
+    return (d.month - 1) * periods_per_month + _period_in_month_for_date(d, horizon_type)
+
+
 def _clean_code_column(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure code column is string without trailing .0."""
     if "code" in df.columns:
@@ -2377,6 +2431,179 @@ def _normalize_lr_forecasts(
     return forecasts, stats
 
 
+def _apply_day_coverage_filter(
+    day_df: pd.DataFrame,
+    model: str,
+    horizon_type: str,
+) -> pd.DataFrame:
+    """Apply MR-C coverage checks to positively-identified DAY rows.
+
+    Rules applied in order:
+    1. Rows without a ``target`` column are excluded (identity unverifiable).
+    2. Target must fall within the calendar window [issue+1, issue+period_length]
+       derived from ``_calendar_days_in_next_period`` — no external library.
+    3. Semantic-duplicate rows (same identity + payload; API metadata ignored)
+       are collapsed to one.
+    4. Any ``(code, issue_date)`` group that contains a ``target`` value with
+       conflicting payloads across rows is excluded entirely.  A count
+       diagnostic is emitted — no station codes or dates are logged.
+       This is the conservative default: partial-conflict groups are not
+       retained by a "keep last" or similar arbitrary policy.
+    5. A row counts toward coverage only if all present value columns
+       (``forecasted_discharge``, ``q05``, ``q25``, ``q75``, ``q95``) are
+       simultaneously finite (not null, not ±inf) — the shared mask.
+    6. A ``(code, issue_date)`` group passes only when the number of unique
+       target dates that satisfy the shared mask is >= ``ceil(0.5 * C)``
+       where ``C`` is the actual calendar days in the next period.
+
+    Returns a DataFrame with the same columns as the input; no coverage
+    columns are added.
+    """
+    if day_df.empty:
+        return day_df
+
+    if "target" not in day_df.columns or "date" not in day_df.columns:
+        n = len(day_df)
+        if n:
+            logger.info(
+                "Excluded %d DAY rows for %s (%s): missing target column — "
+                "cannot verify calendar coverage",
+                n,
+                model,
+                horizon_type,
+            )
+        return pd.DataFrame(columns=day_df.columns)
+
+    # All five columns are always required for DAY aggregation — no fallback.
+    _REQUIRED_VALUE_COLS = ("forecasted_discharge", "q05", "q25", "q75", "q95")
+    missing_required = [c for c in _REQUIRED_VALUE_COLS if c not in day_df.columns]
+    if missing_required:
+        logger.info(
+            "Excluded %d DAY rows for %s (%s): missing required columns %s",
+            len(day_df),
+            model,
+            horizon_type,
+            missing_required,
+        )
+        return pd.DataFrame(columns=day_df.columns)
+    value_cols = list(_REQUIRED_VALUE_COLS)
+
+    # 1. Calendar bounds: target must fall within [issue+1, issue+period_length].
+    #    Computed via _calendar_days_in_next_period — no external library needed;
+    #    handles EOM, leap years, and cross-year (Dec 31 → Jan) correctly.
+    dates = pd.to_datetime(day_df["date"])
+    targets = pd.to_datetime(day_df["target"])
+    period_starts = dates + pd.Timedelta(days=1)
+    period_lengths = dates.apply(lambda d: _calendar_days_in_next_period(d, horizon_type))
+    period_ends = period_starts + pd.to_timedelta(period_lengths - 1, unit="D")
+    in_bounds = (targets >= period_starts) & (targets <= period_ends)
+    n_out_of_bounds = int((~in_bounds).sum())
+    if n_out_of_bounds:
+        logger.info(
+            "Dropped %d DAY target rows outside %s calendar window for %s",
+            n_out_of_bounds,
+            horizon_type,
+            model,
+        )
+    day_df = day_df[in_bounds.values].copy()
+    if day_df.empty:
+        return pd.DataFrame(columns=day_df.columns)
+
+    # 2. Collapse semantic-duplicate rows (same identity + payload).
+    #    API metadata columns (id, created_at, updated_at) are deliberately
+    #    excluded: two rows with identical identity+payload but different
+    #    response metadata represent the same forecast and must deduplicate.
+    _SEMANTIC_DEDUP_COLS = [
+        "code",
+        "date",
+        "target",
+        "forecasted_discharge",
+        "q05",
+        "q25",
+        "q75",
+        "q95",
+    ]
+    _OPTIONAL_DEDUP = [
+        "flag",
+        "applicable",
+        "horizon_type",
+        "model_type",
+        "horizon_value",
+        "horizon_in_year",
+    ]
+    _dedup_cols = [c for c in _SEMANTIC_DEDUP_COLS + _OPTIONAL_DEDUP if c in day_df.columns]
+    day_df = day_df.drop_duplicates(subset=_dedup_cols)
+
+    # 3. Conflict detection: after semantic-dedup, any (code, date, target)
+    #    group with >1 row has genuinely conflicting payloads.
+    key3 = ["code", "date", "target"]
+    if all(c in day_df.columns for c in key3):
+        target_counts = day_df.groupby(key3, sort=False).size()
+        conflict_targets = target_counts[target_counts > 1]
+        if len(conflict_targets):
+            # Collect (code, date) pairs that contain at least one conflict.
+            exc_mask = pd.Series(False, index=day_df.index)
+            conflict_group_count = 0
+            seen_pairs: set = set()
+            for idx in conflict_targets.index:
+                code_val, date_val = idx[0], idx[1]
+                pair = (str(code_val), date_val)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                m = (day_df["code"].astype(str) == str(code_val)) & (day_df["date"] == date_val)
+                if m.any():
+                    exc_mask |= m
+                    conflict_group_count += 1
+            if conflict_group_count:
+                logger.warning(
+                    "Excluded %d (code, issue_date) groups for %s (%s): "
+                    "conflicting DAY target payloads — conservative default, "
+                    "no arbitrary keep",
+                    conflict_group_count,
+                    model,
+                    horizon_type,
+                )
+            day_df = day_df[~exc_mask].copy()
+
+    if day_df.empty:
+        return pd.DataFrame(columns=day_df.columns)
+
+    # 4. Coverage check per (code, date) group.
+    #    Finite mask: ALL present value columns must be simultaneously finite.
+    _pos_inf = float("inf")
+    _neg_inf = float("-inf")
+    finite_per_row = pd.Series(True, index=day_df.index)
+    for col in value_cols:
+        numeric = pd.to_numeric(day_df[col], errors="coerce")
+        finite_per_row &= numeric.notna() & (numeric != _pos_inf) & (numeric != _neg_inf)
+
+    valid_mask = pd.Series(False, index=day_df.index)
+    insufficient_count = 0
+    for (_code, date), grp in day_df.groupby(["code", "date"], sort=False):
+        cal_days = _calendar_days_in_next_period(date, horizon_type)
+        threshold = math.ceil(0.5 * cal_days)
+        grp_finite = finite_per_row.loc[grp.index]
+        finite_rows = grp[grp_finite.values]
+        n_unique_finite = finite_rows["target"].nunique() if not finite_rows.empty else 0
+        if n_unique_finite >= threshold:
+            finite_in_grp = finite_per_row.loc[grp.index]
+            valid_mask.loc[grp.index[finite_in_grp.values]] = True
+        else:
+            insufficient_count += 1
+
+    if insufficient_count:
+        logger.info(
+            "Excluded %d (code, issue_date) DAY groups for %s (%s): "
+            "insufficient calendar coverage (< 50%% threshold)",
+            insufficient_count,
+            model,
+            horizon_type,
+        )
+
+    return day_df[valid_mask].copy()
+
+
 def _normalize_ml_forecasts(
     df: pd.DataFrame,
     model: str,
@@ -2461,6 +2688,48 @@ def _normalize_ml_forecasts(
                 model,
             )
             return pd.DataFrame()
+
+    # MR-C: Apply coverage check for positively-identified DAY rows.
+    # Only rows where horizon_type == "day" are subject to the >=50%
+    # calendar-coverage threshold.  Rows with a KNOWN period horizon_type
+    # ("pentad" or "decade") are positively-identified retained legacy period
+    # rows and bypass the coverage check.  Rows with any other value (null,
+    # unknown, malformed, or the internal alias "decad") are NOT positively
+    # identified and must go through the coverage check — conservative
+    # exclusion, no arbitrary keep.
+    # Absent horizon_type column is unidentified — conservative rejection.
+    _HT_COL = "horizon_type"
+    # Only "pentad" and "decade" are positively-identified legacy period types
+    # from the API.  Any other value — including null, NaN, unknown strings,
+    # and the internal alias "decad" — is treated as unidentified and rejected.
+    _KNOWN_PERIOD_TYPES = frozenset({"pentad", "decade"})
+    if _HT_COL not in df.columns:
+        # Absent identity column: all rows are unidentified — conservative rejection.
+        logger.info(
+            "Excluded %d rows for %s (%s): horizon_type column absent — "
+            "cannot establish row identity",
+            len(df),
+            model,
+            horizon_type,
+        )
+        return pd.DataFrame()
+    _period_mask = df[_HT_COL].isin(_KNOWN_PERIOD_TYPES)
+    _day_mask = df[_HT_COL] == "day"
+    _unknown_mask = ~_period_mask & ~_day_mask
+    if _unknown_mask.any():
+        logger.info(
+            "Excluded %d rows for %s (%s): unrecognised horizon_type — conservative exclusion",
+            int(_unknown_mask.sum()),
+            model,
+            horizon_type,
+        )
+    _period_df = df[_period_mask].copy()
+    _day_df = df[_day_mask].copy()
+    if not _day_df.empty:
+        _day_df = _apply_day_coverage_filter(_day_df, model, horizon_type)
+    df = pd.concat([_period_df, _day_df], ignore_index=True)
+    if df.empty:
+        return pd.DataFrame()
 
     # Aggregate daily targets -> pentad/decad level
     numeric_cols = [
@@ -4614,3 +4883,1155 @@ def _deduplicate_seasonal_forecasts(df: pd.DataFrame) -> pd.DataFrame:
     if len(available) < 4:
         return df
     return df.drop_duplicates(subset=available, keep="last")
+
+
+# ===================================================================
+# P1 Recovery: strict bounded API readers (no CSV fallback, no writes)
+# ===================================================================
+
+# Status codes returned by the recovery readers.
+RECOVERY_STATUS_COMPLETE = "COMPLETE"
+RECOVERY_STATUS_EMPTY = "CONFIRMED_EMPTY"
+RECOVERY_STATUS_DISABLED = "DISABLED"
+RECOVERY_STATUS_FAILED = "FAILED"
+
+# DAY and combined-period schema: identity + all persisted value fields.
+# horizon_value/horizon_in_year are the "horizon integers" stored in the DB.
+# flag may be null but the column must be present.
+_RECOVERY_DAY_REQUIRED_COLS = frozenset(
+    {
+        "code",
+        "date",
+        "target",
+        "model_type",
+        "horizon_type",
+        "flag",
+        "horizon_value",
+        "horizon_in_year",
+        "forecasted_discharge",
+        "q05",
+        "q25",
+        "q75",
+        "q95",
+    }
+)
+# Combined period requires composition in addition to DAY fields (finding 5):
+# ForecastBase includes composition and create_forecast applies full model_dump
+# upserts, so a response missing composition is an incomplete writable record.
+_RECOVERY_COMBINED_PERIOD_REQUIRED_COLS = frozenset(
+    {
+        "code",
+        "date",
+        "target",
+        "model_type",
+        "horizon_type",
+        "flag",
+        "horizon_value",
+        "horizon_in_year",
+        "composition",
+        "forecasted_discharge",
+        "q05",
+        "q25",
+        "q75",
+        "q95",
+    }
+)
+# LR forecasts have an independent schema; quantile columns are not stored.
+# Identity fields: code, date, horizon_type, horizon_value, horizon_in_year.
+# forecasted_discharge is nullable but the column must be present.
+_RECOVERY_LR_REQUIRED_COLS = frozenset(
+    {
+        "code",
+        "date",
+        "horizon_type",
+        "horizon_value",
+        "horizon_in_year",
+        "forecasted_discharge",
+    }
+)
+
+# Identity columns used for full-key conflict detection (DAY/combined).
+# flag, horizon_value, horizon_in_year are VALUE fields, not DB identity;
+# two rows with the same (code, date, target, model_type, horizon_type) but
+# different flag/horizon ints are a conflict, not a new version.
+_RECOVERY_DAY_IDENTITY_COLS = frozenset(
+    {
+        "code",
+        "date",
+        "target",
+        "model_type",
+        "horizon_type",
+    }
+)
+# LR DB key: two rows sharing (horizon_type, code, date) with different writable
+# fields are a conflict (finding 3).
+_RECOVERY_LR_IDENTITY_COLS = frozenset({"horizon_type", "code", "date"})
+# API-metadata columns excluded from repeated-page fingerprints and conflict keys.
+_RECOVERY_FINGERPRINT_EXCLUDE = frozenset({"id"})
+# RAW int-type validation sets for _recovery_fetch_raw_page (NEWP1).
+# required_int_cols: non-null, isinstance int (not bool), within int64 range.
+# nullable_int_cols: None or same valid int rules.
+# nullable_str_cols: None or str; no numeric types accepted.
+_RECOVERY_HORIZON_INT_COLS = frozenset({"horizon_value", "horizon_in_year"})
+_RECOVERY_FLAG_NULLABLE_INT_COLS = frozenset({"flag"})
+_RECOVERY_COMPOSITION_NULLABLE_STR_COLS = frozenset({"composition"})
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63  # exclusive upper bound (Python int, not numpy)
+# Known API model aliases for short-term ML recovery readers.
+# Must match VALID_FORECAST_MODELS in the installed sapphire_api_client.
+_RECOVERY_DAY_ML_MODELS = frozenset({"TFT", "TiDE", "TSMixer"})
+_RECOVERY_PERIOD_ML_MODELS = frozenset({"TFT", "TiDE", "TSMixer", "NE", "EM"})
+
+# Known input aliases that map to canonical API model short names.
+# Requests use canonical names; raw API responses may carry an alias and
+# are accepted only when it maps to the same canonical form.  Unknown
+# strings pass through unchanged so the caller's model-set check rejects
+# them explicitly.  No generic strip/uppercase conversion.
+_RECOVERY_MODEL_ALIAS_MAP: dict[str, str] = {
+    "TIDE": "TiDE",
+    "TSMIXER": "TSMixer",
+    "NEURAL_ENSEMBLE": "NE",
+    "ENSEMBLE_MEAN": "EM",
+}
+
+
+def _resolve_recovery_model(model: str) -> str:
+    """Map a known alias to its canonical API model short name.
+
+    Accepted aliases: TIDE → TiDE, TSMIXER → TSMixer,
+    NEURAL_ENSEMBLE → NE, ENSEMBLE_MEAN → EM.
+    Unknown strings are returned unchanged.
+    """
+    return _RECOVERY_MODEL_ALIAS_MAP.get(model, model)
+
+
+# Application-owned finite deadline default applied when callers pass None.
+# Ensures all enabled recovery reads run under a bounded clock budget.
+_RECOVERY_DEFAULT_DEADLINE_SECONDS = 120.0
+
+
+def _recovery_check_api_enabled() -> bool:
+    """Return False when SAPPHIRE_API_ENABLED is explicitly disabled."""
+    return os.getenv("SAPPHIRE_API_ENABLED", "true").lower() != "false"
+
+
+def _recovery_validate_page(
+    page: pd.DataFrame | None,
+    required_cols: frozenset[str],
+    expected_code: str,
+    start_date: dt.date,
+    end_date: dt.date,
+    forecast_date: dt.date,
+    issue_col: str = "date",
+    *,
+    expected_model: str | None = None,
+    expected_horizon_type: str | None = None,
+    numeric_cols: tuple[str, ...] = (),
+    target_col: str | None = None,
+    horizon_int_cols: tuple[str, ...] = (),
+) -> str | None:
+    """Validate a single API response page.
+
+    Args:
+        page: The page DataFrame to validate.
+        required_cols: Column names that must be present for non-empty pages.
+        expected_code: All rows must carry exactly this code.
+        start_date: Inclusive lower bound for the issue column.
+        end_date: Inclusive upper bound for the issue column.
+        forecast_date: Issue dates must be <= this (no future rows).
+        issue_col: Name of the issue-date column.
+        expected_model: When provided, all rows must have model_type == this.
+        expected_horizon_type: When provided, all rows must have
+            horizon_type == this (exact string match, e.g. "day", "pentad").
+        numeric_cols: Columns whose non-null values must be finite numeric
+            (bool values, non-numeric strings, and ±inf are rejected).
+        target_col: When provided, validates target date column (finding 1):
+            canonical ISO naive-midnight dates; for DAY checks issue+1..11
+            range; for pentad/decade checks valid period-start boundary.
+        horizon_int_cols: Columns that must be non-null, non-bool, integer-
+            valued (not fractional). Used for horizon_value/horizon_in_year
+            on DAY and period records (finding 1).
+
+    Returns:
+        None if valid, or a failure reason string.
+    """
+    if page is None:
+        return "page is None"
+    if not isinstance(page, pd.DataFrame):
+        return "page is not a DataFrame"
+    # 0-row frame is a valid confirmed-empty response regardless of columns.
+    if len(page) == 0:
+        return None
+    # Nonzero rows with zero columns is malformed.
+    if page.shape[1] == 0:
+        return "zero-column frame with nonzero rows"
+    missing = required_cols - set(page.columns)
+    if missing:
+        return f"missing required columns: {sorted(missing)}"
+
+    # Validate identity: code must be exact string match — no astype coercion,
+    # no numeric conversion (finding 2: integer 19999 must not match string '19999').
+    code_col_series = page["code"]
+    if not code_col_series.apply(lambda v: isinstance(v, str) and v == str(expected_code)).all():
+        return f"returned code(s) do not match requested code {expected_code!r}"
+
+    def _is_canonical_date_raw(v) -> bool:
+        """Return True iff v is a canonically typed date value.
+
+        Accepts: YYYY-MM-DD string (exact roundtrip), dt.date (not datetime),
+        or naive exact-midnight dt.datetime / pd.Timestamp (micro/ns=0).
+        Rejects: bool, NaT, tz-aware, time-bearing, numbers, slash/compact
+        strings, and any other non-date type.
+        """
+        if isinstance(v, bool):
+            return False
+        if v is pd.NaT:
+            return False
+        if isinstance(v, pd.Timestamp):
+            if v is pd.NaT or v.tzinfo is not None:
+                return False
+            return (
+                v.hour == 0
+                and v.minute == 0
+                and v.second == 0
+                and v.microsecond == 0
+                and v.nanosecond == 0
+            )
+        if isinstance(v, dt.datetime):  # dt.datetime is a subclass of dt.date
+            if v.tzinfo is not None:
+                return False
+            return v.hour == 0 and v.minute == 0 and v.second == 0 and v.microsecond == 0
+        if isinstance(v, dt.date):  # plain date, not datetime
+            return True
+        if isinstance(v, str):
+            if len(v) != 10 or v[4] != "-" or v[7] != "-":
+                return False
+            try:
+                parsed_d = dt.date.fromisoformat(v)
+                return parsed_d.isoformat() == v
+            except ValueError:
+                return False
+        return False
+
+    def _validate_date_col(series_name: str, col_series: pd.Series) -> str | None:
+        """Shared naive-midnight ISO date validation for issue and target cols.
+
+        Checks raw value types first (rejecting slash dates, compact dates,
+        time-bearing strings, numbers, bools, NaT, and tz-aware timestamps)
+        before parsing.
+        """
+        for v in col_series:
+            if not _is_canonical_date_raw(v):
+                return (
+                    f"non-canonical value {v!r} in {series_name!r} column: "
+                    "must be YYYY-MM-DD string, date, or naive-midnight Timestamp"
+                )
+        parsed = pd.to_datetime(col_series, errors="coerce")
+        if parsed.isna().any():
+            return f"NaT/null/unparseable values in {series_name!r} column"
+        if parsed.dt.tz is not None:
+            return f"timezone-aware timestamp in {series_name!r} column"
+        non_midnight = (
+            (parsed.dt.hour != 0)
+            | (parsed.dt.minute != 0)
+            | (parsed.dt.second != 0)
+            | (parsed.dt.microsecond != 0)
+            | (parsed.dt.nanosecond != 0)
+        )
+        if non_midnight.any():
+            return f"non-midnight/has-time-component in {series_name!r} column"
+        return None
+
+    # Validate issue date bounds.
+    if issue_col in page.columns:
+        err = _validate_date_col(issue_col, page[issue_col])
+        if err is not None:
+            return err
+        issue_series = pd.to_datetime(page[issue_col], errors="coerce")
+        issue_dates = issue_series.dt.date
+        if (issue_dates > forecast_date).any():
+            return "returned rows contain future issue dates"
+        if (issue_dates < start_date).any() or (issue_dates > end_date).any():
+            return "returned rows outside requested date window"
+    else:
+        issue_series = None
+
+    # Validate model identity when a specific model was requested.
+    if expected_model is not None and "model_type" in page.columns:
+        model_series = page["model_type"].astype(str)
+        if not (model_series == str(expected_model)).all():
+            return f"returned model_type(s) do not match requested model {expected_model!r}"
+
+    # Validate horizon type identity when expected (e.g. "day", "pentad").
+    if expected_horizon_type is not None and "horizon_type" in page.columns:
+        ht_series = page["horizon_type"]
+        if not (ht_series == expected_horizon_type).all():
+            return f"returned horizon_type(s) do not match expected {expected_horizon_type!r}"
+
+    # Validate numeric columns: bool, non-numeric strings, and ±inf are rejected.
+    # Raw null (NaN/None) is allowed (known-incomplete contributor).
+    for col in numeric_cols:
+        if col not in page.columns:
+            continue
+        col_series = page[col]
+        # Reject bool dtype columns
+        if col_series.dtype == bool or str(col_series.dtype) == "bool":
+            return f"column {col!r} contains bool values (bool rejected as numeric)"
+        # Reject object columns with Python bool instances or non-numeric strings
+        if col_series.dtype == object:
+            non_null = col_series.dropna()
+            if len(non_null) > 0:
+                if non_null.apply(lambda v: isinstance(v, bool)).any():
+                    return f"column {col!r} contains bool values (bool rejected as numeric)"
+                # Require real numeric types; reject numeric strings (e.g. "100.0")
+                if non_null.apply(lambda v: not isinstance(v, (int, float, complex))).any():
+                    return f"column {col!r} contains non-numeric values (strings rejected)"
+        # Non-null values must coerce to numeric without loss
+        non_null = col_series.dropna()
+        if len(non_null) > 0:
+            coerced = pd.to_numeric(non_null, errors="coerce")
+            if coerced.isna().any():
+                return f"column {col!r} contains non-numeric values"
+            # Reject ±inf
+            if coerced.isin([float("inf"), float("-inf")]).any():
+                return f"column {col!r} contains infinite values"
+
+    # Validate target column: canonical ISO naive-midnight dates, and range checks
+    # (finding 1: DAY issue+1..11; period exact issue+1 start day).
+    target_parsed = None
+    if target_col is not None and target_col in page.columns:
+        err = _validate_date_col(target_col, page[target_col])
+        if err is not None:
+            return err
+        target_parsed = pd.to_datetime(page[target_col], errors="coerce")
+        if expected_horizon_type == "day" and issue_series is not None:
+            # DAY targets must fall in [issue+1, issue+11] per row.
+            tgt_dates = target_parsed.dt.date
+            iss_dates = issue_series.dt.date
+            min_valid = iss_dates.apply(lambda d: d + dt.timedelta(days=1))
+            max_valid = iss_dates.apply(lambda d: d + dt.timedelta(days=11))
+            if not ((tgt_dates >= min_valid) & (tgt_dates <= max_valid)).all():
+                return "DAY target outside expected issue+1..11 range"
+        elif expected_horizon_type in ("pentad", "decade"):
+            # Period targets must be valid period-start days.
+            valid_starts = (
+                (1, 6, 11, 16, 21, 26) if expected_horizon_type == "pentad" else (1, 11, 21)
+            )
+            if not target_parsed.dt.day.isin(valid_starts).all():
+                return (
+                    f"period target day-of-month not a valid {expected_horizon_type} "
+                    f"start: must be one of {valid_starts}"
+                )
+            # Period target must be exactly issue_date + 1 day per row.
+            if issue_series is not None:
+                expected_target = (issue_series + pd.Timedelta(days=1)).dt.date
+                if not (target_parsed.dt.date == expected_target).all():
+                    return "period target must be exactly issue_date+1"
+
+    # Validate horizon integer columns: must be non-null, non-bool, integer-valued
+    # (finding 1: horizon_value and horizon_in_year on DAY/period records).
+    for col in horizon_int_cols:
+        if col not in page.columns:
+            continue
+        col_series = page[col]
+        # Reject bool
+        if col_series.dtype == bool or str(col_series.dtype) == "bool":
+            return f"column {col!r} contains bool values (must be integer)"
+        if col_series.dtype == object:
+            if col_series.apply(lambda v: isinstance(v, bool)).any():
+                return f"column {col!r} contains bool values (must be integer)"
+            # Reject numeric strings and any non-plain-int types (finding 1/new2).
+            # Raw JSON integers are plain int; strings like '279' are invalid here.
+            if col_series.apply(lambda v: not isinstance(v, int) or isinstance(v, bool)).any():
+                return f"column {col!r} contains non-integer values (strings rejected)"
+        # Reject null (horizon integers are non-nullable on DAY/period records)
+        if col_series.isna().any():
+            return f"column {col!r} contains null values (must be non-null integer)"
+        # Reject fractional and non-finite values (new2: inf raises on astype('int64'))
+        coerced_int = pd.to_numeric(col_series, errors="coerce")
+        if coerced_int.isna().any():
+            return f"column {col!r} contains non-numeric values"
+        if coerced_int.isin([float("inf"), float("-inf")]).any():
+            return f"column {col!r} contains infinite values (must be finite integer)"
+        if not (coerced_int == coerced_int.astype("int64")).all():
+            return f"column {col!r} contains fractional values (must be integer)"
+
+    # Validate horizon integer VALUES against target DOY (DAY) or period
+    # calendar integers (pentad/decade).  Runs after target_parsed is set.
+    if horizon_int_cols and target_parsed is not None:
+        if expected_horizon_type == "day":
+            # Both horizon_value and horizon_in_year must equal target DOY.
+            expected_doy = target_parsed.apply(
+                lambda t: t.timetuple().tm_yday if pd.notna(t) else None
+            ).astype("int64")
+            for col in horizon_int_cols:
+                if col in page.columns:
+                    actual = pd.to_numeric(page[col], errors="coerce").astype("int64")
+                    if not (actual == expected_doy).all():
+                        return f"DAY column {col!r} values must equal target day-of-year"
+        elif expected_horizon_type in ("pentad", "decade"):
+            # horizon_value must equal period-in-month; horizon_in_year must
+            # equal period-in-year for the target date.
+            ht = expected_horizon_type  # "pentad" or "decade"
+            if "horizon_value" in horizon_int_cols and "horizon_value" in page.columns:
+                expected_pim = target_parsed.apply(
+                    lambda t: _period_in_month_for_date(t.date(), ht) if pd.notna(t) else None
+                ).astype("int64")
+                actual_hv = pd.to_numeric(page["horizon_value"], errors="coerce").astype("int64")
+                if not (actual_hv == expected_pim).all():
+                    return "period 'horizon_value' must equal target period-in-month"
+            if "horizon_in_year" in horizon_int_cols and "horizon_in_year" in page.columns:
+                expected_piy = target_parsed.apply(
+                    lambda t: _period_in_year_for_date(t.date(), ht) if pd.notna(t) else None
+                ).astype("int64")
+                actual_hiy = pd.to_numeric(page["horizon_in_year"], errors="coerce").astype("int64")
+                if not (actual_hiy == expected_piy).all():
+                    return "period 'horizon_in_year' must equal target period-in-year"
+
+    # Validate flag: nullable integer (finding 1 + finding 5).
+    if "flag" in page.columns:
+        flag_s = page["flag"]
+        non_null_flag = flag_s.dropna()
+        if len(non_null_flag) > 0:
+            if non_null_flag.dtype == bool or str(non_null_flag.dtype) == "bool":
+                return "column 'flag' contains bool values (flag must be integer or null)"
+            if (
+                non_null_flag.dtype == object
+                and non_null_flag.apply(lambda v: isinstance(v, bool)).any()
+            ):
+                return "column 'flag' contains bool values (flag must be integer or null)"
+            # Reject non-integer raw types (strings, floats) for flag.
+            if (
+                non_null_flag.dtype == object
+                and non_null_flag.apply(
+                    lambda v: not isinstance(v, int) or isinstance(v, bool)
+                ).any()
+            ):
+                return "column 'flag' contains non-integer values (strings rejected)"
+            coerced_flag = pd.to_numeric(non_null_flag, errors="coerce")
+            if coerced_flag.isna().any():
+                return "column 'flag' contains non-numeric values"
+            if coerced_flag.isin([float("inf"), float("-inf")]).any():
+                return "column 'flag' contains infinite values"
+            if not (coerced_flag == coerced_flag.astype("int64")).all():
+                return "column 'flag' contains fractional values (must be integer or null)"
+
+    # Validate composition: string or null (finding 5).
+    if "composition" in page.columns:
+        composition_s = page["composition"]
+        non_null_comp = composition_s.dropna()
+        if len(non_null_comp) > 0 and non_null_comp.apply(lambda v: not isinstance(v, str)).any():
+            return "column 'composition' must contain string values (not numeric or other types)"
+
+    return None  # valid
+
+
+def _recovery_fetch_raw_page(
+    client: object,
+    endpoint: str,
+    params: dict,
+    required_keys: frozenset | None = None,
+    required_int_cols: frozenset | None = None,
+    nullable_int_cols: frozenset | None = None,
+    nullable_str_cols: frozenset | None = None,
+) -> tuple[list | None, str | None]:
+    """Fetch a single page via client._get and validate raw JSON shape.
+
+    Private interface: relies on client._get (SapphireAPIClient base method).
+    Only [] is a true confirmed-empty response. null/false/{}/malformed
+    later-page records all fail the entire source (finding 4).
+
+    Args:
+        client: Client with a _get(endpoint, params) method.
+        endpoint: API endpoint path.
+        params: Query parameters dict.
+        required_keys: When provided, every element dict must contain all these
+            keys (finding 5: absent key vs explicit null are indistinguishable
+            after DataFrame construction, so validate before converting).
+        required_int_cols: Columns that must be non-null int (not bool) within
+            int64 range [_INT64_MIN, _INT64_MAX). No float or str rescue.
+        nullable_int_cols: Columns that must be None or a valid int64 (same
+            type rules; bools rejected).
+        nullable_str_cols: Columns that must be None or str; numeric types
+            rejected even when integer-valued.
+
+    Returns:
+        (records_list, None) on success — records_list may be empty [].
+        (None, error_string) on shape failure or exception.
+    """
+    try:
+        raw = client._get(endpoint, params=params)
+    except Exception as exc:
+        return None, f"_get raised exception: {exc}"
+    # Only [] (empty list) is confirmed empty. null/false/{} are malformed.
+    if raw is None or raw is False or (isinstance(raw, dict) and not raw):
+        return None, f"API returned non-list falsy value: {raw!r}"
+    if not isinstance(raw, list):
+        return None, f"API returned non-list type {type(raw).__name__!r}"
+    for i, item in enumerate(raw):  # validate ALL elements (not just first 5)
+        if not isinstance(item, dict):
+            return None, f"API returned non-dict element at index {i}: {type(item).__name__!r}"
+        if required_keys is not None:
+            missing = required_keys - item.keys()
+            if missing:
+                return None, (f"element at index {i} missing required keys: {sorted(missing)}")
+        if required_int_cols is not None:
+            for col in required_int_cols:
+                v = item.get(col)
+                if v is None:
+                    return None, (
+                        f"element at index {i} field {col!r} is null (required non-null int)"
+                    )
+                if isinstance(v, bool) or not isinstance(v, int):
+                    return None, (
+                        f"element at index {i} field {col!r} is not an int: {type(v).__name__!r}"
+                    )
+                if not (_INT64_MIN <= v < _INT64_MAX):
+                    return None, (
+                        f"element at index {i} field {col!r} value {v!r} out of int64 range"
+                    )
+        if nullable_int_cols is not None:
+            for col in nullable_int_cols:
+                v = item.get(col)
+                if v is not None:
+                    if isinstance(v, bool) or not isinstance(v, int):
+                        return None, (
+                            f"element at index {i} field {col!r} must be null or int,"
+                            f" got {type(v).__name__!r}"
+                        )
+                    if not (_INT64_MIN <= v < _INT64_MAX):
+                        return None, (
+                            f"element at index {i} field {col!r} value {v!r} out of int64 range"
+                        )
+        if nullable_str_cols is not None:
+            for col in nullable_str_cols:
+                v = item.get(col)
+                if v is not None and not isinstance(v, str):
+                    return None, (
+                        f"element at index {i} field {col!r} must be null or str,"
+                        f" got {type(v).__name__!r}"
+                    )
+    return raw, None
+
+
+def read_day_forecasts_for_recovery(
+    client: object,
+    codes: list[str],
+    model: str,
+    start_date: dt.date,
+    end_date: dt.date,
+    forecast_date: dt.date,
+    *,
+    total_deadline: float | None = None,
+    page_size: int = 500,
+    max_pages: int = 200,
+    _clock=time.monotonic,
+) -> tuple[str, pd.DataFrame | None, str]:
+    """Read horizon='day' forecast rows for a bounded recovery operation.
+
+    Args:
+        client: Injected SapphirePostprocessingClient (None → DISABLED).
+        codes: Station codes to read (each fetched separately).
+        model: Model short name to filter at the API level.
+        start_date: Inclusive lower bound for the issue date.
+        end_date: Inclusive upper bound for the issue date.
+        forecast_date: Captured run date; issue dates must be <= this.
+        total_deadline: Absolute monotonic-clock deadline (from _clock()).
+            If provided and exceeded, returns FAILED and discards partial data.
+        page_size: Records per API page (positive integer).
+        max_pages: Hard per-code page cap to prevent unbounded reads.
+        _clock: Injectable monotonic clock function (for testing).
+
+    Returns:
+        Tuple of (status, frame, reason).
+        status is one of RECOVERY_STATUS_* constants.
+        frame is a raw (pre-normalizer) DataFrame when status=COMPLETE or
+        CONFIRMED_EMPTY; None otherwise.
+        reason is a descriptive string (empty string when status=COMPLETE).
+    """
+    if client is None:
+        return RECOVERY_STATUS_DISABLED, None, "client is None"
+    if not _recovery_check_api_enabled():
+        return RECOVERY_STATUS_DISABLED, None, "SAPPHIRE_API_ENABLED=false"
+    if not codes:
+        return RECOVERY_STATUS_EMPTY, pd.DataFrame(), "no codes requested"
+    # Resolve known aliases (e.g. TIDE → TiDE) before the model-set check.
+    model = _resolve_recovery_model(model)
+    # Validate model against known DAY ML aliases (finding 6).
+    if model not in _RECOVERY_DAY_ML_MODELS:
+        return (
+            RECOVERY_STATUS_FAILED,
+            None,
+            (f"unsupported DAY model {model!r}: must be one of {sorted(_RECOVERY_DAY_ML_MODELS)}"),
+        )
+    # bool is a subclass of int in Python; reject explicitly before the int check.
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0:
+        return RECOVERY_STATUS_FAILED, None, "page_size must be a positive integer (not bool)"
+    if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages <= 0:
+        return RECOVERY_STATUS_FAILED, None, "max_pages must be a positive integer (not bool)"
+    if end_date < start_date:
+        return RECOVERY_STATUS_FAILED, None, "end_date before start_date"
+    if forecast_date < start_date:
+        return RECOVERY_STATUS_FAILED, None, "forecast_date before start_date"
+    if total_deadline is not None and (
+        isinstance(total_deadline, bool)
+        or not isinstance(total_deadline, (int, float))
+        or not math.isfinite(total_deadline)
+    ):
+        return RECOVERY_STATUS_FAILED, None, "total_deadline must be a finite number"
+
+    # Apply application-owned default deadline when caller passes None (finding 10).
+    if total_deadline is None:
+        total_deadline = _clock() + _RECOVERY_DEFAULT_DEADLINE_SECONDS
+
+    _DAY_NUMERIC_COLS = ("forecasted_discharge", "q05", "q25", "q75", "q95")
+    _DAY_HORIZON_INT_COLS = ("horizon_value", "horizon_in_year")
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
+    all_pages: list[pd.DataFrame] = []
+
+    for code in codes:
+        if _clock() >= total_deadline:
+            return RECOVERY_STATUS_FAILED, None, "deadline exceeded before completing reads"
+
+        skip = 0
+        pages_this_code = 0
+        seen_full_page_fps: set[str] = set()
+
+        while True:
+            if _clock() >= total_deadline:
+                return RECOVERY_STATUS_FAILED, None, "deadline exceeded mid-read"
+
+            if pages_this_code >= max_pages:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"max_pages ({max_pages}) exceeded for code={code!r}"),
+                )
+
+            # Use _get directly to validate raw JSON shape before lossy DataFrame
+            # conversion (finding 4: client converts null/false/{} to empty DataFrame).
+            params = {
+                "horizon": "day",
+                "model": model,
+                "code": code,
+                "start_date": start_str,
+                "end_date": end_str,
+                "skip": skip,
+                "limit": page_size,
+            }
+            raw, fetch_err = _recovery_fetch_raw_page(
+                client,
+                "/forecast/",
+                params,
+                required_keys=_RECOVERY_DAY_REQUIRED_COLS,
+                required_int_cols=_RECOVERY_HORIZON_INT_COLS,
+                nullable_int_cols=_RECOVERY_FLAG_NULLABLE_INT_COLS,
+            )
+            if fetch_err is not None:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"API shape error for code={code!r} skip={skip}: {fetch_err}"),
+                )
+            page = pd.DataFrame(raw) if raw else pd.DataFrame()
+            # Preserve exact Python int (and None) for nullable flag: pd.DataFrame(raw)
+            # infers float64 when None is present, silently rounding ints > 2**53.
+            if raw and "flag" in page.columns:
+                page["flag"] = pd.Series([r.get("flag") for r in raw], dtype=object)
+
+            pages_this_code += 1
+
+            # Deadline check immediately after each call (late-success and late-empty).
+            if _clock() >= total_deadline:
+                return RECOVERY_STATUS_FAILED, None, "deadline exceeded after API call"
+
+            # Reject oversized pages before schema validation.
+            if len(page) > page_size:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"oversized page for code={code!r}: got {len(page)} > page_size={page_size}"),
+                )
+
+            err = _recovery_validate_page(
+                page,
+                _RECOVERY_DAY_REQUIRED_COLS,
+                code,
+                start_date,
+                end_date,
+                forecast_date,
+                expected_model=model,
+                expected_horizon_type="day",
+                numeric_cols=_DAY_NUMERIC_COLS,
+                target_col="target",
+                horizon_int_cols=_DAY_HORIZON_INT_COLS,
+            )
+            if err is not None:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"malformed page for code={code!r} skip={skip}: {err}"),
+                )
+
+            if page.empty:
+                break  # no more rows for this code
+
+            # Repeated-page detection: fingerprint on writable value columns only,
+            # excluding API-metadata (id) so new IDs on identical data are caught.
+            # Track ALL seen full pages (not just previous) so A,B,A is detected.
+            if len(page) >= page_size:
+                fp_cols = [c for c in page.columns if c not in _RECOVERY_FINGERPRINT_EXCLUDE]
+                curr_fp = page[fp_cols].to_csv(index=False)
+                if curr_fp in seen_full_page_fps:
+                    return (
+                        RECOVERY_STATUS_FAILED,
+                        None,
+                        (f"repeated page detected for code={code!r} skip={skip}"),
+                    )
+                seen_full_page_fps.add(curr_fp)
+
+            all_pages.append(page)
+            if len(page) < page_size:
+                break  # last partial page
+            skip += page_size
+
+    if not all_pages:
+        return RECOVERY_STATUS_EMPTY, pd.DataFrame(), ""
+
+    combined = pd.concat(all_pages, ignore_index=True)
+
+    # Cross-page full-key conflict detection: strip API-metadata, collapse exact
+    # writable duplicates, then fail if the same identity key maps to differing values.
+    meta_cols = [c for c in combined.columns if c in _RECOVERY_FINGERPRINT_EXCLUDE]
+    writable = combined.drop(columns=meta_cols, errors="ignore")
+    writable = writable.drop_duplicates()
+    id_cols_present = [c for c in writable.columns if c in _RECOVERY_DAY_IDENTITY_COLS]
+    if id_cols_present:
+        counts = writable.groupby(id_cols_present, dropna=False).size()
+        if (counts > 1).any():
+            return (
+                RECOVERY_STATUS_FAILED,
+                None,
+                ("conflicting writable values for identical identity keys across pages"),
+            )
+
+    return RECOVERY_STATUS_COMPLETE, writable, ""
+
+
+def read_lr_forecasts_for_recovery(
+    client: object,
+    codes: list[str],
+    horizon_type: str,
+    start_date: dt.date,
+    end_date: dt.date,
+    forecast_date: dt.date,
+    *,
+    total_deadline: float | None = None,
+    page_size: int = 500,
+    max_pages: int = 200,
+    _clock=time.monotonic,
+) -> tuple[str, pd.DataFrame | None, str]:
+    """Read LR forecast rows for a bounded recovery operation (independent source).
+
+    Uses the lr_forecasts API endpoint, not the combined forecasts table.
+    LR records are source inputs only; this function never writes.
+
+    Args:
+        client: Injected SapphirePostprocessingClient (None → DISABLED).
+        codes: Station codes to read (each fetched separately).
+        horizon_type: 'pentad' or 'decad'.
+        start_date: Inclusive lower bound for the LR issue date.
+        end_date: Inclusive upper bound for the LR issue date.
+        forecast_date: Captured run date; issue dates must be <= this.
+        total_deadline: Absolute monotonic-clock deadline.
+        page_size: Records per API page.
+        max_pages: Hard per-code page cap.
+        _clock: Injectable monotonic clock (for testing).
+
+    Returns:
+        Tuple of (status, frame, reason).  See read_day_forecasts_for_recovery.
+    """
+    if client is None:
+        return RECOVERY_STATUS_DISABLED, None, "client is None"
+    if not _recovery_check_api_enabled():
+        return RECOVERY_STATUS_DISABLED, None, "SAPPHIRE_API_ENABLED=false"
+    if horizon_type not in ("pentad", "decad"):
+        return RECOVERY_STATUS_FAILED, None, f"unsupported horizon_type {horizon_type!r}"
+    if not codes:
+        return RECOVERY_STATUS_EMPTY, pd.DataFrame(), "no codes requested"
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0:
+        return RECOVERY_STATUS_FAILED, None, "page_size must be a positive integer (not bool)"
+    if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages <= 0:
+        return RECOVERY_STATUS_FAILED, None, "max_pages must be a positive integer (not bool)"
+    if end_date < start_date:
+        return RECOVERY_STATUS_FAILED, None, "end_date before start_date"
+    if forecast_date < start_date:
+        return RECOVERY_STATUS_FAILED, None, "forecast_date before start_date"
+    if total_deadline is not None and (
+        isinstance(total_deadline, bool)
+        or not isinstance(total_deadline, (int, float))
+        or not math.isfinite(total_deadline)
+    ):
+        return RECOVERY_STATUS_FAILED, None, "total_deadline must be a finite number"
+
+    # Apply application-owned default deadline when caller passes None (finding 10).
+    if total_deadline is None:
+        total_deadline = _clock() + _RECOVERY_DEFAULT_DEADLINE_SECONDS
+
+    _LR_NUMERIC_COLS = (
+        "forecasted_discharge",
+        "discharge_avg",
+        "predictor",
+        "slope",
+        "intercept",
+        "rsquared",
+        "q_mean",
+        "q_std_sigma",
+        "delta",
+    )
+    api_horizon = "decade" if horizon_type == "decad" else horizon_type
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
+    all_pages: list[pd.DataFrame] = []
+
+    for code in codes:
+        if _clock() >= total_deadline:
+            return RECOVERY_STATUS_FAILED, None, "deadline exceeded before completing reads"
+
+        skip = 0
+        pages_this_code = 0
+        seen_full_page_fps: set[str] = set()
+
+        while True:
+            if _clock() >= total_deadline:
+                return RECOVERY_STATUS_FAILED, None, "deadline exceeded mid-read"
+
+            if pages_this_code >= max_pages:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"max_pages ({max_pages}) exceeded for code={code!r}"),
+                )
+
+            # Use _get directly to validate raw JSON shape (finding 4).
+            params = {
+                "horizon": api_horizon,
+                "code": code,
+                "start_date": start_str,
+                "end_date": end_str,
+                "skip": skip,
+                "limit": page_size,
+            }
+            raw, fetch_err = _recovery_fetch_raw_page(
+                client,
+                "/lr-forecast/",
+                params,
+                required_keys=_RECOVERY_LR_REQUIRED_COLS,
+                required_int_cols=_RECOVERY_HORIZON_INT_COLS,
+            )
+            if fetch_err is not None:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"API shape error for code={code!r} skip={skip}: {fetch_err}"),
+                )
+            page = pd.DataFrame(raw) if raw else pd.DataFrame()
+
+            pages_this_code += 1
+
+            # Deadline check immediately after each call.
+            if _clock() >= total_deadline:
+                return RECOVERY_STATUS_FAILED, None, "deadline exceeded after API call"
+
+            # Reject oversized pages before schema validation.
+            if len(page) > page_size:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"oversized page for code={code!r}: got {len(page)} > page_size={page_size}"),
+                )
+
+            err = _recovery_validate_page(
+                page,
+                _RECOVERY_LR_REQUIRED_COLS,
+                code,
+                start_date,
+                end_date,
+                forecast_date,
+                expected_horizon_type=api_horizon,
+                numeric_cols=_LR_NUMERIC_COLS,
+            )
+            if err is not None:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"malformed page for code={code!r} skip={skip}: {err}"),
+                )
+
+            if page.empty:
+                break
+
+            # Repeated-page detection: track ALL seen full pages (not just previous).
+            if len(page) >= page_size:
+                fp_cols = [c for c in page.columns if c not in _RECOVERY_FINGERPRINT_EXCLUDE]
+                curr_fp = page[fp_cols].to_csv(index=False)
+                if curr_fp in seen_full_page_fps:
+                    return (
+                        RECOVERY_STATUS_FAILED,
+                        None,
+                        (f"repeated page detected for code={code!r} skip={skip}"),
+                    )
+                seen_full_page_fps.add(curr_fp)
+
+            all_pages.append(page)
+            if len(page) < page_size:
+                break
+            skip += page_size
+
+    if not all_pages:
+        return RECOVERY_STATUS_EMPTY, pd.DataFrame(), ""
+
+    combined = pd.concat(all_pages, ignore_index=True)
+
+    # LR dedup/conflict detection (finding 3): collapse exact writable duplicates,
+    # then fail if the same DB key (horizon_type, code, date) maps to differing values.
+    lr_meta = [c for c in combined.columns if c in _RECOVERY_FINGERPRINT_EXCLUDE]
+    writable_lr = combined.drop(columns=lr_meta, errors="ignore")
+    writable_lr = writable_lr.drop_duplicates()
+    lr_id_present = [c for c in writable_lr.columns if c in _RECOVERY_LR_IDENTITY_COLS]
+    if lr_id_present:
+        counts = writable_lr.groupby(lr_id_present, dropna=False).size()
+        if (counts > 1).any():
+            return (
+                RECOVERY_STATUS_FAILED,
+                None,
+                ("conflicting writable values for identical LR identity keys across pages"),
+            )
+
+    return RECOVERY_STATUS_COMPLETE, writable_lr, ""
+
+
+def read_combined_period_forecasts_for_recovery(
+    client: object,
+    codes: list[str],
+    model: str,
+    horizon_type: str,
+    start_date: dt.date,
+    end_date: dt.date,
+    forecast_date: dt.date,
+    *,
+    total_deadline: float | None = None,
+    page_size: int = 500,
+    max_pages: int = 200,
+    _clock=time.monotonic,
+) -> tuple[str, pd.DataFrame | None, str]:
+    """Read combined short-term (pentad/decad) forecast rows for recovery.
+
+    Uses the same API endpoint as the combined reader (read_short_term_forecasts)
+    but with horizon='pentad'/'decade' (not 'day'), strict per-page schema
+    validation, deadline enforcement, and full-key conflict detection.
+
+    This is the strict period-source counterpart to read_day_forecasts_for_recovery.
+    DAY remains DAY-only; this reader never falls back to period rows and vice versa.
+    No CSV fallback ever.
+
+    Args:
+        client: Injected SapphirePostprocessingClient (None → DISABLED).
+        codes: Station codes to read (each fetched separately).
+        model: Model short name to filter at the API level.
+        horizon_type: 'pentad' or 'decad' (the internal name).
+        start_date: Inclusive lower bound for the issue date.
+        end_date: Inclusive upper bound for the issue date.
+        forecast_date: Captured run date; issue dates must be <= this.
+        total_deadline: Absolute monotonic-clock deadline.
+        page_size: Records per API page (positive integer, not bool).
+        max_pages: Hard per-code page cap.
+        _clock: Injectable monotonic clock (for testing).
+
+    Returns:
+        Tuple of (status, frame, reason).
+        status is one of RECOVERY_STATUS_* constants.
+        frame is a raw (pre-normalizer) DataFrame when COMPLETE or
+        CONFIRMED_EMPTY; None otherwise.
+        reason is empty when status=COMPLETE.
+    """
+    if client is None:
+        return RECOVERY_STATUS_DISABLED, None, "client is None"
+    if not _recovery_check_api_enabled():
+        return RECOVERY_STATUS_DISABLED, None, "SAPPHIRE_API_ENABLED=false"
+    if horizon_type not in ("pentad", "decad"):
+        return RECOVERY_STATUS_FAILED, None, f"unsupported horizon_type {horizon_type!r}"
+    if not codes:
+        return RECOVERY_STATUS_EMPTY, pd.DataFrame(), "no codes requested"
+    # Resolve known aliases (e.g. NEURAL_ENSEMBLE → NE) before the model-set check.
+    model = _resolve_recovery_model(model)
+    # Validate model against known period ML/ensemble aliases (finding 6).
+    if model not in _RECOVERY_PERIOD_ML_MODELS:
+        return (
+            RECOVERY_STATUS_FAILED,
+            None,
+            (
+                f"unsupported period model {model!r}: must be one of {sorted(_RECOVERY_PERIOD_ML_MODELS)}"
+            ),
+        )
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size <= 0:
+        return RECOVERY_STATUS_FAILED, None, "page_size must be a positive integer (not bool)"
+    if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages <= 0:
+        return RECOVERY_STATUS_FAILED, None, "max_pages must be a positive integer (not bool)"
+    if end_date < start_date:
+        return RECOVERY_STATUS_FAILED, None, "end_date before start_date"
+    if forecast_date < start_date:
+        return RECOVERY_STATUS_FAILED, None, "forecast_date before start_date"
+    if total_deadline is not None and (
+        isinstance(total_deadline, bool)
+        or not isinstance(total_deadline, (int, float))
+        or not math.isfinite(total_deadline)
+    ):
+        return RECOVERY_STATUS_FAILED, None, "total_deadline must be a finite number"
+
+    # Apply application-owned default deadline when caller passes None (finding 10).
+    if total_deadline is None:
+        total_deadline = _clock() + _RECOVERY_DEFAULT_DEADLINE_SECONDS
+
+    _PERIOD_NUMERIC_COLS = ("forecasted_discharge", "q05", "q25", "q75", "q95")
+    _PERIOD_HORIZON_INT_COLS = ("horizon_value", "horizon_in_year")
+    # API uses "decade"; internal alias is "decad"
+    api_horizon = "decade" if horizon_type == "decad" else horizon_type
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
+    all_pages: list[pd.DataFrame] = []
+
+    for code in codes:
+        if _clock() >= total_deadline:
+            return RECOVERY_STATUS_FAILED, None, "deadline exceeded before completing reads"
+
+        skip = 0
+        pages_this_code = 0
+        seen_full_page_fps: set[str] = set()
+
+        while True:
+            if _clock() >= total_deadline:
+                return RECOVERY_STATUS_FAILED, None, "deadline exceeded mid-read"
+
+            if pages_this_code >= max_pages:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"max_pages ({max_pages}) exceeded for code={code!r}"),
+                )
+
+            # Use _get directly to validate raw JSON shape (finding 4).
+            params = {
+                "horizon": api_horizon,
+                "model": model,
+                "code": code,
+                "start_date": start_str,
+                "end_date": end_str,
+                "skip": skip,
+                "limit": page_size,
+            }
+            raw, fetch_err = _recovery_fetch_raw_page(
+                client,
+                "/forecast/",
+                params,
+                required_keys=_RECOVERY_COMBINED_PERIOD_REQUIRED_COLS,
+                required_int_cols=_RECOVERY_HORIZON_INT_COLS,
+                nullable_int_cols=_RECOVERY_FLAG_NULLABLE_INT_COLS,
+                nullable_str_cols=_RECOVERY_COMPOSITION_NULLABLE_STR_COLS,
+            )
+            if fetch_err is not None:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"API shape error for code={code!r} skip={skip}: {fetch_err}"),
+                )
+            page = pd.DataFrame(raw) if raw else pd.DataFrame()
+            # Preserve exact Python int (and None) for nullable flag: pd.DataFrame(raw)
+            # infers float64 when None is present, silently rounding ints > 2**53.
+            if raw and "flag" in page.columns:
+                page["flag"] = pd.Series([r.get("flag") for r in raw], dtype=object)
+            # Preserve Python None for nullable quantity fields. pd.DataFrame(raw)
+            # converts JSON null to float NaN; NaN is rejected by
+            # _plan_existing_all5_valid (which accepts None but not non-finite
+            # floats), causing plan_error for any scope that contains a pre-
+            # existing row with null quantiles.
+            if raw:
+                for _qcol in _PERIOD_NUMERIC_COLS:
+                    if _qcol in page.columns:
+                        page[_qcol] = pd.Series([r.get(_qcol) for r in raw], dtype=object)
+
+            pages_this_code += 1
+
+            # Deadline check immediately after each call.
+            if _clock() >= total_deadline:
+                return RECOVERY_STATUS_FAILED, None, "deadline exceeded after API call"
+
+            # Reject oversized pages before schema validation.
+            if len(page) > page_size:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"oversized page for code={code!r}: got {len(page)} > page_size={page_size}"),
+                )
+
+            err = _recovery_validate_page(
+                page,
+                _RECOVERY_COMBINED_PERIOD_REQUIRED_COLS,
+                code,
+                start_date,
+                end_date,
+                forecast_date,
+                expected_model=model,
+                expected_horizon_type=api_horizon,
+                numeric_cols=_PERIOD_NUMERIC_COLS,
+                target_col="target",
+                horizon_int_cols=_PERIOD_HORIZON_INT_COLS,
+            )
+            if err is not None:
+                return (
+                    RECOVERY_STATUS_FAILED,
+                    None,
+                    (f"malformed page for code={code!r} skip={skip}: {err}"),
+                )
+
+            if page.empty:
+                break
+
+            # Repeated-page detection: track ALL seen full pages (not just previous).
+            if len(page) >= page_size:
+                fp_cols = [c for c in page.columns if c not in _RECOVERY_FINGERPRINT_EXCLUDE]
+                curr_fp = page[fp_cols].to_csv(index=False)
+                if curr_fp in seen_full_page_fps:
+                    return (
+                        RECOVERY_STATUS_FAILED,
+                        None,
+                        (f"repeated page detected for code={code!r} skip={skip}"),
+                    )
+                seen_full_page_fps.add(curr_fp)
+
+            all_pages.append(page)
+            if len(page) < page_size:
+                break
+            skip += page_size
+
+    if not all_pages:
+        return RECOVERY_STATUS_EMPTY, pd.DataFrame(), ""
+
+    combined = pd.concat(all_pages, ignore_index=True)
+
+    # Cross-page full-key conflict detection (same as DAY reader).
+    meta_cols = [c for c in combined.columns if c in _RECOVERY_FINGERPRINT_EXCLUDE]
+    writable = combined.drop(columns=meta_cols, errors="ignore")
+    writable = writable.drop_duplicates()
+    id_cols_present = [c for c in writable.columns if c in _RECOVERY_DAY_IDENTITY_COLS]
+    if id_cols_present:
+        counts = writable.groupby(id_cols_present, dropna=False).size()
+        if (counts > 1).any():
+            return (
+                RECOVERY_STATUS_FAILED,
+                None,
+                ("conflicting writable values for identical identity keys across pages"),
+            )
+
+    return RECOVERY_STATUS_COMPLETE, writable, ""

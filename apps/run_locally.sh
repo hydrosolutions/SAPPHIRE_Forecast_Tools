@@ -1566,32 +1566,26 @@ run_short_term_pipeline() {
         run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     fi
 
-    # Forecasting + postprocessing runs per mode
+    # ML-020 P0: ML runs once with the canonical DECAD fan (shared across all
+    # requested horizons). One logical generation per model/issue unit.
+    export SAPPHIRE_PREDICTION_MODE=DECAD
+    local ml_failed=false
+    if should_skip_module machine_learning; then
+        record_skip "machine_learning (DECAD)" "not required for ${ORG} org"
+    else
+        run_machine_learning || { ml_failed=true; }
+    fi
+
+    # LR and postprocessing run per requested horizon.
     for mode in "${modes_to_run[@]}"; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
-        log INFO "Running forecasting for mode: ${mode}"
+        log INFO "Running linear regression + postprocessing for mode: ${mode}"
 
-        if should_skip_module machine_learning; then
-            record_skip "machine_learning (${mode})" "not required for ${ORG} org, mode=${mode}"
-        else
-            run_machine_learning || {
-                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
-                # default), an ML failure in one horizon (e.g. PENTAD) must
-                # no longer stop the next horizon (DECAD) from running --
-                # run_machine_learning already recorded the FAIL row via
-                # record_result, so skip the rest of *this* horizon's steps
-                # (LR, postprocessing below) and move on to the next mode.
-                # PIPELINE_ABORTED is deliberately NOT set here: it only
-                # gates emit_continue_on_error_hint ("stopped -- here's how
-                # to run past it"), and the pipeline no longer stops on an
-                # ML failure, so there is nothing to run past. With
-                # --continue-on-error (CONTINUE_ON_ERROR=true), fall
-                # through instead -- LR and postprocessing below still run
-                # for this horizon exactly as before this change; the
-                # flag's whole purpose is to keep going, and an ML failure
-                # must not take that away from the modules after it.
-                [ "$CONTINUE_ON_ERROR" = false ] && continue
-            }
+        # Shared ML failure blocks LR/PP for all horizons by default
+        # (CONTINUE_ON_ERROR=false). With --continue-on-error, both horizons
+        # attempt LR/PP; overall exit is still nonzero if ML failed.
+        if [ "$ml_failed" = true ] && [ "$CONTINUE_ON_ERROR" = false ]; then
+            continue
         fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
@@ -1717,26 +1711,23 @@ run_maintenance_pipeline() {
         record_skip "preprocessing_gateway (maintenance)" "not required for ${ORG} org"
     fi
 
-    # linear_regression and ML maintenance run per mode
+    # ML-020 P0: ML maintenance runs once with canonical DECAD, shared across
+    # all requested horizons.
+    export SAPPHIRE_PREDICTION_MODE=DECAD
+    local ml_maint_failed=false
+    if should_skip_module machine_learning; then
+        record_skip "machine_learning (maintenance) (DECAD)" "not required for ${ORG} org"
+    else
+        run_maintenance_machine_learning || { ml_maint_failed=true; }
+    fi
+
+    # LR and postprocessing maintenance run per requested horizon.
     for mode in "${modes_to_run[@]}"; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
-        log INFO "Running maintenance for mode: ${mode}"
+        log INFO "Running LR + postprocessing maintenance for mode: ${mode}"
 
-        if should_skip_module machine_learning; then
-            record_skip "machine_learning (maintenance) (${mode})" "not required for ${ORG} org, mode=${mode}"
-        else
-            run_maintenance_machine_learning || {
-                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
-                # default), an ML maintenance failure in one horizon must
-                # no longer stop the next horizon from running -- already
-                # recorded via record_result inside
-                # run_maintenance_machine_learning, so skip the rest of
-                # this horizon's steps (LR, postprocessing below) and move
-                # on. With --continue-on-error (CONTINUE_ON_ERROR=true),
-                # fall through instead -- LR and postprocessing below still
-                # run for this horizon exactly as before this change.
-                [ "$CONTINUE_ON_ERROR" = false ] && continue
-            }
+        if [ "$ml_maint_failed" = true ] && [ "$CONTINUE_ON_ERROR" = false ]; then
+            continue
         fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
@@ -1776,51 +1767,45 @@ run_daily_pipeline() {
         record_skip "preprocessing_gateway (maintenance)" "not required for ${ORG} org"
     fi
 
-    # --- Phase 3: Forecasting + postprocessing per horizon ---
+    # --- Phase 3: ML once (canonical DECAD), then LR + postprocessing per horizon ---
+    # ML-020 P0: one logical DECAD generation per model/issue unit.
+    export SAPPHIRE_PREDICTION_MODE=DECAD
+    log INFO "Phase 3: ML (DECAD, shared)"
+    local ml_phase3_failed=false
+    if should_skip_module machine_learning; then
+        record_skip "machine_learning (DECAD)" "not required for ${ORG} org"
+    else
+        run_machine_learning || { ml_phase3_failed=true; }
+    fi
+
     for mode in PENTAD DECAD; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
-        log INFO "Phase 3: ML + linear regression + postprocessing (${mode})"
+        log INFO "Phase 3: linear regression + postprocessing (${mode})"
 
-        if should_skip_module machine_learning; then
-            record_skip "machine_learning (${mode})" "not required for ${ORG} org, mode=${mode}"
-        else
-            run_machine_learning || {
-                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
-                # default), an ML failure in one horizon (e.g. PENTAD) must
-                # no longer stop the next horizon (DECAD) from running --
-                # already recorded via record_result inside
-                # run_machine_learning, so skip the rest of this horizon's
-                # steps (LR, postprocessing below) and move on. With
-                # --continue-on-error (CONTINUE_ON_ERROR=true), fall
-                # through instead -- LR and postprocessing below still run
-                # for this horizon exactly as before this change.
-                [ "$CONTINUE_ON_ERROR" = false ] && continue
-            }
+        if [ "$ml_phase3_failed" = true ] && [ "$CONTINUE_ON_ERROR" = false ]; then
+            continue
         fi
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
     done
 
-    # --- Phase 4: Maintenance per horizon ---
+    # --- Phase 4: ML maintenance once (DECAD), then LR + postprocessing maintenance per horizon ---
+    # ML-020 P0: one logical DECAD generation per model/issue unit.
+    export SAPPHIRE_PREDICTION_MODE=DECAD
+    log INFO "Phase 4: ML maintenance (DECAD, shared)"
+    local ml_phase4_failed=false
+    if should_skip_module machine_learning; then
+        record_skip "machine_learning (maintenance) (DECAD)" "not required for ${ORG} org"
+    else
+        run_maintenance_machine_learning || { ml_phase4_failed=true; }
+    fi
+
     for mode in PENTAD DECAD; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
-        log INFO "Phase 4: ML + LR + postprocessing maintenance (${mode})"
+        log INFO "Phase 4: LR + postprocessing maintenance (${mode})"
 
-        if should_skip_module machine_learning; then
-            record_skip "machine_learning (maintenance) (${mode})" "not required for ${ORG} org, mode=${mode}"
-        else
-            run_maintenance_machine_learning || {
-                # ML-021 decision 4: with CONTINUE_ON_ERROR=false (the
-                # default), an ML maintenance failure in one horizon must
-                # no longer stop the next horizon from running -- already
-                # recorded via record_result inside
-                # run_maintenance_machine_learning, so skip the rest of
-                # this horizon's steps (LR, postprocessing below) and move
-                # on. With --continue-on-error (CONTINUE_ON_ERROR=true),
-                # fall through instead -- LR and postprocessing below still
-                # run for this horizon exactly as before this change.
-                [ "$CONTINUE_ON_ERROR" = false ] && continue
-            }
+        if [ "$ml_phase4_failed" = true ] && [ "$CONTINUE_ON_ERROR" = false ]; then
+            continue
         fi
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
@@ -2564,25 +2549,13 @@ main() {
                 record_skip "machine_learning (maintenance)" "not required for ${ORG} org"
             else
             local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
-            local modes_to_run=()
-            if [ "$original_mode" = "BOTH" ]; then
-                modes_to_run=(PENTAD DECAD)
-                log INFO "BOTH mode: will run ML maintenance for PENTAD then DECAD"
-            elif [ -n "$original_mode" ]; then
-                modes_to_run=("$original_mode")
-            else
-                modes_to_run=(PENTAD)
-                log WARN "SAPPHIRE_PREDICTION_MODE not set, defaulting to PENTAD"
-            fi
-            for mode in "${modes_to_run[@]}"; do
-                export SAPPHIRE_PREDICTION_MODE="$mode"
-                log INFO "Running ML maintenance for mode: ${mode}"
-                # ML-021 decision 4: an ML maintenance failure in one
-                # horizon must no longer stop the next horizon from
-                # running (no `break` here). Already recorded via
-                # record_result inside run_maintenance_machine_learning.
-                run_maintenance_machine_learning || { exit_code=$?; }
-            done
+            # ML-020 P0: ML maintenance runs once with canonical DECAD regardless
+            # of the operator's requested mode. PENTAD/DECAD/BOTH all map to one
+            # DECAD generation; mode validation in validate_env still applies for
+            # the overall maintenance pipeline.
+            export SAPPHIRE_PREDICTION_MODE=DECAD
+            log INFO "Running ML maintenance (DECAD, canonical)"
+            run_maintenance_machine_learning || { exit_code=$?; }
             export SAPPHIRE_PREDICTION_MODE="$original_mode"
             fi
             ;;
@@ -2654,32 +2627,14 @@ main() {
                 record_skip "machine_learning" "not required for ${ORG} org"
             else
                 local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+                # ML-020 P0: validate the requested mode (reject empty/JUNK),
+                # then run once with the canonical DECAD fan regardless of
+                # whether PENTAD, DECAD, or BOTH was requested.
                 resolve_ml_bare_target_modes
-                local ran_modes=()
-                for mode in "${ML_BARE_RESOLVED_MODES[@]}"; do
-                    export SAPPHIRE_PREDICTION_MODE="$mode"
-                    log INFO "Running machine_learning for mode: ${mode}"
-                    ran_modes+=("$mode")
-                    # ML-021 decision 4: a PENTAD failure must no longer
-                    # stop DECAD from running (no `break` here). Already
-                    # recorded via record_result inside run_machine_learning.
-                    run_machine_learning || { exit_code=$?; }
-                done
-                # Validate every mode actually attempted, each under its
-                # own mode -- validating the pre-loop original_mode would
-                # check a horizon ML did not necessarily produce. Since
-                # ML-021 decision 4, the loop above no longer breaks early
-                # on failure, so ran_modes now always equals
-                # ML_BARE_RESOLVED_MODES; the "attempted, not resolved" set
-                # is kept deliberately in case that ever changes again.
-                # Pass the mode as run_module_validation's label suffix
-                # (INFRA-037) so PENTAD/DECAD each get their own log file
-                # and summary row instead of the second call truncating the
-                # first's log and reusing its label.
-                for mode in ${ran_modes[@]+"${ran_modes[@]}"}; do
-                    export SAPPHIRE_PREDICTION_MODE="$mode"
-                    run_module_validation "machine_learning" "$mode"
-                done
+                export SAPPHIRE_PREDICTION_MODE=DECAD
+                log INFO "Running machine_learning (DECAD, canonical)"
+                run_machine_learning || { exit_code=$?; }
+                run_module_validation "machine_learning" "DECAD"
                 export SAPPHIRE_PREDICTION_MODE="$original_mode"
             fi
             ;;

@@ -47,6 +47,7 @@ from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _read_ml_forecasts_from_api,
     _write_ml_forecast_to_api,
+    canonical_ml_mode,
     get_permitted_station_codes,
     normalize_ml_csv_columns,
 )
@@ -122,6 +123,10 @@ def call_hindcast_script(
         print("Error output:")
         print(result.stderr)
         print()
+        raise RuntimeError(
+            f"Hindcast subprocess failed with return code "
+            f"{result.returncode} for {MODEL_TO_USE} {PREDICTION_MODE}"
+        )
 
     # --------------------------------------------------------------------
     # GET THE HINDCAST
@@ -133,9 +138,7 @@ def call_hindcast_script(
 
     PATH_HINDCAST = os.path.join(PATH_FORECAST, "hindcast", MODEL_TO_USE)
 
-    file_name = (
-        f"{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv"
-    )
+    file_name = f"{MODEL_TO_USE}_{canonical_ml_mode(MODEL_TO_USE, PREDICTION_MODE)}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv"
 
     hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
 

@@ -77,15 +77,18 @@ def _period_row(date, value, horizon_type="pentad"):
 
 def _day_fan(date, values):
     start = pd.Timestamp(date) + pd.Timedelta(days=1)
+    n = len(values)
     return pd.DataFrame(
         {
-            "code": [STATION_CODE] * len(values),
-            "date": [date] * len(values),
-            "target": [
-                (start + pd.Timedelta(days=i)).strftime("%Y-%m-%d") for i in range(len(values))
-            ],
+            "code": [STATION_CODE] * n,
+            "date": [date] * n,
+            "target": [(start + pd.Timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)],
             "forecasted_discharge": values,
-            "horizon_type": ["day"] * len(values),
+            "q05": [1.0] * n,
+            "q25": [2.0] * n,
+            "q75": [8.0] * n,
+            "q95": [9.0] * n,
+            "horizon_type": ["day"] * n,
         }
     )
 
@@ -99,6 +102,10 @@ def _period_rows(dates, values, horizon_type, model):
                 "date": date.strftime("%Y-%m-%d"),
                 "target": (date + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                 "forecasted_discharge": value,
+                "q05": 1.0,
+                "q25": 2.0,
+                "q75": 8.0,
+                "q95": 9.0,
                 "horizon_type": horizon_type,
                 "model_type": model,
             }
@@ -116,6 +123,10 @@ def _day_rows(dates, values, model, fan_length):
                     "date": date.strftime("%Y-%m-%d"),
                     "target": (date + pd.Timedelta(days=offset + 1)).strftime("%Y-%m-%d"),
                     "forecasted_discharge": value,
+                    "q05": 1.0,
+                    "q25": 2.0,
+                    "q75": 8.0,
+                    "q95": 9.0,
                     "horizon_type": "day",
                     "model_type": model,
                 }
@@ -534,3 +545,47 @@ class TestMlHorizonArchiveSplitIntegration:
         )
         assert len(day_ne) == 1
         assert day_ne["forecasted_discharge"].iloc[0] == pytest.approx(expected_day)
+
+
+class TestNEIncompleteRowsExcluded:
+    """MR-H regression: period rows without q-cols must not contribute to NE."""
+
+    def test_period_rows_without_q_cols_produce_no_ne(self):
+        """Period archive rows lacking q-cols are excluded; no all-null-q exception."""
+        dates = pd.to_datetime(["2022-01-05", "2022-01-10"])
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "code": [STATION_CODE] * 2,
+                "model_short": ["TFT", "TIDE"],
+                "forecasted_discharge": [100.0, 80.0],
+                "pentad_in_month": [1, 2],
+                "pentad_in_year": [1, 2],
+                # No q05/q25/q75/q95 columns — incomplete rows
+            }
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        # No q-cols in the DataFrame → no eligible contributors → no NE rows
+        assert "NE" not in result["model_short"].values
+
+    def test_period_rows_with_q_cols_contribute_to_ne(self):
+        """Period archive rows WITH complete q-cols do contribute to NE."""
+        d = pd.Timestamp("2022-01-05")
+        df = pd.DataFrame(
+            {
+                "date": [d, d],
+                "code": [STATION_CODE] * 2,
+                "model_short": ["TFT", "TIDE"],
+                "forecasted_discharge": [100.0, 80.0],
+                "pentad_in_month": [1, 1],
+                "pentad_in_year": [1, 1],
+                "q05": [80.0, 60.0],
+                "q25": [90.0, 70.0],
+                "q75": [110.0, 90.0],
+                "q95": [120.0, 100.0],
+            }
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        ne = result[result["model_short"] == "NE"]
+        assert not ne.empty
+        assert ne.iloc[0]["forecasted_discharge"] == pytest.approx(90.0)

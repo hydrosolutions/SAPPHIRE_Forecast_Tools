@@ -441,7 +441,8 @@ def test_cron_pause_and_restore_called_on_normal_run(tmp_path):
         "#!/usr/bin/env bash\n"
         f'echo "INVOKE: $*" >> "{crontab_log}"\n'
         'if [[ "$1" == "-l" ]]; then\n'
-        # Schedule line that's far in the future.
+        # Non-empty schedule so the wrapper sees a real crontab to pause/restore.
+        # The late-start guard is disabled via --late-start-window-minutes 0 below.
         '  echo "0 0 * * 1 /bin/true"\n'
         "  exit 0\n"
         "fi\n"
@@ -460,6 +461,11 @@ def test_cron_pause_and_restore_called_on_normal_run(tmp_path):
         wrapper,
         [
             str(env_file),
+            # Disable late-start guard so wall-clock proximity to midnight cannot
+            # abort before the pause/restore path executes.  The late-start guard
+            # is independently tested in section 4 above.
+            "--late-start-window-minutes",
+            "0",
             # Skip all hooks so the loop terminates immediately and we exercise
             # only the pause/restore path.
             "--skip-hook-snow-stats",
@@ -502,7 +508,8 @@ def test_cron_restore_called_when_hook_fails(tmp_path):
     )
     failing_stub.chmod(0o755)
 
-    # Fake crontab that records calls + reports a far-future schedule.
+    # Fake crontab that records calls + has a non-empty schedule for pause/restore.
+    # The late-start guard is disabled via --late-start-window-minutes 0 below.
     crontab_log = tmp_path / "crontab.log"
     fake_crontab = tmp_path / "fake_crontab"
     fake_crontab.write_text(
@@ -526,6 +533,11 @@ def test_cron_restore_called_when_hook_fails(tmp_path):
         wrapper,
         [
             str(env_file),
+            # Disable late-start guard so wall-clock proximity to midnight cannot
+            # abort before the pause/restore path executes.  The late-start guard
+            # is independently tested in section 4 above.
+            "--late-start-window-minutes",
+            "0",
             # Skip later hooks so the wrapper doesn't drag on after snow-stats
             # fails fast.
             "--skip-hook-hydrograph-month-season",
@@ -564,6 +576,9 @@ def test_long_term_skill_hook_handles_missing_script_gracefully(tmp_path):
     # Remove the long-term skill stub.
     (wrapper.parent / "bimonthly_long_term_skill_metrics_recalculation.sh").unlink()
 
+    # Fake crontab so late-start guard reads a non-real crontab; window=0 disables guard.
+    fake_env = _install_crontab(minute_offset=5, tmp_path=tmp_path)
+
     # Skip the other long-running hooks so the test is fast.
     result = _run_wrapper(
         wrapper,
@@ -575,6 +590,7 @@ def test_long_term_skill_hook_handles_missing_script_gracefully(tmp_path):
             "--late-start-window-minutes",
             "0",
         ],
+        extra_env=fake_env,
     )
     assert result.returncode == 0, (
         f"expected exit 0 when long-term script is absent, got {result.returncode}\n"

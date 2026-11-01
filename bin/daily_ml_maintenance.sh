@@ -53,7 +53,7 @@ fi
 IFS=',' read -r -a MODEL_OPTIONS <<< "$ieasyhydroforecast_available_ML_models"
 
 # Define your variable option sets
-HORIZON_OPTIONS=("PENTAD" "DECAD")
+HORIZON_OPTIONS=("DECAD")
 
 log_message "Starting ML maintenance run on Mac M2 Max with 64GB RAM"
 log_message "Model options: ${MODEL_OPTIONS[*]}"

@@ -6,11 +6,13 @@ used by postprocessing_forecasts.
 Follows the same singleton pattern as data_reader.py.
 """
 
+import contextlib
 import datetime as dt_module
 import json
 import logging
 import os
 from enum import Enum
+from typing import Any
 
 import pandas as pd
 import tag_library as tl
@@ -880,6 +882,1585 @@ def _write_threshold_skill_metrics_to_api(data: pd.DataFrame, year: int) -> Writ
     except Exception as e:
         logger.error("Failed to write threshold skill metrics to API: %s", e)
         return WriteOutcome.FAILED
+
+
+# ---------------------------------------------------------------------------
+# P3 recovery serializer — selection only, no transport
+# ---------------------------------------------------------------------------
+
+# Canonical plan model keys → wire API enum values (exact case from service schema).
+# Only short-term ML/ensemble models are accepted; LR, LT and DAY are excluded.
+_RECOVERY_WIRE_MODEL: dict[str, str] = {
+    "TFT": "TFT",
+    "TIDE": "TiDE",
+    "TSMIXER": "TSMixer",
+    "NE": "NE",
+    "ENSEMBLE_MEAN": "EM",
+}
+
+# Internal plan horizon keys → wire API enum values.
+_RECOVERY_WIRE_HORIZON: dict[str, str] = {
+    "pentad": "pentad",
+    "decad": "decade",
+}
+
+# The 14 writable fields that every output record must carry (exactly).
+_RECOVERY_OUTPUT_FIELDS: tuple[str, ...] = (
+    "horizon_type",
+    "code",
+    "model_type",
+    "date",
+    "target",
+    "forecasted_discharge",
+    "q05",
+    "q25",
+    "q75",
+    "q95",
+    "flag",
+    "composition",
+    "horizon_value",
+    "horizon_in_year",
+)
+
+# Fields in a plan payload that are response-only and must be silently dropped.
+_RECOVERY_RESPONSE_ONLY_FIELDS: frozenset[str] = frozenset({"id", "model_type_description"})
+
+
+def _recovery_wire_serialize(payload: dict) -> dict:
+    """Serialize one plan payload to a 14-field wire record.
+
+    Returns a dict with exactly the 14 output fields, dates as ISO strings,
+    model_type and horizon_type converted to wire enum values.
+
+    Uses gap_detector._plan_key for canonical identity extraction (accepts
+    TiDE/TSMixer/EM/ENSEMBLE_MEAN model aliases and ISO-8601 date strings in
+    addition to date objects and midnight-naive datetime/Timestamp).  Uses
+    gap_detector._plan_all5_finite and _plan_valid_meta_fields for ALL14
+    presence, calendar, and metadata validation so this function stays in
+    sync with the planner's own contracts without duplicating them.
+
+    Raises ValueError for any validation failure.
+    """
+    import datetime as _dt
+
+    try:
+        from src.gap_detector import _plan_all5_finite as _gd_all5
+        from src.gap_detector import _plan_key as _gd_plan_key
+        from src.gap_detector import _plan_valid_meta_fields as _gd_meta
+    except ImportError:
+        from gap_detector import _plan_all5_finite as _gd_all5  # type: ignore[no-redef]
+        from gap_detector import _plan_key as _gd_plan_key  # type: ignore[no-redef]
+        from gap_detector import _plan_valid_meta_fields as _gd_meta  # type: ignore[no-redef]
+
+    # Detect unknown extra writable fields (anything not in the 14 output
+    # fields and not a known response-only field).
+    _writable_fields = frozenset(
+        {
+            "horizon_type",
+            "code",
+            "model_type",
+            "date",
+            "target",
+            "forecasted_discharge",
+            "q05",
+            "q25",
+            "q75",
+            "q95",
+            "flag",
+            "composition",
+            "horizon_value",
+            "horizon_in_year",
+        }
+    )
+    for k in payload:
+        if k not in _writable_fields and k not in _RECOVERY_RESPONSE_ONLY_FIELDS:
+            raise ValueError(f"select_recovery_records: unknown extra field {k!r} in payload")
+
+    # Use _plan_key for canonical identity extraction.  Accepts TiDE/TSMixer/EM
+    # aliases plus ISO-8601 date strings and midnight datetime/Timestamp objects.
+    # Returns None for any unsupported model/horizon, missing field, or malformed date.
+    key = _gd_plan_key(payload)
+    if key is None:
+        raise ValueError(
+            "select_recovery_records: payload has unparseable key — "
+            "unsupported model_type or horizon_type, malformed/non-date date or target, "
+            "or surrounding whitespace in code"
+        )
+
+    ht, code, canonical_model, issue_date, target_date = key
+
+    wire_ht = _RECOVERY_WIRE_HORIZON.get(ht)
+    if wire_ht is None:
+        raise ValueError(
+            f"select_recovery_records: unsupported horizon_type {ht!r}; "
+            f"must be one of {list(_RECOVERY_WIRE_HORIZON)}"
+        )
+
+    wire_model = _RECOVERY_WIRE_MODEL.get(canonical_model)
+    if wire_model is None:
+        raise ValueError(
+            f"select_recovery_records: unsupported model_type {canonical_model!r}; "
+            f"must be one of {list(_RECOVERY_WIRE_MODEL)}"
+        )
+
+    # ALL5 quantities: must be present, finite, non-bool real numerics.
+    if not _gd_all5(payload):
+        raise ValueError(
+            "select_recovery_records: ALL5 quantities (forecasted_discharge, q05, "
+            "q25, q75, q95) must be present finite real numerics — None and bool "
+            "are not accepted"
+        )
+
+    # flag: None or non-bool int (checked explicitly for a clear error message).
+    flag = payload.get("flag")
+    if flag is not None and (isinstance(flag, bool) or not isinstance(flag, int)):
+        raise ValueError(
+            f"select_recovery_records: flag must be None or int, "
+            f"got {type(flag).__name__}: {flag!r}"
+        )
+
+    # composition: None or str (checked explicitly for a clear error message).
+    composition = payload.get("composition")
+    if composition is not None and (
+        isinstance(composition, bool) or not isinstance(composition, str)
+    ):
+        raise ValueError(
+            f"select_recovery_records: composition must be None or str, "
+            f"got {type(composition).__name__}: {composition!r}"
+        )
+
+    # Full metadata validation: presence of all 14 writable fields, calendar boundary,
+    # target == issue + 1 day, horizon_value/horizon_in_year match calendar position.
+    if not _gd_meta(payload, key):
+        if target_date != issue_date + _dt.timedelta(days=1):
+            raise ValueError(
+                f"select_recovery_records: target {target_date} must equal "
+                f"issue {issue_date} + 1 day"
+            )
+        raise ValueError(
+            "select_recovery_records: metadata validation failed — check that all "
+            "14 writable fields are present and that horizon_value/horizon_in_year "
+            "match the calendar position of the issue date"
+        )
+
+    return {
+        "horizon_type": wire_ht,
+        "code": code,
+        "model_type": wire_model,
+        "date": issue_date.isoformat(),
+        "target": target_date.isoformat(),
+        "forecasted_discharge": payload["forecasted_discharge"],
+        "q05": payload["q05"],
+        "q25": payload["q25"],
+        "q75": payload["q75"],
+        "q95": payload["q95"],
+        "flag": flag,
+        "composition": composition,
+        "horizon_value": payload["horizon_value"],
+        "horizon_in_year": payload["horizon_in_year"],
+    }
+
+
+def select_recovery_records(
+    candidate_payloads: list[dict],
+    plan: "Any",
+    authorized_keys: set[tuple],
+    *,
+    start_date: "Any",
+    end_date: "Any",
+    forecast_date: "Any",
+) -> list[dict]:
+    """Select and serialize recovery records from a PeriodRefreshPlan.
+
+    Pure function: no API calls, no writes, no side effects.
+
+    Selects only plan.missing keys (looked up from candidate_payloads by
+    canonical key) and plan.authorized_refresh payloads (already-merged by the
+    planner). Aborts on plan.plan_error; never selects identical/protected/
+    excluded/blocked keys; rejects keys outside authorized_keys; rejects any
+    candidate whose key lands in more than one disposition set; rejects
+    conflicting duplicate candidates (same 5-part key, differing values);
+    collapses exact full-writable duplicates to one.
+
+    Restricts to short-term ML/ensemble models (TFT/TIDE/TSMIXER/NE/ENSEMBLE_MEAN)
+    and pentad/decad horizons only. Issue dates must be <= forecast_date and
+    within [start_date, end_date].
+
+    Returns a list of exactly-14-field serialized dicts with wire enum values
+    (horizon_type decad→decade, model_type TIDE→TiDE/TSMIXER→TSMixer/
+    ENSEMBLE_MEAN→EM) and ISO date strings. Returns [] when nothing is eligible.
+
+    Args:
+        candidate_payloads: Input-derived candidates (output of _build_candidate_payload).
+        plan: A PeriodRefreshPlan from plan_period_refresh.
+        authorized_keys: The same authorized_keys passed to plan_period_refresh.
+        start_date: Inclusive lower bound for issue date.
+        end_date: Inclusive upper bound for issue date.
+        forecast_date: Captured run date; issue date must be <= this.
+
+    Returns:
+        list[dict]: Serialized wire records (each has exactly 14 fields).
+
+    Raises:
+        ValueError: On plan_error, unauthorized key, protected/identical/excluded/
+            blocked selected key, missing candidate, conflicting duplicates,
+            malformed fields, unsupported model/horizon, or unknown extra fields.
+    """
+    try:
+        from src.gap_detector import _plan_all5_finite as _gd_all5
+        from src.gap_detector import _plan_key
+        from src.gap_detector import _plan_records_identical as _gd_identical
+        from src.gap_detector import _plan_valid_meta_fields as _gd_meta
+    except ImportError:
+        from gap_detector import _plan_all5_finite as _gd_all5  # type: ignore[no-redef]
+        from gap_detector import _plan_key  # type: ignore[no-redef]
+        from gap_detector import _plan_records_identical as _gd_identical  # type: ignore[no-redef]
+        from gap_detector import _plan_valid_meta_fields as _gd_meta  # type: ignore[no-redef]
+
+    # Abort immediately on plan-level error.
+    if plan.plan_error is not None:
+        raise ValueError(
+            f"select_recovery_records: plan has plan_error — aborting: {plan.plan_error}"
+        )
+
+    # Validate date bounds.
+    if start_date > end_date:
+        raise ValueError(f"select_recovery_records: start_date {start_date} > end_date {end_date}")
+    if end_date > forecast_date:
+        raise ValueError(
+            f"select_recovery_records: end_date {end_date} > forecast_date {forecast_date}"
+        )
+
+    # Build a deduplicated index of candidate_payloads by canonical key.
+    # Each candidate is validated (ALL5 + metadata) BEFORE dedup comparison so
+    # that bool/int variants that compare equal numerically are still detected as
+    # invalid before they can collapse into an apparently-valid duplicate.
+    # Exact full-writable duplicates (per _plan_records_identical) collapse to one;
+    # conflicting duplicates raise.
+    candidate_by_key: dict[tuple, dict] = {}
+    candidate_conflicted: set[tuple] = set()
+
+    for p in candidate_payloads:
+        key = _plan_key(p)
+        if key is None:
+            raise ValueError(
+                "select_recovery_records: candidate_payloads contains a record "
+                "with an unparseable key"
+            )
+        # Validate each candidate individually BEFORE dedup comparison.
+        if not _gd_all5(p):
+            raise ValueError(
+                f"select_recovery_records: candidate for key {key!r} has invalid "
+                "ALL5 fields (None, bool, or non-finite value)"
+            )
+        if not _gd_meta(p, key):
+            raise ValueError(
+                f"select_recovery_records: candidate for key {key!r} failed "
+                "metadata validation (missing field, calendar boundary, or type error)"
+            )
+        # Full serialization of every candidate before dedup comparison to
+        # reject unknown extra fields and flag/composition type errors
+        # even if the candidate would later resolve as a duplicate.
+        _recovery_wire_serialize(p)
+        if key in candidate_conflicted:
+            continue  # already known to be conflicted
+        if key in candidate_by_key:
+            if not _gd_identical(candidate_by_key[key], p):
+                candidate_conflicted.add(key)
+                del candidate_by_key[key]
+                raise ValueError(
+                    f"select_recovery_records: conflicting duplicate candidates for key {key!r}"
+                )
+            # Exact duplicate: keep the first, continue.
+        else:
+            candidate_by_key[key] = p
+
+    result_records: list[dict] = []
+    seen_keys: set[tuple] = set()
+
+    # 1. Records for plan.missing: must look up candidate by key.
+    for key in plan.missing:
+        # Must be in authorized_keys.
+        if key not in authorized_keys:
+            raise ValueError(
+                f"select_recovery_records: plan.missing key {key!r} is not in authorized_keys"
+            )
+        # Must not be in any blocking disposition set.
+        if key in plan.identical:
+            raise ValueError(
+                f"select_recovery_records: plan.missing key {key!r} also in plan.identical"
+            )
+        if key in plan.protected:
+            raise ValueError(
+                f"select_recovery_records: plan.missing key {key!r} also in plan.protected"
+            )
+        if key in plan.excluded:
+            raise ValueError(
+                f"select_recovery_records: plan.missing key {key!r} also in plan.excluded"
+            )
+        if key in plan.blocked:
+            raise ValueError(
+                f"select_recovery_records: plan.missing key {key!r} also in plan.blocked"
+            )
+        # Must have a candidate.
+        payload = candidate_by_key.get(key)
+        if payload is None:
+            raise ValueError(
+                f"select_recovery_records: no candidate found for plan.missing key {key!r}"
+            )
+        # Issue date must be within [start_date, end_date].
+        issue_date = key[3]  # (ht, code, model, issue_date, target_date)
+        if not (start_date <= issue_date <= end_date):
+            raise ValueError(
+                f"select_recovery_records: issue date {issue_date} for key {key!r} "
+                f"is outside [{start_date}, {end_date}]"
+            )
+        wire = _recovery_wire_serialize(payload)
+        if key not in seen_keys:
+            result_records.append(wire)
+            seen_keys.add(key)
+
+    # 2. Records from plan.authorized_refresh (already-merged payloads).
+    # Track refresh-phase keys separately to detect repeated-refresh-key conflicts.
+    refresh_seen: dict[tuple, dict] = {}
+
+    for key, merged_payload in plan.authorized_refresh:
+        # Must be in authorized_keys.
+        if key not in authorized_keys:
+            raise ValueError(
+                f"select_recovery_records: authorized_refresh key {key!r} is not in authorized_keys"
+            )
+        # Must not be in blocking disposition sets.
+        if key in plan.identical:
+            raise ValueError(
+                f"select_recovery_records: authorized_refresh key {key!r} also in plan.identical"
+            )
+        if key in plan.protected:
+            raise ValueError(
+                f"select_recovery_records: authorized_refresh key {key!r} also in plan.protected"
+            )
+        if key in plan.excluded:
+            raise ValueError(
+                f"select_recovery_records: authorized_refresh key {key!r} also in plan.excluded"
+            )
+        if key in plan.blocked:
+            raise ValueError(
+                f"select_recovery_records: authorized_refresh key {key!r} also in plan.blocked"
+            )
+        # Issue date must be within [start_date, end_date].
+        issue_date = key[3]
+        if not (start_date <= issue_date <= end_date):
+            raise ValueError(
+                f"select_recovery_records: issue date {issue_date} for authorized_refresh "
+                f"key {key!r} is outside [{start_date}, {end_date}]"
+            )
+        # Refresh payload's canonical key must equal the associated plan key.
+        payload_key = _plan_key(merged_payload)
+        if payload_key != key:
+            raise ValueError(
+                f"select_recovery_records: authorized_refresh payload canonical key "
+                f"{payload_key!r} does not match associated plan key {key!r}"
+            )
+        # Full serialization before dedup check to reject unknown extra fields
+        # and flag/composition type errors even if payload is later a duplicate.
+        wire = _recovery_wire_serialize(merged_payload)
+        # Repeated refresh key: identical payload → collapse; differing payload → raise.
+        if key in refresh_seen:
+            if not _gd_identical(refresh_seen[key], merged_payload):
+                raise ValueError(
+                    f"select_recovery_records: authorized_refresh has repeated key "
+                    f"{key!r} with differing payloads"
+                )
+            continue  # exact duplicate, skip
+        # key already processed in plan.missing → must not silently drop.
+        if key in seen_keys:
+            raise ValueError(
+                f"select_recovery_records: key {key!r} appears in both plan.missing "
+                "and plan.authorized_refresh — these sets must be disjoint"
+            )
+        result_records.append(wire)
+        seen_keys.add(key)
+        refresh_seen[key] = merged_payload
+
+    return result_records
+
+
+def submit_recovery_batch(
+    records: list[dict],
+    *,
+    authorized_keys: set[tuple],
+    start_date: "Any",
+    end_date: "Any",
+    forecast_date: "Any",
+    base_url: str,
+    batch_limit: int,
+    write_cutoff: float,
+    deadline: float,
+    evidence_path: str,
+    timeout: int,
+    _clock=None,
+) -> dict:
+    """Submit exactly one bounded batch of serialized recovery records.
+
+    Pure transport seam: accepts only fully-validated serialized wire records
+    (output of select_recovery_records). Creates an isolated client with
+    max_retries=1 and no connection to the ordinary singleton. Writes evidence
+    before any POST. Never resends on timeout/failure; returns transport_status
+    and attempted flag separately.
+
+    Returns a plain dict with keys:
+      - attempted: bool — True if POST was entered (evidence exists)
+      - transport_status: str — "acknowledged", "uncertain", or "not_attempted"
+      - acknowledged_count: int or None
+      - attempted_records: list[dict] — exact records submitted (or [])
+      - evidence_path: str — path to evidence file (or None)
+      - error: str or None — human-readable reason for non-success
+
+    Args:
+        records: Pre-validated serialized wire records (14 fields each).
+        authorized_keys: Set of canonical 5-tuples; every record's key must be
+            present. Re-validated here at the transport boundary.
+        start_date: Inclusive issue-date lower bound (re-validated).
+        end_date: Inclusive issue-date upper bound (re-validated).
+        forecast_date: Run date; issue date must be <= this (re-validated).
+        base_url: API base URL for the isolated client.
+        batch_limit: Maximum number of records; reject (not split) if exceeded.
+        write_cutoff: Monotonic timestamp; stop before POST if past.
+        deadline: Monotonic timestamp; must be > write_cutoff.
+        evidence_path: Caller-provided path for the evidence file (O_CREAT|O_EXCL).
+        timeout: Request timeout in seconds for the isolated client (positive int).
+        _clock: Monotonic clock callable (default: time.monotonic; injectable for tests).
+    """
+    import datetime as _dt
+    import errno
+    import json as _json
+    import os
+    import stat
+    import time
+    import uuid
+
+    if _clock is None:
+        _clock = time.monotonic
+
+    try:
+        from src.gap_detector import _plan_key as _gd_plan_key
+    except ImportError:
+        from gap_detector import _plan_key as _gd_plan_key  # type: ignore[no-redef]
+
+    # --- Parameter validation ---
+    if not isinstance(batch_limit, int) or isinstance(batch_limit, bool) or batch_limit <= 0:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"batch_limit must be a positive int, got {batch_limit!r}",
+        }
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"timeout must be a positive int, got {timeout!r}",
+        }
+    if not isinstance(write_cutoff, (int, float)) or not _isfinite_real(write_cutoff):
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "write_cutoff must be a finite real number",
+        }
+    if not isinstance(deadline, (int, float)) or not _isfinite_real(deadline):
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "deadline must be a finite real number",
+        }
+    if write_cutoff >= deadline:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"write_cutoff {write_cutoff} must be < deadline {deadline}",
+        }
+    if not isinstance(evidence_path, str) or not evidence_path:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "evidence_path must be a non-empty string",
+        }
+
+    # --- Type checks: records must be list[dict] ---
+    if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "records must be a list of dicts",
+        }
+
+    # --- Date type checks: bounds must be date not datetime, ordered ---
+    for _bn, _bv in (
+        ("start_date", start_date),
+        ("end_date", end_date),
+        ("forecast_date", forecast_date),
+    ):
+        if not isinstance(_bv, _dt.date) or isinstance(_bv, _dt.datetime):
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": None,
+                "error": f"{_bn} must be a date object, not datetime",
+            }
+    if start_date > end_date or end_date > forecast_date:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "scope bounds must satisfy start_date <= end_date <= forecast_date",
+        }
+
+    # --- URL validation: http/https only, hostname required, no credentials/query/fragment ---
+    from urllib.parse import urlsplit as _urlsplit
+
+    try:
+        _url_parts = _urlsplit(base_url)
+        _url_hostname = _url_parts.hostname
+        _url_scheme = _url_parts.scheme
+    except ValueError:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "base_url could not be parsed as a URL",
+        }
+    if _url_scheme not in ("http", "https") or not _url_hostname:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "base_url must use http or https with a valid hostname",
+        }
+    if _url_parts.username or _url_parts.password:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "base_url must not contain credentials",
+        }
+    if _url_parts.query or _url_parts.fragment:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "base_url must not contain query string or fragment",
+        }
+
+    # --- Empty batch: no-op ---
+    if not records:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": 0,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": None,
+        }
+
+    # --- Oversize batch: reject ---
+    if len(records) > batch_limit:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": (
+                f"batch size {len(records)} exceeds batch_limit {batch_limit}; "
+                "reject rather than auto-split"
+            ),
+        }
+
+    # --- API-disabled / unavailable: zero client/network calls ---
+    if not SAPPHIRE_API_AVAILABLE:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "sapphire-api-client not installed",
+        }
+    if not api_writing_enabled():
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "SAPPHIRE_API_ENABLED=false",
+        }
+
+    # --- Re-validate all wire payloads at transport boundary ---
+    try:
+        _validated = [_recovery_wire_serialize(r) for r in records]
+    except ValueError as e:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"wire validation failed: {e}",
+        }
+
+    # --- Re-validate authorized_keys and date bounds ---
+    for r in _validated:
+        key = _gd_plan_key(r)
+        if key is None:
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": None,
+                "error": f"record has unparseable key after serialization: {r!r}",
+            }
+        if key not in authorized_keys:
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": None,
+                "error": f"key {key!r} not in authorized_keys",
+            }
+        issue_date = key[3]
+        if not (start_date <= issue_date <= end_date):
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": None,
+                "error": (f"issue date {issue_date} outside [{start_date}, {end_date}]"),
+            }
+        if issue_date > forecast_date:
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": None,
+                "error": f"issue date {issue_date} > forecast_date {forecast_date}",
+            }
+
+    # --- Strict duplicate check on canonical key ---
+    seen_keys: set[tuple] = set()
+    for r in _validated:
+        key = _gd_plan_key(r)
+        if key in seen_keys:
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": None,
+                "error": f"duplicate canonical key in batch: {key!r}",
+            }
+        seen_keys.add(key)
+
+    # --- Budget check: must have enough remaining time for timeout ---
+    now = _clock()
+    if now >= write_cutoff:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"at or past write_cutoff ({write_cutoff}); clock={now}",
+        }
+    remaining = write_cutoff - now
+    if remaining <= timeout:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": (
+                f"insufficient remaining time for request timeout: "
+                f"{remaining:.2f}s remaining, timeout={timeout}s"
+            ),
+        }
+
+    # --- Evidence file: O_CREAT|O_EXCL, mode 0600, private external dir ---
+    # Check lexists on the ORIGINAL path before realpath: realpath resolves a
+    # dangling symlink to its (non-existent) target, so lexists on the resolved
+    # path would return False and silently miss the dangling symlink.
+    if os.path.lexists(evidence_path):
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"evidence_path already exists or is symlink: {evidence_path!r}",
+        }
+    evidence_path = os.path.realpath(evidence_path)
+    ev_parent = os.path.dirname(evidence_path)
+    if not ev_parent:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": "evidence_path must be under a non-empty parent directory",
+        }
+    if not os.path.isdir(ev_parent):
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"evidence parent directory does not exist: {ev_parent!r}",
+        }
+    _ev_parent_mode = os.stat(ev_parent).st_mode
+    if _ev_parent_mode & 0o077:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"evidence parent directory has group/other permission bits set: {ev_parent!r}",
+        }
+
+    # Reject evidence parent that is itself a symlink.
+    if os.path.islink(ev_parent):
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": None,
+            "error": f"evidence parent dir is a symlink: {ev_parent!r}",
+        }
+    # Reject if path is inside a Git checkout (presence of .git in ancestors)
+    _check_dir = ev_parent
+    while True:
+        if os.path.exists(os.path.join(_check_dir, ".git")):
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": None,
+                "error": (f"evidence_path is inside a Git checkout (found .git at {_check_dir!r})"),
+            }
+        parent = os.path.dirname(_check_dir)
+        if parent == _check_dir:
+            break
+        _check_dir = parent
+
+    attempt_id = str(uuid.uuid4())
+    # Non-secret destination identity: base_url only (no auth/token)
+    evidence_payload = {
+        "attempt_id": attempt_id,
+        "destination": base_url,
+        "records": _validated,
+        "canonical_keys": [list(k) for k in sorted(seen_keys, key=str)],
+        "batch_limit": batch_limit,
+        "n_records": len(_validated),
+    }
+    evidence_bytes = _json.dumps(evidence_payload, default=str).encode("utf-8")
+
+    ev_created = False
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(evidence_path, flags, stat.S_IRUSR | stat.S_IWUSR)
+        try:
+            ev_created = True
+            offset = 0
+            total = len(evidence_bytes)
+            while offset < total:
+                written = os.write(fd, evidence_bytes[offset:])
+                if written <= 0:
+                    raise OSError(errno.EIO, f"os.write returned {written}")
+                offset += written
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": evidence_path if ev_created else None,
+            "error": f"evidence file creation failed: {e}",
+        }
+
+    # --- Recheck cutoff after evidence write ---
+    now = _clock()
+    if now >= write_cutoff:
+        return {
+            "attempted": False,
+            "transport_status": "not_attempted",
+            "acknowledged_count": None,
+            "attempted_records": [],
+            "evidence_path": evidence_path,
+            "error": f"past write_cutoff after evidence write; clock={now}",
+        }
+
+    # --- Isolated client: new instance, max_retries=1, session.max_redirects=0 ---
+    transport_error = None
+    transport_status = "uncertain"
+    acknowledged_count = None
+    client = None
+    attempted = False
+
+    try:
+        client = SapphirePostprocessingClient(
+            base_url=base_url,
+            auth_token=None,
+            max_retries=1,
+            batch_size=batch_limit,
+            timeout=timeout,
+        )
+        client.session.max_redirects = 0
+
+        # Attach a response hook to validate shape before count
+        _hook_error: list[str] = []
+
+        def _validate_response_shape(response, *args, **kwargs):
+            if not (200 <= response.status_code < 300):
+                _hook_error.append(
+                    f"non-2xx response status {response.status_code}; "
+                    "cannot confirm acknowledgement"
+                )
+                return
+            try:
+                body = response.json()
+                if not isinstance(body, list):
+                    _hook_error.append(
+                        f"malformed response: expected list, got {type(body).__name__}"
+                    )
+                elif not all(isinstance(item, dict) for item in body):
+                    _hook_error.append("malformed response: list items are not all dicts")
+            except Exception as parse_err:
+                _hook_error.append(f"response JSON parse error: {parse_err}")
+
+        client.session.hooks["response"].append(_validate_response_shape)
+
+        # Recheck cutoff immediately before POST (client setup may consume budget)
+        now = _clock()
+        remaining = write_cutoff - now
+        if now >= write_cutoff or remaining <= timeout:
+            return {
+                "attempted": False,
+                "transport_status": "not_attempted",
+                "acknowledged_count": None,
+                "attempted_records": [],
+                "evidence_path": evidence_path,
+                "error": (
+                    f"insufficient budget before POST; cutoff={write_cutoff}, "
+                    f"clock={now}, remaining={remaining:.2f}, timeout={timeout}"
+                ),
+            }
+
+        attempted = True
+        count = client.write_short_term_forecasts(_validated)
+
+        # Check hook-detected shape errors
+        if _hook_error:
+            transport_status = "uncertain"
+            transport_error = _hook_error[0]
+        elif not isinstance(count, int) or isinstance(count, bool):
+            transport_status = "uncertain"
+            transport_error = f"non-int/bool count returned: {count!r}"
+        elif count != len(_validated):
+            transport_status = "uncertain"
+            transport_error = f"count mismatch: submitted {len(_validated)}, response count {count}"
+        else:
+            # Check clock: late completion is not timely success
+            now = _clock()
+            if now >= write_cutoff or now >= deadline:
+                transport_status = "uncertain"
+                transport_error = (
+                    f"POST completed late (cutoff={write_cutoff}, deadline={deadline}); clock={now}"
+                )
+            else:
+                transport_status = "acknowledged"
+                acknowledged_count = count
+
+    except Exception as exc:
+        if not attempted:
+            transport_status = "not_attempted"
+        transport_error = str(exc)
+    finally:
+        if client is not None:
+            with contextlib.suppress(Exception):
+                client.session.close()
+
+    return {
+        "attempted": attempted,
+        "transport_status": transport_status,
+        "acknowledged_count": acknowledged_count,
+        "attempted_records": _validated if attempted else [],
+        "evidence_path": evidence_path,
+        "error": transport_error,
+    }
+
+
+def reconcile_recovery_batches(
+    attempted_batches: list[dict],
+    *,
+    authorized_keys: set[tuple],
+    start_date: "Any",
+    end_date: "Any",
+    forecast_date: "Any",
+    base_url: str,
+    deadline: float,
+    timeout: int,
+    page_size: int = 500,
+    max_pages: int = 200,
+    _clock=None,
+) -> dict:
+    """Reconcile attempted recovery batches by strict full readback from the API.
+
+    Accepts the caller-owned list of all prior submit_recovery_batch results,
+    including acknowledged and uncertain ones. Reads back the actual state for
+    every key that was attempted (attempted=True) and compares all 14 writable
+    fields exactly. Does NOT modify transport statuses or retry anything.
+
+    Returns a plain dict with keys:
+      - verified_keys: list[tuple] — keys confirmed fully written (all 14 match)
+      - unverified_keys: list[tuple] — keys not confirmed (missing, mismatch, conflict,
+        or read failure; uncertain transport alone does not put a key here if readback verifies it)
+      - reasons: dict[tuple, str] — per-key human-readable reason for unverified
+      - reconciliation_status: str — "verified", "unverified", or "no_attempted_records"
+      - original_transport_uncertain: list[tuple] — keys whose original transport was
+        "uncertain" (retained separately even when readback verifies the key)
+
+    Args:
+        attempted_batches: All prior submit_recovery_batch return dicts (caller-owned).
+        authorized_keys: Canonical 5-tuples that were authorized for this recovery run.
+        start_date: Inclusive issue-date lower bound.
+        end_date: Inclusive issue-date upper bound.
+        forecast_date: Captured run date.
+        base_url: API base URL for the isolated read client.
+        deadline: Absolute monotonic deadline for all reads (finite positive).
+        timeout: Per-request timeout in seconds.
+        page_size: Records per API page (positive int).
+        max_pages: Hard per-code page cap (positive int).
+        _clock: Injectable monotonic clock (default: time.monotonic).
+    """
+    import datetime as _dt
+    import time
+
+    if _clock is None:
+        _clock = time.monotonic
+
+    try:
+        from src.data_reader import (
+            RECOVERY_STATUS_COMPLETE,
+            RECOVERY_STATUS_EMPTY,
+        )
+        from src.data_reader import (
+            read_combined_period_forecasts_for_recovery as _rb_read,
+        )
+    except ImportError:
+        from data_reader import (
+            RECOVERY_STATUS_COMPLETE,
+            RECOVERY_STATUS_EMPTY,
+        )
+        from data_reader import (  # type: ignore[no-redef]
+            read_combined_period_forecasts_for_recovery as _rb_read,
+        )
+
+    try:
+        from src.gap_detector import _plan_key as _gd_plan_key
+    except ImportError:
+        from gap_detector import _plan_key as _gd_plan_key  # type: ignore[no-redef]
+
+    import math as _math
+
+    # --- Validate scalar parameters ---
+    if (
+        not isinstance(deadline, (int, float))
+        or isinstance(deadline, bool)
+        or not _math.isfinite(deadline)
+    ):
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": "deadline must be a finite real number",
+        }
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": f"timeout must be a positive int, got {timeout!r}",
+        }
+    if not isinstance(page_size, int) or isinstance(page_size, bool) or page_size <= 0:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": f"page_size must be a positive int, got {page_size!r}",
+        }
+    if not isinstance(max_pages, int) or isinstance(max_pages, bool) or max_pages <= 0:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": f"max_pages must be a positive int, got {max_pages!r}",
+        }
+    for _bn, _bv in (
+        ("start_date", start_date),
+        ("end_date", end_date),
+        ("forecast_date", forecast_date),
+    ):
+        if not isinstance(_bv, _dt.date) or isinstance(_bv, _dt.datetime):
+            return {
+                "verified_keys": [],
+                "unverified_keys": [],
+                "reasons": {},
+                "reconciliation_status": "unverified",
+                "original_transport_uncertain": [],
+                "error": f"{_bn} must be a date object, not datetime",
+            }
+    if start_date > end_date or end_date > forecast_date:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": "scope bounds must satisfy start_date <= end_date <= forecast_date",
+        }
+
+    # --- Validate base_url (same rules as submit_recovery_batch) ---
+    from urllib.parse import urlsplit as _urlsplit_rb
+
+    try:
+        _rb_url = _urlsplit_rb(base_url)
+    except ValueError:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": "base_url could not be parsed as a URL",
+        }
+    if _rb_url.scheme not in ("http", "https") or not _rb_url.hostname:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": "base_url must use http or https with a valid hostname",
+        }
+    if _rb_url.username or _rb_url.password:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": "base_url must not contain credentials",
+        }
+    if _rb_url.query or _rb_url.fragment:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": "base_url must not contain query string or fragment",
+        }
+
+    # --- Validate attempted_batches structure and collect attempted records ---
+    # Malformed batch/record/key → structured unverified return, never continue+skip.
+    # False-attempted batches are ignored only when well-formed.
+    if not isinstance(attempted_batches, list):
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [],
+            "error": "attempted_batches must be a list of dicts",
+        }
+    key_to_records: dict[tuple, list[dict]] = {}
+    uncertain_transport_keys: set[tuple] = set()
+
+    for batch in attempted_batches:
+        if not isinstance(batch, dict):
+            return {
+                "verified_keys": [],
+                "unverified_keys": [],
+                "reasons": {},
+                "reconciliation_status": "unverified",
+                "original_transport_uncertain": [],
+                "error": "attempted_batches contains a non-dict element",
+            }
+        raw_attempted = batch.get("attempted")
+        if not isinstance(raw_attempted, bool):
+            return {
+                "verified_keys": [],
+                "unverified_keys": [],
+                "reasons": {},
+                "reconciliation_status": "unverified",
+                "original_transport_uncertain": [],
+                "error": (
+                    f"batch 'attempted' field must be bool, "
+                    f"got {type(raw_attempted).__name__}: {raw_attempted!r}"
+                ),
+            }
+        _VALID_STATUSES = ("acknowledged", "uncertain", "not_attempted")
+        raw_status = batch.get("transport_status")
+        if raw_status not in _VALID_STATUSES:
+            return {
+                "verified_keys": [],
+                "unverified_keys": [],
+                "reasons": {},
+                "reconciliation_status": "unverified",
+                "original_transport_uncertain": [],
+                "error": (f"batch transport_status {raw_status!r} is not one of {_VALID_STATUSES}"),
+            }
+        recs_field = batch.get("attempted_records")
+        if not raw_attempted:
+            # attempted=False is only consistent with not_attempted + empty records.
+            if raw_status != "not_attempted":
+                return {
+                    "verified_keys": [],
+                    "unverified_keys": [],
+                    "reasons": {},
+                    "reconciliation_status": "unverified",
+                    "original_transport_uncertain": [],
+                    "error": (
+                        f"batch attempted=False but transport_status={raw_status!r}; "
+                        "expected 'not_attempted'"
+                    ),
+                }
+            if not (isinstance(recs_field, list) and len(recs_field) == 0):
+                return {
+                    "verified_keys": [],
+                    "unverified_keys": [],
+                    "reasons": {},
+                    "reconciliation_status": "unverified",
+                    "original_transport_uncertain": [],
+                    "error": (
+                        "batch attempted=False but attempted_records is non-empty; "
+                        "contradictory batch structure"
+                    ),
+                }
+            continue
+        # attempted=True: status must be acknowledged or uncertain.
+        if raw_status not in ("acknowledged", "uncertain"):
+            return {
+                "verified_keys": [],
+                "unverified_keys": [],
+                "reasons": {},
+                "reconciliation_status": "unverified",
+                "original_transport_uncertain": [],
+                "error": (
+                    f"batch attempted=True but transport_status={raw_status!r}; "
+                    "expected 'acknowledged' or 'uncertain'"
+                ),
+            }
+        recs = recs_field
+        if not isinstance(recs, list) or not recs or not all(isinstance(r, dict) for r in recs):
+            return {
+                "verified_keys": [],
+                "unverified_keys": [],
+                "reasons": {},
+                "reconciliation_status": "unverified",
+                "original_transport_uncertain": [],
+                "error": "attempted=True batch must have a non-empty attempted_records list of dicts",
+            }
+        for rec in recs:
+            # Full pre-flight: validates all 14 fields, types, calendar, extras.
+            # Store the canonical serialized record (not the original) so that
+            # alias/date-format variants (TiDE vs TIDE, date object vs ISO) compare
+            # on identical full-14-field canonical values during conflict detection.
+            try:
+                canonical_rec = _recovery_wire_serialize(rec)
+            except ValueError as _ve:
+                return {
+                    "verified_keys": [],
+                    "unverified_keys": [],
+                    "reasons": {},
+                    "reconciliation_status": "unverified",
+                    "original_transport_uncertain": [],
+                    "error": f"attempted record failed validation: {_ve}",
+                }
+            key = _gd_plan_key(rec)
+            if key is None:
+                return {
+                    "verified_keys": [],
+                    "unverified_keys": [],
+                    "reasons": {},
+                    "reconciliation_status": "unverified",
+                    "original_transport_uncertain": [],
+                    "error": "attempted_batches contains a record with an unparseable key",
+                }
+            if key not in authorized_keys:
+                return {
+                    "verified_keys": [],
+                    "unverified_keys": [key],
+                    "reasons": {key: "attempted key not in authorized_keys"},
+                    "reconciliation_status": "unverified",
+                    "original_transport_uncertain": [],
+                    "error": f"attempted batch contains key not in authorized_keys: {key!r}",
+                }
+            issue_date = key[3]
+            if not (start_date <= issue_date <= end_date):
+                return {
+                    "verified_keys": [],
+                    "unverified_keys": [key],
+                    "reasons": {key: f"issue date {issue_date} outside [{start_date}, {end_date}]"},
+                    "reconciliation_status": "unverified",
+                    "original_transport_uncertain": [],
+                    "error": (
+                        f"attempted record issue date {issue_date} "
+                        f"outside [{start_date}, {end_date}]"
+                    ),
+                }
+            if issue_date > forecast_date:
+                return {
+                    "verified_keys": [],
+                    "unverified_keys": [key],
+                    "reasons": {key: f"issue date {issue_date} > forecast_date {forecast_date}"},
+                    "reconciliation_status": "unverified",
+                    "original_transport_uncertain": [],
+                    "error": (
+                        f"attempted record issue date {issue_date} > forecast_date {forecast_date}"
+                    ),
+                }
+            if key not in key_to_records:
+                key_to_records[key] = []
+            key_to_records[key].append(canonical_rec)
+        if batch.get("transport_status") == "uncertain":
+            for rec in recs:
+                key = _gd_plan_key(rec)
+                if key is not None:
+                    uncertain_transport_keys.add(key)
+
+    # No attempted records across all batches → no-op, no reads
+    if not key_to_records:
+        return {
+            "verified_keys": [],
+            "unverified_keys": [],
+            "reasons": {},
+            "reconciliation_status": "no_attempted_records",
+            "original_transport_uncertain": [],
+            "error": None,
+        }
+
+    # Check API availability/enabled before constructing any client
+    if not SAPPHIRE_API_AVAILABLE or not api_writing_enabled():
+        all_keys = list(key_to_records.keys())
+        return {
+            "verified_keys": [],
+            "unverified_keys": all_keys,
+            "reasons": {k: "API unavailable or disabled; cannot read back" for k in all_keys},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [k for k in all_keys if k in uncertain_transport_keys],
+            "error": None,
+        }
+
+    # Check deadline before constructing client
+    now = _clock()
+    if now >= deadline:
+        all_keys = list(key_to_records.keys())
+        return {
+            "verified_keys": [],
+            "unverified_keys": all_keys,
+            "reasons": {k: "deadline exhausted before any reads" for k in all_keys},
+            "reconciliation_status": "unverified",
+            "original_transport_uncertain": [k for k in all_keys if k in uncertain_transport_keys],
+            "error": None,
+        }
+
+    # --- Detect conflicting attempted records for the same key ---
+    # Two records from different batches with the same key but differing values
+    # → key is unverifiable (conflict)
+    conflicted_keys: dict[tuple, str] = {}
+    canonical_attempted: dict[tuple, dict] = {}
+
+    for key, recs in key_to_records.items():
+        if not recs:
+            conflicted_keys[key] = "no records for key"
+            continue
+        first = recs[0]
+        for other in recs[1:]:
+            # Compare all 14 writable fields
+            mismatch = None
+            for field in _RECOVERY_OUTPUT_FIELDS:
+                v1 = first.get(field)
+                v2 = other.get(field)
+                if v1 != v2:
+                    mismatch = (
+                        f"conflicting attempted records for key (field {field!r}: {v1!r} vs {v2!r})"
+                    )
+                    break
+            if mismatch:
+                conflicted_keys[key] = mismatch
+                break
+        if key not in conflicted_keys:
+            canonical_attempted[key] = first
+
+    # --- Group keys by (horizon_type, model_canonical) for scoped reads ---
+    # Read scope per (ht, model): only attempted codes, min/max of attempted issue
+    # dates (not the entire authorized window).
+    from collections import defaultdict
+
+    scope_keys: dict[tuple, set[str]] = defaultdict(set)  # (ht_internal, model_canonical) -> codes
+    scope_date_range: dict[tuple, tuple] = {}  # (ht_internal, model_canonical) -> (min, max)
+    for key in canonical_attempted:
+        ht, code, model_canonical, issue_date, target_date = key
+        scope_keys[(ht, model_canonical)].add(code)
+        scope = (ht, model_canonical)
+        if scope not in scope_date_range:
+            scope_date_range[scope] = (issue_date, issue_date)
+        else:
+            lo, hi = scope_date_range[scope]
+            scope_date_range[scope] = (min(lo, issue_date), max(hi, issue_date))
+
+    verified_keys: list[tuple] = []
+    unverified_keys: list[tuple] = []
+    reasons: dict[tuple, str] = {}
+
+    # Mark all conflicted keys as unverified immediately
+    for key, reason in conflicted_keys.items():
+        unverified_keys.append(key)
+        reasons[key] = reason
+
+    client = None
+    try:
+        # --- Build the isolated read client (inside guard so constructor exceptions are structured) ---
+        client = SapphirePostprocessingClient(
+            base_url=base_url,
+            auth_token=None,
+            max_retries=1,
+            batch_size=page_size,
+            timeout=timeout,
+        )
+        client.session.max_redirects = 0
+        # Perform one read per (horizon_type, model_canonical) scope
+        for (ht_internal, model_canonical), codes in scope_keys.items():
+            # Check deadline before each read scope
+            now = _clock()
+            if now >= deadline:
+                # All remaining keys in this scope → unverified
+                for key in canonical_attempted:
+                    if key[0] == ht_internal and key[2] == model_canonical and key not in reasons:
+                        unverified_keys.append(key)
+                        reasons[key] = "deadline exhausted before read"
+                continue
+
+            remaining_deadline = deadline - _clock()
+            if remaining_deadline <= 0:
+                for key in canonical_attempted:
+                    if key[0] == ht_internal and key[2] == model_canonical and key not in reasons:
+                        unverified_keys.append(key)
+                        reasons[key] = "deadline exhausted before read"
+                continue
+
+            # Wire model name for the reader (reader accepts canonical internal names)
+            # _RECOVERY_WIRE_MODEL maps canonical → wire; reader accepts wire model names
+            wire_model = _RECOVERY_WIRE_MODEL.get(model_canonical)
+            if wire_model is None:
+                for key in canonical_attempted:
+                    if key[0] == ht_internal and key[2] == model_canonical and key not in reasons:
+                        unverified_keys.append(key)
+                        reasons[key] = (
+                            f"unsupported canonical model {model_canonical!r} for readback"
+                        )
+                continue
+
+            scope_read_start, scope_read_end = scope_date_range.get(
+                (ht_internal, model_canonical), (start_date, end_date)
+            )
+            status, frame, reason_str = _rb_read(
+                client,
+                list(codes),
+                wire_model,
+                ht_internal,
+                scope_read_start,
+                scope_read_end,
+                forecast_date,
+                total_deadline=deadline,
+                page_size=page_size,
+                max_pages=max_pages,
+                _clock=_clock,
+            )
+
+            # Check clock after read
+            now = _clock()
+
+            if status not in (RECOVERY_STATUS_COMPLETE, RECOVERY_STATUS_EMPTY):
+                # Failed/disabled read → all keys in this scope are unverified
+                for key in canonical_attempted:
+                    if key[0] == ht_internal and key[2] == model_canonical and key not in reasons:
+                        unverified_keys.append(key)
+                        reasons[key] = f"readback failed (status={status!r}): {reason_str}"
+                continue
+
+            # Build a lookup from (code, issue_date) → readback row for this scope
+            readback_by_key: dict[tuple, dict] = {}
+            readback_conflicts: set[tuple] = set()
+
+            if frame is not None and not frame.empty:
+                for _, rb_row in frame.iterrows():
+                    rb_dict = dict(rb_row)
+                    rb_key = _gd_plan_key(rb_dict)
+                    if rb_key is None:
+                        continue
+                    if rb_key in readback_by_key:
+                        # Duplicate in readback → conflict
+                        readback_conflicts.add(rb_key)
+                    else:
+                        readback_by_key[rb_key] = rb_dict
+
+            # Verify each key in this scope
+            for key in list(canonical_attempted.keys()):
+                if key[0] != ht_internal or key[2] != model_canonical:
+                    continue
+                if key in reasons:
+                    continue
+
+                if key in readback_conflicts:
+                    unverified_keys.append(key)
+                    reasons[key] = "duplicate conflicting rows in readback"
+                    continue
+
+                rb = readback_by_key.get(key)
+                if rb is None:
+                    # Key not found in readback — if read was CONFIRMED_EMPTY, key is missing
+                    unverified_keys.append(key)
+                    reasons[key] = "key not found in readback"
+                    continue
+
+                # Canonicalize both sides through the serializer so that bool/int
+                # variants, absent-vs-None, model aliases, and date string formats
+                # are normalized identically. ValueError from either side → unverified.
+                expected = canonical_attempted[key]
+                mismatch = None
+                try:
+                    exp_wire = _recovery_wire_serialize(expected)
+                except ValueError as _ve:
+                    unverified_keys.append(key)
+                    reasons[key] = f"expected record failed re-serialization: {_ve}"
+                    continue
+                try:
+                    rb_wire = _recovery_wire_serialize(rb)
+                except ValueError as _ve:
+                    unverified_keys.append(key)
+                    reasons[key] = f"readback record failed serialization: {_ve}"
+                    continue
+                for field in _RECOVERY_OUTPUT_FIELDS:
+                    exp_v = exp_wire.get(field)
+                    rb_v = rb_wire.get(field)
+                    if exp_v != rb_v:
+                        mismatch = f"field {field!r} mismatch: expected {exp_v!r}, got {rb_v!r}"
+                        break
+
+                if mismatch:
+                    unverified_keys.append(key)
+                    reasons[key] = mismatch
+                elif now >= deadline:
+                    # Readback completed but deadline passed — do not certify as verified
+                    unverified_keys.append(key)
+                    reasons[key] = f"readback completed late (deadline={deadline}, clock={now})"
+                else:
+                    verified_keys.append(key)
+
+    except Exception as _exc:
+        # Only classify keys that have not yet been placed in either partition.
+        # verified_keys have no reasons entry; without this guard they would be
+        # moved to unverified on a later-scope exception, making the partitions
+        # non-disjoint.
+        _verified_set = set(verified_keys)
+        for key in canonical_attempted:
+            if key not in reasons and key not in _verified_set:
+                unverified_keys.append(key)
+                reasons[key] = f"client or read exception: {_exc}"
+    finally:
+        if client is not None:
+            with contextlib.suppress(Exception):
+                client.session.close()
+
+    overall_status = "verified" if (verified_keys and not unverified_keys) else "unverified"
+    if not verified_keys and not unverified_keys:
+        overall_status = "no_attempted_records"
+
+    return {
+        "verified_keys": verified_keys,
+        "unverified_keys": unverified_keys,
+        "reasons": reasons,
+        "reconciliation_status": overall_status,
+        "original_transport_uncertain": [
+            k for k in (verified_keys + unverified_keys) if k in uncertain_transport_keys
+        ],
+        "error": None,
+    }
+
+
+def _isfinite_real(x: object) -> bool:
+    """Return True if x is a finite real number (not bool, not complex)."""
+    import math
+
+    if isinstance(x, bool):
+        return False
+    if isinstance(x, (int, float)):
+        return math.isfinite(x)
+    return False
 
 
 def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:

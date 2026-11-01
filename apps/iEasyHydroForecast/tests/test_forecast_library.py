@@ -1634,8 +1634,8 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
         if os.path.exists(self.output_path):
             os.remove(self.output_path)
 
-        # Call the function
-        fl.write_linreg_pentad_forecast_data(self.test_data)
+        # CSV-only test; api_data=pd.DataFrame() explicitly skips API.
+        fl.write_linreg_pentad_forecast_data(self.test_data, api_data=pd.DataFrame())
 
         # Check that the file exists
         self.assertTrue(os.path.exists(self.output_path))
@@ -1675,8 +1675,8 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
 
         initial_data.to_csv(self.output_path, index=False)
 
-        # Call the function with new data
-        fl.write_linreg_pentad_forecast_data(self.test_data)
+        # CSV-only test; api_data=pd.DataFrame() explicitly skips API.
+        fl.write_linreg_pentad_forecast_data(self.test_data, api_data=pd.DataFrame())
 
         # Read the file and check contents
         result = self._get_output_data()
@@ -1713,8 +1713,8 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
         # Write initial data
         initial_data.to_csv(self.output_path, index=False)
 
-        # Call the function with new data that includes duplicates for codes 15001 and 15003
-        fl.write_linreg_pentad_forecast_data(self.test_data)
+        # CSV-only test; api_data=pd.DataFrame() explicitly skips API.
+        fl.write_linreg_pentad_forecast_data(self.test_data, api_data=pd.DataFrame())
 
         # Read the file and check contents
         result = self._get_output_data()
@@ -1755,8 +1755,8 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
             }
         )
 
-        # Call the function
-        fl.write_linreg_pentad_forecast_data(mixed_year_data)
+        # CSV-only test; api_data=pd.DataFrame() explicitly skips API.
+        fl.write_linreg_pentad_forecast_data(mixed_year_data, api_data=pd.DataFrame())
 
         # Read the file and check contents
         result = self._get_output_data()

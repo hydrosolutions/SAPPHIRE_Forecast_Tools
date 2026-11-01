@@ -73,13 +73,26 @@ def _make_skill_row(
 
 
 def _make_forecast_row(code, date, pentad, pim, model_short, discharge):
-    """Build a single forecast row."""
+    """Build a single forecast row with complete quantile columns.
+
+    q-cols are set to NaN when discharge is NaN/None so the row is
+    properly excluded from the EM pool by the finite-central check.
+    """
+    try:
+        d = float(discharge)
+        q05, q25, q75, q95 = d * 0.9, d * 0.95, d * 1.05, d * 1.1
+    except (TypeError, ValueError):
+        q05 = q25 = q75 = q95 = np.nan
     return {
         "code": code,
         "date": pd.Timestamp(date),
         "pentad_in_year": pentad,
         "pentad_in_month": pim,
         "forecasted_discharge": discharge,
+        "q05": q05,
+        "q25": q25,
+        "q75": q75,
+        "q95": q95,
         "model_short": model_short,
     }
 

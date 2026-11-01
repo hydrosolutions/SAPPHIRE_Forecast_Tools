@@ -36,13 +36,16 @@
 # --------------------------------------------------------------------
 # Load Libraries
 # --------------------------------------------------------------------
+import contextlib
 import datetime
 import glob
+import json
 import logging
 import os
 import sys
 from logging.handlers import TimedRotatingFileHandler
 
+import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 
@@ -53,6 +56,7 @@ from pytorch_lightning.callbacks import Callback
 from scr.utils_ml_forecast import (
     SAPPHIRE_API_AVAILABLE,
     _write_ml_forecast_to_api,
+    canonical_ml_mode,
     normalize_ml_csv_columns,
     read_meteo_data_combined,
 )
@@ -106,6 +110,367 @@ sys.path.append(forecast_dir)
 import forecast_library as fl
 import setup_library as sl
 
+# ─── Recovery compute-only mode (P1b) ────────────────────────────────────────
+# Private env-var marker.  When set by compute_recovery_unit() in
+# recalculate_nan_forecasts.py, main() runs a single predict() call instead of
+# the full historical_forecasts loop, writes a strict JSON result, and returns
+# without touching any API or CSV writer.  Absent this marker, main() is
+# byte-equivalent to before this code existed.
+_RECOVERY_COMPUTE_REQUEST_ENV = "_SAPPHIRE_RECOVERY_COMPUTE_REQUEST_PATH"
+_RECOVERY_COMPUTE_RESPONSE_ENV = "_SAPPHIRE_RECOVERY_COMPUTE_RESPONSE_PATH"
+
+# All 19 quantile columns produced by BaseDartsDLPredictor.create_prediction_df.
+_RECOVERY_19_Q_COLS = (
+    "Q5",
+    "Q10",
+    "Q15",
+    "Q20",
+    "Q25",
+    "Q30",
+    "Q35",
+    "Q40",
+    "Q45",
+    "Q50",
+    "Q55",
+    "Q60",
+    "Q65",
+    "Q70",
+    "Q75",
+    "Q80",
+    "Q85",
+    "Q90",
+    "Q95",
+)
+
+# Supported DL models for recovery (ARIMA cannot use predict() with 11 targets).
+_RECOVERY_DL_MODELS = frozenset({"TFT", "TIDE", "TSMIXER"})
+
+
+def _run_recovery_compute(
+    request: dict,
+    predictor,
+    era5_data: pd.DataFrame,
+    observed_discharge: pd.DataFrame,
+    rivers_to_predict: list,
+    response_path: str,
+    deadline: "datetime.datetime | None" = None,
+) -> int:
+    """Run compute-only recovery for one validated candidate.
+
+    Called from main() when _RECOVERY_COMPUTE_REQUEST_ENV is set.
+    No API writes, no CSV writes.  Returns 0 on success, non-zero on failure.
+    Writes the strict JSON result atomically to response_path on success only.
+    """
+    invocation_id = request.get("invocation_id")
+    req_model = request.get("model")
+    req_code = str(request.get("source_code", ""))
+    req_issue = request.get("issue_date")
+
+    if not invocation_id or not req_model or not req_code or not req_issue:
+        logger.error("Recovery compute: request missing required fields")
+        return 2
+
+    # Code must be in the filtered rivers_to_predict (already validated by gate checks).
+    try:
+        req_code_int = int(req_code)
+    except (TypeError, ValueError):
+        logger.error("Recovery compute: source_code %r is not an integer", req_code)
+        return 2
+
+    if req_code_int not in rivers_to_predict:
+        logger.error("Recovery compute: code %s not in permitted rivers_to_predict", req_code)
+        return 2
+
+    # Validate output_chunk_length >= 11 before inference.
+    try:
+        ocl = predictor.get_max_forecast_horizon()
+    except Exception as e:
+        logger.error("Recovery compute: cannot get output_chunk_length: %s", e)
+        return 2
+    if ocl < 11:
+        logger.error(
+            "Recovery compute: output_chunk_length=%d < 11; blocked before inference",
+            ocl,
+        )
+        return 2
+
+    # Deadline check before model call.
+    if deadline is not None and datetime.datetime.utcnow() >= deadline:
+        logger.error("Recovery compute: deadline expired before inference")
+        return 2
+
+    # Compute required source history depth.
+    # A rolling window of size W needs the target day plus W-1 preceding days, so
+    # the total lookback beyond icl is max(0, max_ws - 1) days, not max_ws.
+    # obs_start is derived from count-1 so the closed interval [obs_start, issue_ts]
+    # contains exactly required_history rows.
+    icl = predictor.get_input_chunk_length()
+    window_sizes = getattr(predictor, "window_sizes", [3, 5, 10])
+    max_ws = max(window_sizes) if window_sizes else 10
+    required_history = icl + max(0, max_ws - 1)
+
+    issue_ts = pd.Timestamp(req_issue)
+    obs_start = issue_ts - pd.Timedelta(days=required_history - 1)
+
+    # Filter discharge observations: source code only, ending exactly at issue_date.
+    disc = observed_discharge.copy()
+    disc["date"] = pd.to_datetime(disc["date"])
+    disc_code = (
+        disc[
+            (disc["code"] == req_code_int)
+            & (disc["date"] >= obs_start)
+            & (disc["date"] <= issue_ts)
+        ]
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    if disc_code.empty or len(disc_code) < required_history:
+        logger.error(
+            "Recovery compute: insufficient source history (%d rows, need %d) for code %s",
+            len(disc_code),
+            required_history,
+            req_code,
+        )
+        return 2
+
+    # Observations must be consecutive day-by-day and end exactly at issue_date.
+    diffs = disc_code["date"].diff().iloc[1:]
+    if not (diffs == pd.Timedelta(days=1)).all():
+        logger.error(
+            "Recovery compute: non-consecutive dates in source history for code %s", req_code
+        )
+        return 2
+    if disc_code["date"].iloc[-1] != issue_ts:
+        logger.error(
+            "Recovery compute: source history ends at %s, not issue_date %s",
+            disc_code["date"].iloc[-1],
+            req_issue,
+        )
+        return 2
+
+    # Discharge values must be finite for all required history rows.
+    _disc_vals = pd.to_numeric(disc_code["discharge"], errors="coerce")
+    if _disc_vals.isnull().any() or not np.isfinite(_disc_vals.values).all():
+        logger.error(
+            "Recovery compute: non-finite discharge values in source history for code %s", req_code
+        )
+        return 2
+
+    # Covariates must cover obs_start through issue_date + max(11, ocl).
+    cov_end_offset = max(11, ocl)
+    cov_end_ts = issue_ts + pd.Timedelta(days=cov_end_offset)
+
+    era = era5_data.copy()
+    era["date"] = pd.to_datetime(era["date"])
+    era_code = era[
+        (era["code"] == req_code_int) & (era["date"] >= obs_start) & (era["date"] <= cov_end_ts)
+    ].copy()
+
+    if era_code.empty:
+        logger.error("Recovery compute: no covariate rows for code %s in required range", req_code)
+        return 2
+
+    era_code = era_code.sort_values("date").reset_index(drop=True)
+
+    # Require a unique, consecutive daily grid from obs_start through cov_end_ts.
+    if era_code["date"].duplicated().any():
+        logger.error("Recovery compute: duplicate dates in covariate grid for code %s", req_code)
+        return 2
+    if era_code["date"].iloc[0] > obs_start:
+        logger.error(
+            "Recovery compute: covariate grid starts at %s, later than required start %s",
+            era_code["date"].iloc[0],
+            obs_start,
+        )
+        return 2
+    if len(era_code) > 1:
+        _cov_diffs = era_code["date"].diff().iloc[1:]
+        if not (_cov_diffs == pd.Timedelta(days=1)).all():
+            logger.error("Recovery compute: covariate grid has interior gaps for code %s", req_code)
+            return 2
+    if era_code["date"].iloc[-1] < cov_end_ts:
+        logger.error(
+            "Recovery compute: covariate coverage ends at %s, need through %s",
+            era_code["date"].iloc[-1],
+            cov_end_ts,
+        )
+        return 2
+
+    fut_cols = getattr(predictor, "future_covariates_cols", ["P", "T", "PET", "daylight_hours"])
+    for fc in fut_cols:
+        if fc not in era_code.columns:
+            logger.error("Recovery compute: required covariate column %s missing", fc)
+            return 2
+        vals = pd.to_numeric(era_code[fc], errors="coerce")
+        if vals.isnull().any() or not np.isfinite(vals.values).all():
+            logger.error(
+                "Recovery compute: covariate %s has non-finite values through forecast horizon", fc
+            )
+            return 2
+
+    # Single predict() call at ONE origin.
+    try:
+        df_pred = predictor.predict(
+            df_rivers_org=disc_code,
+            df_covariates=era_code,
+            code=req_code_int,
+            n=11,
+        )
+    except Exception as e:
+        logger.error("Recovery compute: predict() raised: %s", e)
+        return 2
+
+    # Deadline check after inference (late result is still discarded).
+    if deadline is not None and datetime.datetime.utcnow() >= deadline:
+        logger.error("Recovery compute: deadline expired after inference; result discarded")
+        return 2
+
+    if df_pred is None or (hasattr(df_pred, "empty") and df_pred.empty):
+        logger.error("Recovery compute: predict() returned empty DataFrame for code %s", req_code)
+        return 2
+
+    if len(df_pred) != 11:
+        logger.error("Recovery compute: expected 11 rows, got %d", len(df_pred))
+        return 2
+
+    if "date" not in df_pred.columns:
+        logger.error("Recovery compute: output missing 'date' column")
+        return 2
+
+    # If predictor stamps a code column, it must match the request — no silent relabelling.
+    if "code" in df_pred.columns:
+        _pred_codes = df_pred["code"].unique().tolist()
+        if _pred_codes != [req_code_int]:
+            logger.error(
+                "Recovery compute: predictor returned code(s) %s, expected %s; rejected",
+                _pred_codes,
+                req_code_int,
+            )
+            return 2
+
+    # If predictor stamps a forecast_date column, every row must equal the issue date.
+    if "forecast_date" in df_pred.columns:
+        _expected_fd = pd.Timestamp(req_issue)
+        _bad_fd = df_pred[pd.to_datetime(df_pred["forecast_date"]) != _expected_fd]
+        if not _bad_fd.empty:
+            logger.error(
+                "Recovery compute: predictor returned forecast_date(s) != issue_date %s; rejected",
+                req_issue,
+            )
+            return 2
+
+    # If predictor stamps a model column, every row must equal the request model.
+    if "model" in df_pred.columns:
+        _bad_model = df_pred[df_pred["model"].astype(str) != req_model]
+        if not _bad_model.empty:
+            logger.error(
+                "Recovery compute: predictor returned model %s != %s; rejected",
+                df_pred["model"].unique().tolist(),
+                req_model,
+            )
+            return 2
+
+    # Validate all 19 quantile columns present and finite.
+    missing_q = [q for q in _RECOVERY_19_Q_COLS if q not in df_pred.columns]
+    if missing_q:
+        logger.error("Recovery compute: missing quantile columns %s", missing_q)
+        return 2
+
+    # Reject noncanonical timestamps (timezone-aware or non-midnight); preserve naive midnight.
+    issue_date_obj = datetime.date.fromisoformat(req_issue)
+    expected_targets = {
+        (issue_date_obj + datetime.timedelta(days=i)).isoformat() for i in range(1, 12)
+    }
+    _date_strs_out: list = []
+    for _raw_d in pd.to_datetime(df_pred["date"]):
+        if getattr(_raw_d, "tzinfo", None) is not None:
+            logger.error(
+                "Recovery compute: output contains timezone-aware timestamp %s; rejected", _raw_d
+            )
+            return 2
+        _ns = getattr(_raw_d, "nanosecond", 0)
+        if (
+            _raw_d.hour != 0
+            or _raw_d.minute != 0
+            or _raw_d.second != 0
+            or _raw_d.microsecond != 0
+            or _ns != 0
+        ):
+            logger.error(
+                "Recovery compute: output contains non-midnight timestamp %s; rejected", _raw_d
+            )
+            return 2
+        _date_strs_out.append(_raw_d.strftime("%Y-%m-%d"))
+    actual_targets = set(_date_strs_out)
+    if actual_targets != expected_targets:
+        logger.error(
+            "Recovery compute: target date mismatch (expected %s, got %s)",
+            sorted(expected_targets),
+            sorted(actual_targets),
+        )
+        return 2
+
+    if pd.to_datetime(df_pred["date"]).duplicated().any():
+        logger.error("Recovery compute: duplicate target dates in output")
+        return 2
+
+    for q in _RECOVERY_19_Q_COLS:
+        if df_pred[q].apply(lambda x: isinstance(x, bool)).any():
+            logger.error("Recovery compute: quantile %s contains boolean value(s); rejected", q)
+            return 2
+        col_vals = pd.to_numeric(df_pred[q], errors="coerce")
+        if col_vals.isnull().any() or not np.isfinite(col_vals.values).all():
+            logger.error("Recovery compute: quantile %s has non-finite values", q)
+            return 2
+
+    # Build response — strict JSON (allow_nan=False enforces no NaN/Inf).
+    rows_out = []
+    df_sorted = df_pred.copy()
+    df_sorted["_date_ts"] = pd.to_datetime(df_sorted["date"])
+    df_sorted = df_sorted.sort_values("_date_ts")
+    for _, row in df_sorted.iterrows():
+        row_dict: dict = {"date": row["_date_ts"].strftime("%Y-%m-%d")}
+        for q in _RECOVERY_19_Q_COLS:
+            row_dict[q] = float(row[q])
+        rows_out.append(row_dict)
+
+    response = {
+        "invocation_id": invocation_id,
+        "model": req_model,
+        "source_code": req_code,
+        "issue_date": req_issue,
+        "flag": 4,
+        "rows": rows_out,
+    }
+
+    # Atomic write: temp file in the same dir, then os.replace.
+    response_dir = os.path.dirname(os.path.abspath(response_path))
+    try:
+        import tempfile as _tmp
+
+        fd, tmp_path = _tmp.mkstemp(dir=response_dir, suffix=".json.tmp")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                json.dump(response, fh, allow_nan=False)
+            os.replace(tmp_path, response_path)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
+    except Exception as e:
+        logger.error("Recovery compute: failed to write response JSON: %s", e)
+        return 2
+
+    logger.info(
+        "Recovery compute: wrote response for %s/%s/%s invocation=%s",
+        req_model,
+        req_code,
+        req_issue,
+        invocation_id,
+    )
+    return 0
+
 
 # --------------------------------------------------------------------
 # CALLBACKS
@@ -148,7 +513,70 @@ def main():
         elif MODEL_TO_USE == "ARIMA":
             predictor_class = predictor_ARIMA.PREDICTOR
 
-        # --------------------------------------------------------------------
+    # ── Recovery compute-only mode: parse request before environment load ──
+    _rc_req_raw = os.environ.get(_RECOVERY_COMPUTE_REQUEST_ENV)
+    _rc_resp_raw = os.environ.get(_RECOVERY_COMPUTE_RESPONSE_ENV)
+    _either_present = (_rc_req_raw is not None) or (_rc_resp_raw is not None)
+    _rc_req_path = (_rc_req_raw or "").strip()
+    _rc_resp_path = (_rc_resp_raw or "").strip()
+    _recovery_mode = False
+    _recovery_request: dict | None = None
+    _recovery_deadline: datetime.datetime | None = None
+
+    if _either_present:
+        if not _rc_req_path or not _rc_resp_path:
+            logger.error(
+                "Recovery compute: partial or empty marker (request=%r, response=%r); "
+                "both must be non-empty paths — failing closed",
+                _rc_req_raw,
+                _rc_resp_raw,
+            )
+            sys.exit(2)
+        _recovery_mode = True
+
+    if _recovery_mode:
+        if MODEL_TO_USE == "ARIMA":
+            logger.error("Recovery compute: ARIMA model blocked for recovery")
+            sys.exit(2)
+        if MODEL_TO_USE not in _RECOVERY_DL_MODELS:
+            logger.error("Recovery compute: model %s not in supported DL models", MODEL_TO_USE)
+            sys.exit(2)
+        try:
+            with open(_rc_req_path) as _f:
+                _recovery_request = json.load(_f)
+        except Exception as _e:
+            logger.error("Recovery compute: cannot read request at %r: %s", _rc_req_path, _e)
+            sys.exit(2)
+        if not isinstance(_recovery_request, dict):
+            logger.error(
+                "Recovery compute: request JSON is not a mapping (got %s); required",
+                type(_recovery_request).__name__,
+            )
+            sys.exit(2)
+        _req_model = _recovery_request.get("model")
+        if _req_model != MODEL_TO_USE:
+            logger.error(
+                "Recovery compute: request model %r != env model %r",
+                _req_model,
+                MODEL_TO_USE,
+            )
+            sys.exit(2)
+        _dl_str = _recovery_request.get("deadline_utc", "")
+        if not _dl_str:
+            logger.error("Recovery compute: deadline_utc missing or empty; required field")
+            sys.exit(2)
+        try:
+            _recovery_deadline = datetime.datetime.fromisoformat(_dl_str)
+        except Exception:
+            logger.error("Recovery compute: invalid deadline_utc %r; failing closed", _dl_str)
+            sys.exit(2)
+        if datetime.datetime.utcnow() >= _recovery_deadline:
+            logger.error("Recovery compute: deadline already expired before environment load")
+            sys.exit(2)
+
+        # ──────────────────────────────────────────────────────────────────
+
+    # --------------------------------------------------------------------
     # DEFINE THE HINDCAST MODE
     # --------------------------------------------------------------------
     HINDCAST_MODE = os.getenv("SAPPHIRE_HINDCAST_MODE")
@@ -159,7 +587,8 @@ def main():
         )
     else:
         logger.debug("Prediction mode: %s", HINDCAST_MODE)
-        if HINDCAST_MODE == "PENTAD":
+        gen_mode = canonical_ml_mode(MODEL_TO_USE, HINDCAST_MODE)
+        if gen_mode == "PENTAD":
             forecast_horizon = 6
         else:
             forecast_horizon = 11
@@ -168,6 +597,47 @@ def main():
     # --------------------------------------------------------------------
     # Specify the path to the .env file
     sl.load_environment()
+
+    # ── Budget re-check after environment load (deadline may have passed) ──
+    if (
+        _recovery_mode
+        and _recovery_deadline is not None
+        and datetime.datetime.utcnow() >= _recovery_deadline
+    ):
+        logger.error("Recovery compute: deadline expired after environment load; failing closed")
+        sys.exit(2)
+
+    # ── Recovery compute-only gate checks (after env load, before model calls) ──
+    if _recovery_mode:
+        _api_en = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+        if not _api_en:
+            logger.error("Recovery compute: SAPPHIRE_API_ENABLED=false; blocked")
+            sys.exit(2)
+        _ml_raw = os.getenv("ieasyhydroforecast_run_ML_models", "").strip()
+        if _ml_raw.lower() != "true":
+            logger.error(
+                "Recovery compute: ieasyhydroforecast_run_ML_models not affirmatively true; blocked"
+            )
+            sys.exit(2)
+        _avail_raw = os.getenv("ieasyhydroforecast_available_ML_models", "").strip()
+        _avail_set = frozenset(m.strip().upper() for m in _avail_raw.split(",") if m.strip())
+        if MODEL_TO_USE not in _avail_set:
+            logger.error(
+                "Recovery compute: %s not in available_ML_models %s; blocked",
+                MODEL_TO_USE,
+                _avail_set,
+            )
+            sys.exit(2)
+        from scr.utils_ml_forecast import get_permitted_station_codes as _get_permitted
+
+        _permitted_codes = _get_permitted()
+        _req_code_str = str(_recovery_request.get("source_code", ""))
+        if _permitted_codes is None or _req_code_str not in _permitted_codes:
+            logger.error(
+                "Recovery compute: code %s not in permitted station codes; blocked", _req_code_str
+            )
+            sys.exit(2)
+    # ──────────────────────────────────────────────────────────────────────────
 
     # --------------------------------------------------------------------
     # LOAD IN ENVIROMENT VARIABLES
@@ -186,7 +656,7 @@ def main():
 
     PATH_TO_SCALER = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_" + MODEL_TO_USE)
     # Append Decad to the scaler path if the prediction mode is DECAD
-    if HINDCAST_MODE == "DECAD" and MODEL_TO_USE != "ARIMA":
+    if gen_mode == "DECAD" and MODEL_TO_USE != "ARIMA":
         PATH_TO_SCALER = PATH_TO_SCALER + "_Decad"
     PATH_TO_SCALER = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_SCALER)
     # Test if the path exists
@@ -240,6 +710,25 @@ def main():
         "Hydroposts available for ML forecasting: \n%s", hydroposts_available_for_ml_forecasting
     )
 
+    # ── Recovery: verify requested code is in model-specific config BEFORE model load ──
+    if _recovery_mode:
+        try:
+            _req_code_int_pre = int(str(_recovery_request.get("source_code", "")))
+        except (TypeError, ValueError):
+            logger.error("Recovery compute: invalid source_code in request; failing closed")
+            sys.exit(2)
+        if _req_code_int_pre not in rivers_to_predict:
+            logger.error(
+                "Recovery compute: code %s not available for model %s per config; "
+                "blocked before model load",
+                _req_code_int_pre,
+                MODEL_TO_USE,
+            )
+            sys.exit(2)
+        # Confine to exactly the requested code — no twins, no extra sources.
+        rivers_to_predict = [_req_code_int_pre]
+    # ──────────────────────────────────────────────────────────────────────────
+
     # --------------------------------------------------------------------
     # READ IN FORCING DATA
     # --------------------------------------------------------------------
@@ -265,16 +754,22 @@ def main():
     )
 
     # check if the start and end date is in the era5 data
-    if pd.to_datetime(start_date) < era5_data_transformed["date"].min() + pd.DateOffset(days=60):
-        raise ValueError(
-            f"The start date {start_date} is before the first date in the era5 data {era5_data_transformed['date'].min()} + 60 days"
-        )
-    if pd.to_datetime(end_date) > era5_data_transformed["date"].max() - pd.DateOffset(
-        days=forecast_horizon
-    ):
-        raise ValueError(
-            f"The end date {end_date} is after the last date in the era5 data {era5_data_transformed['date'].max()} - forecast horizon {forecast_horizon}"
-        )
+    # Recovery mode defers all forcing coverage checks to _run_recovery_compute,
+    # which validates against actual predictor requirements (icl + max_ws - 1)
+    # rather than the ordinary-path hardcoded 60-day minimum and end-date horizon.
+    if not _recovery_mode:
+        if pd.to_datetime(start_date) < era5_data_transformed["date"].min() + pd.DateOffset(
+            days=60
+        ):
+            raise ValueError(
+                f"The start date {start_date} is before the first date in the era5 data {era5_data_transformed['date'].min()} + 60 days"
+            )
+        if pd.to_datetime(end_date) > era5_data_transformed["date"].max() - pd.DateOffset(
+            days=forecast_horizon
+        ):
+            raise ValueError(
+                f"The end date {end_date} is after the last date in the era5 data {era5_data_transformed['date'].max()} - forecast horizon {forecast_horizon}"
+            )
 
     # --------------------------------------------------------------------
     # Preprocessing
@@ -368,6 +863,22 @@ def main():
             dl_config_params=None,
             unique_id_col="code",
         )
+
+    # ── Recovery compute-only: early return before hindcast loop/persistence ──
+    if _recovery_mode:
+        observed_discharge["code"] = observed_discharge["code"].astype(int)
+        era5_data_transformed["code"] = era5_data_transformed["code"].astype(int)
+        _exit_code = _run_recovery_compute(
+            request=_recovery_request,
+            predictor=predictor,
+            era5_data=era5_data_transformed,
+            observed_discharge=observed_discharge,
+            rivers_to_predict=rivers_to_predict,
+            response_path=_rc_resp_path,
+            deadline=_recovery_deadline,
+        )
+        sys.exit(_exit_code)
+    # ──────────────────────────────────────────────────────────────────────────
 
     # --------------------------------------------------------------------
     # HINDECAST
@@ -495,7 +1006,7 @@ def main():
     # hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
 
     # --- 1. Write to SAPPHIRE API (primary path) ---
-    horizon = "pentad" if HINDCAST_MODE == "PENTAD" else "decade"
+    horizon = "pentad" if gen_mode == "PENTAD" else "decade"
     api_ok = False
     if SAPPHIRE_API_AVAILABLE:
         try:
@@ -522,7 +1033,7 @@ def main():
     hindecast_daily_df.to_csv(
         os.path.join(
             OUTPUT_PATH_DISCHARGE,
-            f"{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv",
+            f"{MODEL_TO_USE}_{gen_mode}_hindcast_daily_{start_date_string}_{end_date_string}.csv",
         ),
         index=False,
     )

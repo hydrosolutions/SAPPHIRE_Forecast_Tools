@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from iEasyHydroForecast import setup_library as sl
 from iEasyHydroForecast import tag_library as tl
@@ -2829,3 +2830,930 @@ class TestNeuralEnsembleForecastGuards:
 
             missing_code = self._matching_ml_frame(period_data, include_code=False)
             self._assert_guarded_unchanged(func, missing_code, caplog)
+
+
+# ---------------------------------------------------------------------------
+# MR-H: NE correctness — exact alias, consistent contributor population
+# ---------------------------------------------------------------------------
+
+
+class TestNeuralEnsembleCorrectness:
+    """NE pentad + decade: exact aliases, per-group composition, consistent population."""
+
+    # --- helpers ---
+
+    @staticmethod
+    def _pentad_frame(rows):
+        """Build a pentad DataFrame from a list of row dicts."""
+        base = {
+            "date": pd.Timestamp("2025-01-05"),
+            "code": "19999",
+            "pentad_in_month": 1,
+            "pentad_in_year": 1,
+            "forecasted_discharge": 100.0,
+        }
+        records = [{**base, **r} for r in rows]
+        return pd.DataFrame(records)
+
+    @staticmethod
+    def _decade_frame(rows):
+        """Build a decade DataFrame from a list of row dicts."""
+        base = {
+            "date": pd.Timestamp("2025-01-10"),
+            "code": "19999",
+            "decad_in_month": 1,
+            "decad_in_year": 1,
+            "forecasted_discharge": 100.0,
+        }
+        records = [{**base, **r} for r in rows]
+        return pd.DataFrame(records)
+
+    # --- exact alias tests ---
+
+    def test_pentad_exact_alias_tft_not_substring(self):
+        """TFT_extra (contains 'TFT') must NOT match; only exact 'TFT' qualifies."""
+        df = self._pentad_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {"model_short": "TFT_extra", "forecasted_discharge": 200.0},
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        ne_rows = result[result["model_short"] == "NE"]
+        assert not ne_rows.empty, "NE should be created for the exact TFT row"
+        # TFT_extra must not inflate the mean above 100
+        assert ne_rows.iloc[0]["forecasted_discharge"] == pytest.approx(100.0)
+
+    def test_decade_exact_alias_tft_not_substring(self):
+        """TFT_extra must NOT match in the decade function either."""
+        df = self._decade_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {"model_short": "TFT_extra", "forecasted_discharge": 200.0},
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast_decade(df)
+        ne_rows = result[result["model_short"] == "NE"]
+        assert not ne_rows.empty
+        assert ne_rows.iloc[0]["forecasted_discharge"] == pytest.approx(100.0)
+
+    def test_pentad_no_target_models_returns_input_unchanged(self):
+        """Only LR in input → no NE; original frame returned."""
+        df = self._pentad_frame([{"model_short": "LR"}])
+        result = sl.calculate_neural_ensemble_forecast(df)
+        assert "NE" not in result["model_short"].values
+
+    # --- consistent contributor population (NaN/inf exclusion) ---
+
+    def test_pentad_missing_central_excludes_row_from_all_fields(self):
+        """A row with NaN forecasted_discharge is excluded from NE."""
+        df = self._pentad_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": np.nan,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        ne = result[result["model_short"] == "NE"]
+        assert not ne.empty
+        # Only TIDE contributed — mean = TIDE values
+        assert ne.iloc[0]["forecasted_discharge"] == pytest.approx(80.0)
+        assert ne.iloc[0]["q05"] == pytest.approx(60.0)
+
+    def test_pentad_nan_quantile_excludes_row_from_all_fields(self):
+        """A row with NaN q05 is excluded from NE — including from point forecast.
+
+        TFT has NaN q05.  TIDE has all fields.  NE point forecast must equal
+        TIDE's value (80), NOT the average of both (90).
+        """
+        df = self._pentad_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": np.nan,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        ne = result[result["model_short"] == "NE"]
+        assert not ne.empty
+        # TFT excluded → NE = TIDE only
+        assert ne.iloc[0]["forecasted_discharge"] == pytest.approx(80.0)
+        assert ne.iloc[0]["q05"] == pytest.approx(60.0)
+        # Composition must show only TIDE
+        assert "TFT" not in ne.iloc[0]["composition"]
+
+    def test_pentad_inf_central_excludes_row(self):
+        """A row with inf forecasted_discharge is excluded from NE."""
+        df = self._pentad_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": np.inf,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        ne = result[result["model_short"] == "NE"]
+        assert not ne.empty
+        assert ne.iloc[0]["forecasted_discharge"] == pytest.approx(80.0)
+
+    def test_pentad_both_models_finite_mean_all_fields(self):
+        """Two complete models → NE means all 5 fields over both contributors."""
+        df = self._pentad_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        ne = result[result["model_short"] == "NE"]
+        assert not ne.empty
+        ne_row = ne.iloc[0]
+        assert ne_row["forecasted_discharge"] == pytest.approx(90.0)  # mean(100, 80)
+        assert ne_row["q05"] == pytest.approx(70.0)  # mean(80, 60)
+        assert ne_row["q25"] == pytest.approx(80.0)  # mean(90, 70)
+        assert ne_row["q75"] == pytest.approx(100.0)  # mean(110, 90)
+        assert ne_row["q95"] == pytest.approx(110.0)  # mean(120, 100)
+
+    # --- per-group composition ---
+
+    def test_pentad_per_group_composition(self):
+        """Composition reflects actual contributors per (date, code, period)."""
+        d1 = pd.Timestamp("2025-01-05")
+        d2 = pd.Timestamp("2025-01-10")
+        df = pd.DataFrame(
+            [
+                # date1: TFT + TIDE both present — complete q-cols required
+                {
+                    "date": d1,
+                    "code": "19999",
+                    "pentad_in_month": 1,
+                    "pentad_in_year": 1,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "date": d1,
+                    "code": "19999",
+                    "pentad_in_month": 1,
+                    "pentad_in_year": 1,
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+                # date2: only TSMIXER present (TFT missing)
+                {
+                    "date": d2,
+                    "code": "19999",
+                    "pentad_in_month": 2,
+                    "pentad_in_year": 2,
+                    "model_short": "TSMIXER",
+                    "forecasted_discharge": 90.0,
+                    "q05": 70.0,
+                    "q25": 80.0,
+                    "q75": 100.0,
+                    "q95": 110.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        ne = result[result["model_short"] == "NE"].set_index("date")
+        assert set(ne.index.unique()) == {d1, d2}
+        comp_d1 = ne.loc[d1, "composition"]
+        comp_d2 = ne.loc[d2, "composition"]
+        assert "TIDE" in comp_d1 and "TFT" in comp_d1
+        assert "TSMIXER" in comp_d2
+        assert "TFT" not in comp_d2
+
+    # --- decade horizon ---
+
+    def test_decade_nan_quantile_excludes_row_from_all_fields(self):
+        """NaN q05 in NE decade excludes the row from ALL fields."""
+        df = self._decade_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": np.nan,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast_decade(df)
+        ne = result[result["model_short"] == "NE"]
+        assert not ne.empty
+        assert ne.iloc[0]["forecasted_discharge"] == pytest.approx(80.0)
+        assert ne.iloc[0]["q05"] == pytest.approx(60.0)
+
+    def test_decade_both_models_finite_mean_all_fields(self):
+        """Two complete decade models → NE means all 5 fields."""
+        df = self._decade_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast_decade(df)
+        ne = result[result["model_short"] == "NE"].iloc[0]
+        assert ne["forecasted_discharge"] == pytest.approx(90.0)
+        assert ne["q05"] == pytest.approx(70.0)
+        assert ne["q95"] == pytest.approx(110.0)
+
+    def test_pentad_and_decade_original_rows_preserved(self):
+        """Original model rows must appear unchanged in output."""
+        df = self._pentad_frame(
+            [
+                {"model_short": "TFT", "forecasted_discharge": 100.0},
+                {"model_short": "TIDE", "forecasted_discharge": 80.0},
+            ]
+        )
+        for _func in (
+            sl.calculate_neural_ensemble_forecast,
+            sl.calculate_neural_ensemble_forecast_decade
+            if "decad_in_month" in self._decade_frame([]).columns
+            else sl.calculate_neural_ensemble_forecast,
+        ):
+            result = sl.calculate_neural_ensemble_forecast(df)
+            tft = result[result["model_short"] == "TFT"]
+            assert not tft.empty
+            assert tft.iloc[0]["forecasted_discharge"] == pytest.approx(100.0)
+
+    # --- missing q-col / all-null q-col exclusion (MR-H) ---
+
+    def test_pentad_all_null_q_cols_produces_no_ne(self):
+        """All contributors have all-NaN q-cols → no NE; no all-null exception."""
+        df = self._pentad_frame(
+            [
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": np.nan,
+                    "q25": np.nan,
+                    "q75": np.nan,
+                    "q95": np.nan,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": np.nan,
+                    "q25": np.nan,
+                    "q75": np.nan,
+                    "q95": np.nan,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        assert "NE" not in result["model_short"].values
+
+    def test_pentad_missing_quantile_column_produces_no_ne(self):
+        """Entire q-col absent from DataFrame → no eligible contributors → no NE."""
+        df = self._pentad_frame(
+            [
+                # q05 is absent — only q25/q75/q95 provided
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q25": 70.0,
+                    "q75": 90.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast(df)
+        assert "NE" not in result["model_short"].values
+
+    def test_decade_missing_quantile_column_produces_no_ne(self):
+        """Entire q-col absent from decade DataFrame → no NE (both horizons covered)."""
+        df = self._decade_frame(
+            [
+                # q75 is absent — only q05/q25/q95 provided
+                {
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q95": 120.0,
+                },
+                {
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 80.0,
+                    "q05": 60.0,
+                    "q25": 70.0,
+                    "q95": 100.0,
+                },
+            ]
+        )
+        result = sl.calculate_neural_ensemble_forecast_decade(df)
+        assert "NE" not in result["model_short"].values
+
+
+# ---------------------------------------------------------------------------
+# MR-H: virtual station correctness — model-keyed merge, weighted quantiles
+# ---------------------------------------------------------------------------
+
+
+class TestVirtualStationsCorrectness:
+    """calculate_virtual_stations_data: model-keyed merge, quantile weighting."""
+
+    @staticmethod
+    def _make_config(tmp_path, weights_by_station):
+        """Write a virtual_stations.json and return the env-var patch dict."""
+        config = {
+            "virtualStations": {
+                "V001": {
+                    "combinationFunction": "sum",
+                    "weightByStation": weights_by_station,
+                }
+            }
+        }
+        cfg_file = tmp_path / "virtual_stations.json"
+        cfg_file.write_text(json.dumps(config))
+        return {
+            "ieasyforecast_configuration_path": str(tmp_path),
+            "ieasyforecast_virtual_stations": "virtual_stations.json",
+        }
+
+    def test_two_sources_two_models_weighted_quantiles(self, tmp_path):
+        """2 sources × 2 models with unequal weights: central + all 4 q-cols weighted."""
+        env = self._make_config(tmp_path, {"S001": 0.6, "S002": 0.4})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 200.0,
+                    "q05": 160.0,
+                    "q25": 180.0,
+                    "q75": 220.0,
+                    "q95": 240.0,
+                },
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 50.0,
+                    "q05": 40.0,
+                    "q25": 45.0,
+                    "q75": 55.0,
+                    "q95": 60.0,
+                },
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+            ]
+        )
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        v = result[result["code"] == "V001"]
+        tft = v[v["model_short"] == "TFT"].iloc[0]
+        tide = v[v["model_short"] == "TIDE"].iloc[0]
+        # TFT: 0.6*100 + 0.4*50 = 80
+        assert tft["forecasted_discharge"] == pytest.approx(80.0)
+        assert tft["q05"] == pytest.approx(0.6 * 80.0 + 0.4 * 40.0)  # 64.0
+        assert tft["q25"] == pytest.approx(0.6 * 90.0 + 0.4 * 45.0)  # 72.0
+        assert tft["q75"] == pytest.approx(0.6 * 110.0 + 0.4 * 55.0)  # 88.0
+        assert tft["q95"] == pytest.approx(0.6 * 120.0 + 0.4 * 60.0)  # 96.0
+        # TIDE: 0.6*200 + 0.4*100 = 160
+        assert tide["forecasted_discharge"] == pytest.approx(160.0)
+        assert tide["q05"] == pytest.approx(0.6 * 160.0 + 0.4 * 80.0)  # 128.0
+        assert tide["q25"] == pytest.approx(0.6 * 180.0 + 0.4 * 90.0)  # 144.0
+        assert tide["q75"] == pytest.approx(0.6 * 220.0 + 0.4 * 110.0)  # 176.0
+        assert tide["q95"] == pytest.approx(0.6 * 240.0 + 0.4 * 120.0)  # 192.0
+
+    def test_missing_one_contributor_blocks_only_that_unit(self, tmp_path):
+        """If S002 has no TFT row, no V001/TFT key is produced at all (not even NaN)."""
+        env = self._make_config(tmp_path, {"S001": 0.6, "S002": 0.4})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 200.0,
+                    "q05": 160.0,
+                    "q25": 180.0,
+                    "q75": 220.0,
+                    "q95": 240.0,
+                },
+                # S002 only has TIDE, not TFT
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+            ]
+        )
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        v = result[(result["code"] == "V001") & result["model_short"].notna()]
+        # TIDE must be present and valid
+        tide = v[v["model_short"] == "TIDE"]
+        assert not tide.empty
+        assert tide.iloc[0]["forecasted_discharge"] == pytest.approx(0.6 * 200.0 + 0.4 * 100.0)
+        # TFT: S002 missing → no V001/TFT row at all (not even a NaN row)
+        tft = v[v["model_short"] == "TFT"]
+        assert tft.empty, "Missing contributor must not produce a V001/TFT row"
+
+    def test_existing_virtual_rows_preserved(self, tmp_path):
+        """Authoritative existing virtual rows at (code, date, model) are not overwritten."""
+        env = self._make_config(tmp_path, {"S001": 1.0})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                # Authoritative V001/TFT row already present — must not be overwritten
+                {
+                    "code": "V001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 999.0,
+                    "q05": 799.0,
+                    "q25": 899.0,
+                    "q75": 1099.0,
+                    "q95": 1199.0,
+                },
+            ]
+        )
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        v = result[(result["code"] == "V001") & (result["model_short"] == "TFT")]
+        # Original row must survive, value must not change to 100
+        assert not v.empty, "V001/TFT row must be present"
+        assert v["forecasted_discharge"].iloc[0] == pytest.approx(999.0), (
+            "Authoritative existing virtual row was overwritten"
+        )
+
+    def test_interior_hole_filled(self, tmp_path):
+        """Interior historical gaps are filled even when newer data exists."""
+        env = self._make_config(tmp_path, {"S001": 1.0})
+        d_old = pd.Timestamp("2025-01-05")
+        d_hole = pd.Timestamp("2025-01-10")
+        d_new = pd.Timestamp("2025-01-15")
+        df = pd.DataFrame(
+            [
+                {
+                    "code": "S001",
+                    "date": d_old,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 50.0,
+                    "q05": 40.0,
+                    "q25": 45.0,
+                    "q75": 55.0,
+                    "q95": 60.0,
+                },
+                {
+                    "code": "S001",
+                    "date": d_hole,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 60.0,
+                    "q05": 48.0,
+                    "q25": 54.0,
+                    "q75": 66.0,
+                    "q95": 72.0,
+                },
+                {
+                    "code": "S001",
+                    "date": d_new,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 70.0,
+                    "q05": 56.0,
+                    "q25": 63.0,
+                    "q75": 77.0,
+                    "q95": 84.0,
+                },
+                # V001 already has d_old and d_new but is missing d_hole
+                {
+                    "code": "V001",
+                    "date": d_old,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 50.0,
+                    "q05": 40.0,
+                    "q25": 45.0,
+                    "q75": 55.0,
+                    "q95": 60.0,
+                },
+                {
+                    "code": "V001",
+                    "date": d_new,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 70.0,
+                    "q05": 56.0,
+                    "q25": 63.0,
+                    "q75": 77.0,
+                    "q95": 84.0,
+                },
+            ]
+        )
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        v = result[(result["code"] == "V001") & (result["model_short"] == "TFT")]
+        dates_present = set(v["date"])
+        assert d_hole in dates_present, "Interior hole must be filled"
+
+    def test_reversed_model_order_same_result(self, tmp_path):
+        """Result is independent of model iteration order."""
+        env = self._make_config(tmp_path, {"S001": 0.6, "S002": 0.4})
+        d = pd.Timestamp("2025-01-05")
+        rows = [
+            {
+                "code": "S001",
+                "date": d,
+                "model_short": "TFT",
+                "forecasted_discharge": 100.0,
+                "q05": 80.0,
+                "q25": 90.0,
+                "q75": 110.0,
+                "q95": 120.0,
+            },
+            {
+                "code": "S001",
+                "date": d,
+                "model_short": "TIDE",
+                "forecasted_discharge": 200.0,
+                "q05": 160.0,
+                "q25": 180.0,
+                "q75": 220.0,
+                "q95": 240.0,
+            },
+            {
+                "code": "S002",
+                "date": d,
+                "model_short": "TFT",
+                "forecasted_discharge": 50.0,
+                "q05": 40.0,
+                "q25": 45.0,
+                "q75": 55.0,
+                "q95": 60.0,
+            },
+            {
+                "code": "S002",
+                "date": d,
+                "model_short": "TIDE",
+                "forecasted_discharge": 100.0,
+                "q05": 80.0,
+                "q25": 90.0,
+                "q75": 110.0,
+                "q95": 120.0,
+            },
+        ]
+        df_fwd = pd.DataFrame(rows)
+        df_rev = pd.DataFrame(rows[::-1])  # reversed row order
+        with patch.dict(os.environ, env):
+            r1 = sl.calculate_virtual_stations_data(df_fwd)
+            r2 = sl.calculate_virtual_stations_data(df_rev)
+
+        def _virt_values(r):
+            v = r[r["code"] == "V001"].sort_values("model_short").reset_index(drop=True)
+            return v[["model_short", "forecasted_discharge"]].to_dict("records")
+
+        assert _virt_values(r1) == _virt_values(r2)
+
+    def test_input_frame_not_mutated(self, tmp_path):
+        """The caller's input DataFrame is not mutated."""
+        env = self._make_config(tmp_path, {"S001": 0.6, "S002": 0.4})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 50.0,
+                    "q05": 40.0,
+                    "q25": 45.0,
+                    "q75": 55.0,
+                    "q95": 60.0,
+                },
+            ]
+        )
+        original_vals = df["forecasted_discharge"].tolist()
+        with patch.dict(os.environ, env):
+            sl.calculate_virtual_stations_data(df)
+        assert df["forecasted_discharge"].tolist() == original_vals
+
+    def test_partial_contributor_no_virtual_key(self, tmp_path):
+        """Contributor with NaN central → no V001 key for that (date, model)."""
+        env = self._make_config(tmp_path, {"S001": 0.6, "S002": 0.4})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": np.nan,  # NaN central
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 200.0,
+                    "q05": 160.0,
+                    "q25": 180.0,
+                    "q75": 220.0,
+                    "q95": 240.0,
+                },
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 50.0,
+                    "q05": 40.0,
+                    "q25": 45.0,
+                    "q75": 55.0,
+                    "q95": 60.0,
+                },
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TIDE",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+            ]
+        )
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        v = result[(result["code"] == "V001") & result["model_short"].notna()]
+        # TFT: S001 has NaN central → partial sum is NaN → no V001/TFT row
+        tft = v[v["model_short"] == "TFT"]
+        assert tft.empty, "NaN contributor must not produce a V001/TFT row"
+        # TIDE: both sources complete → V001/TIDE must exist
+        tide = v[v["model_short"] == "TIDE"]
+        assert not tide.empty
+        assert tide.iloc[0]["forecasted_discharge"] == pytest.approx(0.6 * 200.0 + 0.4 * 100.0)
+
+    def test_duplicate_source_keys_no_virtual_key(self, tmp_path):
+        """Duplicate (date, model) rows in a source → no virtual key for that unit."""
+        env = self._make_config(tmp_path, {"S001": 0.5, "S002": 0.5})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                # S001 has two TFT rows for the same date (duplicate key)
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 110.0,
+                    "q05": 88.0,
+                    "q25": 99.0,
+                    "q75": 121.0,
+                    "q95": 132.0,
+                },
+                # S002 has a unique TFT row
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 50.0,
+                    "q05": 40.0,
+                    "q25": 45.0,
+                    "q75": 55.0,
+                    "q95": 60.0,
+                },
+            ]
+        )
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        v = result[(result["code"] == "V001") & result["model_short"].notna()]
+        tft = v[v["model_short"] == "TFT"]
+        assert tft.empty, "Duplicate source keys must not produce a V001/TFT row"
+
+    @pytest.mark.parametrize("missing_col", ["q05", "q25", "q75", "q95"])
+    def test_missing_single_qcol_no_virtual_key(self, tmp_path, missing_col):
+        """Absent single quantile column blocks all virtual key generation; original rows preserved."""
+        env = self._make_config(tmp_path, {"S001": 0.6, "S002": 0.4})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                {
+                    "code": "S001",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 100.0,
+                    "q05": 80.0,
+                    "q25": 90.0,
+                    "q75": 110.0,
+                    "q95": 120.0,
+                },
+                {
+                    "code": "S002",
+                    "date": d,
+                    "model_short": "TFT",
+                    "forecasted_discharge": 50.0,
+                    "q05": 40.0,
+                    "q25": 45.0,
+                    "q75": 55.0,
+                    "q95": 60.0,
+                },
+            ]
+        ).drop(columns=[missing_col])
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        assert "V001" not in result["code"].values, (
+            f"No virtual key must be generated when {missing_col} is absent"
+        )
+        src_rows = result[result["code"].isin(["S001", "S002"])]
+        assert len(src_rows) == len(df), "Original source rows must be exactly preserved"
+
+    def test_all_qcols_absent_no_virtual_key(self, tmp_path):
+        """Central-only input (no quantile columns at all) produces no virtual key."""
+        env = self._make_config(tmp_path, {"S001": 0.6, "S002": 0.4})
+        d = pd.Timestamp("2025-01-05")
+        df = pd.DataFrame(
+            [
+                {"code": "S001", "date": d, "model_short": "TFT", "forecasted_discharge": 100.0},
+                {"code": "S002", "date": d, "model_short": "TFT", "forecasted_discharge": 50.0},
+            ]
+        )
+        with patch.dict(os.environ, env):
+            result = sl.calculate_virtual_stations_data(df)
+
+        assert "V001" not in result["code"].values, (
+            "Central-only inputs must not produce a virtual key"
+        )
+        src_rows = result[result["code"].isin(["S001", "S002"])]
+        assert len(src_rows) == len(df), "Original source rows must be exactly preserved"

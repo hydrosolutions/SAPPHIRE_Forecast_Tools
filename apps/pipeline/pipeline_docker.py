@@ -788,15 +788,12 @@ class RunAllMLModels(luigi.WrapperTask):
         # Get the list of available ML models from .env file
         models = env.get("ieasyhydroforecast_available_ML_models").split(",")
 
-        # Determine which prediction modes to run based on the parameter
-        if self.prediction_mode == "ALL":
-            prediction_modes = ["PENTAD", "DECAD"]
-        else:
-            prediction_modes = [self.prediction_mode]
-
+        # ML-020 P0: one canonical DECAD task per model regardless of the
+        # prediction_mode parameter. PENTAD postprocessing depends on the same
+        # DECAD task identity; Luigi deduplicates at runtime when both workflows
+        # (PENTAD and DECAD) appear in the same Luigi run.
         for model in models:
-            for mode in prediction_modes:
-                yield RunMLModel(model_type=model, prediction_mode=mode, run_mode="forecast")
+            yield RunMLModel(model_type=model, prediction_mode="DECAD", run_mode="forecast")
 
 
 class PostProcessingForecasts(DockerTaskBase):
@@ -817,10 +814,11 @@ class PostProcessingForecasts(DockerTaskBase):
             # Get the list of available ML models from .env file
             models = env.get("ieasyhydroforecast_available_ML_models").split(",")
             for model in models:
+                # ML-020 P0: one canonical DECAD fan per model/issue unit.
+                # Both PENTAD and DECAD postprocessing tasks depend on this
+                # single DECAD task; Luigi deduplicates it at runtime.
                 dependencies.append(
-                    RunMLModel(
-                        model_type=model, prediction_mode=self.prediction_mode, run_mode="forecast"
-                    )
+                    RunMLModel(model_type=model, prediction_mode="DECAD", run_mode="forecast")
                 )
 
         # Add conceptual model if enabled
@@ -1486,8 +1484,9 @@ class RunPentadalWorkflow(luigi.Task):
         if RUN_ML_MODELS == "True":
             models = env.get("ieasyhydroforecast_available_ML_models").split(",")
             for model in models:
+                # ML-020 P0: pentad workflow uses the canonical DECAD fan.
                 base_tasks.append(
-                    RunMLModel(model_type=model, prediction_mode="PENTAD", run_mode="forecast")
+                    RunMLModel(model_type=model, prediction_mode="DECAD", run_mode="forecast")
                 )
 
         # Add Conceptual Model if enabled
@@ -1873,8 +1872,8 @@ class PostProcessingMaintenance(DockerTaskBase):
         if RUN_ML_MODELS == "True":
             models = env.get("ieasyhydroforecast_available_ML_models").split(",")
             for model in models:
-                for mode in ["PENTAD", "DECAD"]:
-                    deps.append(MLMaintenance(model_type=model, prediction_mode=mode))
+                # ML-020 P0: maintenance uses one canonical DECAD task per model.
+                deps.append(MLMaintenance(model_type=model, prediction_mode="DECAD"))
         return deps
 
     def output(self):
