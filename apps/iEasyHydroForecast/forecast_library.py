@@ -3850,6 +3850,136 @@ def _write_runoff_to_api(
         return None
 
 
+def _select_lr_rows(data: pd.DataFrame, forecast_date, keep_last: bool) -> pd.DataFrame:
+    """
+    Select eligible LR rows for an exact-date write.
+
+    Normalizes forecast_date to a Python date: accepts a Python date,
+    timezone-naive midnight Timestamp/datetime (zero microsecond and nanosecond),
+    or a strict canonical YYYY-MM-DD string that round-trips exactly.  Returns
+    an empty DataFrame for any other forecast_date.
+
+    Validates each row's date value with the same strict rules: timezone-aware,
+    non-midnight, nonzero microsecond or nanosecond, and other unsupported
+    representations are rejected without coercion.  Mixed object-dtype date
+    columns are handled per-row so valid rows are never discarded by coercion.
+
+    When keep_last=True (main frame): applies per-code keep-last among
+    exact-date rows before eligibility.  Does not relabel dates or values.
+    When keep_last=False (override): raises ValueError if 'date' column is
+    absent; no per-code deduplication; preserves row order, duplicates, values.
+
+    Eligibility: NULL forecast (None/NaN/pd.NA) with NULL or finite predictor;
+    finite forecast with finite predictor.  Rejected: infinity, bool,
+    numpy.bool_, strings including numeric strings, complex numbers.
+    Absent columns are treated as NULL.
+    """
+
+    # Per-row date validation: strict, no coercion or truncation
+    def _row_date(val):
+        if val is None:
+            return None
+        try:
+            if bool(pd.isna(val)):
+                return None
+        except (TypeError, ValueError):
+            pass
+        if isinstance(val, pd.Timestamp):
+            if val.tzinfo is not None or pd.isna(val):
+                return None
+            if (
+                val.hour != 0
+                or val.minute != 0
+                or val.second != 0
+                or val.microsecond != 0
+                or val.nanosecond != 0
+            ):
+                return None
+            return val.date()
+        if isinstance(val, dt.datetime):  # before dt.date: datetime is subclass of date
+            if val.tzinfo is not None:
+                return None
+            if val.hour != 0 or val.minute != 0 or val.second != 0 or val.microsecond != 0:
+                return None
+            return val.date()
+        if isinstance(val, dt.date):
+            return val
+        if isinstance(val, str):
+            if len(val) != 10 or val[4] != "-" or val[7] != "-":
+                return None
+            try:
+                _d = dt.date.fromisoformat(val)
+                if str(_d) != val:
+                    return None
+                return _d
+            except ValueError:
+                return None
+        return None
+
+    fd = _row_date(forecast_date)
+
+    if fd is None:
+        return pd.DataFrame(columns=list(data.columns))
+
+    if not keep_last and "date" not in data.columns:
+        raise ValueError(
+            "Override api_data is missing required 'date' column for the exact-date guard"
+        )
+
+    if data.empty:
+        return data.copy()
+
+    match_mask = [_row_date(v) == fd for v in data["date"]]
+    exact = data[[bool(m) for m in match_mask]].copy()
+
+    if exact.empty:
+        return exact
+
+    if keep_last:
+        exact = exact.groupby("code", group_keys=False).tail(1).reset_index(drop=True)
+
+    # Numeric/NULL eligibility — inline predicates
+    def _is_null(v):
+        # Positive scalar whitelist: only these three forms are NULL.
+        # Containers, bools, temporals, complex, and strings are all rejected.
+        if v is None:
+            return True
+        if v is pd.NA:
+            return True
+        if isinstance(v, (float, np.floating)) and math.isnan(v):
+            return True
+        return False
+
+    def _is_finite_real(v):
+        if isinstance(v, (bool, np.bool_)):
+            return False
+        if isinstance(v, str):
+            return False
+        if isinstance(v, (complex, np.complexfloating)):
+            return False
+        if not isinstance(v, (int, float, np.number)):
+            return False
+        try:
+            return math.isfinite(float(v))
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+    def _eligible(row):
+        fc = row["forecasted_discharge"] if "forecasted_discharge" in row.index else None
+        if _is_null(fc):
+            if "predictor" not in row.index:
+                return True
+            return _is_null(row["predictor"]) or _is_finite_real(row["predictor"])
+        if _is_finite_real(fc):
+            if "predictor" not in row.index:
+                return False
+            return _is_finite_real(row["predictor"])
+        return False
+
+    eligible_mask = exact.apply(_eligible, axis=1)
+    return exact[eligible_mask].reset_index(drop=True)
+
+
 def write_linreg_pentad_forecast_data(
     data: pd.DataFrame, api_data: pd.DataFrame = None, forecast_date=None
 ):
@@ -3861,9 +3991,10 @@ def write_linreg_pentad_forecast_data(
         data (pd.DataFrame): The data to be written to a csv file.
         api_data (pd.DataFrame, optional): Data to write to API. If None, uses
             last_line (newest data per station). If empty DataFrame, skips API write.
-        forecast_date: The expected forecast date. When provided, validates that
-            data contains current-year records and sets the date explicitly.
-            If None, uses legacy year-derivation logic (backward compatibility).
+        forecast_date: The expected forecast date. When provided, selects only
+            rows whose date exactly matches this date before per-code reduction,
+            then applies numeric/NULL eligibility.  Returns None if no eligible
+            rows remain.  If None, uses legacy year-derivation logic.
 
     Returns:
         bool: True if no API write exception occurred (including when API is
@@ -3899,31 +4030,29 @@ def write_linreg_pentad_forecast_data(
     # Round all values to 3 digits
     data = data.round(3)
 
-    # For each code, extract the last row (most recent data in current batch)
-    last_line = (
-        data.groupby("code", as_index=False).apply(lambda g: g.tail(1)).reset_index(drop=True)
-    )
-
-    # Print the last_line DataFrame for debugging
-    logger.debug(f"last_line before edits: \n{last_line}")
-
     if forecast_date is not None:
-        # Explicit forecast_date path: validate data is current, set date
-        fd = pd.Timestamp(forecast_date)
-        has_current_year = (last_line["date"].dt.year == fd.year).any()
-        if not has_current_year:
+        # Exact-date path: filter to the exact issue date before per-code
+        # reduction, then apply numeric/NULL eligibility.
+        last_line = _select_lr_rows(data, forecast_date, True)
+        if last_line.empty:
             logger.warning(
-                "Skipping LR pentad write: no data for forecast year %d "
-                "(last_line date_max=%s). Daily discharge data may be "
-                "missing.",
-                fd.year,
-                last_line["date"].max(),
+                "Skipping LR pentad write: no eligible rows for forecast_date=%s.",
+                forecast_date,
             )
-            return
-        # Set the date to the actual forecast date for all rows
-        last_line["date"] = fd
+            return None
+        # Normalize accepted dates to uniform naive midnight Timestamps so that
+        # drop_duplicates below matches against CSV-parsed dates regardless of
+        # whether the input date was a dt.date, canonical string, or Timestamp.
+        last_line["date"] = pd.to_datetime(last_line["date"], errors="coerce")
     else:
-        # Legacy path: derive year from data, standardize dates
+        # Legacy path: per-code keep-last, then year standardization
+        last_line = (
+            data.groupby("code", as_index=False).apply(lambda g: g.tail(1)).reset_index(drop=True)
+        )
+
+        logger.debug(f"last_line before edits: \n{last_line}")
+
+        # Derive year from data, standardize dates
         year = last_line["date"].dt.year.max()
         logger.debug(f"current year: {year}")
 
@@ -3960,6 +4089,7 @@ def write_linreg_pentad_forecast_data(
 
     # --- API Write (before CSV) ---
     # Determine what data to send to API
+    _api_needs_filter = False
     if api_data is None:
         # Default: use last_line (newest forecast per station)
         data_for_api = last_line.copy()
@@ -3967,13 +4097,19 @@ def write_linreg_pentad_forecast_data(
         # Empty DataFrame explicitly passed: skip API write
         data_for_api = None
     else:
-        # Use provided api_data
+        # Nonempty explicit override: filter inside try/except when forecast_date set
+        # so that malformed override (e.g. missing date column) routes through the
+        # existing API error policy rather than bypassing the date guard.
         data_for_api = api_data
+        _api_needs_filter = forecast_date is not None
 
     api_ok = True
-    if data_for_api is not None and not data_for_api.empty:
+    if data_for_api is not None:
         try:
-            _write_lr_forecast_to_api(data_for_api, "pentad")
+            if _api_needs_filter:
+                data_for_api = _select_lr_rows(data_for_api, forecast_date, False)
+            if not data_for_api.empty:
+                _write_lr_forecast_to_api(data_for_api, "pentad")
         except Exception as e:
             _handle_api_write_error(e, "write_linreg_pentad_forecast_data")
             api_ok = False
@@ -4215,9 +4351,10 @@ def write_linreg_decad_forecast_data(
         data (pd.DataFrame): The data to be written to a csv file.
         api_data (pd.DataFrame, optional): Data to write to API. If None, uses
             last_line (newest data per station). If empty DataFrame, skips API write.
-        forecast_date: The expected forecast date. When provided, validates that
-            data contains current-year records and sets the date explicitly.
-            If None, uses legacy year-derivation logic (backward compatibility).
+        forecast_date: The expected forecast date. When provided, selects only
+            rows whose date exactly matches this date before per-code reduction,
+            then applies numeric/NULL eligibility.  Returns None if no eligible
+            rows remain.  If None, uses legacy year-derivation logic.
 
     Returns:
         bool: True if no API write exception occurred (including when API is
@@ -4253,26 +4390,25 @@ def write_linreg_decad_forecast_data(
     # Round all values to 3 digits
     data = data.round(3)
 
-    # For each code, extract the last row (most recent data in current batch)
-    last_line = data.groupby("code").tail(1)
-
     if forecast_date is not None:
-        # Explicit forecast_date path: validate data is current, set date
-        fd = pd.Timestamp(forecast_date)
-        has_current_year = (last_line["date"].dt.year == fd.year).any()
-        if not has_current_year:
+        # Exact-date path: filter to the exact issue date before per-code
+        # reduction, then apply numeric/NULL eligibility.
+        last_line = _select_lr_rows(data, forecast_date, True)
+        if last_line.empty:
             logger.warning(
-                "Skipping LR decad write: no data for forecast year %d "
-                "(last_line date_max=%s). Daily discharge data may be "
-                "missing.",
-                fd.year,
-                last_line["date"].max(),
+                "Skipping LR decad write: no eligible rows for forecast_date=%s.",
+                forecast_date,
             )
-            return
-        # Set the date to the actual forecast date for all rows
-        last_line["date"] = fd
+            return None
+        # Normalize accepted dates to uniform naive midnight Timestamps so that
+        # drop_duplicates below matches against CSV-parsed dates regardless of
+        # whether the input date was a dt.date, canonical string, or Timestamp.
+        last_line["date"] = pd.to_datetime(last_line["date"], errors="coerce")
     else:
-        # Legacy path: derive year from data, standardize dates
+        # Legacy path: per-code keep-last, then year standardization
+        last_line = data.groupby("code").tail(1)
+
+        # Derive year from data, standardize dates
         year = last_line["date"].dt.year.max()
         logger.debug(f"mode of year: {year}")
 
@@ -4304,6 +4440,7 @@ def write_linreg_decad_forecast_data(
 
     # --- API Write (before CSV) ---
     # Determine what data to send to API
+    _api_needs_filter = False
     if api_data is None:
         # Default: use last_line (newest forecast per station)
         data_for_api = last_line.copy()
@@ -4311,13 +4448,19 @@ def write_linreg_decad_forecast_data(
         # Empty DataFrame explicitly passed: skip API write
         data_for_api = None
     else:
-        # Use provided api_data
+        # Nonempty explicit override: filter inside try/except when forecast_date set
+        # so that malformed override (e.g. missing date column) routes through the
+        # existing API error policy rather than bypassing the date guard.
         data_for_api = api_data
+        _api_needs_filter = forecast_date is not None
 
     api_ok = True
-    if data_for_api is not None and not data_for_api.empty:
+    if data_for_api is not None:
         try:
-            _write_lr_forecast_to_api(data_for_api, "decade")
+            if _api_needs_filter:
+                data_for_api = _select_lr_rows(data_for_api, forecast_date, False)
+            if not data_for_api.empty:
+                _write_lr_forecast_to_api(data_for_api, "decade")
         except Exception as e:
             _handle_api_write_error(e, "write_linreg_decad_forecast_data")
             api_ok = False

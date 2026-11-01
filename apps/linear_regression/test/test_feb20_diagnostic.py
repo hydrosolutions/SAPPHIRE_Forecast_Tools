@@ -339,12 +339,15 @@ class TestWriteSkipsStaleData:
 
     @patch.object(fl, "_write_lr_forecast_to_api")
     def test_pentad_writes_when_current_year_data(self, mock_api):
-        """Data from 2026, forecast_date=2026-02-20 -> write succeeds."""
-        data = _make_write_data(["S1", "S2"], "2026-02-15")
+        """Data from 2026-02-20, forecast_date=2026-02-20 -> write succeeds.
+
+        Feb 20 is pentad_in_year=11, pentad_in_month=5.
+        """
+        data = _make_write_data(["S1", "S2"], "2026-02-20", pentad_in_year=11)
+        data["pentad_in_month"] = 5  # Feb 20 target metadata: pentad 5 in month
         fl.write_linreg_pentad_forecast_data(data, forecast_date=dt.date(2026, 2, 20))
 
         assert os.path.exists(self.pentad_path), "CSV should be written when data is current"
-        # Verify the date in the CSV matches the forecast date
         result = pd.read_csv(self.pentad_path)
         assert all(result["date"] == "2026-02-20"), (
             f"All dates should be 2026-02-20, got {result['date'].tolist()}"
@@ -392,18 +395,22 @@ class TestWriteSkipsStaleData:
 
     @patch.object(fl, "_write_lr_forecast_to_api")
     def test_decad_writes_when_current_year_data(self, mock_api):
-        """Decad write: current data -> write with correct date."""
+        """Decad write: data on exact 2026-02-20, forecast_date=2026-02-20 -> write succeeds.
+
+        Feb 20 is decad_in_year=6, decad_in_month=3.
+        """
         n = 2
         data = pd.DataFrame(
             {
                 "code": ["S1", "S2"],
-                "date": pd.to_datetime(["2026-02-10"] * n),
+                "date": pd.to_datetime(["2026-02-20"] * n),
                 "discharge": [50.0] * n,
                 "discharge_avg": [11.0] * n,
                 "predictor": [12.0] * n,
                 "forecasted_discharge": [13.0] * n,
                 "issue_date": [True] * n,
-                "decad_in_year": [5] * n,
+                "decad_in_year": [6] * n,
+                "decad_in_month": [3] * n,
                 "q_mean": [14.0] * n,
                 "q_std_sigma": [1.5] * n,
                 "delta": [1.0] * n,
