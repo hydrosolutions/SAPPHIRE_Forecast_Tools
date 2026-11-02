@@ -560,32 +560,17 @@ def save_forecast(
     horizon_value: int = 1,
     is_hindcast: bool = False,
 ) -> bool:
+    """Save forecasts and hindcasts using the configured storage backend.
+
+    Always write CSV as an archive/fallback, including after API delivery fails.
+    Report API delivery failures even when CSV succeeds. Operational forecasts
+    are also appended to the existing hindcast CSV.
     """
-    Main save function - saves to BOTH DB and CSV for parallel tracking.
+    if forecast_df.empty:
+        logger.warning(f"No forecast records to save for {model_name}")
+        return False
 
-    When SAPPHIRE_API_AVAILABLE=True:
-        1. Write to database via API
-        2. ALSO write to CSV (parallel track for testing/validation)
-
-    When SAPPHIRE_API_AVAILABLE=False:
-        - Write to CSV only (fallback)
-
-    Args:
-        forecast_df: DataFrame with forecast data
-        model_name: Name of the model
-        output_path: Directory path for CSV output
-        horizon_type: Horizon type for the forecast (default: "month")
-        horizon_value: Lead time in months from ForecastConfig (default: 1)
-        is_hindcast: True if this is hindcast data (default: False)
-            file (default: False). Only applies when is_hindcast=False.
-
-    Returns:
-        bool: True if at least one save operation succeeded
-    """
-    success_db = False
-    success_csv = False
-
-    # 1. Try to save to database if API is available
+    success_db = True
     if SAPPHIRE_API_AVAILABLE:
         success_db = save_forecast_to_db(
             forecast_df=forecast_df,
@@ -596,28 +581,16 @@ def save_forecast(
         if success_db:
             logger.info(f"DB save successful for {model_name}")
         else:
-            logger.warning(f"DB save failed for {model_name}, will still save to CSV")
+            logger.error(f"DB save failed for {model_name}; preserving forecast in CSV")
 
-    # 2. ALWAYS save to CSV (parallel track for testing/validation)
     success_csv = save_forecast_to_csv(
         forecast_df=forecast_df,
         output_path=output_path,
         model_name=model_name,
         is_hindcast=is_hindcast,
     )
-
-    # 3. If this is a forecast also append
-    if not is_hindcast:
-        append_success = append_forecast_to_hindcast(
+    if not is_hindcast and success_csv:
+        append_forecast_to_hindcast(
             forecast_df=forecast_df, output_path=output_path, model_name=model_name
         )
-        if append_success and SAPPHIRE_API_AVAILABLE:
-            save_forecast_to_db(
-                forecast_df=forecast_df,
-                model_name=model_name,
-                horizon_type=horizon_type,
-                horizon_value=horizon_value,
-            )
-
-    # Return True if at least one save succeeded
-    return success_db or success_csv
+    return success_db and success_csv

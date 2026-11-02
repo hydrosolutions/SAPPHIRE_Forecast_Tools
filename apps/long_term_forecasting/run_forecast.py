@@ -239,7 +239,7 @@ def run_single_model(
     configs["path_config"]["model_home_path"] = model_home_path
 
     #################################################
-    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    # Dependency CSV paths are used only by the CSV backend.
     #################################################
     model_dependencies = forecast_configs.get_model_dependencies()
     all_dependencies_forecast_paths = []
@@ -250,9 +250,9 @@ def run_single_model(
         dep_path = forecast_configs.get_output_path(model_name=dep)
         dep_file_forecast = os.path.join(dep_path, f"{dep}_forecast.csv")
         dep_file_hindcast = os.path.join(dep_path, f"{dep}_hindcast.csv")
-        if not os.path.exists(dep_file_forecast):
+        if not SAPPHIRE_API_AVAILABLE and not os.path.exists(dep_file_forecast):
             logger.error(f"Dependency file {dep_file_forecast} for model {model_name} not found.")
-        if not os.path.exists(dep_file_hindcast):
+        if not SAPPHIRE_API_AVAILABLE and not os.path.exists(dep_file_hindcast):
             logger.error(f"Dependency file {dep_file_hindcast} for model {model_name} not found.")
 
         all_dependencies_forecast_paths.append(dep_file_forecast)
@@ -272,7 +272,7 @@ def run_single_model(
             base_predictor_data, base_model_cols = (
                 base_predictor_interface.load_all_dependencies_database(
                     all_dependencies_models=all_dependencies_models,
-                    horizon_type="month",
+                    horizon_type=forecast_configs.get_horizon_type(),
                     horizon_value=forecast_configs.get_operational_month_lead_time(),
                 )
             )
@@ -413,7 +413,7 @@ def run_single_model(
     horizon_value = forecast_configs.get_operational_month_lead_time()
     horizon_type = forecast_configs.get_horizon_type()
 
-    # Save forecast (DB + CSV parallel track)
+    # Save forecast (configured storage backend)
     save_success = save_forecast(
         forecast_df=forecast,
         model_name=model_name,
@@ -426,8 +426,8 @@ def run_single_model(
     if not save_success:
         logger.warning(f"Forecast save had issues for model {model_name}")
 
-    # Return success
-    return success
+    # Delivery failure must remain visible even when the CSV archive succeeded.
+    return success and save_success
 
 
 def run_forecast(
@@ -530,6 +530,7 @@ def run_forecast(
     logger.info("=" * 50 + "\n")
 
     logger.info("Forecast run completed.")
+    return all(execution_is_success.values())
 
 
 if __name__ == "__main__":
@@ -622,4 +623,5 @@ Examples:
 
     initialize_today(today)
 
-    run_forecast(forecast_all=recalibrate_all, models_to_run=models_to_run)
+    success = run_forecast(forecast_all=recalibrate_all, models_to_run=models_to_run)
+    sys.exit(0 if success else 1)

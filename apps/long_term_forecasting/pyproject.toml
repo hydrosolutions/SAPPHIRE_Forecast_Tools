@@ -65,7 +65,7 @@ explicit = true
 
 [tool.uv.sources]
 iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
-lt-forecasting = { git = "https://github.com/hydrosolutions/long-term-forecasting.git", rev = "d717d247b3baac0b47a3682debe002b918563c37" }
+lt-forecasting = { git = "https://github.com/hydrosolutions/long-term-forecasting.git", rev = "e0df498ad58ef565358da05734a736cc004cef33" }
 torch = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
