@@ -134,3 +134,46 @@ class TestCheckValidForecastIssueDate:
 
         # Early runs keep their date (no snap-back)
         assert result == pd.Timestamp("2024-03-07")
+
+
+@pytest.mark.parametrize("db_enabled", [False, True])
+@pytest.mark.parametrize("db_success", [False, True])
+@pytest.mark.parametrize("is_hindcast", [False, True])
+def test_save_forecast_uses_selected_backend(db_enabled, db_success, is_hindcast):
+    from lt_utils import save_forecast
+
+    forecast = pd.DataFrame({"date": ["2026-10-25"], "code": [123]})
+    with (
+        patch("lt_utils.SAPPHIRE_API_AVAILABLE", db_enabled),
+        patch("lt_utils.save_forecast_to_db", return_value=db_success) as db,
+        patch("lt_utils.save_forecast_to_csv", return_value=True) as csv,
+        patch("lt_utils.append_forecast_to_hindcast") as append,
+    ):
+        result = save_forecast(forecast, "SM_GBT", "/unused", horizon_value=2, is_hindcast=is_hindcast)
+        assert result is (db_success if db_enabled else True)
+        if db_enabled:
+            db.assert_called_once_with(
+                forecast_df=forecast, model_name="SM_GBT", horizon_type="month", horizon_value=2
+            )
+        else:
+            db.assert_not_called()
+        csv.assert_called_once_with(
+            forecast_df=forecast, output_path="/unused", model_name="SM_GBT", is_hindcast=is_hindcast
+        )
+        assert append.call_count == (0 if is_hindcast else 1)
+
+
+@pytest.mark.parametrize("db_enabled", [False, True])
+def test_save_empty_forecast_preserves_existing_output(tmp_path, db_enabled):
+    from lt_utils import save_forecast
+
+    output = tmp_path / "SM_GBT_forecast.csv"
+    output.write_text("previous forecast\n")
+    with (
+        patch("lt_utils.SAPPHIRE_API_AVAILABLE", db_enabled),
+        patch("lt_utils.save_forecast_to_db") as db,
+    ):
+        assert not save_forecast(pd.DataFrame(columns=["flag"]), "SM_GBT", str(tmp_path))
+        db.assert_not_called()
+    assert output.read_text() == "previous forecast\n"
+    assert list(tmp_path.iterdir()) == [output]

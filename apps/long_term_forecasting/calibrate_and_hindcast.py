@@ -20,7 +20,7 @@ import time
 import pandas as pd
 from __init__ import SAPPHIRE_API_AVAILABLE
 from config_forecast import ForecastConfig
-from data_interface import DataInterface, DataInterfaceDB
+from data_interface import BasePredictorDataInterface, DataInterface, DataInterfaceDB
 
 # Import forecast models
 from lt_utils import create_model_instance, save_forecast
@@ -70,12 +70,40 @@ def _read_station_codes():
     return codes
 
 
+def _load_dependency_predictors(forecast_configs, model_name, station_codes=None):
+    """Load historical predictions before model construction using the selected backend."""
+    dependencies = forecast_configs.get_model_dependencies().get(model_name, [])
+    if not dependencies:
+        return None, []
+
+    interface = BasePredictorDataInterface(station_codes=station_codes)
+    if SAPPHIRE_API_AVAILABLE:
+        predictors, model_cols = interface.load_all_dependencies_database(
+            all_dependencies_models=dependencies,
+            horizon_type=forecast_configs.get_horizon_type(),
+            horizon_value=forecast_configs.get_operational_month_lead_time(),
+        )
+    else:
+        paths = [
+            os.path.join(forecast_configs.get_output_path(model_name=dep), f"{dep}_hindcast.csv")
+            for dep in dependencies
+        ]
+        predictors, model_cols = interface.load_all_dependencies_csv(
+            all_dependencies_models=dependencies,
+            all_dependencies_paths=paths,
+        )
+    if predictors is None or predictors.empty or not model_cols:
+        raise ValueError(f"No historical dependency predictions available for {model_name}")
+    return predictors, model_cols
+
+
 def tune_hyperparameters_model(
     model_name: str,
     forecast_configs: ForecastConfig,
     temporal_data: pd.DataFrame,
     static_data: pd.DataFrame,
     data_interface: DataInterface | DataInterfaceDB,
+    station_codes: list[str] | None = None,
 ) -> tuple[bool, str]:
     """
     Tune hyperparameters for a given model instance.
@@ -106,20 +134,9 @@ def tune_hyperparameters_model(
     logger.info(f"Hyperparameter tuning years for model {model_name}: {hparam_tuning_years}")
     configs["general_config"]["hparam_tuning_years"] = hparam_tuning_years
 
-    #################################################
-    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
-    #################################################
-    model_dependencies = forecast_configs.get_model_dependencies()
-    all_dependencies_paths = []
-    for dep in model_dependencies.get(model_name, []):
-        dep_path = forecast_configs.get_output_path(model_name=dep)
-        dep_file = os.path.join(dep_path, f"{dep}_hindcast.csv")
-        if not os.path.exists(dep_file):
-            logger.error(f"Dependency file {dep_file} for model {model_name} not found.")
-        all_dependencies_paths.append(dep_file)
-
-    configs["path_config"]["path_to_lr_predictors"] = all_dependencies_paths
-    configs["path_config"]["path_to_base_predictors"] = all_dependencies_paths
+    base_predictor_data, base_model_cols = _load_dependency_predictors(
+        forecast_configs, model_name, station_codes=station_codes
+    )
 
     data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
 
@@ -140,6 +157,8 @@ def tune_hyperparameters_model(
         configs=configs,
         data=temporal_data,
         static_data=static_data,
+        base_predictors=base_predictor_data,
+        base_model_names=base_model_cols,
     )
 
     # Run hyperparameter tuning
@@ -177,20 +196,9 @@ def calibrate_model(
     model_home_path = os.path.dirname(model_path)
     configs["path_config"]["model_home_path"] = model_home_path
 
-    #################################################
-    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
-    #################################################
-    model_dependencies = forecast_configs.get_model_dependencies()
-    all_dependencies_paths = []
-    for dep in model_dependencies.get(model_name, []):
-        dep_path = forecast_configs.get_output_path(model_name=dep)
-        dep_file = os.path.join(dep_path, f"{dep}_hindcast.csv")
-        if not os.path.exists(dep_file):
-            logger.error(f"Dependency file {dep_file} for model {model_name} not found.")
-        all_dependencies_paths.append(dep_file)
-
-    configs["path_config"]["path_to_lr_predictors"] = all_dependencies_paths
-    configs["path_config"]["path_to_base_predictors"] = all_dependencies_paths
+    base_predictor_data, base_model_cols = _load_dependency_predictors(
+        forecast_configs, model_name, station_codes=station_codes
+    )
 
     logger.info(f"Running model: {model_name} of type {model_type}")
 
@@ -218,6 +226,8 @@ def calibrate_model(
         configs=configs,
         data=temporal_data,
         static_data=static_data,
+        base_predictors=base_predictor_data,
+        base_model_names=base_model_cols,
     )
 
     # Run hindcast
@@ -264,7 +274,7 @@ def calibrate_model(
     horizon_value = forecast_configs.get_operational_month_lead_time()
     horizon_type = forecast_configs.get_horizon_type()
 
-    # Save hindcast (DB + CSV parallel track)
+    # Save hindcast (configured storage backend)
     save_success = save_forecast(
         forecast_df=hindcast,
         model_name=model_name,
@@ -277,8 +287,8 @@ def calibrate_model(
     if not save_success:
         logger.warning(f"Hindcast save had issues for model {model_name}")
 
-    # Return success
-    return success
+    # Delivery failure must remain visible even when the CSV archive succeeded.
+    return success and save_success
 
 
 def calibrate_and_hindcast(
@@ -381,6 +391,7 @@ def calibrate_and_hindcast(
                 temporal_data=temporal_data,
                 static_data=static_data,
                 data_interface=data_interface,
+                station_codes=station_codes,
             )
             if success:
                 logger.info(f"Hyperparameter tuning for model {model_name} completed successfully.")

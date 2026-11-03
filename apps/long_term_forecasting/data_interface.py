@@ -7,12 +7,10 @@ import os
 import sys
 from time import time
 from typing import Any
-from urllib.parse import quote_plus
 
 import numpy as np
 import pandas as pd
 from __init__ import get_today, logger
-from sqlalchemy import create_engine, text
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -27,76 +25,54 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
-def _build_db_url(
-    db_name_var: str,
-    docker_host: str,
-    default_external_port: int,
-    port_env_var: str,
-) -> str:
-    """Build a PostgreSQL URL from component env vars.
+def _api_client(client_type):
+    # Import lazily so CSV-only installations do not require the API client.
+    from sapphire_api_client import SapphirePreprocessingClient, SapphirePostprocessingClient
 
-    Args:
-        db_name_var: Env var holding the database name
-            (e.g. "PREPROCESSING_DB", "POSTPROCESSING_DB").
-        docker_host: Docker DNS hostname
-            (e.g. "preprocessing-db", "postprocessing-db").
-        default_external_port: Port used outside Docker
-            (e.g. 5433, 5434).
-        port_env_var: Env var for optional port override
-            (e.g. "PREPROCESSING_DB_PORT", "POSTPROCESSING_DB_PORT").
-    """
-    user = os.getenv("POSTGRES_USER")
-    password = os.getenv("POSTGRES_PASSWORD")
-    db_name = os.getenv(db_name_var)
-
-    missing = []
-    if not user:
-        missing.append("POSTGRES_USER")
-    if not password:
-        missing.append("POSTGRES_PASSWORD")
-    if not db_name:
-        missing.append(db_name_var)
-    if missing:
-        raise ValueError(
-            f"Missing env var(s) for {db_name_var} connection: "
-            f"{', '.join(missing)}. Set them in your .env file."
-        )
-
-    in_docker = os.getenv("IN_DOCKER", "").lower() == "true"
-    if in_docker:
-        host = docker_host
-        port = 5432
-    else:
-        host = "localhost"
-        port = int(os.getenv(port_env_var, str(default_external_port)))
-
-    return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db_name}"
+    cls = SapphirePreprocessingClient if client_type == "preprocessing" else SapphirePostprocessingClient
+    url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    logger.info(f"Long-term {client_type} reads use configured API: {url}")
+    return cls(base_url=url)
 
 
-def _build_preprocessing_db_url() -> str:
-    """Build PostgreSQL URL for the preprocessing database (port 5433)."""
-    return _build_db_url("PREPROCESSING_DB", "preprocessing-db", 5433, "PREPROCESSING_DB_PORT")
-
-
-def _build_postprocessing_db_url() -> str:
-    """Build PostgreSQL URL for the postprocessing database (port 5434)."""
-    return _build_db_url("POSTPROCESSING_DB", "postprocessing-db", 5434, "POSTPROCESSING_DB_PORT")
+def _read_api_pages(read, station_codes=None, **filters):
+    """Read all pages from one configured service; failures propagate without fallback."""
+    frames = []
+    codes = list(dict.fromkeys(str(c) for c in station_codes)) if station_codes else [None]
+    for code in codes:
+        skip = 0
+        while True:
+            page = read(**filters, code=code, skip=skip, limit=1000)
+            if page.empty:
+                break
+            frames.append(page)
+            skip += len(page)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 class DataInterfaceDB:
-    """SQL-based data interface using PostgreSQL."""
+    """Database-backed inputs accessed exclusively through the configured regional API."""
 
-    def __init__(
-        self,
-        connection_string: str | None = None,
-        station_codes=None,
-    ):
+    def __init__(self, station_codes=None):
         sl.load_environment()
-
-        self.connection_string = connection_string or _build_preprocessing_db_url()
-        self.engine = create_engine(self.connection_string)
+        self.client = _api_client("preprocessing")
         self.station_codes = station_codes
         self._get_paths()
+
+    def _read_input(self, read, code=None, **filters):
+        if code is not None and self.station_codes and str(code) not in {str(c) for c in self.station_codes}:
+            return pd.DataFrame()
+        codes = [str(code)] if code is not None else self.station_codes
+        return _read_api_pages(read, codes, **filters)
+
+    @staticmethod
+    def _normalize_input(df, mapping):
+        df = df.rename(columns=mapping).reindex(columns=["date", "code", *mapping.values()]).copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df["code"] = df["code"].astype(int)
+        for col in mapping.values():
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df.sort_values(["code", "date"]).reset_index(drop=True)
 
     def _get_paths(self):
         """Retrieve necessary file paths for static features (still CSV-based)."""
@@ -106,71 +82,10 @@ class DataInterfaceDB:
             MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES
         )
 
-    def _execute_query(self, query: str, params: dict = None) -> pd.DataFrame:
-        """Execute SQL query and return DataFrame."""
-        start = time()
-        with self.engine.connect() as conn:
-            df = pd.read_sql(text(query), conn, params=params)
-        logger.debug(f"Query executed in {time() - start:.3f}s")
-        return df
-
-    def _add_station_filter(self, conditions: list, params: dict) -> None:
-        """Append station_codes IN clause if instance has station_codes set.
-
-        Treats None and empty list as "no filter" (returns all stations).
-        """
-        if self.station_codes is not None and len(self.station_codes) > 0:
-            placeholders = ", ".join(f":sc_{i}" for i in range(len(self.station_codes)))
-            conditions.append(f"code IN ({placeholders})")
-            for i, c in enumerate(self.station_codes):
-                params[f"sc_{i}"] = str(c)
-
-    # ─────────────────────────────────────────────────────────────
-    # METEO DATA (Precipitation & Temperature)
-    # ─────────────────────────────────────────────────────────────
-    def get_meteo_data(
-        self,
-        meteo_type: str,
-        code: str | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
-    ) -> pd.DataFrame:
-        """
-        Load meteo data (P or T) from the database.
-
-        Args:
-            meteo_type: 'P' for precipitation, 'T' for temperature
-            code: Optional station code filter (string)
-            start_date: Optional start date filter (YYYY-MM-DD)
-            end_date: Optional end date filter (YYYY-MM-DD)
-        """
-        conditions = ["meteo_type = :meteo_type"]
-        params = {"meteo_type": meteo_type}
-
-        if code is not None:
-            conditions.append("code = :code")
-            params["code"] = str(code)
-        if start_date:
-            conditions.append("date >= :start_date")
-            params["start_date"] = start_date
-        if end_date:
-            conditions.append("date <= :end_date")
-            params["end_date"] = end_date
-
-        self._add_station_filter(conditions, params)
-
-        where_clause = " AND ".join(conditions)
-        query = f"""
-            SELECT date, code, value as {meteo_type}
-            FROM meteo
-            WHERE {where_clause}
-            ORDER BY code, date
-        """
-
-        df = self._execute_query(query, params)
-        df["date"] = pd.to_datetime(df["date"])
-        df["code"] = df["code"].astype(int)
-        return df
+    def get_meteo_data(self, meteo_type, code=None, start_date=None, end_date=None):
+        df = self._read_input(self.client.read_meteo, code=code, meteo_type=meteo_type,
+                              start_date=start_date, end_date=end_date)
+        return self._normalize_input(df, {"value": meteo_type})
 
     def get_rain(self, station: str | None = None) -> pd.DataFrame:
         """Get precipitation data."""
@@ -185,117 +100,24 @@ class DataInterfaceDB:
     # ─────────────────────────────────────────────────────────────
     # RUNOFF / DISCHARGE DATA
     # ─────────────────────────────────────────────────────────────
-    def get_runoff_data(
-        self, code: str | None = None, start_date: str | None = None, end_date: str | None = None
-    ) -> pd.DataFrame:
-        """
-        Load runoff/discharge data from the database.
+    def get_runoff_data(self, code=None, start_date=None, end_date=None):
+        df = self._read_input(self.client.read_runoff, code=code, horizon="day",
+                              start_date=start_date, end_date=end_date)
+        return self._normalize_input(df, {"discharge": "discharge"})
 
-        Args:
-            code: Optional station code filter (string)
-            start_date: Optional start date filter (YYYY-MM-DD)
-            end_date: Optional end date filter (YYYY-MM-DD)
-        """
-        conditions = []
-        params = {}
-
-        if code is not None:
-            conditions.append("code = :code")
-            params["code"] = str(code)
-        if start_date:
-            conditions.append("date >= :start_date")
-            params["start_date"] = start_date
-        if end_date:
-            conditions.append("date <= :end_date")
-            params["end_date"] = end_date
-
-        self._add_station_filter(conditions, params)
-
-        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        query = f"""
-            SELECT date, code, discharge
-            FROM runoffs
-            {where_clause}
-            ORDER BY code, date
-        """
-
-        df = self._execute_query(query, params)
-        df["date"] = pd.to_datetime(df["date"])
-        df["code"] = df["code"].astype(int)
-        return df
-
-    # ─────────────────────────────────────────────────────────────
-    # SNOW DATA
-    # ─────────────────────────────────────────────────────────────
-    def get_snow_data(
-        self,
-        variable: str,
-        code: str | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
-    ) -> pd.DataFrame:
-        """
-        Load snow data from the database.
-
-        Args:
-            variable: Snow variable name (e.g., 'SWE', 'ROF', 'HS')
-            code: Optional station code filter (string)
-            start_date: Optional start date filter
-            end_date: Optional end date filter
-        """
-        conditions = ["snow_type = :snow_type"]
-        variable_caps = variable.upper()
-        params = {"snow_type": variable_caps}
-
-        if code is not None:
-            conditions.append("code = :code")
-            params["code"] = str(code)
-        if start_date:
-            conditions.append("date >= :start_date")
-            params["start_date"] = start_date
-        if end_date:
-            conditions.append("date <= :end_date")
-            params["end_date"] = end_date
-
-        self._add_station_filter(conditions, params)
-
-        where_clause = " AND ".join(conditions)
-
-        query = f"""
-            SELECT date, code,
-            value as {variable_caps},
-            value1   AS {variable_caps}_1,
-            value2   AS {variable_caps}_2,
-            value3   AS {variable_caps}_3,
-            value4   AS {variable_caps}_4,
-            value5   AS {variable_caps}_5,
-            value6   AS {variable_caps}_6,
-            value7   AS {variable_caps}_7,
-            value8   AS {variable_caps}_8,
-            value9   AS {variable_caps}_9,
-            value10  AS {variable_caps}_10,
-            value11  AS {variable_caps}_11,
-            value12  AS {variable_caps}_12,
-            value13  AS {variable_caps}_13,
-            value14  AS {variable_caps}_14
-            FROM snow
-            WHERE {where_clause}
-            ORDER BY code, date
-        """
-
-        df = self._execute_query(query, params)
-
-        df["date"] = pd.to_datetime(df["date"])
-        df["code"] = df["code"].astype(int)
-
-        return df
+    def get_snow_data(self, variable, code=None, start_date=None, end_date=None):
+        variable = variable.upper()
+        df = self._read_input(self.client.read_snow, code=code, snow_type=variable,
+                              start_date=start_date, end_date=end_date)
+        mapping = {"value": variable, **{f"value{i}": f"{variable}_{i}" for i in range(1, 15)}}
+        return self._normalize_input(df, mapping)
 
     def load_snow_data(self, HRU: str, variable: str) -> tuple[pd.DataFrame, pd.Timestamp]:
         """Load snow data for a specific HRU and variable.
 
         Note: HRU is used for validation only (to match CSV-based interface).
         The database stores snow data by station codes, not HRU codes.
-        We load ALL snow data for the variable (no code filter).
+        The configured station selection is applied to API reads.
         """
         available_snow_vars = os.getenv("ieasyhydroforecast_SNOW_VARS", "").split(",")
         available_snow_hrus = os.getenv("ieasyhydroforecast_HRU_SNOW_DATA", "").split(",")
@@ -303,7 +125,7 @@ class DataInterfaceDB:
         assert variable in available_snow_vars, f"Variable {variable} not in {available_snow_vars}"
         assert HRU in available_snow_hrus, f"HRU {HRU} not in {available_snow_hrus}"
 
-        # Load ALL snow data for this variable (no code filter)
+        # Load snow data for the configured station selection
         # HRU is just used for validation, similar to CSV version where HRU is part of filename
         df = self.get_snow_data(variable=variable)
 
@@ -752,36 +574,13 @@ class BasePredictorDataInterface:
         sl.load_environment()
         self.station_codes = station_codes  # list[str] | None
 
-        # Postprocessing DB connection — built from component env vars.
-        # Wrapped in try/except because this class is instantiated
-        # unconditionally, but the DB is only needed when
-        # SAPPHIRE_API_AVAILABLE=True. The CSV-only path must not crash.
-        try:
-            self.postprocessing_connection_string = _build_postprocessing_db_url()
-        except ValueError:
-            self.postprocessing_connection_string = None
-        self._postprocessing_engine = None
+        self._client = None
 
     @property
-    def postprocessing_engine(self):
-        """Lazy initialization of the database engine."""
-        if self._postprocessing_engine is None:
-            if self.postprocessing_connection_string is None:
-                raise ValueError(
-                    "Postprocessing DB connection not available. "
-                    "Set POSTGRES_USER, POSTGRES_PASSWORD, and "
-                    "POSTPROCESSING_DB in your .env file."
-                )
-            self._postprocessing_engine = create_engine(self.postprocessing_connection_string)
-        return self._postprocessing_engine
-
-    def _execute_postprocessing_query(self, query: str, params: dict = None) -> pd.DataFrame:
-        """Execute SQL query against the postprocessing database."""
-        start = time()
-        with self.postprocessing_engine.connect() as conn:
-            df = pd.read_sql(text(query), conn, params=params)
-        logger.debug(f"Postprocessing query executed in {time() - start:.3f}s")
-        return df
+    def client(self):
+        if self._client is None:
+            self._client = _api_client("postprocessing")
+        return self._client
 
     def get_base_predictor_data_csv(
         self, model_name: str, data_path: str
@@ -862,37 +661,14 @@ class BasePredictorDataInterface:
         """
         today = get_today()
 
-        # Cast enum columns to text and use UPPER for case-insensitive comparison
-        # DB stores enums in uppercase (e.g., LR_BASE, MONTH)
-        conditions = [
-            "UPPER(model_type::text) = UPPER(:model_type)",
-            "UPPER(horizon_type::text) = UPPER(:horizon_type)",
-            "horizon_value = :horizon_value",
-            "date <= :today",
-        ]
-        params = {
-            "model_type": model_name,
-            "horizon_type": horizon_type,
-            "horizon_value": horizon_value,
-            "today": today.strftime("%Y-%m-%d"),
-        }
-
-        # Add org-scoping filter
-        if self.station_codes is not None and len(self.station_codes) > 0:
-            placeholders = ", ".join(f":sc_{i}" for i in range(len(self.station_codes)))
-            conditions.append(f"code IN ({placeholders})")
-            for i, c in enumerate(self.station_codes):
-                params[f"sc_{i}"] = str(c)
-
-        where_clause = " AND ".join(conditions)
-        query = f"""
-            SELECT date, code, q, q_xgb, q_lgbm, q_catboost, q_loc
-            FROM long_forecasts
-            WHERE {where_clause}
-            ORDER BY code, date
-        """
-
-        df = self._execute_postprocessing_query(query, params)
+        df = _read_api_pages(
+            self.client.read_long_term_forecasts,
+            self.station_codes,
+            model=model_name,
+            horizon_type=horizon_type,
+            horizon_value=horizon_value,
+            end_date=today.strftime("%Y-%m-%d"),
+        )
 
         if df.empty:
             logger.warning(
@@ -1116,21 +892,6 @@ if __name__ == "__main__":
     print("=" * 60)
 
     bpi = BasePredictorDataInterface()
-
-    # Diagnostic query to see what data exists
-    print("\n7.5 Diagnostic: What data exists in long_forecasts?")
-    t0 = time()
-    try:
-        diag_query = """
-            SELECT DISTINCT model_type::text, horizon_type::text, horizon_value
-            FROM long_forecasts
-            LIMIT 20
-        """
-        diag_df = bpi._execute_postprocessing_query(diag_query)
-        print(f"   Query executed in {time() - t0:.3f}s")
-        print(diag_df)
-    except Exception as e:
-        print(f"   Error: {e}")
 
     # Test loading LR_Base from database
     print("\n8. Testing get_base_predictor_data_database (LR_Base)...")

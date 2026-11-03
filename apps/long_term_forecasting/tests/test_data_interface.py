@@ -6,7 +6,6 @@ Without proper configuration, tests will be skipped with a warning.
 Run with: ieasyhydroforecast_env_file_path="path/to/.env" python -m pytest tests/test_data_interface.py
 """
 
-import contextlib
 import json
 import os
 import warnings
@@ -47,8 +46,6 @@ if ENV_AVAILABLE:
 from data_interface import (
     BasePredictorDataInterface,
     DataInterfaceDB,
-    _build_postprocessing_db_url,
-    _build_preprocessing_db_url,
 )
 
 
@@ -144,218 +141,91 @@ class TestDataInterface:
         print("✓ Correctly raised error for invalid variable")
 
 
-class TestDataInterfaceDBOrgScoping:
-    """Test org-scoping SQL filters in DataInterfaceDB."""
-
+class TestConfiguredAPI:
     @pytest.fixture
-    def patched_db(self, monkeypatch):
-        """Create DataInterfaceDB with mocked engine and env."""
-        monkeypatch.setenv("ieasyhydroforecast_env_file_path", "/dev/null")
-        monkeypatch.setenv("ieasyforecast_configuration_path", "/dev/null")
+    def interfaces(self, monkeypatch):
+        from data_interface import DataInterfaceDB, BasePredictorDataInterface
+        monkeypatch.setenv("SAPPHIRE_API_URL", "http://localhost:8100")
+        # Deliberately conflicting direct-DB settings must never be used.
+        monkeypatch.setenv("PREPROCESSING_DB_PORT", "5433")
+        monkeypatch.setenv("POSTPROCESSING_DB_PORT", "5434")
+        with patch("data_interface.sl.load_environment"), patch.object(DataInterfaceDB, "_get_paths"), \
+             patch("sapphire_api_client.SapphirePreprocessingClient") as pre, \
+             patch("sapphire_api_client.SapphirePostprocessingClient") as post:
+            db = DataInterfaceDB(station_codes=["12345"])
+            bp = BasePredictorDataInterface(station_codes=["12345"])
+            yield db, bp, pre, post
 
-        with patch("data_interface.sl.load_environment"), patch("data_interface.create_engine"):
-            db = DataInterfaceDB.__new__(DataInterfaceDB)
-            db.station_codes = ["12345", "67890"]
-            db.engine = MagicMock()
-            db.PATH_TO_STATIC_FEATURES = "/dev/null"
-            db.connection_string = "sqlite://"
-        return db
-
-    def test_station_filter_adds_in_clause(self, patched_db):
-        """_add_station_filter adds IN clause with correct params."""
-        conditions = []
-        params = {}
-        patched_db._add_station_filter(conditions, params)
-        assert len(conditions) == 1
-        assert "code IN (:sc_0, :sc_1)" in conditions[0]
-        assert params["sc_0"] == "12345"
-        assert params["sc_1"] == "67890"
-
-    def test_no_station_codes_no_filter(self, patched_db):
-        """No IN clause when station_codes is None."""
-        patched_db.station_codes = None
-        conditions = []
-        params = {}
-        patched_db._add_station_filter(conditions, params)
-        assert len(conditions) == 0
-        assert len(params) == 0
-
-    def test_empty_station_codes_no_filter(self, patched_db):
-        """Empty list behaves like None — no IN clause."""
-        patched_db.station_codes = []
-        conditions = []
-        params = {}
-        patched_db._add_station_filter(conditions, params)
-        assert len(conditions) == 0
-        assert len(params) == 0
-
-    def test_single_code_and_station_codes_both_apply(self, patched_db):
-        """Both single code param and station_codes produce AND conditions."""
-        conditions = ["code = :code"]
-        params = {"code": "12345"}
-        patched_db._add_station_filter(conditions, params)
-        assert len(conditions) == 2
-        assert "code = :code" in conditions[0]
-        assert "code IN" in conditions[1]
-
-    def test_static_data_filtered_by_station_codes(self, patched_db, tmp_path):
-        """_prepare_static_data filters CSV to org stations only."""
-        csv_file = tmp_path / "static_features.csv"
-        csv_file.write_text("code,feature1\n12345,1.0\n67890,2.0\n99999,3.0\n")
-        patched_db.PATH_TO_STATIC_FEATURES = str(csv_file)
-        result = patched_db._prepare_static_data()
-        assert set(result["code"].astype(str)) == {"12345", "67890"}
+    @pytest.mark.parametrize("method,kwargs,api_method,column", [
+        ("get_runoff_data", {}, "read_runoff", "discharge"),
+        ("get_meteo_data", {"meteo_type": "P"}, "read_meteo", "P"),
+        ("get_snow_data", {"variable": "RoF"}, "read_snow", "ROF"),
+    ])
+    def test_inputs_use_configured_api(self, interfaces, method, kwargs, api_method, column):
+        db, _, pre, _ = interfaces
+        row = {"date": "2026-10-30", "code": "12345", "value": 2, "discharge": 3,
+               **{f"value{i}": i for i in range(1,15)}}
+        read = getattr(pre.return_value, api_method)
+        # Short pages must not truncate history when the server caps page size.
+        read.side_effect = [pd.DataFrame([row]), pd.DataFrame([{**row, "date": "2026-10-31"}]), pd.DataFrame()]
+        result = getattr(db, method)(start_date="2026-10-01", end_date="2026-10-31", **kwargs)
+        pre.assert_called_once_with(base_url="http://localhost:8100")
         assert len(result) == 2
+        assert result["code"].tolist() == [12345, 12345]
+        assert column in result
+        assert [c.kwargs["skip"] for c in read.call_args_list] == [0, 1, 2]
+        for call in read.call_args_list:
+            assert call.kwargs["code"] == "12345"
+            assert call.kwargs["start_date"] == "2026-10-01"
+            assert call.kwargs["end_date"] == "2026-10-31"
+        if column == "discharge":
+            assert read.call_args.kwargs["horizon"] == "day"
+        if column == "ROF":
+            assert read.call_args.kwargs["snow_type"] == "ROF"
+            assert result["ROF_14"].tolist() == [14, 14]
 
-    def test_static_data_unfiltered_when_no_station_codes(self, patched_db, tmp_path):
-        """All codes returned when station_codes is None."""
-        csv_file = tmp_path / "static_features.csv"
-        csv_file.write_text("code,feature1\n12345,1.0\n67890,2.0\n99999,3.0\n")
-        patched_db.PATH_TO_STATIC_FEATURES = str(csv_file)
-        patched_db.station_codes = None
-        result = patched_db._prepare_static_data()
-        assert len(result) == 3
+    def test_predictions_use_same_api_and_filters(self, interfaces):
+        _, bp, _, post = interfaces
+        post.return_value.read_long_term_forecasts.side_effect = [pd.DataFrame([
+            {"date": "2020-01-25", "code": "12345", "q": 4, "q_xgb": 5}
+        ]), pd.DataFrame()]
+        frame, cols = bp.get_base_predictor_data_database("GBT", "quarter", 2)
+        post.assert_called_once_with(base_url="http://localhost:8100")
+        call = post.return_value.read_long_term_forecasts.call_args_list[0]
+        assert call.kwargs["model"] == "GBT"
+        assert call.kwargs["code"] == "12345"
+        assert call.kwargs["horizon_type"] == "quarter"
+        assert call.kwargs["horizon_value"] == 2
+        assert call.kwargs["end_date"]
+        assert cols == ["GBT", "GBT_xgb"]
+        assert frame["GBT"].tolist() == [4]
 
-    @pytest.mark.parametrize(
-        "method_name,extra_kwargs",
-        [
-            ("get_runoff_data", {}),
-            ("get_meteo_data", {"meteo_type": "P"}),
-            ("get_snow_data", {"variable": "SWE"}),
-        ],
-    )
-    def test_station_filter_applied_to_all_query_methods(
-        self, patched_db, method_name, extra_kwargs
-    ):
-        """IN clause appears in SQL for all query methods."""
-        captured_queries = []
+    def test_api_failure_propagates(self, interfaces):
+        db, _, pre, _ = interfaces
+        pre.return_value.read_snow.side_effect = RuntimeError("API unavailable")
+        with pytest.raises(RuntimeError, match="API unavailable"):
+            db.get_snow_data("SWE")
 
-        def mock_execute(query, params=None):
-            captured_queries.append(str(query))
-            return pd.DataFrame(columns=["date", "code", "value"])
+    @pytest.mark.parametrize("codes", [None, [], ["12345", "67890"]])
+    def test_station_selection(self, interfaces, codes):
+        db, _, pre, _ = interfaces
+        db.station_codes = codes
+        pre.return_value.read_meteo.return_value = pd.DataFrame()
+        result = db.get_meteo_data("T")
+        assert result.empty and list(result.columns) == ["date", "code", "T"]
+        assert [c.kwargs["code"] for c in pre.return_value.read_meteo.call_args_list] == (codes or [None])
 
-        patched_db._execute_query = mock_execute
-        with contextlib.suppress(Exception):
-            getattr(patched_db, method_name)(**extra_kwargs)
-        assert len(captured_queries) >= 1
-        assert any("code IN" in q for q in captured_queries), (
-            f"No IN clause found in {method_name} queries: {captured_queries}"
-        )
+    def test_explicit_station_cannot_escape_selection(self, interfaces):
+        db, _, pre, _ = interfaces
+        assert db.get_runoff_data(code="99999").empty
+        pre.return_value.read_runoff.assert_not_called()
 
-    def test_get_base_data_propagates_station_filter(self, patched_db, tmp_path):
-        """All SQL from get_base_data() chain contains IN clause."""
-        csv_file = tmp_path / "static_features.csv"
-        csv_file.write_text("code,feature1\n12345,1.0\n67890,2.0\n")
-        patched_db.PATH_TO_STATIC_FEATURES = str(csv_file)
-
-        captured_queries = []
-
-        def mock_execute(query, params=None):
-            captured_queries.append(str(query))
-            # Return minimal valid DataFrame
-            return pd.DataFrame(
-                {
-                    "date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
-                    "code": [12345, 67890],
-                    "discharge": [1.0, 2.0],
-                    "P": [0.5, 0.6],
-                    "T": [5.0, 6.0],
-                }
-            )
-
-        patched_db._execute_query = mock_execute
-        with contextlib.suppress(Exception):
-            patched_db.get_base_data(forcing_HRU="00003")
-        assert len(captured_queries) >= 1
-        for q in captured_queries:
-            assert "code IN" in q, f"Missing IN clause in query: {q[:100]}"
-
-
-class TestBasePredictorDataInterfaceOrgScoping:
-    """Test org-scoping filters in BasePredictorDataInterface."""
-
-    @pytest.fixture
-    def patched_bpdi(self, monkeypatch):
-        """Create BasePredictorDataInterface with mocked env."""
-        monkeypatch.setenv("ieasyhydroforecast_env_file_path", "/dev/null")
-
-        with patch("data_interface.sl.load_environment"):
-            bpdi = BasePredictorDataInterface.__new__(BasePredictorDataInterface)
-            bpdi.station_codes = ["12345", "67890"]
-            bpdi._postprocessing_engine = MagicMock()
-            bpdi.postprocessing_connection_string = "sqlite://"
-        return bpdi
-
-    def test_base_predictor_station_filter(self, patched_bpdi):
-        """code IN clause present when station_codes set."""
-        captured = []
-
-        def mock_exec(query, params=None):
-            captured.append(str(query))
-            return pd.DataFrame(
-                columns=["date", "code", "q", "q_xgb", "q_lgbm", "q_catboost", "q_loc"]
-            )
-
-        patched_bpdi._execute_postprocessing_query = mock_exec
-        with contextlib.suppress(Exception):
-            patched_bpdi.get_base_predictor_data_database("test_model")
-        assert len(captured) >= 1
-        assert "code IN" in captured[0]
-
-    def test_base_predictor_no_filter_when_none(self, patched_bpdi):
-        """No IN clause when station_codes is None."""
-        patched_bpdi.station_codes = None
-        captured = []
-
-        def mock_exec(query, params=None):
-            captured.append(str(query))
-            return pd.DataFrame(
-                columns=["date", "code", "q", "q_xgb", "q_lgbm", "q_catboost", "q_loc"]
-            )
-
-        patched_bpdi._execute_postprocessing_query = mock_exec
-        with contextlib.suppress(Exception):
-            patched_bpdi.get_base_predictor_data_database("test_model")
-        assert len(captured) >= 1
-        assert "code IN" not in captured[0]
-
-    def test_base_predictor_empty_list_no_filter(self, patched_bpdi):
-        """Empty list behaves like None."""
-        patched_bpdi.station_codes = []
-        captured = []
-
-        def mock_exec(query, params=None):
-            captured.append(str(query))
-            return pd.DataFrame(
-                columns=["date", "code", "q", "q_xgb", "q_lgbm", "q_catboost", "q_loc"]
-            )
-
-        patched_bpdi._execute_postprocessing_query = mock_exec
-        with contextlib.suppress(Exception):
-            patched_bpdi.get_base_predictor_data_database("test_model")
-        assert len(captured) >= 1
-        assert "code IN" not in captured[0]
-
-    def test_base_predictor_order_by_preserved(self, patched_bpdi):
-        """ORDER BY comes after WHERE clause (regression test)."""
-        captured = []
-
-        def mock_exec(query, params=None):
-            captured.append(str(query))
-            return pd.DataFrame(
-                columns=["date", "code", "q", "q_xgb", "q_lgbm", "q_catboost", "q_loc"]
-            )
-
-        patched_bpdi._execute_postprocessing_query = mock_exec
-        with contextlib.suppress(Exception):
-            patched_bpdi.get_base_predictor_data_database("test_model")
-        assert len(captured) >= 1
-        query = captured[0]
-        where_pos = query.find("WHERE")
-        order_pos = query.find("ORDER BY")
-        assert where_pos < order_pos, (
-            f"ORDER BY ({order_pos}) should come after WHERE ({where_pos})"
-        )
+    def test_static_station_filter_preserved(self, interfaces, tmp_path):
+        db, _, _, _ = interfaces
+        path = tmp_path / "static.csv"
+        path.write_text("code,area\n12345,1\n99999,2\n")
+        db.PATH_TO_STATIC_FEATURES = str(path)
+        assert db._prepare_static_data()["code"].tolist() == [12345]
 
 
 def _import_read_station_codes():
@@ -460,156 +330,3 @@ class TestReadStationCodes:
         _read_station_codes = _import_read_station_codes()
         codes = _read_station_codes()
         assert codes == []
-
-
-class TestBuildPostprocessingDbUrl:
-    """Tests for _build_postprocessing_db_url helper."""
-
-    def test_outside_docker_default_port(self, monkeypatch):
-        """Outside Docker: uses localhost:5434."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
-        monkeypatch.delenv("IN_DOCKER", raising=False)
-        monkeypatch.delenv("POSTPROCESSING_DB_PORT", raising=False)
-
-        url = _build_postprocessing_db_url()
-
-        assert url == "postgresql://testuser:testpass@localhost:5434/test_db"
-
-    def test_inside_docker(self, monkeypatch):
-        """Inside Docker: uses postprocessing-db:5432."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
-        monkeypatch.setenv("IN_DOCKER", "True")
-
-        url = _build_postprocessing_db_url()
-
-        assert url == "postgresql://testuser:testpass@postprocessing-db:5432/test_db"
-
-    def test_custom_port(self, monkeypatch):
-        """POSTPROCESSING_DB_PORT overrides default 5434."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
-        monkeypatch.setenv("POSTPROCESSING_DB_PORT", "5555")
-        monkeypatch.delenv("IN_DOCKER", raising=False)
-
-        url = _build_postprocessing_db_url()
-
-        assert url == "postgresql://testuser:testpass@localhost:5555/test_db"
-
-    def test_custom_port_ignored_in_docker(self, monkeypatch):
-        """Inside Docker, port is always 5432 regardless of POSTPROCESSING_DB_PORT."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
-        monkeypatch.setenv("IN_DOCKER", "True")
-        monkeypatch.setenv("POSTPROCESSING_DB_PORT", "5555")
-
-        url = _build_postprocessing_db_url()
-
-        assert url == "postgresql://testuser:testpass@postprocessing-db:5432/test_db"
-
-    def test_special_chars_in_password(self, monkeypatch):
-        """Passwords with special chars are URL-encoded."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss/word")
-        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
-        monkeypatch.delenv("IN_DOCKER", raising=False)
-        monkeypatch.delenv("POSTPROCESSING_DB_PORT", raising=False)
-
-        url = _build_postprocessing_db_url()
-
-        assert "p%40ss%2Fword" in url
-
-    def test_missing_user_raises(self, monkeypatch):
-        """Missing POSTGRES_USER raises ValueError."""
-        monkeypatch.delenv("POSTGRES_USER", raising=False)
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
-
-        with pytest.raises(ValueError, match="POSTGRES_USER"):
-            _build_postprocessing_db_url()
-
-    def test_missing_password_raises(self, monkeypatch):
-        """Missing POSTGRES_PASSWORD raises ValueError."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
-        monkeypatch.setenv("POSTPROCESSING_DB", "test_db")
-
-        with pytest.raises(ValueError, match="POSTGRES_PASSWORD"):
-            _build_postprocessing_db_url()
-
-    def test_missing_db_name_raises(self, monkeypatch):
-        """Missing POSTPROCESSING_DB raises ValueError."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.delenv("POSTPROCESSING_DB", raising=False)
-
-        with pytest.raises(ValueError, match="POSTPROCESSING_DB"):
-            _build_postprocessing_db_url()
-
-    def test_multiple_missing_lists_all(self, monkeypatch):
-        """All components missing: error lists all three."""
-        monkeypatch.delenv("POSTGRES_USER", raising=False)
-        monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
-        monkeypatch.delenv("POSTPROCESSING_DB", raising=False)
-
-        with pytest.raises(ValueError, match="POSTGRES_USER.*POSTGRES_PASSWORD.*POSTPROCESSING_DB"):
-            _build_postprocessing_db_url()
-
-
-class TestBuildPreprocessingDbUrl:
-    """Tests for _build_preprocessing_db_url helper."""
-
-    def test_outside_docker_default_port(self, monkeypatch):
-        """Outside Docker: uses localhost:5433."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.setenv("PREPROCESSING_DB", "test_db")
-        monkeypatch.delenv("IN_DOCKER", raising=False)
-        monkeypatch.delenv("PREPROCESSING_DB_PORT", raising=False)
-
-        url = _build_preprocessing_db_url()
-
-        assert url == "postgresql://testuser:testpass@localhost:5433/test_db"
-
-    def test_inside_docker(self, monkeypatch):
-        """Inside Docker: uses preprocessing-db:5432."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.setenv("PREPROCESSING_DB", "test_db")
-        monkeypatch.setenv("IN_DOCKER", "True")
-
-        url = _build_preprocessing_db_url()
-
-        assert url == "postgresql://testuser:testpass@preprocessing-db:5432/test_db"
-
-    def test_missing_db_name_raises(self, monkeypatch):
-        """Missing PREPROCESSING_DB raises ValueError."""
-        monkeypatch.setenv("POSTGRES_USER", "testuser")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
-        monkeypatch.delenv("PREPROCESSING_DB", raising=False)
-
-        with pytest.raises(ValueError, match="PREPROCESSING_DB"):
-            _build_preprocessing_db_url()
-
-
-# Run with "ieasyhydroforecast_env_file_path="../../../kyg_data_forecast_tools/config/.env_develop_kghm" python -m tests.test_data_interface"
-if __name__ == "__main__":
-    test_suite = TestDataInterface()
-    # Create DataInterface instance directly (not through fixture)
-    di = DataInterface()
-
-    print("\n=== Running Test 1: Load Base Data ===")
-    test_suite.test_load_base_data(di)
-
-    print("\n=== Running Test 2: Load Snow Data ===")
-    test_suite.test_load_snow_data(di)
-
-    print("\n=== Running Test 3: Wrong HRU Combination ===")
-    test_suite.test_load_snow_data_wrong_hru_combination(di)
-
-    print("\n=== All tests completed successfully! ===")
