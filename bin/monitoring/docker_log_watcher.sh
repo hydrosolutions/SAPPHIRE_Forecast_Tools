@@ -9,7 +9,12 @@
 # whose dashboard container is named differently. Names that do not exist on
 # this host are skipped by the loop below.
 read -r -a containers <<< "${DASHBOARD_LOG_WATCH_CONTAINERS:-sapphire-dashboard sapphire-frontend-forecast-pentad sapphire-frontend-forecast-decad}"
-pattern="404|ERROR|Exception"
+# Alert on server-side failures only: ERROR/CRITICAL log lines (app format
+# " - ERROR - " or stdlib "ERROR:" at line start), Traceback/Exception, and
+# HTTP 5xx access-log lines (status after whitespace, followed by a method).
+# 4xx responses are deliberately excluded: client 404s from internet scanners
+# are not faults, and a bare "404" also matches timestamp milliseconds.
+pattern="( - (ERROR|CRITICAL) - )|(^(ERROR|CRITICAL):)|Traceback|Exception|([[:space:]]5[0-9][0-9][[:space:]]+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)[[:space:]])"
 MIN_ALERT_INTERVAL=3600  # Minimum seconds between alerts for the same container
 
 # Signal handling for graceful shutdown
@@ -124,7 +129,7 @@ for c in "${containers[@]}"; do
                 # already-resolved errors, which trains operators to ignore
                 # the alerts -- the exact failure mode this monitoring exists
                 # to prevent.
-                docker logs -f --tail 0 "$c" 2>&1 | grep --line-buffered -Ei "$pattern" | 
+                docker logs -f --tail 0 "$c" 2>&1 | grep --line-buffered -E "$pattern" | 
                 while read line; do
                     ts=$(date '+%Y-%m-%d %H:%M:%S')
                     send_alert "$c" "[$ts] $line"
