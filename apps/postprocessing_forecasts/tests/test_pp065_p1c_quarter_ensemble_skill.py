@@ -29,7 +29,6 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.ensemble_calculator import (
-    _skip_em_for_quarter,
     create_quarterly_ensemble_forecasts,
 )
 from src.skill_metrics import (
@@ -102,14 +101,6 @@ def _derived_row(
 # ===========================================================================
 # 1. Shared helper unit tests
 # ===========================================================================
-
-
-class TestSkipEmForQuarterHelper:
-    def test_true_for_quarter(self):
-        assert _skip_em_for_quarter("quarter_in_year") is True
-
-    def test_false_for_season(self):
-        assert _skip_em_for_quarter("season_in_year") is False
 
 
 class TestQuarterGroupColsWithoutCompositionHelper:

@@ -31,8 +31,11 @@ Ensemble models (created by this module):
 
 - **NE** -- Neural Ensemble (TFT + TiDE + TSMixer, created upstream in
   `setup_library`). Short-term only, excluded from EM candidates.
-- **EM** -- Ensemble Mean (variable composition, only models passing skill
-  thresholds). All horizons.
+- **EM** -- Ensemble Mean (variable composition). **Short-term (pentad/decad)
+  only**: equal-weight mean of the Skilled-Mean pool (NSE>0 and n_pairs≥4, own
+  env vars). Long-term (monthly, quarterly, seasonal) produces no EM (removed
+  in PP-072 P3; quarterly EM was already removed in PP-065 P1c). Old monthly/seasonal EM forecast and
+  skill rows stay in the database.
 - **Skilled Mean** -- Weighted by 1/MAE. Long-term (monthly, quarterly,
   seasonal).
 - **Naive Mean** -- Unweighted average of all models. Long-term (monthly,
@@ -68,8 +71,9 @@ Operational (daily, boundary days)     Maintenance (nightly)
 1. Check if today is a boundary day
 2. Read today's observed + modelled data from API
 3. Read pre-calculated skill metrics from API
-4. Create ensemble forecasts (filter by skill thresholds, require >= 2
-   qualifying models, compute mean discharge)
+4. Create ensemble forecasts (short-term: NSE>0 and n_pairs≥4 filter, minimum 2 point
+   models with at least one non-LR band contributor; long-term horizons: no EM, Naive Mean + Skilled Mean only;
+   compute mean discharge)
 5. Write to API (upsert) + CSV (deprecated backup)
 
 **Runtime:** Seconds.
@@ -84,11 +88,11 @@ Operational (daily, boundary days)     Maintenance (nightly)
 
 **Steps (PP-021 efficient flow):**
 1. Read existing combined forecasts from API (cheap)
-2. Detect (date, code) pairs missing EM rows within lookback window (cheap, in-memory)
-3. Detect records with NULL quantiles (stale individual-model/NE rows and stale EM rows)
+2. Detect (date, code) pairs missing ensemble rows (short-term: EM/NE; long-term: Naive Mean/Skilled Mean) within lookback window (cheap, in-memory)
+3. Detect records with NULL quantiles (stale individual-model/NE rows and stale short-term EM rows)
 4. **Early exit if no gaps and no stale records** — completes in <30 seconds
 5. Read individual-model forecasts scoped to affected dates only (not full history)
-6. Create NE + EM rows with quantiles for affected dates
+6. Create NE + EM rows (short-term) or Naive Mean + Skilled Mean rows (long-term) for affected dates
 7. Merge new rows with existing data, deduplicate
 8. Write to API (upsert) + CSV (deprecated backup)
 
@@ -111,7 +115,7 @@ Operational (daily, boundary days)     Maintenance (nightly)
 1. Read daily runoff from API, aggregate to monthly observations
 2. Read monthly forecasts, aggregate to target horizon
 3. Calculate skill metrics (including CRPS)
-4. Create ensembles (EM, Skilled Mean, Naive Mean)
+4. Create ensembles (Skilled Mean, Naive Mean; no long-term EM)
 5. Save to API + CSV
 
 **Steps (daily):**
@@ -141,7 +145,7 @@ inferred, not measured.
 
 Two further traps worth knowing before reading the full procedure: only the *years* of
 `--start-date`/`--end-date` are used, so a narrow date range does not narrow the work;
-and Ensemble Mean is recomputed against current skill metrics, so a historical
+and the short-term Ensemble Mean is recomputed against current skill metrics, so a historical
 backfill is not a replay.
 
 Full procedure, including the write-safety requirements:
@@ -153,22 +157,125 @@ Full procedure, including the write-safety requirements:
 
 | Tier | Metrics | Purpose |
 |------|---------|---------|
-| **Tier 1 (threshold)** | sdivsigma, NSE, accuracy | Filter models for EM inclusion |
+| **Tier 1 (threshold)** | sdivsigma, NSE, accuracy | Skill gate. The un-suffixed env vars are the strict gate of the backward-compat wrapper `ensemble_calculator.filter_for_highly_skilled_forecasts` and also serve as the fallback for the short-term EM gate (see below). Long-term has no EM |
 | **Tier 1 (always)** | MAE, n_pairs, delta | Calculated for all models |
 | **Tier 2 (informational)** | PBIAS, KGE-LF, NSE-log | Additional quality indicators |
 | **Tier 2 (daily)** | FDC-FHV, FDC-FLV | Flow duration curve metrics |
 
-### Ensemble filtering thresholds
+### Shared filter settings (strict gate)
 
-A model qualifies for EM inclusion only if **all three** pass:
+Long-term horizons no longer produce EM (PP-072 P3). The strict gate below uses
+the un-suffixed env vars. Called without overrides (the backward-compat wrapper
+`ensemble_calculator.filter_for_highly_skilled_forecasts`) a model passes only if
+**all three** pass. The same variables also act as the **fallback** for the
+short-term EM gate (next section):
 
-| Metric | Threshold | Env var |
+| Metric | Default threshold (inclusive) | Env var |
 |--------|-----------|---------|
-| sdivsigma | < 0.6 | `ieasyhydroforecast_efficiency_threshold` |
-| NSE | > 0.8 | `ieasyhydroforecast_nse_threshold` |
-| accuracy | > 0.8 | `ieasyhydroforecast_accuracy_threshold` |
+| sdivsigma | ≤ 0.6 | `ieasyhydroforecast_efficiency_threshold` |
+| NSE | ≥ 0.8 | `ieasyhydroforecast_nse_threshold` |
+| accuracy | ≥ 0.8 | `ieasyhydroforecast_accuracy_threshold` |
 
 Setting a threshold to `'False'` disables that filter.
+
+### Short-term EM eligibility (pentad/decad)
+
+Short-term EM has its own gate, independent of the long-term gate. For each of
+the three metrics the threshold is resolved in this order: (1) the
+`ieasyhydroforecast_*_threshold_short_term` variable if set (an empty string
+counts as unset); (2) else the existing un-suffixed deployed variable
+(`ieasyhydroforecast_nse_threshold`, `..._efficiency_threshold`,
+`..._accuracy_threshold`); (3) else the default below. Per-variable, so a mix is
+possible. `ieasyhydroforecast_min_pairs_short_term` has no fallback (default 4).
+An NSE fallback that resolves to a disable token logs a warning and uses the
+default (NSE > 0) instead of failing; an explicit `_short_term` NSE disable
+token raises an error. Comparisons are inclusive (a fallback NSE of `0.0`
+admits NSE == 0).
+
+- **NSE filter**: finite NSE > 0 by default (NaN and Inf excluded; the NSE gate
+  cannot be disabled). sdivsigma and accuracy gates are off by default but can
+  be enabled via their `_short_term` variables.
+- **Minimum pairs**: `n_pairs` ≥ 4 by default.
+- NE and existing EM rows are always excluded from candidates.
+- **Point value**: finite `forecasted_discharge` required for all candidates.
+- **LR model**: contributes its point value plus a tolerance band
+  q25 = point − delta, q75 = point + delta, where `delta` is the hydromet delta
+  of the station and period, taken from the LR row of `skill_stats` only
+  (latest skill `date` if several). PP-075 normalizes the reported delta
+  across models as described below. LR has no q05/q95. LR is
+  dropped from the EM entirely (point and bands) when delta is missing,
+  non-finite or negative. Any quantile values supplied for LR are ignored.
+- **Non-LR models**: must supply all four finite bands (q05, q25, q75, q95).
+  Rows with any missing or non-finite band are dropped before averaging.
+- **Minimum composition**: at least 2 distinct point models in the composition
+  string (e.g. `"LR, TFT"`). Single-model groups are discarded.
+- **Non-LR band contributor**: at least one non-LR model must supply band
+  values; groups with only LR are dropped.
+- **Aggregation**: unweighted (equal-weight) arithmetic mean of
+  `forecasted_discharge` (point); q25/q75 are averaged over LR and non-LR
+  members, q05/q95 over non-LR members only.
+- **Monotonicity guard**: applied after averaging (corrects crossings).
+
+Caveats: the skill used to select members (NSE, `n_pairs`) is computed on the
+same history, so it is in-sample and optimistic. NSE > 0 only means "better
+than the climatological mean", a weak filter at short lead; tighten it with
+`ieasyhydroforecast_nse_threshold_short_term` (e.g. 0.8). The LR band is a
+tolerance band, not a prediction interval.
+
+Long-term EM is no longer produced (PP-072 P3): monthly and seasonal output
+Naive Mean + Skilled Mean only, and quarterly EM was already removed in PP-065 P1c. Existing
+monthly/seasonal EM forecast rows and EM skill rows remain in the database (skill
+rows are exempt from stale tombstoning; quarter EM skill rows are still
+tombstoned), so the dashboard may keep showing the last stored EM until it is
+superseded. The legacy EM re-derivation inside `calculate_skill_metrics`
+(`skill_metrics.py`) was removed (PP-072 P2); the function scores supplied
+model rows, and `exclude_models` is accepted but has no effect.
+
+**Example** (synthetic): LR issues point 10 m³/s with delta 2 (q25=8,
+q75=12); TFT issues point 20 m³/s with bands q05=10, q25=15, q75=25,
+q95=30. EM point = 15 m³/s, q25=11.5 and q75=18.5; q05=10 and q95=30
+come from TFT alone. The point can lie outside the bands — no clamping is applied.
+
+### EM hindcast skills and shared delta (PP-075)
+
+**Release status:** implemented on the branch; module tests and independent
+review passed. The repository-wide zero-skip gate remains unmet; deployment
+is pending. See [PP-075 verification](../../doc/plans/issues/mid_prio_gi_draft_pp_short_term_em_skill_and_delta_ranges.md#verification).
+
+Recalculation builds EM hindcasts from stored pentad/decad member forecasts
+for the same station, horizon, target period and boundary issue date, using
+the existing EM calculator and member gates above. This EM input path does
+not use DAY forecasts; other readers retain their existing default behavior.
+The generated EM rows are saved for all eligible stored boundary issues.
+Member and EM scoring use the configured `SAPPHIRE_SKILL_METRICS_START_YEAR`
+as a **target-year** boundary, retaining a 31 December issue for the first
+period of the following year. This scoring-window rule does not narrow the
+generated forecast history. EM is scored as one series per
+station and calendar period, across changing compositions. A skill row's
+composition label is the union of historical members, not a claim that every
+forecast used that whole set.
+
+EM skills require **four distinct target years** with finite matched forecast
+and observation values. This reporting floor is separate from the configurable
+member-admission floor. Duplicate rows do not add years, and mathematically
+undefined metrics remain NaN. Recalculation replaces the affected current
+reporting-year EM skill keys; insufficient or absent results overwrite old
+values with unavailable/tombstone results through the existing write path.
+It does not perform a general historical cleanup or remove old long-term EM.
+
+The reported `delta` is selected once from the latest applicable finite,
+non-negative LR/observation delta for each station, horizon and calendar
+period, independently of individual-model forecast coverage. All output
+models receive that same value. Historical accuracy still compares each
+error with **that historical date's delta**; reported delta is not a replacement
+for those historical tolerances.
+
+Member selection and EM scoring use the same history, so the reported skills
+are **in-sample** and may be optimistic. Historical stored inputs mix hindcasts
+and operational forecasts; this release neither separates them nor establishes
+independent out-of-sample performance. No eligible multi-model EM or too few
+matched years means no reportable EM skill, even if member forecasts exist.
+Dashboard range-option changes remain deferred to the dashboard maintainer.
 
 ## Source Modules
 
@@ -183,7 +290,7 @@ postprocessing_forecasts/
 |   |-- aggregation.py         Monthly -> quarterly/seasonal aggregation
 |   |-- api_writer.py          Write forecasts + metrics to SAPPHIRE API
 |   |-- data_reader.py         Read skill metrics, forecasts, observations (API primary, CSV fallback)
-|   |-- ensemble_calculator.py Create ensemble forecasts (EM, Skilled Mean, Naive Mean)
+|   |-- ensemble_calculator.py Create ensemble forecasts (short-term EM; long-term Skilled Mean, Naive Mean)
 |   |-- file_writer.py         Write forecasts + metrics to CSV (deprecated)
 |   |-- gap_detector.py        Detect missing/stale ensemble rows for maintenance
 |   |-- skill_metrics.py       Calculate all skill metrics (METRIC_REGISTRY)
@@ -246,13 +353,17 @@ process monthly + quarterly + seasonal regardless of this variable.
 Cross-year wrapping is supported: `start=10, end=3` defines an Oct-Mar
 season. The `season_year` is the year of the start month.
 
-### Ensemble thresholds
+### Ensemble thresholds (short-term EM: `_short_term` variable, else the un-suffixed variable, else default)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ieasyhydroforecast_efficiency_threshold` | sdivsigma threshold | 0.6 |
-| `ieasyhydroforecast_nse_threshold` | NSE threshold | 0.8 |
-| `ieasyhydroforecast_accuracy_threshold` | Accuracy threshold | 0.8 |
+| `ieasyhydroforecast_efficiency_threshold` | sdivsigma threshold (strict gate); fallback for short-term EM | 0.6 (strict gate) / False (EM) |
+| `ieasyhydroforecast_nse_threshold` | NSE threshold (strict gate); fallback for short-term EM (a disable token falls back to default) | 0.8 (strict gate) / 1e-9 (EM) |
+| `ieasyhydroforecast_accuracy_threshold` | Accuracy threshold (strict gate); fallback for short-term EM | 0.8 (strict gate) / False (EM) |
+| `ieasyhydroforecast_nse_threshold_short_term` | Short-term EM NSE gate (cannot be disabled) | 1e-9 (NSE > 0) |
+| `ieasyhydroforecast_efficiency_threshold_short_term` | Short-term EM sdivsigma gate (`False` = off) | False |
+| `ieasyhydroforecast_accuracy_threshold_short_term` | Short-term EM accuracy gate (`False` = off) | False |
+| `ieasyhydroforecast_min_pairs_short_term` | Short-term EM minimum `n_pairs` (no fallback) | 4 |
 
 ### CSV output paths (deprecated)
 
@@ -291,7 +402,9 @@ models** for the same station and target period. For example, if TFT
 forecasts q10 = 12.5 m³/s and GBT forecasts q10 = 14.3 m³/s, the
 ensemble q10 is approximately 13.4 m³/s.
 
-- Used when creating ensemble forecasts: EM, Skilled Mean, Naive Mean.
+- Used when creating ensemble forecasts: short-term EM; long-term Skilled Mean, Naive Mean.
+- For short-term EM, LR contributes only q25/q75 = point -/+ delta (no q05/q95;
+  see Short-term EM eligibility).
 - Valid for mixture distributions (Vincent 1912, Ratcliff 1979).
 - A quantile monotonicity guard (`enforce_quantile_monotonicity` in
   `postprocessing_tools.py`) is applied after every multi-model

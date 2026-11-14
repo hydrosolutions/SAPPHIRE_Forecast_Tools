@@ -266,7 +266,7 @@ class TestMonthlyMetricsMultiModel:
 
 
 class TestMonthlyMetricsEnsemble:
-    """Ensemble mean (EM) from threshold-filtered models."""
+    """Naive/Skilled Mean ensembles (long-term EM removed, PP-072 P3)."""
 
     @pytest.fixture
     def two_skilled_models(self):
@@ -298,24 +298,24 @@ class TestMonthlyMetricsEnsemble:
         )
         return obs, fcst
 
-    def test_em_row_created(self, two_skilled_models):
-        """EM row created when 2+ models pass threshold."""
+    def test_no_em_row_created(self, two_skilled_models):
+        """Long-term EM is no longer produced (PP-072 P3); NM + SM are."""
         obs, fcst = two_skilled_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = skill_stats[skill_stats["model_short"] == "EM"]
-        assert len(em_rows) == 1
+        assert "EM" not in set(skill_stats["model_short"])
+        assert {"Naive Mean", "Skilled Mean"} <= set(skill_stats["model_short"])
 
-    def test_em_has_composition(self, two_skilled_models):
-        """EM row lists contributing models in composition."""
+    def test_naive_mean_has_composition(self, two_skilled_models):
+        """Naive Mean row lists contributing models in composition."""
         obs, fcst = two_skilled_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_row = skill_stats[skill_stats["model_short"] == "EM"].iloc[0]
+        em_row = skill_stats[skill_stats["model_short"] == "Naive Mean"].iloc[0]
         assert "composition" in skill_stats.columns
         assert "M1" in em_row["composition"]
         assert "M2" in em_row["composition"]
 
-    def test_em_mae_from_mean_q50(self, two_skilled_models):
-        """EM forecast = mean of skilled models' q50.
+    def test_naive_mean_mae_from_mean_q50(self, two_skilled_models):
+        """Naive Mean forecast = mean of skilled models' q50.
 
         M1 q50=[102, 108], M2 q50=[101, 109]
         EM = [101.5, 108.5], obs = [100, 110]
@@ -323,11 +323,11 @@ class TestMonthlyMetricsEnsemble:
         """
         obs, fcst = two_skilled_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_row = skill_stats[skill_stats["model_short"] == "EM"].iloc[0]
+        em_row = skill_stats[skill_stats["model_short"] == "Naive Mean"].iloc[0]
         assert em_row["mae"] == pytest.approx(1.5, rel=1e-6)
 
-    def test_em_all_metrics_verified(self, two_skilled_models):
-        """Verify all EM metrics numerically.
+    def test_naive_mean_all_metrics_verified(self, two_skilled_models):
+        """Verify all Naive Mean metrics numerically.
 
         EM = [101.5, 108.5, 101.5, 108.5], obs = [100, 110, 100, 110]
         diff = [-1.5, 1.5, -1.5, 1.5]
@@ -338,21 +338,21 @@ class TestMonthlyMetricsEnsemble:
         """
         obs, fcst = two_skilled_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_row = skill_stats[skill_stats["model_short"] == "EM"].iloc[0]
+        em_row = skill_stats[skill_stats["model_short"] == "Naive Mean"].iloc[0]
         assert em_row["n_pairs"] == 4
         assert em_row["sdivsigma"] == pytest.approx(0.3, rel=1e-6)
         assert em_row["nse"] == pytest.approx(0.91, rel=1e-6)
         assert em_row["accuracy"] == pytest.approx(1.0, rel=1e-6)
 
-    def test_em_crps_computed_from_quantiles(self, two_skilled_models):
-        """EM has CRPS computed from aggregated quantile distribution.
+    def test_naive_mean_crps_computed_from_quantiles(self, two_skilled_models):
+        """Naive Mean has CRPS computed from aggregated quantile distribution.
 
         EM quantiles = mean of M1 and M2 quantiles per group.
         CRPS is computed via trapezoidal pinball loss integration.
         """
         obs, fcst = two_skilled_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_row = skill_stats[skill_stats["model_short"] == "EM"].iloc[0]
+        em_row = skill_stats[skill_stats["model_short"] == "Naive Mean"].iloc[0]
         assert not np.isnan(em_row["crps"])
         assert em_row["crps"] > 0  # non-zero CRPS
 
@@ -377,21 +377,21 @@ class TestMonthlyMetricsEnsemble:
         em_rows = skill_stats[skill_stats["model_short"] == "EM"]
         assert len(em_rows) == 0
 
-    def test_em_in_joint_forecasts(self, two_skilled_models):
-        """EM rows in joint_forecasts alongside originals."""
+    def test_no_em_in_joint_forecasts(self, two_skilled_models):
+        """Joint forecasts carry originals + NM/SM but no EM rows."""
         obs, fcst = two_skilled_models
         _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
         models = set(joint["model_short"].unique())
-        assert "EM" in models
+        assert "EM" not in models
+        assert "Naive Mean" in models
         assert "M1" in models
         assert "M2" in models
 
-    def test_em_three_models_partial_pass(self):
-        """EM from 2 of 3 models when only 2 pass thresholds.
+    def test_skilled_mean_three_models_partial_pass(self):
+        """Skilled Mean from 2 of 3 models when only 2 pass the NSE>0 gate; no EM.
 
         M1 and M2 have good q50, Bad has q50=150/160 (far from obs).
-        EM = mean(M1, M2) only. Bad excluded from composition.
-        EM MAE = 1.5 (same as two_skilled_models fixture).
+        Bad is excluded from the Skilled Mean composition.
         4 years used so n_pairs>=4 floor is satisfied.
         """
         obs = _make_obs(
@@ -419,13 +419,13 @@ class TestMonthlyMetricsEnsemble:
             ]
         )
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = skill_stats[skill_stats["model_short"] == "EM"]
-        assert len(em_rows) == 1
-        em_row = em_rows.iloc[0]
-        assert "M1" in em_row["composition"]
-        assert "M2" in em_row["composition"]
-        assert "Bad" not in em_row["composition"]
-        assert em_row["mae"] == pytest.approx(1.5, rel=1e-6)
+        assert "EM" not in set(skill_stats["model_short"])
+        sm_rows = skill_stats[skill_stats["model_short"] == "Skilled Mean"]
+        assert len(sm_rows) == 1
+        sm_row = sm_rows.iloc[0]
+        assert "M1" in sm_row["composition"]
+        assert "M2" in sm_row["composition"]
+        assert "Bad" not in sm_row["composition"]
 
 
 # ===================================================================
@@ -872,11 +872,11 @@ class TestMonthlyMetricsEdgeCases:
         # 2020 obs joined twice (one per fcst dup) + 2021 + 2022 + 2023 = 5
         assert row["n_pairs"] == 5
 
-    def test_em_joint_forecasts_values_correct(self):
-        """EM rows in joint_forecasts have correct discharge values.
+    def test_naive_mean_joint_forecasts_values_correct(self):
+        """Naive Mean rows in joint_forecasts have correct discharge values (no EM rows).
 
         M1 q50=[102, 108, 102, 108], M2 q50=[101, 109, 101, 109]
-        EM = mean of q50 = [101.5, 108.5, 101.5, 108.5] per (year, code).
+        NM = mean of q50 = [101.5, 108.5, 101.5, 108.5] per (year, code).
         4 years used so n_pairs>=4 floor is satisfied.
         """
         obs = _make_obs(
@@ -900,7 +900,8 @@ class TestMonthlyMetricsEdgeCases:
             ]
         )
         _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = joint[joint["model_short"] == "EM"]
+        assert "EM" not in set(joint["model_short"])
+        em_rows = joint[joint["model_short"] == "Naive Mean"]
         assert len(em_rows) == 4
 
         em_2020 = em_rows[em_rows["year"] == 2020].iloc[0]
@@ -968,11 +969,11 @@ class TestMonthlyMetricsEdgeCases:
         s2_m2 = model_rows[(model_rows["code"] == "S2") & (model_rows["month_in_year"] == 2)]
         assert len(s2_m2) == 0
 
-    def test_skilled_mean_excluded_from_em_composition(self):
-        """Skilled Mean baseline is not included in EM composition.
+    def test_skilled_mean_excluded_from_naive_mean_composition(self):
+        """Skilled Mean baseline is not included in Naive Mean composition (no EM row).
 
         M1 and M2 pass thresholds. Skilled Mean is added separately
-        and should never appear in EM's composition string.
+        and should never appear in Naive Mean's composition string.
         4 years used so n_pairs>=4 floor is satisfied.
         """
         obs = _make_obs(
@@ -996,16 +997,17 @@ class TestMonthlyMetricsEdgeCases:
             ]
         )
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = skill_stats[skill_stats["model_short"] == "EM"]
+        assert "EM" not in set(skill_stats["model_short"])
+        em_rows = skill_stats[skill_stats["model_short"] == "Naive Mean"]
         assert len(em_rows) == 1
         composition = em_rows.iloc[0]["composition"]
         assert "Skilled Mean" not in composition
 
-    def test_naive_mean_excluded_from_em_composition(self):
-        """Naive Mean baseline is not included in EM composition.
+    def test_naive_mean_excluded_from_skilled_mean_composition(self):
+        """Naive Mean baseline is not included in Skilled Mean composition.
 
         M1 and M2 pass thresholds. Naive Mean is added separately
-        and should never appear in EM's composition string.
+        and should never appear in Skilled Mean's composition string.
         4 years used so n_pairs>=4 floor is satisfied.
         """
         obs = _make_obs(
@@ -1029,7 +1031,7 @@ class TestMonthlyMetricsEdgeCases:
             ]
         )
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = skill_stats[skill_stats["model_short"] == "EM"]
+        em_rows = skill_stats[skill_stats["model_short"] == "Skilled Mean"]
         assert len(em_rows) == 1
         composition = em_rows.iloc[0]["composition"]
         assert "Naive Mean" not in composition
@@ -1168,8 +1170,8 @@ class TestSkilledMeanBaseline:
         sm_rows = skill_stats[skill_stats["model_short"] == "Skilled Mean"]
         assert len(sm_rows) == 0
 
-    def test_skilled_mean_excluded_from_em(self):
-        """EM does not include Skilled Mean in its composition.
+    def test_skilled_mean_excluded_from_naive_mean(self):
+        """Naive Mean does not include Skilled Mean in its composition.
 
         4 years used so n_pairs>=4 floor is satisfied.
         """
@@ -1194,15 +1196,15 @@ class TestSkilledMeanBaseline:
             ]
         )
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = skill_stats[skill_stats["model_short"] == "EM"]
+        em_rows = skill_stats[skill_stats["model_short"] == "Naive Mean"]
         assert len(em_rows) == 1
         assert "Skilled Mean" not in em_rows.iloc[0]["composition"]
 
-    def test_skilled_mean_equal_mae_equals_em(self):
-        """When all models have equal MAE, Skilled Mean ~ EM.
+    def test_skilled_mean_equal_mae_equals_naive_mean(self):
+        """When all models have equal MAE, Skilled Mean ~ Naive Mean.
 
         With equal MAE, weights are equal, so the weighted mean
-        equals the arithmetic mean (EM).
+        equals the arithmetic mean (Naive Mean).
         4 years used so n_pairs>=4 floor is satisfied.
         """
         obs = _make_obs(
@@ -1227,7 +1229,7 @@ class TestSkilledMeanBaseline:
             ]
         )
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_row = skill_stats[skill_stats["model_short"] == "EM"].iloc[0]
+        em_row = skill_stats[skill_stats["model_short"] == "Naive Mean"].iloc[0]
         sm_row = skill_stats[skill_stats["model_short"] == "Skilled Mean"].iloc[0]
         assert sm_row["mae"] == pytest.approx(em_row["mae"], rel=1e-4)
 
@@ -1266,7 +1268,7 @@ class TestSkilledMeanBaseline:
 
 
 class TestQuantileAggregation:
-    """Tests for quantile aggregation in EM, Naive Mean, Skilled Mean."""
+    """Tests for quantile aggregation in Naive Mean, Skilled Mean."""
 
     @pytest.fixture
     def two_model_data(self):
@@ -1304,35 +1306,12 @@ class TestQuantileAggregation:
         )
         return obs, fcst
 
-    def test_em_quantile_aggregation(self, two_model_data):
-        """EM quantiles = simple mean of model quantiles.
-
-        2020: M1 q05=10, M2 q05=20 -> EM q05=15
-        2020: M1 q75=112, M2 q75=108 -> EM q75=110
-        """
+    def test_no_em_in_quantile_aggregation_outputs(self, two_model_data):
+        """Long-term EM is no longer produced (PP-072 P3): no EM in skill or joint."""
         obs, fcst = two_model_data
-        _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = joint[joint["model_short"] == "EM"]
-        assert len(em_rows) == 4, f"Expected 4 EM rows (1 station x 4 years), got {len(em_rows)}"
-
-        em_2020 = em_rows[em_rows["year"] == 2020].iloc[0]
-        assert em_2020["q05"] == pytest.approx(15.0, rel=1e-6)
-        assert em_2020["q10"] == pytest.approx(25.0, rel=1e-6)
-        assert em_2020["q25"] == pytest.approx(35.0, rel=1e-6)
-        # M1 q75=112, M2 q75=108 -> mean=110
-        assert em_2020["q75"] == pytest.approx(110.0, rel=1e-6)
-        # M1 q90=120, M2 q90=114 -> mean=117
-        assert em_2020["q90"] == pytest.approx(117.0, rel=1e-6)
-        # M1 q95=130, M2 q95=120 -> mean=125
-        assert em_2020["q95"] == pytest.approx(125.0, rel=1e-6)
-
-    def test_em_crps_computed(self, two_model_data):
-        """EM CRPS is not NaN when quantiles are aggregated."""
-        obs, fcst = two_model_data
-        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_row = skill_stats[skill_stats["model_short"] == "EM"].iloc[0]
-        assert not np.isnan(em_row["crps"])
-        assert em_row["crps"] > 0
+        skill_stats, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
+        assert "EM" not in set(skill_stats["model_short"])
+        assert "EM" not in set(joint["model_short"])
 
     def test_naive_mean_quantile_aggregation(self, two_model_data):
         """Naive Mean quantiles = simple mean of ALL model quantiles.
@@ -1434,7 +1413,7 @@ class TestQuantileAggregation:
         )
         _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
 
-        em_rows = joint[joint["model_short"] == "EM"]
+        em_rows = joint[joint["model_short"] == "Naive Mean"]
         if len(em_rows) > 0 and "valid_from" in em_rows.columns:
             assert em_rows["valid_from"].notna().all()
 

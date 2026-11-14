@@ -245,13 +245,13 @@ Pipeline-side variables (set in the external `<data_folder>/config/.env_develop_
 | `SAPPHIRE_SYNC_MODE` | Optional | preprocessing_gateway | `operational` or `historical` | `operational` |
 | `SAPPHIRE_CONSISTENCY_CHECK` | Optional | preprocessing_gateway | `true`/`false` — enable data consistency check | `false` |
 | `SAPPHIRE_CONSISTENCY_STRICT` | Optional | preprocessing_gateway | Fail on consistency mismatch | `false` |
-| `SAPPHIRE_SKILL_METRICS_START_YEAR` | Optional | postprocessing_forecasts | Override rolling window start year | current year − 20 |
+| `SAPPHIRE_SKILL_METRICS_START_YEAR` | Optional | postprocessing_forecasts | Override rolling scoring window start year; short-term recalculation uses target year (PP-075) | current year − 20 |
 | `SAPPHIRE_SKILL_METRICS_YEAR` | Optional | postprocessing_forecasts | Target year for recalculation run | — |
 | `SAPPHIRE_RECALC_START_YEAR` | Optional | postprocessing_forecasts | Skill recalc window start | — |
 | `SAPPHIRE_RECALC_END_YEAR` | Optional | postprocessing_forecasts | Skill recalc window end | — |
-| `ieasyhydroforecast_efficiency_threshold` | Optional | postprocessing_forecasts | **Short-term** ensemble admission: keep models with `sdivsigma` ≤ threshold | `0.6` |
-| `ieasyhydroforecast_nse_threshold` | Optional | postprocessing_forecasts | **Short-term** ensemble admission: keep models with `NSE` ≥ threshold | `0.8` |
-| `ieasyhydroforecast_accuracy_threshold` | Optional | postprocessing_forecasts | **Short-term** ensemble admission: keep models with `accuracy` ≥ threshold | `0.8` |
+| `ieasyhydroforecast_efficiency_threshold` | Optional | postprocessing_forecasts | **Short-term** EM fallback (used when `..._short_term` is unset); also the strict wrapper gate: keep models with `sdivsigma` ≤ threshold | `0.6` (wrapper) / disabled (EM) |
+| `ieasyhydroforecast_nse_threshold` | Optional | postprocessing_forecasts | **Short-term** EM fallback (used when `..._short_term` is unset); also the strict wrapper gate: keep models with `NSE` ≥ threshold | `0.8` (wrapper) / `1e-9` (EM) |
+| `ieasyhydroforecast_accuracy_threshold` | Optional | postprocessing_forecasts | **Short-term** EM fallback (used when `..._short_term` is unset); also the strict wrapper gate: keep models with `accuracy` ≥ threshold | `0.8` (wrapper) / disabled (EM) |
 | `ieasyhydroforecast_nse_threshold_long_term` | Optional | postprocessing_forecasts | **Long-term** (month/quarter/season) Skilled-Mean admission: keep models with `NSE` ≥ threshold | `1e-9` (i.e. NSE > 0) |
 | `ieasyhydroforecast_efficiency_threshold_long_term` | Optional | postprocessing_forecasts | **Long-term** `sdivsigma` gate | `False` (gate disabled) |
 | `ieasyhydroforecast_accuracy_threshold_long_term` | Optional | postprocessing_forecasts | **Long-term** `accuracy` gate | `False` (gate disabled) |
@@ -325,15 +325,18 @@ Internal / Docker-only variables injected by the dashboard or Luigi at runtime (
 #### Ensemble admission thresholds (short-term vs long-term)
 
 Ensemble aggregates admit member models by skill. **Short-term and long-term use separate
-variables** — the names differ only by a `_long_term` suffix, so they are easy to confuse. All
+variables** — the names differ only by a `_short_term` / `_long_term` suffix, so they are easy to confuse. All
 have working defaults; a deployment needs an entry only to deliberately override one.
+For **short-term** each gate resolves as: the `_short_term` variable if set (empty = unset), else
+the existing un-suffixed variable (`ieasyhydroforecast_nse_threshold`, `..._efficiency_threshold`,
+`..._accuracy_threshold`), else the default. `ieasyhydroforecast_min_pairs_short_term` has no fallback.
 
 | Metric | Short-term (pentad / decad) | Long-term (month / quarter / season) |
 |---|---|---|
-| `sdivsigma` | `ieasyhydroforecast_efficiency_threshold` (`0.6`) | `ieasyhydroforecast_efficiency_threshold_long_term` (disabled) |
-| `NSE` | `ieasyhydroforecast_nse_threshold` (`0.8`) | `ieasyhydroforecast_nse_threshold_long_term` (`1e-9`) |
-| `accuracy` | `ieasyhydroforecast_accuracy_threshold` (`0.8`) | `ieasyhydroforecast_accuracy_threshold_long_term` (disabled) |
-| minimum pairs | — | `ieasyhydroforecast_min_pairs_long_term` (`4`), `..._quarter` (`5`), `..._season` (`5`) |
+| `sdivsigma` | `ieasyhydroforecast_efficiency_threshold_short_term`, else `ieasyhydroforecast_efficiency_threshold`, else disabled | `ieasyhydroforecast_efficiency_threshold_long_term` (disabled) |
+| `NSE` | `ieasyhydroforecast_nse_threshold_short_term`, else `ieasyhydroforecast_nse_threshold`, else `1e-9` (cannot be disabled; a disable token in the un-suffixed fallback logs a warning and uses `1e-9`) | `ieasyhydroforecast_nse_threshold_long_term` (`1e-9`) |
+| `accuracy` | `ieasyhydroforecast_accuracy_threshold_short_term`, else `ieasyhydroforecast_accuracy_threshold`, else disabled | `ieasyhydroforecast_accuracy_threshold_long_term` (disabled) |
+| minimum pairs | `ieasyhydroforecast_min_pairs_short_term` (`4`, no fallback) | `ieasyhydroforecast_min_pairs_long_term` (`4`), `..._quarter` (`10`), `..._season` (`5`) |
 
 Three details that are not obvious from the values alone:
 
@@ -344,7 +347,7 @@ Three details that are not obvious from the values alone:
   exact `0.0` would pass a gate meant to read "NSE greater than zero". The epsilon enforces
   *strictly* positive skill — i.e. exclude any model no better than climatology.
 - **The long-term metric thresholds apply to all three long-term horizons**; only the
-  minimum-pairs floor is per-horizon. Quarter and season draw on just two candidate models, so
+  minimum-pairs floor is per-horizon. Season draws on just two candidate models (quarter, since PP-065, also draws on derived models), so
   there a threshold acts as an on/off switch for the whole aggregate rather than a way to select
   among members — raising it above "NSE > 0" suppresses the product instead of refining it.
 
@@ -352,11 +355,28 @@ Which aggregate uses which gate:
 
 | Aggregate | Horizon | Admission |
 |---|---|---|
-| EM | pentad / decad | short-term thresholds, ≥2 qualifying models |
-| EM | month | short-term thresholds + monthly min-pairs — sparse by design, and **not** the intended long-term product |
-| EM | quarter / season | **no skill gate** — fixed `LR_Base` + `LR_SM` aggregate |
+| EM | pentad / decad only | short-term thresholds (NSE > 0 default) + `n_pairs` ≥ `..._min_pairs_short_term`, ≥2 qualifying models, equal weights. No long-term EM since PP-072 P3 |
 | **Skilled Mean** | month / quarter / season | **long-term thresholds** — the intended long-term aggregate |
 | Naive Mean | all | **no skill gate**; needs ≥2 members with a non-null point forecast |
+
+**PP-075 reporting rule (module tests and review passed; full test gate unmet, deployment pending):** The short-term
+EM skill reporting floor is fixed at **four distinct matched target years** per
+station, horizon and calendar period. `ieasyhydroforecast_min_pairs_short_term`
+controls **member admission**, not this reporting floor; no new configuration
+variable is introduced. Undefined metrics remain unavailable. Recalculation
+writes generated historical EM forecasts and replaces affected current
+reporting-year EM skills, including unavailable results for insufficient history.
+For both member and EM scoring in this recalculation, `SAPPHIRE_SKILL_METRICS_START_YEAR`
+refers to the target year, retaining the preceding 31 December issue for period 1.
+Generated EM forecasts are saved for all eligible stored boundary rows; only metric
+evaluation is restricted by this scoring window. Other callers retain their default window semantics.
+
+Reported `delta` is the latest applicable finite, non-negative LR/observation
+value for the station, horizon and period, shared by all models independently
+of their forecast coverage. Historical accuracy still uses each historical
+date's delta. Member selection and EM evaluation use the same mixed
+hindcast/operational history and are in-sample; see
+[EM hindcast skills](../apps/postprocessing_forecasts/README.md#em-hindcast-skills-and-shared-delta-pp-075).
 
 ## Configuration of the forecast tools
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.

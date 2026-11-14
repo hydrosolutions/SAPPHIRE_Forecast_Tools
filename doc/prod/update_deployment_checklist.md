@@ -1508,7 +1508,8 @@ redirect above it.
   `LR_Base`.
 
   **Limits of this check:** Phase 4 queries `long_forecasts` (bucket
-  presence, date span, `EM = mean(LR_BASE, LR_SM)` composition) — it does
+  presence, date span; the former long-term `EM = mean(LR_BASE, LR_SM)`
+  composition check is obsolete since PP-072 P3) — it does
   **not** query `skill_metrics` and does not prove monthly skill rows
   converged. A Phase 4 pass is necessary but not sufficient. Do not treat a
   Phase 4 pass alone as proof the skill tables converted.

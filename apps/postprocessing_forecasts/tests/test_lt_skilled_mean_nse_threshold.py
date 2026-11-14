@@ -311,7 +311,7 @@ def _mixed_pool():
 
 
 def _em_signature(result):
-    """Byte-identical EM signature: key columns + composition + discharge +
+    """EM signature (expected empty after PP-072 P3): key columns + composition + discharge +
     every quantile, as a sorted tuple of rounded tuples."""
     em = result[result["model_short"] == "EM"].copy()
     qcols = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
@@ -331,15 +331,16 @@ def _em_signature(result):
 
 
 class TestEMUnchangedForecastOutput:
-    """The relaxed Skilled Mean must NOT perturb the EM forecast row."""
+    """Long-term EM is removed (PP-072 P3): the relaxed Skilled Mean gate must
+    never cause an EM row to appear."""
 
-    def test_em_row_byte_identical_to_default(self):
-        """EM output with the relaxation active is byte-identical to EM output
-        under the default gate applied uniformly.
+    def test_no_em_row_with_or_without_relaxation(self):
+        """No EM output with the relaxation active, nor under the default gate
+        applied uniformly.
 
         Baseline: force the SAME gate everywhere by making the LT vars equal to
         the short-term defaults (so nothing is relaxed).  Then run with the LT
-        relaxation defaults active.  The EM row must match exactly."""
+        relaxation defaults active.  Neither run may contain an EM row."""
         skill, forecasts = _mixed_pool()
 
         # Baseline: LT vars mirror the default gate -> no relaxation anywhere.
@@ -360,23 +361,17 @@ class TestEMUnchangedForecastOutput:
                 os.environ.pop(k, None)
             relaxed = create_monthly_ensemble_forecasts(forecasts.copy(), skill.copy())
 
-        assert _em_signature(relaxed) == _em_signature(baseline), (
-            "EM forecast row changed when the Skilled-Mean relaxation was enabled "
-            "— EM MUST be byte-identical."
-        )
+        assert _em_signature(baseline) == ()
+        assert _em_signature(relaxed) == (), "EM row appeared when the relaxation was enabled"
 
-    def test_em_is_only_lr_tft_mean(self):
-        """EM composition and discharge reflect ONLY the default-gate models,
-        even though GBT now enters the Skilled-Mean pool."""
+    def test_no_em_row_is_produced(self):
+        """Long-term EM is removed (PP-072 P3): no EM row even with the pool above."""
         skill, forecasts = _mixed_pool()
         with patch.dict(os.environ, DEFAULT_ENV):
             for k in _LT_ENV_KEYS:
                 os.environ.pop(k, None)
             result = create_monthly_ensemble_forecasts(forecasts, skill)
-        em = result[result["model_short"] == "EM"]
-        assert len(em) == 1
-        assert em.iloc[0]["composition"] == "LR, TFT"
-        assert em.iloc[0]["forecasted_discharge"] == pytest.approx((100.0 + 120.0) / 2.0)
+        assert result[result["model_short"] == "EM"].empty
 
     def test_skilled_mean_admits_extra_lt_model(self):
         """NEW: Skilled Mean includes GBT (NSE>0) — its composition is the

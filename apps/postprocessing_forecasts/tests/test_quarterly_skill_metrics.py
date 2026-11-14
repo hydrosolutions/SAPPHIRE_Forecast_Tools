@@ -505,7 +505,7 @@ class TestSeasonalMetricsEnsembles:
         naive_rows = skill_stats[skill_stats["model_short"] == "Naive Mean"]
         assert not naive_rows.empty
 
-    def test_em_recalc_uses_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
+    def test_no_em_recalc_naive_mean_is_lr_mean_when_lr_skills_fail_thresholds(self, monkeypatch):
         for key, value in {
             "ieasyhydroforecast_efficiency_threshold": "0.6",
             "ieasyhydroforecast_nse_threshold": "0.8",
@@ -540,8 +540,10 @@ class TestSeasonalMetricsEnsembles:
         skill_stats, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
         raw_skill = skill_stats[skill_stats["model_short"].isin({"LR_Base", "LR_SM"})]
         filtered_raw = filter_for_highly_skilled_forecasts(raw_skill)
-        em_joint = joint[joint["model_short"] == "EM"].sort_values("season_year")
-        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+        assert "EM" not in set(joint["model_short"])
+        assert "EM" not in set(skill_stats["model_short"])
+        em_joint = joint[joint["model_short"] == "Naive Mean"].sort_values("season_year")
+        em_skill = skill_stats[skill_stats["model_short"] == "Naive Mean"]
 
         assert filtered_raw.empty
         assert len(em_joint) == 5
@@ -550,7 +552,7 @@ class TestSeasonalMetricsEnsembles:
         assert np.allclose(em_joint["q50"], [100.0] * 5)
         assert np.allclose(em_joint["q95"], [120.0] * 5)
         assert set(em_joint["composition"]) == {"LR_Base, LR_SM"}
-        # EM rows must keep their season keys so the write-side NaN guard
+        # NM rows must keep their season keys so the write-side NaN guard
         # (api_writer drops rows with null season_year/season_in_year)
         # persists them.
         assert {"season_year", "season_in_year"} <= set(em_joint.columns)
@@ -560,7 +562,7 @@ class TestSeasonalMetricsEnsembles:
         assert int(em_skill.iloc[0]["n_pairs"]) == 5
         assert pd.notna(em_skill.iloc[0]["crps"])
 
-    def test_em_recalc_accepts_db_form_lr_model_names(self, monkeypatch):
+    def test_no_em_recalc_db_form_lr_model_names(self, monkeypatch):
         for key, value in {
             "ieasyhydroforecast_efficiency_threshold": "0.6",
             "ieasyhydroforecast_nse_threshold": "0.8",
@@ -593,8 +595,10 @@ class TestSeasonalMetricsEnsembles:
         )
 
         skill_stats, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
-        em_joint = joint[joint["model_short"] == "EM"].sort_values("season_year")
-        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
+        assert "EM" not in set(joint["model_short"])
+        assert "EM" not in set(skill_stats["model_short"])
+        em_joint = joint[joint["model_short"] == "Naive Mean"].sort_values("season_year")
+        em_skill = skill_stats[skill_stats["model_short"] == "Naive Mean"]
 
         assert len(em_joint) == 5
         assert np.allclose(em_joint["forecasted_discharge"], [100.0] * 5)
@@ -602,10 +606,10 @@ class TestSeasonalMetricsEnsembles:
         assert set(em_joint["composition"]) == {"LR_BASE, LR_SM"}
         assert not em_skill.empty
 
-    def test_em_per_issue_date_not_collapsed(self):
-        """Each seasonal issue date yields its own clean 2-model EM.
+    def test_naive_mean_per_issue_date_not_collapsed(self):
+        """Each seasonal issue date yields its own clean 2-model Naive Mean.
 
-        When a (season_year, lead) is (re-)issued on several dates, the EM
+        When a (season_year, lead) is (re-)issued on several dates, the Naive Mean
         must be computed per issue date — mean(LR_Base, LR_SM) for that
         date — rather than averaged across dates into one blended row.
         """
@@ -615,9 +619,9 @@ class TestSeasonalMetricsEnsembles:
                 ("S1", 2021, 110.0),
             ]
         )
-        # Two issue dates per season_year, same lead. Per-date EM q50 is
+        # Two issue dates per season_year, same lead. Per-date NM q50 is
         # 150 (=(100+200)/2) for date d1 and 130 (=(120+140)/2) for date d2.
-        # A date-collapsing EM would instead produce a single 140 per year.
+        # A date-collapsing NM would instead produce a single 140 per year.
         fcst = _make_seasonal_fcst_dated(
             [
                 ("S1", 2020, "2020-03-25", "LR_Base", 80, 85, 95, 100, 105, 115, 120),
@@ -632,13 +636,14 @@ class TestSeasonalMetricsEnsembles:
         )
 
         _, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
-        em = joint[joint["model_short"] == "EM"].copy()
+        assert "EM" not in set(joint["model_short"])
+        em = joint[joint["model_short"] == "Naive Mean"].copy()
 
-        # One EM row per issue date (2 years x 2 dates), not one per year.
+        # One NM row per issue date (2 years x 2 dates), not one per year.
         assert len(em) == 4
         assert "date" in em.columns
         assert em["date"].notna().all()
-        # Each EM is the clean 2-model mean for its own date.
+        # Each NM is the clean 2-model mean for its own date.
         by_date = em.groupby("date")["q50"].first().to_dict()
         assert by_date["2020-03-25"] == pytest.approx(150.0)
         assert by_date["2020-04-01"] == pytest.approx(130.0)

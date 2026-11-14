@@ -1,3 +1,5 @@
+> **Superseded by PP-072** (2026-11-12): see [`mid_prio_gi_draft_pp_em_skilled_mean_consolidation.md`](mid_prio_gi_draft_pp_em_skilled_mean_consolidation.md). Long-term EM was removed in PP-072 P3; the text below is kept for history and is not rewritten.
+
 ## Remove monthly EM — it is vestigial, and Skilled Mean is the intended long-term aggregate (PP-059)
 
 **Status**: Draft (2026-08-18) — **for iterative review; not ready to implement**

@@ -217,12 +217,13 @@ class TestSeasonalEnsembleSkilled:
         discharge = sm.iloc[0]["forecasted_discharge"]
         assert discharge < 110.0  # closer to 100 than simple mean 110
 
-    def test_em_composition_string(self):
-        """EM composition should contain contributing model names."""
+    def test_naive_mean_composition_string(self):
+        """Naive Mean composition lists contributing models; no EM row (PP-072 P3)."""
         skill = _two_model_seasonal_skill()
         fcst = _two_model_seasonal_fcst()
         result = create_seasonal_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
+        assert result[result["model_short"] == "EM"].empty
+        em = result[result["model_short"] == "Naive Mean"]
         assert not em.empty
         comp = str(em.iloc[0]["composition"])
         assert "LR_Base" in comp

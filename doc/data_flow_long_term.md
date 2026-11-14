@@ -43,7 +43,6 @@ flowchart TD
     subgraph Phase3["Phase 3: Postprocessing"]
         READ_F["Read latest monthly<br/>forecasts from DB"]
         READ_SK["Read skill metrics<br/>─────────────────<br/>From skill_metrics table<br/>(horizon_type = month)"]
-        EM["Create EM<br/>─────────────────<br/>Ensemble Mean<br/>mean(models passing threshold)<br/>Requires ≥ 2 models"]
         SM_ENS["Create Skilled Mean<br/>─────────────────<br/>1/MAE weighted average<br/>of qualifying models"]
         NM["Create Naive Mean<br/>─────────────────<br/>Unweighted average<br/>of all models"]
         WR["Write combined forecasts<br/>─────────────────<br/>All models + ensembles"]
@@ -81,14 +80,11 @@ flowchart TD
     SMT --> READ_SK
 
     %% Ensemble creation
-    READ_F --> EM
     READ_F --> SM_ENS
     READ_F --> NM
-    READ_SK -- "threshold filter" --> EM
     READ_SK -- "1/MAE weights" --> SM_ENS
 
     %% Writing
-    EM --> WR
     SM_ENS --> WR
     NM --> WR
     WR --> LFT
@@ -129,12 +125,11 @@ Entry point: `postprocessing_forecasts/postprocessing_operational_long_term.py`
    table.
 2. **Read skill metrics**: Read pre-calculated monthly skill metrics from
    `skill_metrics` table (`horizon_type = month`).
-3. **Create ensembles**:
+3. **Create ensembles** (no EM since PP-072 P3; previously stored monthly EM rows remain in the table):
 
 | Ensemble | Method | Threshold | Description |
 |----------|--------|-----------|-------------|
-| **EM** (Ensemble Mean) | Arithmetic mean | sdivsigma, accuracy, nse | Mean of models passing skill filter (≥ 2 required) |
-| **Skilled Mean** | 1/MAE weighted mean | sdivsigma, accuracy | Weighted average using inverse MAE as weights |
+| **Skilled Mean** | 1/MAE weighted mean | NSE > 0 (1e-9); sdivsigma and accuracy disabled; plus n_pairs minimum | Weighted average using inverse MAE as weights |
 | **Naive Mean** | Arithmetic mean | None | Simple average of all available models |
 
 4. **Write**: All models + ensembles back to `long_forecasts` table.
@@ -156,12 +151,12 @@ flowchart TD
 | Task | Entry Point | Purpose |
 |------|-------------|---------|
 | Calibrate + hindcast | `long_term_forecasting/calibrate_and_hindcast.py` | Train models on historical data, generate hindcasts |
-| Fill ensembles | `postprocessing_forecasts/postprocessing_maintenance_long_term.py` | Create EM/Skilled Mean/Naive Mean for gap-filled dates |
+| Fill ensembles | `postprocessing_forecasts/postprocessing_maintenance_long_term.py` | Create Skilled Mean/Naive Mean for gap-filled dates |
 
 The maintenance gap-fill uses `gap_detector.detect_missing_monthly_ensembles()`
 to scan the most recent N months (configurable via
 `POSTPROCESSING_GAPFILL_WINDOW_MONTHS`, default 3) for `(year, month, code)`
-tuples missing ensemble rows (EM, Skilled Mean, Naive Mean). For each gap, it
+tuples missing ensemble rows (Skilled Mean, Naive Mean). For each gap, it
 reads individual model forecasts and skill metrics, creates the missing
 ensembles, and merges them back.
 
@@ -297,11 +292,10 @@ this contract applies to discharge *actuals* formatting only.
 
 | Ensemble | Models | Method | Created In |
 |----------|--------|--------|------------|
-| **EM** | Models passing skill filter | Arithmetic mean of q50 + quantiles | `ensemble_calculator.py` |
 | **Skilled Mean** | Models passing skill filter | 1/MAE weighted mean of q50 + quantiles | `ensemble_calculator.py` |
 | **Naive Mean** | All models (no filter) | Arithmetic mean of q50 + quantiles | `ensemble_calculator.py` |
 
-All three ensembles require ≥ 2 contributing models. Single-model groups are
+Both ensembles require ≥ 2 contributing models. Single-model groups are
 discarded. Ensemble rows include a `composition` field listing the contributing
 models.
 
@@ -323,7 +317,7 @@ models.
 | Horizon types | pentad, decade | Forecasts: month; hydrograph norms: month, season, quarter |
 | Output table | `forecasts` + `lr_forecasts` | `long_forecasts` |
 | Models | LR, TFT, TiDE, TSMixer | LR_Base, LR_SM, LR_SM_DT, LR_SM_ROF, GBT, SM_GBT, SM_GBT_LR, SM_GBT_Norm, MC_ALD |
-| Ensembles | NE, EM | EM, Skilled Mean, Naive Mean |
+| Ensembles | NE, EM | Skilled Mean, Naive Mean (no EM since PP-072 P3) |
 | Quantiles | q05–q95 stored; currently only q50 used operationally | Full distribution (q05–q95) |
 | Model dependencies | Independent | Dependency graph (e.g., SM_GBT depends on LR_Base) |
 | Run frequency | Daily | Predefined monthly dates |

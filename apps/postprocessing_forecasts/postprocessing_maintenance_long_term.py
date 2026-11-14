@@ -133,7 +133,7 @@ def _run_monthly_gap_fill(
         gaps = gap_detector.detect_missing_monthly_ensembles(
             combined,
             lookback,
-            ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
+            ensemble_models={"Skilled Mean", "Naive Mean"},
         )
 
     if gaps.empty:
@@ -206,10 +206,10 @@ def _run_monthly_gap_fill(
         )
 
     # Extract only ensemble rows that match actual gap tuples.
-    # create_monthly_ensemble_forecasts creates all 3 types for
+    # create_monthly_ensemble_forecasts creates both types for
     # every period, but we only want those that were actually
     # missing (per the gap detector).
-    ensemble_models = {"EM", "Skilled Mean", "Naive Mean"}
+    ensemble_models = {"Skilled Mean", "Naive Mean"}
     new_ensemble = joint[joint["model_short"].isin(ensemble_models)].copy()
     # Under SAPPHIRE_SKILL_LEAD_AWARE, key the gap filter per-lead --
     # mirroring the quarterly block's q_gap_keys -- so a regenerated
@@ -436,7 +436,6 @@ def postprocessing_maintenance_long_term():
                                 q_skill,
                             )
                             q_ens_models = {
-                                "EM",
                                 "Skilled Mean",
                                 "Naive Mean",
                             }
@@ -661,7 +660,7 @@ def postprocessing_maintenance_long_term():
                 s_gaps = gap_detector.detect_missing_seasonal_ensembles(
                     s_combined,
                     lookback_s,
-                    ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
+                    ensemble_models={"Skilled Mean", "Naive Mean"},
                 )
                 if not s_gaps.empty:
                     s_skill = data_reader.read_skill_metrics("season", codes=codes)
@@ -709,7 +708,6 @@ def postprocessing_maintenance_long_term():
                                 s_skill,
                             )
                             s_ens_models = {
-                                "EM",
                                 "Skilled Mean",
                                 "Naive Mean",
                             }

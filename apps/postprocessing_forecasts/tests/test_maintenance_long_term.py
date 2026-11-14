@@ -50,12 +50,12 @@ def _make_gaps(tuples):
     """Build a gaps DataFrame from (year, month, code, model_short) tuples.
 
     For backward compatibility, also accepts (year, month, code) tuples
-    and defaults model_short to 'EM'.
+    and defaults model_short to 'Naive Mean'.
     """
     if not tuples:
         return pd.DataFrame(columns=["year", "month", "code", "model_short"])
     if len(tuples[0]) == 3:
-        tuples = [(y, m, c, "EM") for y, m, c in tuples]
+        tuples = [(y, m, c, "Naive Mean") for y, m, c in tuples]
     return pd.DataFrame(
         tuples,
         columns=["year", "month", "code", "model_short"],
@@ -157,7 +157,7 @@ def _import_module(mocks_dict):
 
 @pytest.fixture
 def combined_with_models():
-    """Combined forecasts with two base models but no EM."""
+    """Combined forecasts with two base models but no Naive Mean."""
     return _make_combined(
         [
             {
@@ -182,7 +182,7 @@ def combined_with_models():
 
 @pytest.fixture
 def gap_tuples():
-    """Gap tuples indicating year=2025, month=1, code=10001 needs EM."""
+    """Gap tuples indicating year=2025, month=1, code=10001 needs a Naive Mean."""
     return _make_gaps([(2025, 1, "10001")])
 
 
@@ -223,14 +223,14 @@ def forecasts_for_gaps():
 
 @pytest.fixture
 def ensemble_result(forecasts_for_gaps):
-    """Ensemble calculator output: original rows + EM row."""
+    """Ensemble calculator output: original rows + Naive Mean row."""
     em_row = pd.DataFrame(
         [
             {
                 "year": 2025,
                 "month": 1,
                 "code": "10001",
-                "model_short": "EM",
+                "model_short": "Naive Mean",
                 "forecasted_discharge": 105.0,
                 "month_in_year": 1,
                 "q50": 105.0,
@@ -338,7 +338,6 @@ class TestMaintenanceLongTerm:
             )
             assert call_args[0][1] == 3  # default lookback
             assert call_args[1]["ensemble_models"] == {
-                "EM",
                 "Skilled Mean",
                 "Naive Mean",
             }
@@ -406,11 +405,11 @@ class TestMaintenanceLongTerm:
             # save_monthly_forecast_data receives a merged DataFrame
             mock_file_writer.save_monthly_forecast_data.assert_called_once()
             saved_df = mock_file_writer.save_monthly_forecast_data.call_args[0][0]
-            # Merged result should contain original rows + EM row
+            # Merged result should contain original rows + Naive Mean row
             assert len(saved_df) >= 3, (
-                f"Expected at least 3 rows (2 base + 1 EM), got {len(saved_df)}"
+                f"Expected at least 3 rows (2 base + 1 Naive Mean), got {len(saved_df)}"
             )
-            em_rows = saved_df[saved_df["model_short"] == "EM"]
+            em_rows = saved_df[saved_df["model_short"] == "Naive Mean"]
             assert len(em_rows) == 1
             assert em_rows.iloc[0]["forecasted_discharge"] == 105.0
 
@@ -445,7 +444,7 @@ class TestMaintenanceLongTerm:
                     "season_year": [2024],
                     "season_in_year": [3],
                     "code": ["10001"],
-                    "model_short": ["EM"],
+                    "model_short": ["Naive Mean"],
                     "forecasted_discharge": [103.0],
                 }
             ),
@@ -463,7 +462,7 @@ class TestMaintenanceLongTerm:
                     "season_year": [2024],
                     "season_in_year": [1],
                     "code": ["10001"],
-                    "model_short": ["EM"],
+                    "model_short": ["Naive Mean"],
                     "forecasted_discharge": [101.0],
                 }
             ),
@@ -472,7 +471,7 @@ class TestMaintenanceLongTerm:
                     "season_year": [2024],
                     "season_in_year": [0],
                     "code": ["10001"],
-                    "model_short": ["EM"],
+                    "model_short": ["Naive Mean"],
                     "forecasted_discharge": [100.0],
                 }
             ),
@@ -503,7 +502,7 @@ class TestMaintenanceLongTerm:
                 "season_year": [2024],
                 "season_in_year": [2],
                 "code": ["10001"],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
             }
         )
         mock_data_reader.read_seasonal_forecasts.return_value = pd.DataFrame(
@@ -521,7 +520,7 @@ class TestMaintenanceLongTerm:
                 "season_year": [2024, 2024],
                 "season_in_year": [2, 3],
                 "code": ["10001", "10001"],
-                "model_short": ["EM", "EM"],
+                "model_short": ["Naive Mean", "Naive Mean"],
                 "forecasted_discharge": [102.0, 999.0],
             }
         )
@@ -553,7 +552,7 @@ class TestMaintenanceLongTerm:
 
             saved = mock_file_writer.save_seasonal_forecast_data.call_args.args[0]
             assert set(saved["season_in_year"]) == {0, 1, 2, 3}
-            filled = saved[(saved["season_in_year"] == 2) & (saved["model_short"] == "EM")]
+            filled = saved[(saved["season_in_year"] == 2) & (saved["model_short"] == "Naive Mean")]
             assert len(filled) == 1
             assert filled.iloc[0]["forecasted_discharge"] == 102.0
             assert not (
@@ -616,7 +615,7 @@ class TestMaintenanceLongTerm:
                 "year": [2025],
                 "quarter_in_year": [1],
                 "code": ["19999"],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
             }
         )
         q_skill = pd.DataFrame(
@@ -651,7 +650,7 @@ class TestMaintenanceLongTerm:
                 "year": [2025],
                 "quarter_in_year": [1],
                 "code": ["19999"],
-                "model_short": ["EM"],
+                "model_short": ["Naive Mean"],
                 "forecasted_discharge": [105.0],
             }
         )
@@ -846,10 +845,10 @@ class TestMaintenanceLongTerm:
         rows are filtered to the ACTUAL missing per-lead gap keys before
         merge, so a NON-gap lead's existing ensemble row is not overwritten
         (keep="last") by a regenerated row for a lead that was never a gap.
-        The gap-filled EM is stamped at the lead it was detected missing
+        The gap-filled Naive Mean is stamped at the lead it was detected missing
         (lead 1) and survives merge-back without collapsing the existing
-        lead-0 EM. Flag OFF keeps today's (period-key) behavior, under which
-        the non-gap lead-0 EM IS overwritten.
+        lead-0 Naive Mean. Flag OFF keeps today's (period-key) behavior, under which
+        the non-gap lead-0 Naive Mean IS overwritten.
         """
         if flag_on:
             monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
@@ -864,27 +863,27 @@ class TestMaintenanceLongTerm:
         mock_pt = MagicMock()
         mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
 
-        # Existing combined: lead-0 EM (NOT a gap) with a distinctive
+        # Existing combined: lead-0 Naive Mean (NOT a gap) with a distinctive
         # discharge (100), plus LR_Base at leads 0 and 1.
         combined = pd.DataFrame(
             {
                 "year": [2025, 2025, 2025],
                 "month": [1, 1, 1],
                 "code": ["19999", "19999", "19999"],
-                "model_short": ["EM", "LR_Base", "LR_Base"],
+                "model_short": ["Naive Mean", "LR_Base", "LR_Base"],
                 "horizon_value": [0, 0, 1],
                 "forecasted_discharge": [100.0, 100.0, 90.0],
                 "month_in_year": [1, 1, 1],
             }
         )
-        # ONLY the lead-1 EM is reported missing.
+        # ONLY the lead-1 Naive Mean is reported missing.
         if flag_on:
             gaps = pd.DataFrame(
                 {
                     "year": [2025],
                     "month": [1],
                     "code": ["19999"],
-                    "model_short": ["EM"],
+                    "model_short": ["Naive Mean"],
                     "horizon_value": [1],
                 }
             )
@@ -895,7 +894,7 @@ class TestMaintenanceLongTerm:
                     "year": [2025],
                     "month": [1],
                     "code": ["19999"],
-                    "model_short": ["EM"],
+                    "model_short": ["Naive Mean"],
                 }
             )
         forecasts = pd.DataFrame(
@@ -912,7 +911,7 @@ class TestMaintenanceLongTerm:
                 "flag": [0, 0],
             }
         )
-        # Ensemble output regenerates EM for BOTH leads; the lead-0 EM has a
+        # Ensemble output regenerates Naive Mean for BOTH leads; the lead-0 Naive Mean has a
         # DIFFERENT discharge (999) so an overwrite would be observable.
         joint = pd.concat(
             [
@@ -922,7 +921,7 @@ class TestMaintenanceLongTerm:
                         "year": [2025, 2025],
                         "month": [1, 1],
                         "code": ["19999", "19999"],
-                        "model_short": ["EM", "EM"],
+                        "model_short": ["Naive Mean", "Naive Mean"],
                         "horizon_value": [0, 1],
                         "forecasted_discharge": [999.0, 111.0],
                         "month_in_year": [1, 1],
@@ -962,11 +961,11 @@ class TestMaintenanceLongTerm:
 
             mock_file_writer.save_monthly_forecast_data.assert_called_once()
             saved = mock_file_writer.save_monthly_forecast_data.call_args.args[0]
-            em_rows = saved[saved["model_short"] == "EM"]
+            em_rows = saved[saved["model_short"] == "Naive Mean"]
 
             if flag_on:
-                # Both leads present; the gap-filled EM is stamped lead 1
-                # (discharge 111), and the NON-gap lead-0 EM keeps its
+                # Both leads present; the gap-filled Naive Mean is stamped lead 1
+                # (discharge 111), and the NON-gap lead-0 Naive Mean keeps its
                 # ORIGINAL discharge (100), NOT the regenerated 999.
                 assert set(em_rows["horizon_value"]) == {0, 1}
                 lead0 = em_rows[em_rows["horizon_value"] == 0]
@@ -977,7 +976,7 @@ class TestMaintenanceLongTerm:
                 assert float(lead1.iloc[0]["forecasted_discharge"]) == 111.0
             else:
                 # Flag OFF: today's behavior -- period-only gap filter keeps
-                # BOTH regenerated EM rows, so the non-gap lead-0 EM IS
+                # BOTH regenerated Naive Mean rows, so the non-gap lead-0 Naive Mean IS
                 # overwritten (keep="last") to 999.
                 lead0 = em_rows[em_rows["horizon_value"] == 0]
                 lead1 = em_rows[em_rows["horizon_value"] == 1]
@@ -992,8 +991,8 @@ class TestMaintenanceLongTerm:
         forecasts_for_gaps,
         skill_stats,
     ):
-        """Existing EM rows are replaced (not duplicated) during merge."""
-        # Combined already has an old EM row with discharge=99.0
+        """Existing Naive Mean rows are replaced (not duplicated) during merge."""
+        # Combined already has an old Naive Mean row with discharge=99.0
         combined = _make_combined(
             [
                 {
@@ -1008,21 +1007,21 @@ class TestMaintenanceLongTerm:
                     "year": 2025,
                     "month": 1,
                     "code": "10001",
-                    "model_short": "EM",
+                    "model_short": "Naive Mean",
                     "forecasted_discharge": 99.0,
                     "month_in_year": 1,
                 },
             ]
         )
 
-        # Ensemble calculator returns a new EM row with discharge=105.0
+        # Ensemble calculator returns a new Naive Mean row with discharge=105.0
         new_em = pd.DataFrame(
             [
                 {
                     "year": 2025,
                     "month": 1,
                     "code": "10001",
-                    "model_short": "EM",
+                    "model_short": "Naive Mean",
                     "forecasted_discharge": 105.0,
                     "month_in_year": 1,
                     "q50": 105.0,
@@ -1075,11 +1074,13 @@ class TestMaintenanceLongTerm:
             assert exc_info.value.code == 0
 
             saved_df = mock_file_writer.save_monthly_forecast_data.call_args[0][0]
-            em_rows = saved_df[saved_df["model_short"] == "EM"]
-            # Dedup keeps='last' so the new EM row (105.0) wins
-            assert len(em_rows) == 1, f"Expected exactly 1 EM row after dedup, got {len(em_rows)}"
+            em_rows = saved_df[saved_df["model_short"] == "Naive Mean"]
+            # Dedup keeps='last' so the new Naive Mean row (105.0) wins
+            assert len(em_rows) == 1, (
+                f"Expected exactly 1 Naive Mean row after dedup, got {len(em_rows)}"
+            )
             assert em_rows.iloc[0]["forecasted_discharge"] == 105.0, (
-                "New EM value should overwrite old one"
+                "New Naive Mean value should overwrite old one"
             )
 
     def test_audit_trail_logged(
@@ -1354,7 +1355,7 @@ class TestMaintenanceLongTerm:
         forecasts_for_gaps,
         skill_stats,
     ):
-        """Ensemble calculator returns rows but none are EM.
+        """Ensemble calculator returns rows but none are ensemble rows.
 
         The monthly block does not complete. Quarterly gap-fill still
         runs (finds nothing), and the script exits 0 right after --
@@ -1506,7 +1507,7 @@ class TestMaintenanceLongTerm:
                     "year": 2025,
                     "month": 1,
                     "code": "10001",
-                    "model_short": "EM",
+                    "model_short": "Naive Mean",
                     "forecasted_discharge": 100.0,
                     "month_in_year": 1,
                 },
@@ -1514,7 +1515,7 @@ class TestMaintenanceLongTerm:
                     "year": 2025,
                     "month": 1,
                     "code": "10002",
-                    "model_short": "EM",
+                    "model_short": "Naive Mean",
                     "forecasted_discharge": 200.0,
                     "month_in_year": 1,
                 },
@@ -1560,8 +1561,10 @@ class TestMaintenanceLongTerm:
             assert exc_info.value.code == 0
 
             saved_df = mock_file_writer.save_monthly_forecast_data.call_args[0][0]
-            em_saved = saved_df[saved_df["model_short"] == "EM"]
-            assert len(em_saved) == 2, f"Expected 2 EM rows (one per station), got {len(em_saved)}"
+            em_saved = saved_df[saved_df["model_short"] == "Naive Mean"]
+            assert len(em_saved) == 2, (
+                f"Expected 2 Naive Mean rows (one per station), got {len(em_saved)}"
+            )
             codes_with_em = set(em_saved["code"].astype(str))
             assert codes_with_em == {"10001", "10002"}
 
@@ -2199,3 +2202,35 @@ class TestQuarterlyFallThroughAfterMonthlyEarlyExit:
             mock_file_writer.save_quarterly_forecast_data.assert_called_once()
             saved = mock_file_writer.save_quarterly_forecast_data.call_args.args[0]
             assert "Naive Mean" in set(saved["model_short"])
+
+
+class TestNoLongTermEmInEnsembleSets:
+    """PP-072 P3: no ensemble-model set in the long-term maintenance script may
+    contain "EM" (monthly, quarterly and seasonal gap detection/filtering all
+    use such sets; a stray "EM" makes the gap detector report permanent gaps)."""
+
+    def test_no_set_literal_in_maintenance_script_contains_em(self):
+        import ast
+
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "postprocessing_maintenance_long_term.py"
+        )
+        with open(path) as handle:
+            tree = ast.parse(handle.read())
+
+        ensemble_sets = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Set):
+                values = {
+                    el.value
+                    for el in node.elts
+                    if isinstance(el, ast.Constant) and isinstance(el.value, str)
+                }
+                if values & {"Naive Mean", "Skilled Mean"}:
+                    ensemble_sets.append(values)
+
+        # monthly gap call, monthly filter, quarterly filter, seasonal gap call,
+        # seasonal filter (>= 5 ensemble-model set literals).
+        assert len(ensemble_sets) >= 5
+        for values in ensemble_sets:
+            assert "EM" not in values, f"stray EM in ensemble set {sorted(values)}"

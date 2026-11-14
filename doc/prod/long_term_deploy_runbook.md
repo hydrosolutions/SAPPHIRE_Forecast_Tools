@@ -17,7 +17,7 @@ two deployments differ — see the parameter table below.
 | # | Change | Where it lives |
 |---|--------|----------------|
 | a | P-PIPE: quarter/season ensemble `horizon_value` = config lead; per-issue seasonal threading; per-lead seasonal skill | `apps/postprocessing_forecasts/`, `apps/iEasyHydroForecast/long_term_horizon_resolver.py` |
-| b | Two-model ensemble: quarter/season `EM = mean(LR_Base, LR_SM)`, de-skill-gated; reader drops 7 deprecated quarter models | `apps/postprocessing_forecasts/src/{ensemble_calculator,skill_metrics,data_reader,model_names}.py` |
+| b | Two-model ensemble (historical: quarter/season EM; long-term EM has since been removed, PP-072 P3); reader drops 7 deprecated quarter models | `apps/postprocessing_forecasts/src/{ensemble_calculator,skill_metrics,data_reader,model_names}.py` |
 | c | From-file importer accepts quarter/season + code-scoped gap-fill | `bin/utils/migration_py/long_forecast.py` |
 | d | Seasonal Excel bulletin export | `apps/forecast_dashboard/src/bulletins.py` |
 | e | Lead-aware skill & ensembles (`SAPPHIRE_SKILL_LEAD_AWARE`, **default OFF, opt-in per deployment**) | `apps/postprocessing_forecasts/`, `apps/forecast_dashboard/src/db.py`, `apps/forecast_dashboard/dashboard/{widgets,widget_manager,plot_manager}.py`, `apps/forecast_dashboard/src/month_lead.py`, `apps/iEasyHydroForecast/{long_term_horizon_resolver,skill_lead_aware_flag}.py` — see the dedicated section below |
@@ -61,7 +61,7 @@ Issue identity is in `date`; the target season is in `valid_from`/`valid_to`.
 byte-identity test enforces that flag-OFF output is identical to before. You
 must therefore **turn it on per deployment**, once that deployment is ready.
 
-**What it does when ON:** skill metrics and EM / Naive Mean / Skilled Mean
+**What it does when ON:** skill metrics and Naive Mean / Skilled Mean
 ensembles are computed and stored **per operational lead** (`horizon_value`)
 instead of collapsed — month keeps one row per lead `0..N`, quarter stays
 single-lead per deployment, season keeps one row per seasonal issue lead. The
@@ -144,7 +144,7 @@ above; see [`update_deployment_checklist.md`](./update_deployment_checklist.md)
 Phase 1  Deploy code/images
 Phase 2  Env / config preflight        ← STOP GATE: recalc hard-errors if vars unset
 Phase 3  Regenerate (full-history recalc)
-Phase 4  Verify (buckets, EM=mean, bulletin render)   ← STOP GATE for cleanup
+Phase 4  Verify (buckets, Naive/Skilled Mean, bulletin render)   ← STOP GATE for cleanup
 Phase 5  Cleanup (deprecated models + old-convention rows)
 Phase 6  Re-verify (buckets + deprecated absent)
 ```
@@ -181,7 +181,7 @@ Pull / refresh these images (substitute your `.env` tag):
 > these changes add no schema migration and no new columns.
 
 **Image fix-presence check** (confirms the postprocessing image actually carries
-the EM fix; expect `>= 2`):
+the ensemble fix; expect `>= 2`):
 
 ```bash
 docker run --rm mabesa/sapphire-postprocessing:<tag> \
@@ -264,7 +264,7 @@ Do not proceed until every value above is present and correct.
 ### Phase 3 — Regenerate (full-history recalc)
 
 One-time full-history recalc for **both** long-term modes. This persists correct
-per-issue/per-lead EM and skill over all history. (The scheduled bimonthly recalc
+per-issue/per-lead Naive/Skilled Mean and skill over all history. (The scheduled bimonthly recalc
 also self-heals going forward; this one-time run lands it immediately.)
 
 **Backup first.** `DB_BACKUP_DIR` must already exist before running the backup
@@ -326,7 +326,7 @@ Detailed recalc rationale: [`ppipe_ensemble_hv_deploy_runbook.md`](ppipe_ensembl
 Run the **aggregate-only** verification queries from
 [`ppipe_ensemble_hv_deploy_runbook.md`](ppipe_ensemble_hv_deploy_runbook.md)
 (§ verification). Use sentinel codes (e.g. `19999`) in any ad-hoc query — never
-paste real station codes. Reference the EM query there; do not fork a second
+paste real station codes. Reference the ensemble query there (its EM-specific parts no longer apply to long-term); do not fork a second
 copy here.
 
 **SQL literal rule:** SQL examples and ad-hoc SQL must use DB enum names, never
@@ -347,12 +347,12 @@ Confirm:
    deployment's most recent successful operational long-term run). A missing
    bucket or a date range that doesn't span this window **fails** the gate — a
    partial-history recalc must not pass.
-2. **`EM = mean(LR_BASE, LR_SM)`** join check returns
-   `em_pairs > 0 AND mismatch = 0` (holds per issue date for season). A non-zero
-   mismatch on composition-populated rows means the deployed image is still the
-   pre-fix one — revisit Phase 1. `mismatch = 0` alone is not sufficient; it can
-   also mean the join found no EM/LR pairs.
-   *(Model labels in the DB are uppercase: `LR_BASE`, `LR_SM`, `ENSEMBLE_MEAN`.)*
+2. **Long-term EM checks are skipped.** Long-term (month/quarter/season) EM is
+   no longer produced after the deployed image carries PP-072 P3; older stored
+   `ENSEMBLE_MEAN` rows may remain and are neither pass nor fail. Naive Mean /
+   Skilled Mean presence is judged with the existing queries and log output.
+   No new gate is defined here (to be decided in PP-072 P5).
+   *(Model labels in the DB are uppercase: `LR_BASE`, `LR_SM`, `NAIVE_MEAN`, `SKILLED_MEAN`.)*
 3. **Seasonal bulletin renders** (change d): first **recreate the dashboard** so it
    reloads the corrected `.env` — do this **through the deployment's env path**, not
    a bare `docker restart`. A plain restart reuses the container's baked env and
@@ -382,7 +382,7 @@ models and (ii) rows written under the old hv convention. The predicates must be
 
 > ⚠️ **Superseded statement — do NOT run as written.** The old blanket
 > `DELETE FROM long_forecasts WHERE horizon_type='QUARTER' AND model_type NOT IN ('LR_BASE','LR_SM')`
-> would delete EM/Naive/Skilled rows that P-PIPE now **regenerates**. Use the
+> would delete Naive/Skilled (and old EM) rows that P-PIPE now **regenerates**. Use the
 > old-signature-scoped predicates instead.
 
 **(i) Deprecated quarter models** — drop from **both** `long_forecasts` and
@@ -405,7 +405,7 @@ Always back up the DB and dry-run the row counts before any `DELETE`/`UPDATE`.
 
 ### Phase 6 — Re-verify
 
-Re-run the Phase 4 bucket + `EM=mean` checks, **plus** confirm the deprecated
+Re-run the Phase 4 bucket + Naive/Skilled Mean checks, **plus** confirm the deprecated
 models are gone:
 
 - The 7 deprecated models return **0 rows** in both `long_forecasts` and

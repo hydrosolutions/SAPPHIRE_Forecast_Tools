@@ -139,6 +139,14 @@ def build_stale_tombstones(
 
     existing_canon["_model_canon"] = canonical_model_short_series(existing_canon["model_short"])
 
+    # PP-072 D4/D8: long-term EM is no longer produced for month/season, but its
+    # old skill rows must be kept.  Exclude them from the stored keys so they
+    # never become stale tombstones.  Matched on the canonical key (covers "EM"
+    # and "ENSEMBLE_MEAN").  Quarter is deliberately NOT exempted: quarter EM
+    # rows keep being tombstoned (PP-065 P1c).
+    if period_col in ("month_in_year", "season_in_year"):
+        existing_canon = existing_canon[existing_canon["_model_canon"] != "ENSEMBLE_MEAN"].copy()
+
     if emitted.empty:
         # All existing keys become tombstones.
         stale_existing = existing_canon

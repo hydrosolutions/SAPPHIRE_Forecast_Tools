@@ -153,8 +153,9 @@ the value as an integer.
 
 ### 3. Aggregate-Only Verification
 
-Verify that regenerated EM / Naive Mean / Skilled Mean rows exist under the new
-convention for the full expected date range. Keep checks aggregate-only.
+Verify that regenerated Naive Mean / Skilled Mean rows (and short-term EM) exist
+under the new convention. Long-term (monthly/season) EM is no longer produced
+since PP-072 P3 (quarter EM was removed earlier in PP-065 P1c); do not require it for the full expected date range. Keep checks aggregate-only.
 
 Kyrgyz expectations:
 
@@ -236,7 +237,12 @@ deployment's most recent successful operational long-term run). A bucket with
 `row_count = 0`, or coverage that does not span this window, **fails** — a
 partial-history recalc must not pass to cleanup.
 
-Also confirm that EM forecasts were persisted (not just EM skill) and that each
+**Obsolete since PP-072 P3 (long-term EM no longer produced):** the EM-persistence
+and EM-parity check below no longer applies to new runs. Old `ENSEMBLE_MEAN`
+rows may remain in the DB; they must not be counted as pass or fail. The text
+and query are kept only for historical reference.
+
+Historical: confirm that EM forecasts were persisted (not just EM skill) and that each
 EM equals the clean two-model mean at its exact key. With the PR #383 fix, every
 recalc-written EM (composition populated) must satisfy
 `q = mean(LR_BASE.q, LR_SM.q)` joined on
@@ -268,8 +274,9 @@ FROM j;
 A non-zero `mismatch` on composition-populated rows means the deployed image is
 stale (pre-fix). Pre-existing rows with empty `composition` are old-convention
 artifacts and are excluded here; they are handled by the cleanup gate below.
-The cleanup gate requires `em_pairs > 0 AND mismatch = 0`; `mismatch = 0` alone
-is not sufficient because it can also mean the join found no EM/LR pairs.
+Historically the cleanup gate required `em_pairs > 0 AND mismatch = 0`. Since
+PP-072 P3 no new long-term EM is written, so `em_pairs > 0` can no longer be
+satisfied and this condition no longer applies to the cleanup gate.
 
 ### 4. Cleanup Gate
 

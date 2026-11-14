@@ -32,7 +32,6 @@ from src.aggregation import (
     local_calendar_date,
 )
 from src.model_names import (
-    AGGREGATED_EM_RAW_MODELS,
     AGGREGATED_ENSEMBLE_MODELS,
     AGGREGATED_SUPPORTED_MODELS,
     QUARTER_NATIVE_RAW_MODELS,
@@ -429,11 +428,22 @@ class TestQuarterModelConstants:
             QUARTER_NATIVE_RAW_MODELS | QUARTERLY_DERIVED_MODELS | AGGREGATED_ENSEMBLE_MODELS
         )
 
-    def test_aggregated_em_raw_models_unchanged(self):
-        assert frozenset({"LR_BASE", "LR_SM"}) == AGGREGATED_EM_RAW_MODELS
+    def test_aggregated_em_raw_models_removed(self):
+        """PP-072 P3: long-term EM is gone, so its raw-member set is removed."""
+        import src.model_names as model_names
+
+        assert not hasattr(model_names, "AGGREGATED_EM_RAW_MODELS")
 
     def test_aggregated_supported_models_unchanged(self):
-        assert AGGREGATED_SUPPORTED_MODELS == AGGREGATED_EM_RAW_MODELS | AGGREGATED_ENSEMBLE_MODELS
+        assert (
+            frozenset({"LR_BASE", "LR_SM"}) | AGGREGATED_ENSEMBLE_MODELS
+        ) == AGGREGATED_SUPPORTED_MODELS
+
+    def test_ensemble_mean_still_readable_for_old_rows(self):
+        """Old persisted EM rows must stay readable (PP-072 D4/D7)."""
+        assert "ENSEMBLE_MEAN" in AGGREGATED_ENSEMBLE_MODELS
+        assert "ENSEMBLE_MEAN" in AGGREGATED_SUPPORTED_MODELS
+        assert "ENSEMBLE_MEAN" in QUARTER_SUPPORTED_MODELS
 
 
 # ===================================================================

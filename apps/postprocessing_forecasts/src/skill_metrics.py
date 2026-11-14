@@ -14,11 +14,10 @@ import pandas as pd
 import probabilistic_metrics as pm
 from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.model_names import (
-    AGGREGATED_EM_RAW_MODELS,
     AGGREGATED_ENSEMBLE_MODELS,
     canonical_model_short_series,
 )
-from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
+from src.postprocessing_tools import enforce_quantile_monotonicity
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +242,93 @@ def _long_term_min_pairs(horizon_type: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Short-term (pentad/decad) EM candidate gate (PP-072 D6)
+# ---------------------------------------------------------------------------
+# The short-term Ensemble Mean admits models with NSE > 0 and n_pairs >= K.
+# Own ``*_short_term`` env vars, independent of the long-term ones.  Each gate
+# resolves its raw value as: (1) the ``*_short_term`` var if set (non-empty);
+# else (2) the existing un-suffixed deployed var (``_SHORT_TERM_FALLBACK_ENV``);
+# else (3) the default below.  The canonical filter is inclusive (>=), so the
+# NSE default is a small epsilon.
+_SHORT_TERM_THRESHOLD_ENV = {
+    "nse": ("ieasyhydroforecast_nse_threshold_short_term", str(_LONG_TERM_NSE_EPSILON)),
+    "sdivsigma": ("ieasyhydroforecast_efficiency_threshold_short_term", "False"),
+    "accuracy": ("ieasyhydroforecast_accuracy_threshold_short_term", "False"),
+}
+_SHORT_TERM_FALLBACK_ENV = {
+    "nse": "ieasyhydroforecast_nse_threshold",
+    "sdivsigma": "ieasyhydroforecast_efficiency_threshold",
+    "accuracy": "ieasyhydroforecast_accuracy_threshold",
+}
+_SHORT_TERM_MIN_PAIRS_ENV = ("ieasyhydroforecast_min_pairs_short_term", 4)
+
+
+def _short_term_threshold_overrides() -> dict:
+    """Return the per-metric override dict for the short-term EM gate.
+
+    Same shape and parsing as :func:`_long_term_threshold_overrides`, but reads
+    the ``*_short_term`` env vars, falling back per metric to the un-suffixed
+    deployed var, then to the default.  An empty string counts as unset.  The
+    NSE gate may not be disabled: an explicit ``*_short_term`` disable token
+    raises; a disable token from the un-suffixed fallback var logs a warning
+    and uses the default epsilon.
+
+    Raises:
+        ValueError: If a value is invalid (message names the env var that
+            supplied it) or the explicit NSE ``*_short_term`` var resolves to
+            a disable token.
+    """
+    overrides: dict = {}
+    for metric_key, (st_var, default) in _SHORT_TERM_THRESHOLD_ENV.items():
+        env_var = st_var
+        raw_value = os.getenv(st_var)
+        if not raw_value:
+            env_var = _SHORT_TERM_FALLBACK_ENV[metric_key]
+            raw_value = os.getenv(env_var)
+        if not raw_value:
+            env_var, raw_value = st_var, default
+        try:
+            parsed = _parse_threshold_env(raw_value)
+        except ValueError as exc:
+            raise ValueError(f"Env var {env_var!r}: {exc}") from exc
+        if metric_key == "nse" and parsed is False and env_var != st_var:
+            logger.warning(
+                "Env var %r resolved to disable token %r but the short-term NSE gate "
+                "cannot be disabled; using default %s.",
+                env_var,
+                raw_value,
+                default,
+            )
+            parsed = float(default)
+        elif metric_key == "nse" and parsed is False:
+            raise ValueError(
+                f"The short-term NSE skill gate cannot be disabled (env var "
+                f"{env_var!r} resolved to disable token {raw_value!r})."
+            )
+        overrides[metric_key] = parsed
+    return overrides
+
+
+def _short_term_min_pairs() -> int:
+    """Return the minimum n_pairs K for the short-term EM gate (default 4).
+
+    Raises:
+        ValueError: If the env var is not an integer or is < 1.
+    """
+    env_var, default = _SHORT_TERM_MIN_PAIRS_ENV
+    raw = os.getenv(env_var, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid value for env var {env_var!r}: {raw!r} (expected a positive integer)"
+        ) from exc
+    if value < 1:
+        raise ValueError(f"Env var {env_var!r} must be >= 1, got {value!r}")
+    return value
+
+
+# ---------------------------------------------------------------------------
 # Monthly skill groupby keys (PP-038: per-lead stratification)
 # These constants define the groupby keys for all monthly skill groupbys and
 # the ensemble aggregation groupby.  Threading them through every site avoids
@@ -400,6 +486,8 @@ def forecast_accuracy_hydromet(
         accuracy = np.mean(abs_diff <= delta_values)
 
         # Delta is constant per (code, period_in_year) by design.
+        # NOTE: live data shows delta differing between models (PP-074); EM
+        # therefore reads delta from the LR row.
         # Use first value; warn if they vary unexpectedly.
         delta = delta_values[0]
         delta_range = np.ptp(delta_values)
@@ -1074,6 +1162,8 @@ def calculate_all_skill_metrics(
             abs_diff_d = np.abs(obs_d - sim_d)
             accuracy = float(np.mean(abs_diff_d <= deltas))
             # Delta is constant per (code, period_in_year) by design.
+            # NOTE: live data shows delta differing between models (PP-074); EM
+            # therefore reads delta from the LR row.
             # Use first value; warn if they vary unexpectedly.
             delta = float(deltas[0])
             delta_range = float(np.ptp(deltas))
@@ -1352,7 +1442,7 @@ _ENSEMBLE_JOINT_COLS = (
         "year",
         "month",
         "month_in_year",
-        # Aggregated (quarter/season) period keys — required so EM/Naive/
+        # Aggregated (quarter/season) period keys — required so Naive/
         # Skilled Mean rows keep their period column on append. Without
         # these the write-side NaN guard drops every ensemble row.
         "quarter_in_year",
@@ -1429,10 +1519,6 @@ def calculate_monthly_skill_metrics(
         skill_stats_df columns: [month_in_year, code, model_short,
             sdivsigma, nse, delta, accuracy, mae, n_pairs, crps]
     """
-    from src.ensemble_calculator import (
-        composition_agg,
-        is_multi_model_composition,
-    )
 
     empty_stats = pd.DataFrame(
         columns=["month_in_year", "horizon_value", "code", "model_short"]
@@ -1466,9 +1552,9 @@ def calculate_monthly_skill_metrics(
         forecasts["horizon_value"] = forecasts["horizon_value"].fillna(0).astype(int)
 
     # Drop any pre-existing aggregate/baseline rows (EM, Naive Mean,
-    # Skilled Mean) so stale copies — e.g. a NAIVE_MEAN row stored at
+    # Skilled Mean; long-term EM is no longer produced, PP-072 P3) so stale copies — e.g. a NAIVE_MEAN row stored at
     # horizon_value = target month — are not scored as raw model rows.
-    # The ensemble/naive/skilled blocks below regenerate these from the
+    # The naive/skilled blocks below regenerate Naive/Skilled Mean from the
     # raw models and re-exclude the same names from their input pools, so
     # clean sites see identical legitimate output. Canonical matching
     # catches both DB-form (NAIVE_MEAN) and display-form (Naive Mean).
@@ -1559,119 +1645,12 @@ def calculate_monthly_skill_metrics(
         how="left",
     )
 
-    # --- 4. Ensemble mean (EM) ---
+    # --- 4. Joint forecasts ---
+    # Long-term EM is no longer produced (PP-072 P3): monthly = Skilled Mean + Naive Mean.
     joint_forecasts = forecasts.copy()
     # Ensure month_in_year is present (forecasts may only have 'month')
     if "month_in_year" not in joint_forecasts.columns and "month" in joint_forecasts.columns:
         joint_forecasts["month_in_year"] = joint_forecasts["month"]
-    skill_stats_filtered = filter_for_highly_skilled_forecasts(
-        skill_stats, min_pairs=_long_term_min_pairs("MONTH")
-    )
-
-    merge_keys = GROUP_COLS
-    skilled_merged = merged.merge(
-        skill_stats_filtered[merge_keys].drop_duplicates(),
-        on=merge_keys,
-        how="inner",
-    )
-    # Exclude existing EM / baselines from ensemble input
-    skilled_merged = skilled_merged[
-        ~skilled_merged["model_short"].isin(["EM", "Naive Mean", "Skilled Mean"])
-    ].copy()
-    skilled_merged = skilled_merged.dropna(subset=["forecasted_discharge"]).copy()
-
-    n_models = forecasts["model_short"].nunique()
-    if n_models > 1 and not skilled_merged.empty:
-        # Build aggregation: mean of q50 + all available quantile cols
-        em_agg_dict = {
-            "month_in_year": "first",
-            "forecasted_discharge": "mean",
-            "model_short": composition_agg,
-        }
-        for qcol in _QUANTILE_COLS:
-            if qcol in skilled_merged.columns:
-                em_agg_dict[qcol] = "mean"
-        for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in skilled_merged.columns:
-                em_agg_dict[dcol] = "first"
-
-        em_avg = skilled_merged.groupby(ENSEMBLE_KEY).agg(em_agg_dict).reset_index()
-        em_avg = enforce_quantile_monotonicity(
-            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
-        )
-        em_avg = em_avg.rename(columns={"model_short": "composition"})
-        em_avg["model_short"] = "EM"
-
-        # Discard single-model "ensembles"
-        em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
-
-        if not em_avg.empty:
-            # Compute EM skill metrics
-            em_with_obs = pd.merge(
-                em_avg,
-                observations[["code", "year", "month", "month_in_year", "discharge_avg", "delta"]],
-                on=["code", "year", "month"],
-                how="inner",
-                suffixes=("", "_obs"),
-            )
-            # Resolve month_in_year collision
-            if "month_in_year_obs" in em_with_obs.columns:
-                em_with_obs = em_with_obs.drop(columns=["month_in_year_obs"])
-
-            em_skill = (
-                em_with_obs.groupby(
-                    ["month_in_year", "horizon_value", "code", "model_short", "composition"]
-                )[["discharge_avg", "forecasted_discharge", "delta"]]
-                .apply(
-                    calculate_all_skill_metrics,
-                    observed_col="discharge_avg",
-                    simulated_col="forecasted_discharge",
-                    delta_col="delta",
-                )
-                .reset_index()
-            )
-
-            # Compute CRPS from aggregated quantiles
-            qf_cols = [c for c in _QUANTILE_COLS if c in em_with_obs.columns]
-            if len(qf_cols) == len(_QUANTILE_COLS):
-                em_crps = []
-                em_sharpness_tally = _new_sharpness_tally()
-                for (miy, hv, code, model), grp in em_with_obs.groupby(GROUP_COLS):
-                    obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
-                    qf = grp[qf_cols].to_numpy(dtype=np.float64)
-                    crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
-                    pit = calculate_pit_reliability(obs_arr, qf, _QUANTILE_LEVELS)
-                    sharp = calculate_sharpness(qf, _QUANTILE_LEVELS)
-                    _tally_sharpness(em_sharpness_tally, sharp)
-                    em_crps.append(
-                        {
-                            "month_in_year": miy,
-                            "horizon_value": hv,
-                            "code": code,
-                            "model_short": model,
-                            "crps": crps_val,
-                            "reliability_score": pit["reliability_score"],
-                            "sharpness_90": sharp["sharpness_90"],
-                            "sharpness_50": sharp["sharpness_50"],
-                            "sharpness_n_90": sharp["sharpness_n_90"],
-                            "sharpness_n_50": sharp["sharpness_n_50"],
-                        }
-                    )
-                _log_sharpness_tally(em_sharpness_tally, "calculate_monthly_skill_metrics (EM)")
-                em_crps_df = pd.DataFrame(em_crps)
-                em_skill = em_skill.merge(
-                    em_crps_df,
-                    on=GROUP_COLS,
-                    how="left",
-                )
-            else:
-                em_skill["crps"] = np.nan
-
-            skill_stats = pd.concat([skill_stats, em_skill], ignore_index=True)
-
-            # Add EM rows to joint_forecasts
-            em_avg["flag"] = 0
-            joint_forecasts = _append_to_joint(joint_forecasts, em_avg)
 
     # --- 4b. Skilled Mean baseline ---
     skill_stats, joint_forecasts = _add_skilled_mean(
@@ -1704,7 +1683,7 @@ def _add_naive_mean(
     """Add Naive Mean (unweighted model average) to skill_stats.
 
     Naive Mean = simple average of ALL model forecasts, regardless of
-    skill thresholds (unlike EM/Skilled Mean which filter).  Baselines
+    skill thresholds (unlike Skilled Mean, which filters).  Baselines
     (EM, Naive Mean, Skilled Mean) are excluded from the model pool.
     Single-model groups are discarded.
 
@@ -2080,6 +2059,8 @@ def calculate_skill_metrics(
     simulated: pd.DataFrame,
     timing_stats=None,
     exclude_models: list[str] | None = None,
+    *,
+    target_year_window: bool = False,
 ):
     """Calculate skill metrics for a short-term horizon (pentad or decad).
 
@@ -2091,8 +2072,11 @@ def calculate_skill_metrics(
         observed: DataFrame with observed data.
         simulated: DataFrame with simulated data.
         timing_stats: Optional TimingStats collector.
-        exclude_models: Optional list of model_short values to skip during
-            ensemble derivation (e.g. ["EM"] to skip EM recalculation).
+        exclude_models: Accepted for backward compatibility; no effect.
+            EM rows are no longer derived here (PP-072 P2).
+        target_year_window: Filter history by target year (issue date + one
+            day), as required for member selection and EM recalculation.
+            The default preserves the existing issue-year window.
 
     Returns:
         (skill_stats, joint_forecasts, timing_stats)
@@ -2100,8 +2084,6 @@ def calculate_skill_metrics(
     horizon = config.name.capitalize()
     exclude_models = exclude_models or []
     period_col = config.period_col
-    period_in_month_col = config.period_in_month_col
-    get_period_func = config.get_period_func
 
     if timing_stats is None:
 
@@ -2118,9 +2100,6 @@ def calculate_skill_metrics(
                 yield
             finally:
                 stats.end(section)
-
-    # Import composition helpers from ensemble_calculator
-    from src.ensemble_calculator import composition_agg, is_multi_model_composition
 
     # Test the input. Make sure that the DataFrames contain the required columns
     if not all(
@@ -2166,8 +2145,11 @@ def calculate_skill_metrics(
     with timer(timing_stats, f"calculate_skill_metrics_{config.name} - Filter data"):
         _default_start = dt.date.today().year - 20
         min_year = int(os.getenv("SAPPHIRE_SKILL_METRICS_START_YEAR", _default_start))
-        observed = observed[observed["date"].dt.year >= min_year]
-        simulated = simulated[simulated["date"].dt.year >= min_year]
+        # Recalculation uses the same target-year window for member selection
+        # and EM scoring, including Dec-31 before the requested first year.
+        offset = pd.Timedelta(days=1 if target_year_window else 0)
+        observed = observed[(observed["date"] + offset).dt.year >= min_year]
+        simulated = simulated[(simulated["date"] + offset).dt.year >= min_year]
 
     # Merge the observed and simulated DataFrames
     with timer(timing_stats, f"calculate_skill_metrics_{config.name} - Initially merge data"):
@@ -2196,39 +2178,10 @@ def calculate_skill_metrics(
 
     with timer(
         timing_stats,
-        f"calculate_skill_metrics_{config.name} - Calculate ensemble skill metrics for highly skilled forecasts",
+        f"calculate_skill_metrics_{config.name} - Calculate short-term CRPS, sharpness and skill aggregates",
     ):
-        skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
-
-        merge_keys = [period_col, "code", "model_short"]
-        skill_metrics_df_ensemble = skill_metrics_df.merge(
-            skill_stats_ensemble[merge_keys].drop_duplicates(),
-            on=merge_keys,
-            how="inner",
-        )
-        # Filter out rows where forecasted_discharge is NaN
-        skill_metrics_df_ensemble = skill_metrics_df_ensemble.dropna(
-            subset=["forecasted_discharge"]
-        ).copy()
-
-        # Drop columns with model_short == NE (neural ensemble)
-        skill_metrics_df_ensemble = skill_metrics_df_ensemble[
-            skill_metrics_df_ensemble["model_short"] != "NE"
-        ].copy()
-
-        # Perform the aggregations and keep only the unique combinations
-        # Group by period + date + code so forecasts from different periods
-        # are never averaged together.
-        em_agg_dict = {
-            "forecasted_discharge": "mean",
-            "model_short": composition_agg,
-        }
-        # Propagate quantiles into EM rows (vincentization)
         _SHORT_TERM_Q_COLS = ["q05", "q25", "q75", "q95"]
         _SHORT_TERM_Q_LEVELS = np.array([0.05, 0.25, 0.75, 0.95])
-        for qcol in _SHORT_TERM_Q_COLS:
-            if qcol in skill_metrics_df_ensemble.columns:
-                em_agg_dict[qcol] = "mean"
 
         # --- CRPS for individual models (short-term) ---
         crps_records = []
@@ -2274,142 +2227,115 @@ def calculate_skill_metrics(
                 crps_df, on=[period_col, "code", "model_short"], how="left"
             )
 
-        if "EM" not in exclude_models:
-            skill_metrics_df_ensemble_avg = (
-                skill_metrics_df_ensemble.groupby([period_col, "date", "code"])
-                .agg(em_agg_dict)
-                .reset_index()
-            )
-            skill_metrics_df_ensemble_avg = enforce_quantile_monotonicity(
-                skill_metrics_df_ensemble_avg, _SHORT_TERM_Q_COLS
-            )
-            # model_short now holds the composition string
-            skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg.rename(
-                columns={"model_short": "composition"}
-            )
-            skill_metrics_df_ensemble_avg["model_short"] = "EM"
+        # EM is not derived here: it is produced by the ensemble calculator.
+        joint_forecasts = simulated.copy()
 
-            # Discard single-model or empty ensembles
-            skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
-                skill_metrics_df_ensemble_avg["composition"].apply(is_multi_model_composition)
-            ].copy()
-
-            number_of_models = simulated["model_short"].nunique()
-            logger.debug("%s number_of_models: %d", horizon, number_of_models)
-            if number_of_models > 1 and not skill_metrics_df_ensemble_avg.empty:
-                # Now recalculate the skill metrics for the ensemble
-                ensemble_skill_metrics_df = pd.merge(
-                    skill_metrics_df_ensemble_avg,
-                    observed[["code", "date", "discharge_avg", "delta"]],
-                    on=["code", "date"],
-                )
-
-                # Single-pass ensemble skill metrics
-                ensemble_skill_stats = (
-                    ensemble_skill_metrics_df.groupby(
-                        [period_col, "code", "model_short", "composition"]
-                    )[["discharge_avg", "forecasted_discharge", "delta"]]
-                    .apply(
-                        calculate_all_skill_metrics,
-                        observed_col="discharge_avg",
-                        simulated_col="forecasted_discharge",
-                        delta_col="delta",
-                    )
-                    .reset_index()
-                )
-
-                # --- CRPS for EM (short-term) ---
-                em_crps_records = []
-                em_sharpness_tally = _new_sharpness_tally()
-                for group_key, grp in ensemble_skill_metrics_df.groupby(
-                    [period_col, "code", "model_short", "composition"]
-                ):
-                    p, code, model, comp = group_key
-                    obs_arr = grp["discharge_avg"].to_numpy(dtype=np.float64)
-                    qf_cols = [c for c in _SHORT_TERM_Q_COLS if c in grp.columns]
-                    if len(qf_cols) == len(_SHORT_TERM_Q_COLS):
-                        qf = grp[qf_cols].to_numpy(dtype=np.float64)
-                        crps_val = calculate_crps(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
-                        pit = calculate_pit_reliability(obs_arr, qf, _SHORT_TERM_Q_LEVELS)
-                        sharp = calculate_sharpness(qf, _SHORT_TERM_Q_LEVELS)
-                        _tally_sharpness(em_sharpness_tally, sharp)
-                    else:
-                        crps_val = np.nan
-                        pit = {"reliability_score": np.nan}
-                        sharp = {
-                            "sharpness_90": np.nan,
-                            "sharpness_50": np.nan,
-                            "sharpness_n_90": 0,
-                            "sharpness_n_50": 0,
-                        }
-                    em_crps_records.append(
-                        {
-                            period_col: p,
-                            "code": code,
-                            "model_short": model,
-                            "composition": comp,
-                            "crps": crps_val,
-                            "reliability_score": pit["reliability_score"],
-                            "sharpness_90": sharp["sharpness_90"],
-                            "sharpness_50": sharp["sharpness_50"],
-                            "sharpness_n_90": sharp["sharpness_n_90"],
-                            "sharpness_n_50": sharp["sharpness_n_50"],
-                        }
-                    )
-                _log_sharpness_tally(
-                    em_sharpness_tally, f"calculate_skill_metrics_{config.name} (EM)"
-                )
-                if em_crps_records:
-                    em_crps_df = pd.DataFrame(em_crps_records)
-                    ensemble_skill_stats = ensemble_skill_stats.merge(
-                        em_crps_df,
-                        on=[period_col, "code", "model_short", "composition"],
-                        how="left",
-                    )
-
-                # Append the ensemble skill metrics to the skill metrics
-                skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
-
-                # Calculate period in month (production date -> target period)
-                ensemble_skill_metrics_df[period_in_month_col] = forecast_target_date(
-                    ensemble_skill_metrics_df["date"]
-                ).apply(get_period_func)
-
-                # Ensure simulated has composition column for the outer merge
-                if "composition" not in simulated.columns:
-                    simulated = simulated.copy()
-                    simulated["composition"] = ""
-
-                # Join the two dataframes
-                join_cols = [
-                    "code",
-                    "date",
-                    period_in_month_col,
-                    period_col,
-                    "forecasted_discharge",
-                    "model_short",
-                    "composition",
-                ]
-                # Carry quantile columns through into EM rows
-                for qcol in _SHORT_TERM_Q_COLS:
-                    if qcol in ensemble_skill_metrics_df.columns:
-                        join_cols.append(qcol)
-                joint_forecasts = pd.merge(
-                    simulated,
-                    ensemble_skill_metrics_df[join_cols],
-                    on=join_cols,
-                    how="outer",
-                )
-            else:
-                joint_forecasts = simulated.copy()
-        else:
-            logger.info(
-                "Skipping EM ensemble derivation (excluded). "
-                "Operational EM skill metrics are retained in DB."
-            )
-            joint_forecasts = simulated.copy()
+    # PP-075: display/ensemble delta belongs to the station and target period,
+    # not to a model's overlapping sample. Historical accuracy above still
+    # uses each paired date's own delta.
+    delta_source = observed[["code", "date", "delta"]].copy()
+    if period_col in observed.columns:
+        delta_source[period_col] = pd.to_numeric(observed[period_col])
+    else:
+        target_dates = delta_source["date"] + pd.Timedelta(days=1)
+        periods_per_month = 6 if config.name == "pentad" else 3
+        delta_source[period_col] = (target_dates.dt.month - 1) * periods_per_month + pd.to_numeric(
+            target_dates.apply(config.get_period_func)
+        )
+    valid_delta = np.isfinite(delta_source["delta"]) & (delta_source["delta"] >= 0)
+    latest_delta = (
+        delta_source.loc[valid_delta]
+        .sort_values("date")
+        .drop_duplicates(["code", period_col], keep="last")
+        .set_index(["code", period_col])["delta"]
+    )
+    keys = pd.MultiIndex.from_arrays([skill_stats["code"], pd.to_numeric(skill_stats[period_col])])
+    skill_stats["delta"] = latest_delta.reindex(keys).to_numpy()
 
     return skill_stats, joint_forecasts, timing_stats
+
+
+def calculate_short_term_em_hindcast(config, observed, members, member_skills):
+    """Build stored-period EM history and score one pair per target year.
+
+    Reuse the operational EM rule. Four matched target years are required for
+    reported metrics; a smaller sample retains its count and shared delta but
+    writes NULL metrics to replace an older assessment.
+    """
+    from src.ensemble_calculator import create_ensemble_forecasts
+    from src.gap_detector import _plan_is_valid_boundary
+
+    period_col = config.period_col
+    empty_skills = member_skills.iloc[:0].copy()
+    for metric in METRIC_REGISTRY:
+        if metric not in empty_skills.columns:
+            empty_skills[metric] = pd.Series(dtype=float)
+    empty_skills["composition"] = pd.Series(dtype=object)
+    if members.empty or member_skills.empty:
+        return members.iloc[:0].copy(), empty_skills
+
+    members = members.copy()
+    members["date"] = pd.to_datetime(members["date"]).dt.normalize()
+    target = members["date"] + pd.Timedelta(days=1)
+    periods_per_month = 6 if config.name == "pentad" else 3
+    expected_period = (target.dt.month - 1) * periods_per_month + pd.to_numeric(
+        target.apply(config.get_period_func)
+    )
+    valid = members["date"].apply(
+        lambda date: _plan_is_valid_boundary(date.date(), config.name)
+    ) & (pd.to_numeric(members[period_col]) == expected_period)
+    members = members.loc[valid].drop_duplicates().copy()
+    member_key = ["code", period_col, "date", "model_short"]
+    if members.duplicated(member_key).any():
+        raise ValueError("Conflicting stored period forecasts for EM hindcast")
+    if members.empty:
+        return members, empty_skills
+
+    joint, _ = create_ensemble_forecasts(
+        members,
+        member_skills.copy(),
+        period_col,
+        config.period_in_month_col,
+        config.get_period_func,
+    )
+    em = joint[joint["model_short"] == "EM"].copy()
+    if em.empty:
+        return em, empty_skills
+    observed = observed.copy()
+    observed["date"] = pd.to_datetime(observed["date"]).dt.normalize()
+    observed = observed.drop_duplicates()
+    if observed.duplicated(["code", "date"]).any():
+        raise ValueError("Conflicting observations for EM hindcast")
+
+    em_skills, scored_em, _ = calculate_skill_metrics(config, observed, em, target_year_window=True)
+    if em_skills.empty:
+        return em, empty_skills
+    # A boundary date and target period identify one target year uniquely.
+    # Exact duplicate observations/members were removed before pairing.
+    labels = (
+        scored_em.groupby([period_col, "code"])["composition"]
+        .agg(
+            lambda values: ", ".join(
+                sorted(
+                    {
+                        member.strip()
+                        for value in values.dropna()
+                        for member in value.split(",")
+                        if member.strip()
+                    }
+                )
+            )
+        )
+        .rename("composition")
+    )
+    em_skills = em_skills.merge(labels, on=[period_col, "code"], how="left")
+    metric_cols = [
+        col
+        for col in em_skills.columns
+        if col not in (period_col, "code", "model_short", "composition", "n_pairs", "delta")
+    ]
+    em_skills.loc[em_skills["n_pairs"] < 4, metric_cols] = np.nan
+    return em, em_skills
 
 
 # ===================================================================
@@ -2628,13 +2554,8 @@ def _calculate_aggregated_skill_metrics(
     """Shared implementation for quarterly and seasonal skill metrics.
 
     Follows the same structure as calculate_monthly_skill_metrics():
-    merge, point metrics, CRPS, EM, Skilled Mean, Naive Mean.
+    merge, point metrics, CRPS, Skilled Mean, Naive Mean (no EM, PP-072 P3).
     """
-    from src.ensemble_calculator import (
-        _skip_em_for_quarter,
-        composition_agg,
-        is_multi_model_composition,
-    )
 
     # Under SAPPHIRE_SKILL_LEAD_AWARE, stratify the aggregated skill/ensemble
     # grouping by the operational lead (horizon_value), matching monthly's
@@ -2665,8 +2586,8 @@ def _calculate_aggregated_skill_metrics(
     if observations.empty or forecasts.empty:
         return empty_stats, empty_joint, timing_stats
 
-    # The recalc regenerates EM / Naive Mean / Skilled Mean from the raw
-    # models. Drop any pre-existing copies in the source so we neither score
+    # The recalc regenerates Naive Mean / Skilled Mean from the raw
+    # models (long-term EM is no longer produced, PP-072 P3). Drop any pre-existing copies in the source so we neither score
     # them as raw models nor emit a duplicate write-key when the freshly
     # computed ensemble collides with a stored one. Other ensemble types
     # (e.g. NE) are left untouched.
@@ -2740,72 +2661,9 @@ def _calculate_aggregated_skill_metrics(
     )
     skill_stats = skill_stats.merge(crps_df, on=metric_group_cols, how="left")
 
-    # --- 4. Ensemble Mean (EM) ---
+    # --- 4. Joint forecasts ---
+    # Long-term EM is no longer produced (PP-072 P3).
     joint_forecasts = forecasts.copy()
-
-    if not _skip_em_for_quarter(period_col):
-        model_keys = canonical_model_short_series(merged["model_short"])
-        em_merged = merged[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
-        em_merged = em_merged.dropna(subset=["forecasted_discharge"]).copy()
-
-        n_models = em_merged["model_short"].nunique()
-        if n_models > 1 and not em_merged.empty:
-            em_agg_dict = {
-                "forecasted_discharge": "mean",
-                "model_short": composition_agg,
-            }
-            if period_col not in time_group_cols:
-                em_agg_dict[period_col] = "first"
-            for qcol in _QUANTILE_COLS:
-                if qcol in em_merged.columns:
-                    em_agg_dict[qcol] = "mean"
-            for dcol in ("valid_from", "valid_to", "date"):
-                if dcol in em_merged.columns and dcol not in time_group_cols:
-                    em_agg_dict[dcol] = "first"
-
-            em_avg = em_merged.groupby(time_group_cols).agg(em_agg_dict).reset_index()
-            em_avg = enforce_quantile_monotonicity(
-                em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
-            )
-            em_avg = em_avg.rename(columns={"model_short": "composition"})
-            em_avg["model_short"] = "EM"
-
-            em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
-
-            if not em_avg.empty:
-                em_with_obs = pd.merge(
-                    em_avg,
-                    observations[available_obs_cols],
-                    on=merge_cols,
-                    how="inner",
-                    suffixes=("", "_obs"),
-                )
-                if obs_suffix in em_with_obs.columns:
-                    em_with_obs = em_with_obs.drop(columns=[obs_suffix])
-
-                em_skill = (
-                    em_with_obs.groupby([*metric_group_cols, "composition"])[
-                        ["discharge_avg", "forecasted_discharge", "delta"]
-                    ]
-                    .apply(
-                        calculate_all_skill_metrics,
-                        observed_col="discharge_avg",
-                        simulated_col="forecasted_discharge",
-                        delta_col="delta",
-                    )
-                    .reset_index()
-                )
-
-                em_crps_df = _crps_records_for_groups(
-                    em_with_obs,
-                    metric_group_cols,
-                    context=f"_calculate_aggregated_skill_metrics({period_col}) EM",
-                )
-                em_skill = em_skill.merge(em_crps_df, on=metric_group_cols, how="left")
-
-                skill_stats = pd.concat([skill_stats, em_skill], ignore_index=True)
-                em_avg["flag"] = 0
-                joint_forecasts = _append_to_joint(joint_forecasts, em_avg)
 
     # --- 4b. Skilled Mean ---
     skill_stats, joint_forecasts = _add_skilled_mean_aggregated(

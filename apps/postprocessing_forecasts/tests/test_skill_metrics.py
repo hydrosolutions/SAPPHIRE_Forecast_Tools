@@ -161,25 +161,22 @@ class TestCalculateSkillMetricsPentad:
         assert all(skill_stats["sdivsigma"] >= 0)
         assert all(skill_stats["mae"] >= 0)
 
-    def test_ensemble_creation(self, observed, simulated, monkeypatch):
-        """Ensemble forecasts created as average of qualifying models."""
-        # Relax thresholds so both models qualify
+    def test_no_ensemble_creation(self, observed, simulated, monkeypatch):
+        """calculate_skill_metrics no longer derives EM (PP-072 P2).
+
+        Even with thresholds relaxed so both models would have qualified,
+        output contains per-model rows only and joint == input models.
+        """
         monkeypatch.setenv("ieasyhydroforecast_efficiency_threshold", "2.0")
         monkeypatch.setenv("ieasyhydroforecast_accuracy_threshold", "0.0")
         monkeypatch.setenv("ieasyhydroforecast_nse_threshold", "-1.0")
 
-        _, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
-        assert any(joint["model_short"] == "EM")
-
-        em_rows = joint[joint["model_short"] == "EM"]
-        for _, row in em_rows.iterrows():
-            individual = joint[
-                (joint["date"] == row["date"])
-                & (joint["code"] == row["code"])
-                & (joint["model_short"].isin(["MA", "MB"]))
-            ]["forecasted_discharge"]
-            assert row["forecasted_discharge"] == pytest.approx(individual.mean(), abs=1e-5)
+        assert "EM" not in joint["model_short"].values
+        assert "EM" not in skill_stats["model_short"].values
+        assert set(joint["model_short"]) == {"MA", "MB"}
+        assert len(joint) == len(simulated)
 
     def test_perfect_forecast(self, observed, simulated):
         """Perfect forecasts produce sdivsigma=0, nse=1, mae=0, acc=1."""
@@ -335,40 +332,25 @@ class TestCalculateSkillMetricsDecade:
         assert all(skill_stats["sdivsigma"] >= 0)
         assert all(skill_stats["mae"] >= 0)
 
-    def test_ensemble_creation(self, observed_decad, simulated_decad, monkeypatch):
-        """Ensemble forecasts created as average of qualifying models."""
+    def test_no_ensemble_creation(self, observed_decad, simulated_decad, monkeypatch):
+        """Decade: no EM derived (PP-072 P2); per-model rows only."""
         monkeypatch.setenv("ieasyhydroforecast_efficiency_threshold", "2.0")
         monkeypatch.setenv("ieasyhydroforecast_accuracy_threshold", "0.0")
         monkeypatch.setenv("ieasyhydroforecast_nse_threshold", "-1.0")
 
-        _, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed_decad, simulated_decad)
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(
+            DECAD, observed_decad, simulated_decad
+        )
 
-        assert any(joint["model_short"] == "EM")
+        assert "EM" not in joint["model_short"].values
+        assert "EM" not in skill_stats["model_short"].values
+        assert len(joint) == len(simulated_decad)
 
-        em_rows = joint[joint["model_short"] == "EM"]
-        for _, row in em_rows.iterrows():
-            individual = joint[
-                (joint["date"] == row["date"])
-                & (joint["code"] == row["code"])
-                & (joint["model_short"].isin(["MA", "MB"]))
-            ]["forecasted_discharge"]
-            assert row["forecasted_discharge"] == pytest.approx(individual.mean(), abs=1e-5)
+    def test_nan_forecasts_do_not_produce_decade_em(self, monkeypatch):
+        """NaN forecasted_discharge input produces no EM rows (PP-072 P2).
 
-    def test_nan_forecasts_excluded_from_decade_ensemble(self, monkeypatch):
-        """NaN forecasted_discharge must not produce a false multi-model EM.
-
-        Regression test: the decade path was missing a dropna() that the
-        pentad path had.  Without dropna, pandas mean() silently skips
-        NaN but the NaN model still appears in the composition string
-        (via composition_agg), creating a "MA, MB" ensemble when only MA
-        actually contributed a value.  The correct behavior is: when only
-        one model has a valid forecast for a (date, code), no EM row
-        should be created (single-model ensembles are discarded).
-
-        We need 4+ years of data so that MB has enough valid points
-        (>= 2 per group) to pass the skill threshold despite one NaN.
-        With only 2 years, the NaN leaves MB with n=1 for that group,
-        giving NaN skill stats that exclude it from the filter anyway.
+        Formerly a regression test for a false multi-model EM; EM is no
+        longer derived in calculate_skill_metrics, so none can appear.
         """
         monkeypatch.setenv("ieasyhydroforecast_efficiency_threshold", "2.0")
         monkeypatch.setenv("ieasyhydroforecast_accuracy_threshold", "0.0")
@@ -417,37 +399,15 @@ class TestCalculateSkillMetricsDecade:
 
         skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
-        em_rows = joint[joint["model_short"] == "EM"]
+        # No EM at all (PP-072 P2); the NaN forecast row is passed through
+        # unchanged and never leaks into any derived value.
+        assert "EM" not in joint["model_short"].values
+        assert "EM" not in skill_stats["model_short"].values
+        assert len(joint) == len(simulated)
+        assert joint["forecasted_discharge"].isna().sum() == 1
 
-        # On 2021-01-10 only MA has a valid forecast.  A single-model
-        # "ensemble" must be discarded, so there should be NO EM row
-        # for that date.
-        em_at_nan_date = em_rows[em_rows["date"] == pd.Timestamp("2021-01-10")]
-        assert len(em_at_nan_date) == 0, (
-            "EM row created at 2021-01-10 where only one model had a "
-            "valid forecast — NaN model should have been excluded before "
-            "composition_agg"
-        )
-
-        # On dates where both models are valid, EM should exist and
-        # be the true mean of both models
-        for d in dates[1:]:  # skip the NaN date
-            em_at_d = em_rows[em_rows["date"] == d]
-            assert not em_at_d.empty, f"EM row missing at {d} where both models are valid"
-            if not em_at_d.empty:
-                ma_val = joint[(joint["date"] == d) & (joint["model_short"] == "MA")][
-                    "forecasted_discharge"
-                ].iloc[0]
-                mb_val = joint[(joint["date"] == d) & (joint["model_short"] == "MB")][
-                    "forecasted_discharge"
-                ].iloc[0]
-                expected = (ma_val + mb_val) / 2
-                assert em_at_d.iloc[0]["forecasted_discharge"] == pytest.approx(
-                    expected, abs=1e-5
-                ), f"EM at {d} should be mean of MA+MB"
-
-    def test_nan_forecasts_excluded_from_pentad_ensemble(self, observed, monkeypatch):
-        """Pentad path also correctly excludes NaN forecasts (parity check)."""
+    def test_nan_forecasts_do_not_produce_pentad_em(self, observed, monkeypatch):
+        """Pentad path: NaN input produces no EM rows (parity with decade)."""
         monkeypatch.setenv("ieasyhydroforecast_efficiency_threshold", "2.0")
         monkeypatch.setenv("ieasyhydroforecast_accuracy_threshold", "0.0")
         monkeypatch.setenv("ieasyhydroforecast_nse_threshold", "-1.0")
@@ -482,11 +442,8 @@ class TestCalculateSkillMetricsDecade:
 
         _, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated_with_nan)
 
-        em_rows = joint[joint["model_short"] == "EM"]
-        assert not em_rows.empty, "EM rows should exist — at least some dates have 2 valid models"
-        assert em_rows["forecasted_discharge"].notna().all(), (
-            "NaN forecast leaked into pentad ensemble mean"
-        )
+        assert "EM" not in joint["model_short"].values
+        assert len(joint) == len(simulated_with_nan)
 
 
 # ===================================================================
@@ -867,26 +824,33 @@ class TestExcludeModels:
         assert len(ma_rows) > 0
         assert len(mb_rows) > 0
 
-    def test_exclude_em_logs_skip_message(self, observed, simulated, monkeypatch, caplog):
-        """Skipping EM logs an INFO message when exclude_models=["EM"]."""
-        import logging
+    def test_em_in_input_does_not_trigger_derivation(self, observed, simulated, monkeypatch):
+        """EM among the input model names yields no derived EM rows.
 
+        calculate_skill_metrics never derives EM from the individual models
+        (PP-072 P2): any EM row in the output is the input's own row passed
+        through, and none carries a derived composition.
+        """
         self._relax_thresholds(monkeypatch)
+        em_input = simulated[simulated["model_short"] == "MA"].copy()
+        em_input["model_short"] = "EM"
+        sim_with_em = pd.concat([simulated, em_input], ignore_index=True)
 
-        with caplog.at_level(logging.INFO):
-            skill_metrics.calculate_skill_metrics(
-                PENTAD, observed, simulated, exclude_models=["EM"]
-            )
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, sim_with_em)
 
-        assert "Skipping EM ensemble derivation" in caplog.text
+        assert len(joint) == len(sim_with_em)
+        assert (joint["model_short"] == "EM").sum() == len(em_input)
+        if "composition" in skill_stats.columns:
+            em_comp = skill_stats.loc[skill_stats["model_short"] == "EM", "composition"]
+            assert em_comp.fillna("").eq("").all()
 
-    def test_default_exclude_models_em_present(self, observed, simulated, monkeypatch):
-        """Default exclude_models=None produces EM rows (backward compatibility)."""
+    def test_default_exclude_models_no_em(self, observed, simulated, monkeypatch):
+        """Default exclude_models=None produces no EM rows (PP-072 P2)."""
         self._relax_thresholds(monkeypatch)
 
         _, joint_forecasts, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
-        assert "EM" in joint_forecasts["model_short"].values
+        assert "EM" not in joint_forecasts["model_short"].values
 
     def test_exclude_em_with_decad_config(self, decad_observed, decad_simulated, monkeypatch):
         """exclude_models=["EM"] also suppresses EM in the DECAD path."""

@@ -1,4 +1,16 @@
-# Boundary-issued short-term EM and hindcast skills
+# DEPRECATED — Boundary-issued short-term EM and hindcast skills
+
+**Deprecated in full by owner decision, 2026-11-13.** This document is retained only as history and is not an
+implementation contract. Use [PP-072](../../doc/plans/issues/mid_prio_gi_draft_pp_em_skilled_mean_consolidation.md)
+for EM membership/arithmetic and [PP-075](../../doc/plans/issues/mid_prio_gi_draft_pp_short_term_em_skill_and_delta_ranges.md)
+for shared delta, stored-period EM hindcasts, four-year skill reporting and narrow replacement.
+
+The old five-year floor, NSE ≥ 0 rule, exclusion of LR from all quantile pools, daily/archive reconstruction and
+broader publication machinery below must not be used to expand or override the current minimal fix.
+
+---
+
+## Historical text (not governing)
 
 ## 1. Outcome, scope and authority
 

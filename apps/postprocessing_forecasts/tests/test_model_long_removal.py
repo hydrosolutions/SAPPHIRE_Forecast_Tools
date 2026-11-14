@@ -425,27 +425,20 @@ class TestSkillMetricsCharacterization:
         # MAE for MA: mean(|10-10.2|, |12-10.3|) = mean(0.2, 1.7) = 0.95
         assert ma_123_p1.iloc[0]["mae"] == pytest.approx(0.95, abs=0.01)
 
-    def test_pentad_ensemble_discharge_mean_correct(self, observed_sm, simulated_sm, monkeypatch):
-        """BEHAVIORAL ANCHOR: ensemble discharge = mean of MA + MB.
+    def test_pentad_no_ensemble_derived(self, observed_sm, simulated_sm, monkeypatch):
+        """BEHAVIORAL ANCHOR: no EM rows are derived (PP-072 P2).
 
-        At date 2022-01-01, station 123:
-          MA: 10.2, MB: 10.1 → EM: 10.15
-        At date 2023-01-01, station 123:
-          MA: 10.3, MB: 12.1 → EM: 11.2
+        Even with thresholds relaxed so both models would qualify, joint
+        forecasts contain only the input models MA and MB.
         """
-        # Relax thresholds so both models qualify for ensemble
         monkeypatch.setenv("ieasyhydroforecast_efficiency_threshold", "2.0")
         monkeypatch.setenv("ieasyhydroforecast_accuracy_threshold", "0.0")
         monkeypatch.setenv("ieasyhydroforecast_nse_threshold", "-1.0")
 
         _, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed_sm, simulated_sm)
-        em_rows = joint[(joint["model_short"] == "EM") & (joint["code"] == "123")].sort_values(
-            "date"
-        )
-        assert len(em_rows) >= 2
-        # 2022-01-01: mean(10.2, 10.1) = 10.15
-        em_jan1 = em_rows[em_rows["date"] == pd.Timestamp("2022-01-01")]
-        assert em_jan1.iloc[0]["forecasted_discharge"] == pytest.approx(10.15, abs=1e-5)
+
+        assert "EM" not in joint["model_short"].values
+        assert len(joint) == len(simulated_sm)
 
     def test_decade_works_without_model_long(self):
         """Decade function accepts data without model_long."""
@@ -471,15 +464,13 @@ class TestSkillMetricsCharacterization:
         assert not skill_stats.empty
         assert "model_short" in skill_stats.columns
 
-    def test_decade_multi_model_ensemble(self, monkeypatch):
-        """Decade: 2 models → EM created with correct discharge and composition.
+    def test_decade_multi_model_no_ensemble(self, monkeypatch):
+        """Decade: 2 models → per-model rows only; no EM derived (PP-072 P2).
 
         Station 123, decad 1, 2 years of data:
           Observed:  100.0 (2022), 120.0 (2023)
           MA:        100.0, 120.0  (perfect)
           MB:        100.0, 120.0  (perfect)
-        → EM = mean(MA, MB) = 100.0, 120.0  (also perfect)
-        → NSE=1, MAE=0 for EM
         """
         monkeypatch.setenv("ieasyhydroforecast_efficiency_threshold", "2.0")
         monkeypatch.setenv("ieasyhydroforecast_accuracy_threshold", "0.0")
@@ -512,26 +503,12 @@ class TestSkillMetricsCharacterization:
             }
         )
         skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
-        # EM rows exist in joint forecasts
-        em_rows = joint[joint["model_short"] == "EM"]
-        assert len(em_rows) == 2
 
-        # EM discharge = mean(MA, MB) = mean(100, 100) = 100.0 for 2022
-        em_2022 = em_rows[em_rows["date"] == pd.Timestamp("2022-01-01")]
-        assert em_2022.iloc[0]["forecasted_discharge"] == pytest.approx(100.0, abs=1e-5)
-
-        # EM skill stats exist with correct metrics (perfect forecast)
-        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
-        assert len(em_skill) == 1
-        row = em_skill.iloc[0]
-        assert row["nse"] == pytest.approx(1.0, abs=1e-5)
-        assert row["mae"] == pytest.approx(0.0, abs=1e-5)
-        assert row["n_pairs"] == 2
-
-        # Composition column present on EM rows
-        assert "composition" in em_rows.columns
-        comp = em_rows.iloc[0]["composition"]
-        assert "MA" in comp and "MB" in comp
+        # No EM rows or EM skill (PP-072 P2); per-model rows only
+        assert "EM" not in joint["model_short"].values
+        assert "EM" not in skill_stats["model_short"].values
+        assert set(skill_stats["model_short"]) == {"MA", "MB"}
+        assert len(joint) == len(simulated)
 
 
 class TestDataReaderCharacterization:

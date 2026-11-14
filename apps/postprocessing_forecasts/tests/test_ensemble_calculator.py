@@ -225,14 +225,15 @@ class TestCreateEnsembleForecasts:
                 assert row["forecasted_discharge"] < 900.0
 
     def test_no_ensemble_when_no_qualified_models(self):
-        """No ensemble created when no models pass thresholds."""
+        """No ensemble created when NSE is negative (fails threshold_nse=0)."""
+        # nse=-0.1 is below 0 so the model is excluded regardless of env thresholds
         skill_stats = pd.DataFrame(
             {
                 "pentad_in_year": [1],
                 "code": ["10001"],
                 "model_short": ["LR"],
                 "sdivsigma": [0.9],
-                "nse": [0.5],
+                "nse": [-0.1],
                 "delta": [5.0],
                 "accuracy": [0.6],
                 "mae": [8.0],
@@ -544,9 +545,9 @@ class TestEnsembleQuantilePropagation:
     def test_ensemble_quantiles_numerical_verification(
         self, forecasts_with_quantiles, skill_stats_three_models
     ):
-        """EM quantiles are the mean of qualifying ML models' quantiles.
+        """q05/q95 come from ML models only; q25/q75 also include LR's point -/+ delta.
 
-        LR has NaN quantiles, so only TFT and TiDE contribute.
+        LR point=100, delta=5 -> LR q25=95, q75=105.
         """
         with patch.dict(os.environ, _ENSEMBLE_ENV):
             joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
@@ -554,42 +555,31 @@ class TestEnsembleQuantilePropagation:
         em = joint[joint["model_short"] == "EM"].iloc[0]
         # TFT q05=80, TiDE q05=60 → mean=70
         assert em["q05"] == pytest.approx(70.0)
-        # TFT q25=95, TiDE q25=75 → mean=85
-        assert em["q25"] == pytest.approx(85.0)
-        # TFT q75=125, TiDE q75=105 → mean=115
-        assert em["q75"] == pytest.approx(115.0)
+        # LR q25=95, TFT q25=95, TiDE q25=75 → mean=88.33
+        assert em["q25"] == pytest.approx(265.0 / 3)
+        # LR q75=105, TFT q75=125, TiDE q75=105 → mean=111.67
+        assert em["q75"] == pytest.approx(335.0 / 3)
         # TFT q95=140, TiDE q95=120 → mean=130
         assert em["q95"] == pytest.approx(130.0)
 
     def test_ensemble_quantile_model_mix_asymmetry(
         self, forecasts_with_quantiles, skill_stats_three_models
     ):
-        """EM excludes LR from ALL fields when LR has NaN quantiles.
-
-        Because LR has NaN quantiles, the consistent-population policy excludes
-        LR from forecasted_discharge as well as quantiles.  The values here
-        happen to coincide with the old behaviour (mean(110,90)=100, same as
-        mean(100,110,90)=100) but the composition no longer includes LR.
-        """
+        """LR contributes point and q25/q75 (point -/+ delta) but no q05/q95."""
         with patch.dict(os.environ, _ENSEMBLE_ENV):
             joint, _ = self._make_ensemble(forecasts_with_quantiles, skill_stats_three_models)
 
         em = joint[joint["model_short"] == "EM"].iloc[0]
-        # Point forecast uses TFT+TiDE only (LR excluded — NaN quantiles)
+        # Point forecast: mean(LR=100, TFT=110, TiDE=90) = 100.0
         assert em["forecasted_discharge"] == pytest.approx(100.0)
-        # q25: mean(95, 75) = 85.0 (TFT + TiDE only)
-        assert em["q25"] == pytest.approx(85.0)
-        # LR must not appear in composition since it was excluded
-        assert "LR" not in em["composition"]
+        # q25: mean(LR=100-5, TFT=95, TiDE=75)
+        assert em["q25"] == pytest.approx(265.0 / 3)
+        # q05 has no LR contribution: mean(TFT=80, TiDE=60)
+        assert em["q05"] == pytest.approx(70.0)
+        assert "LR" in em["composition"]
 
-    def test_incomplete_lr_excluded_from_point_forecast(self):
-        """LR with NaN quantiles is excluded from point forecast (not just q-cols).
-
-        When LR contributes a high value (200) and TFT+TiDE have lower values,
-        including LR would raise the EM point forecast above the TFT+TiDE mean.
-        After the fix the point forecast equals mean(110, 90)=100, not
-        mean(200, 110, 90)=133.3.
-        """
+    def test_lr_contributes_point_and_delta_band_not_q05_q95(self):
+        """LR contributes point and q25/q75 = point -/+ delta; q05/q95 from ML only."""
         skill_stats = pd.DataFrame(
             {
                 "pentad_in_year": [1, 1, 1],
@@ -610,7 +600,7 @@ class TestEnsembleQuantilePropagation:
                 "date": pd.Timestamp("2025-01-05"),
                 "code": ["A", "A", "A"],
                 "model_short": ["LR", "TFT", "TiDE"],
-                "forecasted_discharge": [200.0, 110.0, 90.0],
+                "forecasted_discharge": [100.0, 110.0, 90.0],
                 "q05": [np.nan, 80.0, 60.0],
                 "q25": [np.nan, 95.0, 75.0],
                 "q75": [np.nan, 125.0, 105.0],
@@ -621,10 +611,15 @@ class TestEnsembleQuantilePropagation:
             joint, _ = self._make_ensemble(forecasts, skill_stats)
 
         em = joint[joint["model_short"] == "EM"].iloc[0]
-        # LR excluded → mean(110, 90) = 100.0, NOT mean(200, 110, 90) ≈ 133.3
+        # LR included in point mean: mean(100, 110, 90) = 100
         assert em["forecasted_discharge"] == pytest.approx(100.0)
-        assert em["q25"] == pytest.approx(85.0)
-        assert "LR" not in em["composition"]
+        # LR delta=5: q25 = mean(95, 95, 75), q75 = mean(105, 125, 105)
+        assert em["q25"] == pytest.approx((95.0 + 95.0 + 75.0) / 3)
+        assert em["q75"] == pytest.approx((105.0 + 125.0 + 105.0) / 3)
+        # q05/q95: ML models only
+        assert em["q05"] == pytest.approx(70.0)
+        assert em["q95"] == pytest.approx(130.0)
+        assert "LR" in em["composition"]
 
     def test_ensemble_no_quantiles_backward_compatible(self):
         """No EM when input has no quantile columns (MR-H: no central-only exception)."""
@@ -901,3 +896,473 @@ class TestEMSkipDiagnosticLogging:
             or "1 qualifying model" in msg
         ]
         assert skip_messages == [], f"Unexpected skip logs: {skip_messages}"
+
+
+# ---------------------------------------------------------------------------
+# TestEMMinimalMaintenance — NSE>=0 gate boundary + LR q50/all-quantile masking
+# ---------------------------------------------------------------------------
+
+
+def _make_em_h(forecasts, skill_stats, horizon):
+    """Test-only factory: call create_ensemble_forecasts for the given horizon."""
+    if horizon == "pentad":
+        return create_ensemble_forecasts(
+            forecasts=forecasts,
+            skill_stats=skill_stats,
+            period_col="pentad_in_year",
+            period_in_month_col="pentad_in_month",
+            get_period_in_month_func=tl.get_pentad,
+        )
+    return create_ensemble_forecasts(
+        forecasts=forecasts,
+        skill_stats=skill_stats,
+        period_col="decad_in_year",
+        period_in_month_col="decad_in_month",
+        get_period_in_month_func=tl.get_decad_in_month,
+    )
+
+
+def _base_skill(horizon, models, nse_vals, **overrides):
+    """Test-only factory: minimal skill_stats frame."""
+    pcol = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+    n = len(models)
+    return pd.DataFrame(
+        {
+            pcol: [1] * n,
+            "code": ["A"] * n,
+            "model_short": models,
+            "sdivsigma": overrides.get("sdivsigma", [999] * n),
+            "nse": nse_vals,
+            "delta": [5.0] * n,
+            "accuracy": overrides.get("accuracy", [-99] * n),
+            "mae": [5.0] * n,
+            "n_pairs": overrides.get("n_pairs", [10] * n),
+        }
+    )
+
+
+def _base_forecast(horizon, models, discharges, **qcols):
+    """Test-only factory: minimal forecast frame."""
+    pcol = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+    pmc = "pentad_in_month" if horizon == "pentad" else "decad_in_month"
+    n = len(models)
+    base = {
+        pcol: [1] * n,
+        pmc: [1] * n,
+        "date": [pd.Timestamp("2025-01-05")] * n,
+        "code": ["A"] * n,
+        "model_short": models,
+        "forecasted_discharge": discharges,
+    }
+    base.update(qcols)
+    return pd.DataFrame(base)
+
+
+class TestEMMinimalMaintenance:
+    """NSE>=0 gate boundary (fix) and LR q-col masking (incl. q50) patch."""
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    @pytest.mark.parametrize(
+        "tft_nse,expect_em",
+        [
+            (0.0, False),  # nse==0 excluded: gate is NSE > 0
+            (0.4, True),  # nse>0 passes
+            (-0.1, False),  # nse<0 excluded
+            (np.nan, False),  # non-finite excluded
+            (np.inf, False),  # non-finite excluded
+            (-np.inf, False),  # non-finite excluded
+        ],
+    )
+    def test_nse_gate_boundary(self, horizon, tft_nse, expect_em):
+        """NSE>0 passes; <=0 or non-finite is excluded; sdivsigma/accuracy gates disabled."""
+        skill = _base_skill(horizon, ["LR", "TFT"], [1.0, tft_nse])
+        fc = _base_forecast(
+            horizon,
+            ["LR", "TFT"],
+            [100.0, 20.0],
+            q05=[np.nan, 10.0],
+            q25=[np.nan, 15.0],
+            q75=[np.nan, 25.0],
+            q95=[np.nan, 30.0],
+        )
+        joint, skill_out = _make_em_h(fc, skill, horizon)
+        em = joint[joint["model_short"] == "EM"]
+        if expect_em:
+            assert not em.empty, f"Expected EM for TFT nse={tft_nse}"
+            assert em.iloc[0]["forecasted_discharge"] == pytest.approx(60.0)
+        else:
+            assert em.empty, f"Expected no EM for TFT nse={tft_nse}"
+        pd.testing.assert_frame_equal(
+            skill_out.reset_index(drop=True), skill.reset_index(drop=True)
+        )
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    def test_lr_input_quantiles_replaced_by_delta_band(self, horizon):
+        """LR's own (absurd) quantile values are ignored; LR gets q50=point, q25/q75=point-/+delta.
+
+        Hand-computed: LR point 10 delta 5, TFT 20, TiDE 30.
+        """
+        skill = _base_skill(horizon, ["LR", "TFT", "TiDE"], [1.0, 0.9, 0.85])
+        fc = _base_forecast(
+            horizon,
+            ["LR", "TFT", "TiDE"],
+            [10.0, 20.0, 30.0],
+            q05=[10000.0, 10.0, 15.0],
+            q25=[10000.0, 15.0, 20.0],
+            q50=[10000.0, 20.0, 30.0],
+            q75=[10000.0, 25.0, 35.0],
+            q95=[10000.0, 30.0, 40.0],
+        )
+        joint, _ = _make_em_h(fc, skill, horizon)
+        em = joint[joint["model_short"] == "EM"]
+        assert not em.empty
+        em0 = em.iloc[0]
+        assert em0["forecasted_discharge"] == pytest.approx(20.0)  # (10+20+30)/3
+        assert em0["q50"] == pytest.approx(20.0)  # (10+20+30)/3; LR q50 = point
+        assert em0["q05"] == pytest.approx(12.5)  # (10+15)/2; no LR
+        assert em0["q25"] == pytest.approx(40.0 / 3)  # (5+15+20)/3
+        assert em0["q75"] == pytest.approx(25.0)  # (15+25+35)/3
+        assert em0["q95"] == pytest.approx(35.0)  # (30+40)/2; no LR
+        assert em0["q05"] <= em0["q25"] <= em0["q50"] <= em0["q75"] <= em0["q95"]
+        # Input LR and TFT rows in joint keep their original q50
+        assert joint[joint["model_short"] == "LR"].iloc[0]["q50"] == pytest.approx(10000.0)
+        assert joint[joint["model_short"] == "TFT"].iloc[0]["q50"] == pytest.approx(20.0)
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    def test_lr_q50_ml_only_control(self, horizon):
+        """Control: without LR, ML-only gives same quantiles; point = mean(TFT, TiDE)."""
+        skill = _base_skill(horizon, ["TFT", "TiDE"], [0.9, 0.85])
+        fc = _base_forecast(
+            horizon,
+            ["TFT", "TiDE"],
+            [20.0, 30.0],
+            q05=[10.0, 15.0],
+            q25=[15.0, 20.0],
+            q50=[20.0, 30.0],
+            q75=[25.0, 35.0],
+            q95=[30.0, 40.0],
+        )
+        joint, _ = _make_em_h(fc, skill, horizon)
+        em = joint[joint["model_short"] == "EM"]
+        assert not em.empty
+        em0 = em.iloc[0]
+        assert em0["forecasted_discharge"] == pytest.approx(25.0)  # (20+30)/2
+        assert em0["q50"] == pytest.approx(25.0)
+        assert em0["q05"] == pytest.approx(12.5)
+        assert em0["q25"] == pytest.approx(17.5)
+        assert em0["q75"] == pytest.approx(30.0)
+        assert em0["q95"] == pytest.approx(35.0)
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    @pytest.mark.parametrize("bad_val", [np.nan, np.inf])
+    def test_bad_non_lr_quantile_excludes_whole_contributor(self, horizon, bad_val):
+        """Non-LR with any non-finite q-band is dropped; LR+TFT still form EM."""
+        skill = _base_skill(horizon, ["LR", "TFT", "TiDE"], [1.0, 0.9, 0.85])
+        fc = _base_forecast(
+            horizon,
+            ["LR", "TFT", "TiDE"],
+            [100.0, 110.0, 90.0],
+            q05=[np.nan, 80.0, bad_val],
+            q25=[np.nan, 95.0, 75.0],
+            q75=[np.nan, 125.0, 105.0],
+            q95=[np.nan, 140.0, 120.0],
+        )
+        joint, _ = _make_em_h(fc, skill, horizon)
+        em = joint[joint["model_short"] == "EM"]
+        assert not em.empty, "LR+TFT should still form EM after TiDE excluded"
+        em0 = em.iloc[0]
+        assert em0["forecasted_discharge"] == pytest.approx(105.0)  # (100+110)/2
+        assert em0["q05"] == pytest.approx(80.0)
+        assert em0["q95"] == pytest.approx(140.0)
+        assert "TiDE" not in em0["composition"]
+        assert "LR" in em0["composition"]
+        assert "TFT" in em0["composition"]
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    def test_lr_only_no_em(self, horizon):
+        """All-LR input (single model) → no EM produced."""
+        skill = _base_skill(horizon, ["LR"], [0.9])
+        fc = _base_forecast(
+            horizon,
+            ["LR"],
+            [100.0],
+            q05=[np.nan],
+            q25=[np.nan],
+            q75=[np.nan],
+            q95=[np.nan],
+        )
+        joint, _ = _make_em_h(fc, skill, horizon)
+        assert "EM" not in joint["model_short"].values
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    def test_tft_only_no_em(self, horizon):
+        """Single TFT only (no LR) → no EM produced."""
+        skill = _base_skill(horizon, ["TFT"], [0.9])
+        fc = _base_forecast(
+            horizon,
+            ["TFT"],
+            [110.0],
+            q05=[80.0],
+            q25=[95.0],
+            q75=[125.0],
+            q95=[140.0],
+        )
+        joint, _ = _make_em_h(fc, skill, horizon)
+        assert "EM" not in joint["model_short"].values
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    @pytest.mark.parametrize("dtype", ["object", "Float64"])
+    @pytest.mark.parametrize("bad_band", ["q05", "q25", "q75", "q95"])
+    def test_nullable_non_lr_band_excludes_contributor(self, horizon, bad_band, dtype):
+        """pd.NA in one TiDE q-band (any dtype) excludes TiDE; LR+TFT still form EM.
+
+        Models: LR (discharge=10), TFT (discharge=20), TiDE (discharge=30).
+        LR (delta=5) contributes q25/q75 = point -/+ 5 but no q05/q95.
+        TFT bands: q05=18, q25=19, q75=21, q95=22 (all finite).
+        TiDE bands: q05=28, q25=29, q75=31, q95=32 except bad_band → pd.NA.
+        Expected EM: point=(10+20)/2=15, bands from TFT only, composition "LR, TFT".
+        """
+        # TFT quantile values (finite, become sole quantile source for EM)
+        q_tft = {"q05": 18.0, "q25": 19.0, "q75": 21.0, "q95": 22.0}
+        q_tide = {"q05": 28.0, "q25": 29.0, "q75": 31.0, "q95": 32.0}
+
+        fc = _base_forecast(
+            horizon,
+            ["LR", "TFT", "TiDE"],
+            [10.0, 20.0, 30.0],
+            q05=[np.nan, q_tft["q05"], q_tide["q05"]],
+            q25=[np.nan, q_tft["q25"], q_tide["q25"]],
+            q75=[np.nan, q_tft["q75"], q_tide["q75"]],
+            q95=[np.nan, q_tft["q95"], q_tide["q95"]],
+        )
+        # Cast all four band columns to the chosen dtype, then inject pd.NA into TiDE's bad_band
+        for col in ("q05", "q25", "q75", "q95"):
+            fc[col] = fc[col].astype(dtype)
+        tide_idx = fc[fc["model_short"] == "TiDE"].index[0]
+        fc.at[tide_idx, bad_band] = pd.NA
+
+        skill = _base_skill(horizon, ["LR", "TFT", "TiDE"], [1.0, 0.9, 0.85])
+
+        # Deep-copy before passing to calculator so mutation of inputs can be detected
+        fc_orig = fc.copy(deep=True)
+        skill_orig = skill.copy(deep=True)
+
+        joint, skill_out = _make_em_h(fc, skill, horizon)
+
+        # Input frames must not be mutated by the calculator
+        pd.testing.assert_frame_equal(
+            fc.reset_index(drop=True), fc_orig.reset_index(drop=True), check_dtype=False
+        )
+        pd.testing.assert_frame_equal(
+            skill.reset_index(drop=True), skill_orig.reset_index(drop=True)
+        )
+
+        # Exactly one EM row
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert len(em_rows) == 1, (
+            f"Expected exactly 1 EM row for horizon={horizon}, bad_band={bad_band}, "
+            f"dtype={dtype}; got {len(em_rows)}"
+        )
+        em0 = em_rows.iloc[0]
+
+        # Composition: LR and TFT included; TiDE excluded (bad band)
+        assert "LR" in em0["composition"], "LR must appear in EM composition"
+        assert "TFT" in em0["composition"], "TFT must appear in EM composition"
+        assert "TiDE" not in em0["composition"], "TiDE must be excluded from EM composition"
+
+        # Point mean = (LR=10 + TFT=20) / 2 = 15
+        assert em0["forecasted_discharge"] == pytest.approx(15.0), (
+            f"Expected point=15.0, got {em0['forecasted_discharge']}"
+        )
+
+        # q05/q95 from TFT only (TiDE excluded, LR has none); q25/q75 average LR delta band
+        # Raw means: q05=18, q25=(5+19)/2=12, q75=(15+21)/2=18, q95=22; the
+        # monotonicity guard (running max) lifts q25 to 18 -> 18, 18, 18, 22.
+        # NOTE: q05/q95 come from non-LR members only while q25/q75 average in LR.
+        # When LR's delta band lies below the non-LR q05, enforce_quantile_monotonicity
+        # lifts q25 to q05 -- this is the guard acting, not a statistical expectation.
+        assert em0["q05"] == pytest.approx(18.0)
+        assert em0["q25"] == pytest.approx(18.0)
+        assert em0["q75"] == pytest.approx(18.0)
+        assert em0["q95"] == pytest.approx(q_tft["q95"]), "q95 must equal TFT's q95=22"
+
+        # Skill output is passed through unchanged
+        pd.testing.assert_frame_equal(
+            skill_out.reset_index(drop=True), skill_orig.reset_index(drop=True)
+        )
+
+        # All original model rows in joint output retain their original values
+        # (dtype promotion is allowed; compare only the original forecast columns)
+        orig_cols = fc_orig.columns.tolist()
+        for model in ["LR", "TFT", "TiDE"]:
+            orig_row = fc_orig[fc_orig["model_short"] == model].reset_index(drop=True)
+            out_row = joint[joint["model_short"] == model].reset_index(drop=True)
+            pd.testing.assert_frame_equal(
+                out_row[orig_cols],
+                orig_row[orig_cols],
+                check_dtype=False,
+            )
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    @pytest.mark.parametrize("orphan_kind", ["direct_lr_only", "excluded_non_lr"])
+    def test_nullable_lr_only_group_does_not_block_valid_group(self, horizon, orphan_kind):
+        """pd.NA q-means in all-LR ORPHAN group must not crash or block GOOD's EM.
+
+        GOOD: LR(10)+TFT(20), bands 18/19/21/22 → EM point=15, bands from TFT.
+        ORPHAN direct_lr_only: LR only → q-means pd.NA → no EM, no crash.
+        ORPHAN excluded_non_lr: LR+TiDE, TiDE q05=pd.NA → TiDE excluded → LR-only → no EM.
+        """
+        pcol = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+        pmc = "pentad_in_month" if horizon == "pentad" else "decad_in_month"
+        q_tft = {"q05": 18.0, "q25": 19.0, "q75": 21.0, "q95": 22.0}
+
+        good_df = pd.DataFrame(
+            {
+                pcol: [1, 1],
+                pmc: [1, 1],
+                "date": [pd.Timestamp("2025-01-05")] * 2,
+                "code": ["GOOD", "GOOD"],
+                "model_short": ["LR", "TFT"],
+                "forecasted_discharge": [10.0, 20.0],
+                "q05": [np.nan, q_tft["q05"]],
+                "q25": [np.nan, q_tft["q25"]],
+                "q75": [np.nan, q_tft["q75"]],
+                "q95": [np.nan, q_tft["q95"]],
+            }
+        )
+
+        if orphan_kind == "direct_lr_only":
+            orphan_df = pd.DataFrame(
+                {
+                    pcol: [1],
+                    pmc: [1],
+                    "date": [pd.Timestamp("2025-01-05")],
+                    "code": ["ORPHAN"],
+                    "model_short": ["LR"],
+                    "forecasted_discharge": [99.0],
+                    "q05": [np.nan],
+                    "q25": [np.nan],
+                    "q75": [np.nan],
+                    "q95": [np.nan],
+                }
+            )
+            orphan_skill_codes, orphan_skill_models, orphan_nse = ["ORPHAN"], ["LR"], [1.0]
+        else:  # LR + TiDE where TiDE's q05=pd.NA → TiDE excluded → LR-only
+            orphan_df = pd.DataFrame(
+                {
+                    pcol: [1, 1],
+                    pmc: [1, 1],
+                    "date": [pd.Timestamp("2025-01-05")] * 2,
+                    "code": ["ORPHAN", "ORPHAN"],
+                    "model_short": ["LR", "TiDE"],
+                    "forecasted_discharge": [99.0, 50.0],
+                    "q05": [np.nan, np.nan],
+                    "q25": [np.nan, 29.0],
+                    "q75": [np.nan, 31.0],
+                    "q95": [np.nan, 32.0],
+                }
+            )
+            orphan_skill_codes = ["ORPHAN", "ORPHAN"]
+            orphan_skill_models = ["LR", "TiDE"]
+            orphan_nse = [1.0, 0.85]
+
+        fc = pd.concat([good_df, orphan_df], ignore_index=True)
+        for col in ("q05", "q25", "q75", "q95"):
+            fc[col] = fc[col].astype("Float64")
+
+        n_skill = 2 + len(orphan_skill_models)
+        skill = pd.DataFrame(
+            {
+                pcol: [1] * n_skill,
+                "code": ["GOOD", "GOOD"] + orphan_skill_codes,
+                "model_short": ["LR", "TFT"] + orphan_skill_models,
+                "sdivsigma": [999] * n_skill,
+                "nse": [1.0, 0.9] + orphan_nse,
+                "delta": [5.0] * n_skill,
+                "accuracy": [-99] * n_skill,
+                "mae": [5.0] * n_skill,
+                "n_pairs": [10] * n_skill,
+            }
+        )
+
+        fc_orig = fc.copy(deep=True)
+        skill_orig = skill.copy(deep=True)
+
+        joint, skill_out = _make_em_h(fc, skill, horizon)
+
+        # Skill passthrough unchanged
+        pd.testing.assert_frame_equal(
+            skill_out.reset_index(drop=True), skill_orig.reset_index(drop=True)
+        )
+
+        # Exactly one EM row, for GOOD only
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert len(em_rows) == 1, f"Expected 1 EM (GOOD only), got {len(em_rows)}"
+        em0 = em_rows.iloc[0]
+        assert em0["code"] == "GOOD"
+
+        # Correct point, composition, and all 4 bands
+        assert em0["forecasted_discharge"] == pytest.approx(15.0)
+        assert "LR" in em0["composition"]
+        assert "TFT" in em0["composition"]
+        # Raw: q05=18 (TFT only), q25=(5+19)/2=12 (LR 10-5), q75=(15+21)/2=18,
+        # q95=22; monotonicity guard (running max) lifts q25 to 18 -> 18, 18, 18, 22.
+        # NOTE: q05/q95 come from non-LR members only while q25/q75 average in LR.
+        # When LR's delta band lies below the non-LR q05, enforce_quantile_monotonicity
+        # lifts q25 to q05 -- this is the guard acting, not a statistical expectation.
+        assert em0["q05"] == pytest.approx(18.0)
+        assert em0["q25"] == pytest.approx(18.0)
+        assert em0["q75"] == pytest.approx(18.0)
+        assert em0["q95"] == pytest.approx(q_tft["q95"])
+
+        # Input not mutated; allow dtype promotion in output
+        pd.testing.assert_frame_equal(
+            fc.reset_index(drop=True), fc_orig.reset_index(drop=True), check_dtype=False
+        )
+
+        # All original rows (GOOD LR/TFT + ORPHAN) preserved in joint output
+        orig_cols = fc_orig.columns.tolist()
+        pd.testing.assert_frame_equal(
+            joint[joint["model_short"] != "EM"][orig_cols].reset_index(drop=True),
+            fc_orig[orig_cols].reset_index(drop=True),
+            check_dtype=False,
+        )
+
+    @pytest.mark.parametrize("horizon", ["pentad", "decad"])
+    def test_ne_and_em_aliases_excluded_from_composition(self, horizon):
+        """NE, EM, ENSEMBLE_MEAN in input do not become EM constituents.
+
+        Existing EM rows in input forecasts are preserved (legacy contract).
+        Generated EM composition must not include NE/EM/ENSEMBLE_MEAN.
+        """
+        pcol = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+        pmc = "pentad_in_month" if horizon == "pentad" else "decad_in_month"
+        all_models = ["LR", "TFT", "NE", "EM", "ENSEMBLE_MEAN"]
+        skill = _base_skill(horizon, all_models, [1.0, 0.9, 0.95, 0.99, 0.99])
+        fc = pd.DataFrame(
+            {
+                pcol: [1] * 5,
+                pmc: [1] * 5,
+                "date": [pd.Timestamp("2025-01-05")] * 5,
+                "code": ["A"] * 5,
+                "model_short": all_models,
+                "forecasted_discharge": [100.0, 110.0, 9999.0, 9999.0, 9999.0],
+                "q05": [np.nan, 80.0, 1000.0, 1000.0, 1000.0],
+                "q25": [np.nan, 95.0, 1000.0, 1000.0, 1000.0],
+                "q75": [np.nan, 125.0, 1000.0, 1000.0, 1000.0],
+                "q95": [np.nan, 140.0, 1000.0, 1000.0, 1000.0],
+            }
+        )
+        joint, _ = _make_em_h(fc, skill, horizon)
+        # Find generated EM (not the input EM rows with discharge=9999)
+        em_rows = joint[joint["model_short"] == "EM"]
+        assert not em_rows.empty
+        new_em = em_rows[em_rows["forecasted_discharge"] < 200.0]
+        assert not new_em.empty, "Generated EM with LR+TFT point should be ~105"
+        em0 = new_em.iloc[0]
+        assert em0["forecasted_discharge"] == pytest.approx(105.0)  # (100+110)/2
+        assert "NE" not in em0["composition"]
+        assert "EM" not in em0["composition"]
+        assert "ENSEMBLE_MEAN" not in em0["composition"]
+        assert "LR" in em0["composition"]
+        assert "TFT" in em0["composition"]

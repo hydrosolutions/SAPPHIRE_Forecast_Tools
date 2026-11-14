@@ -3,6 +3,7 @@
 import os
 import sys
 
+import pandas as pd
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
@@ -62,3 +63,35 @@ def _reset_api_singletons():
     yield
     fl._reset_api_clients()
     api_writer._reset_api_client()
+
+
+@pytest.fixture
+def em_recalc_api_boundaries(monkeypatch):
+    """Supply period fixtures and an EM API sink to legacy CSV workflow tests.
+
+    Scoring and EM calculation stay real. These tests predate the API-only EM
+    path; its serialization and stateful readback have separate coverage.
+    """
+    from src import data_reader
+
+    original_skill_read = data_reader._read_skill_metrics_api
+
+    def read_periods(horizon, codes=None, **kwargs):
+        _, members = data_reader.read_observed_and_modelled_data(horizon, codes=codes)
+        return members.copy(), pd.DataFrame()
+
+    def read_skills(horizon, codes=None, *, strict=False):
+        if strict:
+            return pd.DataFrame()
+        return original_skill_read(horizon, codes)
+
+    published = []
+
+    def publish(data, horizon):
+        published.append((horizon, data.copy()))
+        return True
+
+    monkeypatch.setattr(data_reader, "read_individual_model_forecasts", read_periods)
+    monkeypatch.setattr(data_reader, "_read_skill_metrics_api", read_skills)
+    monkeypatch.setattr(api_writer, "_write_combined_forecast_to_api", publish)
+    return published

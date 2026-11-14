@@ -974,6 +974,12 @@ def _setup_recalc_mocks(
         side_effect=_mock_read_observed_and_modelled
     )
 
+    mock_data_reader.read_individual_model_forecasts.side_effect = lambda horizon_type, **kwargs: (
+        _mock_read_observed_and_modelled(horizon_type)[1],
+        pd.DataFrame(),
+    )
+    mock_data_reader._read_skill_metrics_api.return_value = pd.DataFrame()
+
     mock_file_writer.save_forecast_data.return_value = None
     mock_file_writer.save_skill_metrics.return_value = True
 
@@ -989,6 +995,9 @@ def _setup_recalc_mocks(
     real_src.ensemble_calculator = real_ensemble_calc
     real_src.file_writer = mock_file_writer
     real_src.horizon_config = _real_horizon_config
+    mock_api_writer = MagicMock()
+    mock_api_writer._write_combined_forecast_to_api.return_value = True
+    real_src.api_writer = mock_api_writer
     sys.modules["src"] = real_src
     sys.modules["src.postprocessing_tools"] = real_pt
     sys.modules["src.skill_metrics"] = real_skill_metrics
@@ -1001,6 +1010,7 @@ def _setup_recalc_mocks(
         "sl": mock_sl,
         "file_writer": mock_file_writer,
         "data_reader": mock_data_reader,
+        "api_writer": mock_api_writer,
     }
 
 
@@ -1185,12 +1195,10 @@ class TestRecalcWiringIntegration:
                     if row["model_short"] in ("LR", "TFT"):
                         assert row["n_pairs"] == 5, f"Expected n_pairs=5, got {row['n_pairs']}"
 
-    def test_pentad_em_excluded_in_recalc(self, env_setup):
-        """PP-030: recalc skips EM derivation — no EM rows in saved forecasts.
+    def test_pentad_nonboundary_inputs_do_not_form_em(self, env_setup):
+        """These same-year, nonboundary inputs cannot form a historical EM.
 
-        The recalculation path now passes exclude_models=["EM"] to avoid
-        boundary-pentad date misalignment producing bad EM records.
-        Individual model rows (LR, TFT) should still be present.
+        Individual model rows still reach the existing forecast output.
         """
         observed, modelled = self._build_test_data()
 
@@ -1212,7 +1220,8 @@ class TestRecalcWiringIntegration:
 
                 saved_fc = mocks["file_writer"].save_forecast_data.call_args[0][1]
                 em_rows = saved_fc[saved_fc["model_short"] == "EM"]
-                assert em_rows.empty, "Recalculation should not produce EM rows (PP-030)"
+                assert em_rows.empty, "Nonboundary inputs must not form historical EM"
+                mocks["api_writer"]._write_combined_forecast_to_api.assert_not_called()
 
                 # Individual models should still be present
                 models = set(saved_fc["model_short"].unique())
@@ -2271,6 +2280,15 @@ class TestCodesPassthrough:
         mock_sl.calculate_neural_ensemble_forecast_decade.side_effect = lambda x: x
 
         mock_data_reader.read_observed_and_modelled_data.return_value = (mock_data, mock_data)
+        mock_data_reader.read_individual_model_forecasts.return_value = (
+            pd.DataFrame(),
+            pd.DataFrame(),
+        )
+        mock_data_reader._read_skill_metrics_api.return_value = pd.DataFrame()
+        mock_skill_metrics.calculate_short_term_em_hindcast.return_value = (
+            pd.DataFrame(),
+            mock_skill.iloc[:0].copy(),
+        )
         mock_skill_metrics.calculate_skill_metrics.return_value = (mock_skill, mock_data, None)
         mock_file_writer.save_forecast_data.return_value = None
         mock_file_writer.save_skill_metrics.return_value = True

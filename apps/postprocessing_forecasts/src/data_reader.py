@@ -523,18 +523,25 @@ def _read_skill_metrics_csv(
 def _read_skill_metrics_api(
     horizon_type: str,
     codes: list[str] | None = None,
+    *,
+    strict: bool = False,
 ) -> pd.DataFrame | None:
     """Read skill metrics from SAPPHIRE postprocessing API.
 
-    Returns None if the API is unavailable or returns no data.
+    With strict=True, return an empty frame for no rows and raise on failure.
+    The default retains the legacy None-on-empty/error behavior.
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.debug("sapphire-api-client not installed, skipping API read")
+        if strict:
+            raise RuntimeError("Skill API unavailable for EM replacement")
         return None
 
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
     if api_enabled == "false":
         logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        if strict:
+            raise RuntimeError("Skill API unavailable for EM replacement")
         return None
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -543,6 +550,8 @@ def _read_skill_metrics_api(
         client = SapphirePostprocessingClient(base_url=api_url)
         if not client.readiness_check():
             logger.warning("Postprocessing API not ready at %s", api_url)
+            if strict:
+                raise RuntimeError("Skill API not ready for EM replacement")
             return None
 
         # Map internal horizon names to API horizon names
@@ -562,6 +571,8 @@ def _read_skill_metrics_api(
                         skip=skip,
                         limit=batch_size,
                     )
+                    if strict and df_batch is None:
+                        raise RuntimeError("Incomplete skill API response")
                     if df_batch is None or df_batch.empty:
                         break
                     frames.append(df_batch)
@@ -569,7 +580,7 @@ def _read_skill_metrics_api(
                         break
                     skip += batch_size
             if not frames:
-                return None
+                return pd.DataFrame() if strict else None
             df = pd.concat(frames, ignore_index=True)
         else:
             # Read all skill metrics for this horizon; paginate if needed
@@ -579,6 +590,8 @@ def _read_skill_metrics_api(
                 df_batch = client.read_skill_metrics(
                     horizon=api_horizon, skip=skip, limit=batch_size
                 )
+                if strict and df_batch is None:
+                    raise RuntimeError("Incomplete skill API response")
                 if df_batch is None or df_batch.empty:
                     break
                 all_records.append(df_batch)
@@ -587,7 +600,7 @@ def _read_skill_metrics_api(
                 skip += batch_size
 
             if not all_records:
-                return None
+                return pd.DataFrame() if strict else None
 
             df = pd.concat(all_records, ignore_index=True)
 
@@ -595,6 +608,8 @@ def _read_skill_metrics_api(
 
     except Exception as e:
         logger.error("Failed to read skill metrics from API: %s", e)
+        if strict:
+            raise
         return None
 
 
@@ -1914,6 +1929,8 @@ def _read_short_term_runoff_api(
     codes: list[str] | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
+    *,
+    strict: bool = False,
 ) -> pd.DataFrame | None:
     """Read pentad or decad runoff observations from preprocessing API.
 
@@ -1922,17 +1939,22 @@ def _read_short_term_runoff_api(
         codes: Station codes to filter. None reads all.
         start_year: First year (inclusive).
         end_year: Last year (inclusive).
+        strict: Propagate API read failures; never fall back to CSV.
 
     Returns:
         Raw DataFrame from API, or None if unavailable.
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.debug("sapphire-api-client not installed, skipping API read")
+        if strict:
+            raise RuntimeError("Observation API unavailable for EM reconstruction")
         return None
 
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
     if api_enabled == "false":
         logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        if strict:
+            raise RuntimeError("Observation API unavailable for EM reconstruction")
         return None
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -1941,6 +1963,8 @@ def _read_short_term_runoff_api(
         client = SapphirePreprocessingClient(base_url=api_url)
         if not client.readiness_check():
             logger.warning("Preprocessing API not ready at %s", api_url)
+            if strict:
+                raise RuntimeError("Observation API not ready for EM reconstruction")
             return None
 
         # Map internal horizon names to API horizon names
@@ -1962,6 +1986,8 @@ def _read_short_term_runoff_api(
                     kwargs["end_date"] = end_date
                 while True:
                     df_batch = client.read_runoff(**kwargs, skip=skip, limit=batch_size)
+                    if strict and df_batch is None:
+                        raise RuntimeError("Incomplete observation API response")
                     if df_batch is None or df_batch.empty:
                         break
                     all_records.append(df_batch)
@@ -1977,6 +2003,8 @@ def _read_short_term_runoff_api(
                 kwargs["end_date"] = end_date
             while True:
                 df_batch = client.read_runoff(**kwargs, skip=skip, limit=batch_size)
+                if strict and df_batch is None:
+                    raise RuntimeError("Incomplete observation API response")
                 if df_batch is None or df_batch.empty:
                     break
                 all_records.append(df_batch)
@@ -1985,12 +2013,14 @@ def _read_short_term_runoff_api(
                 skip += batch_size
 
         if not all_records:
-            return None
+            return pd.DataFrame() if strict else None
 
         return pd.concat(all_records, ignore_index=True)
 
     except Exception as e:
         logger.error("Failed to read short-term runoff from API: %s", e)
+        if strict:
+            raise
         return None
 
 
@@ -1999,6 +2029,8 @@ def _read_lr_forecasts_pp_api(
     codes: list[str] | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
+    *,
+    strict: bool = False,
 ) -> pd.DataFrame | None:
     """Read LR forecasts from postprocessing API.
 
@@ -2013,11 +2045,15 @@ def _read_lr_forecasts_pp_api(
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.debug("sapphire-api-client not installed, skipping API read")
+        if strict:
+            raise RuntimeError("LR API unavailable for EM reconstruction")
         return None
 
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
     if api_enabled == "false":
         logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        if strict:
+            raise RuntimeError("LR API unavailable for EM reconstruction")
         return None
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -2026,6 +2062,8 @@ def _read_lr_forecasts_pp_api(
         client = SapphirePostprocessingClient(base_url=api_url)
         if not client.readiness_check():
             logger.warning("Postprocessing API not ready at %s", api_url)
+            if strict:
+                raise RuntimeError("LR API not ready for EM reconstruction")
             return None
 
         api_horizon = "decade" if horizon_type == "decad" else horizon_type
@@ -2046,6 +2084,8 @@ def _read_lr_forecasts_pp_api(
                     kwargs["end_date"] = end_date
                 while True:
                     df_batch = client.read_lr_forecasts(**kwargs, skip=skip, limit=batch_size)
+                    if strict and df_batch is None:
+                        raise RuntimeError("Incomplete LR API response")
                     if df_batch is None or df_batch.empty:
                         break
                     all_records.append(df_batch)
@@ -2061,6 +2101,8 @@ def _read_lr_forecasts_pp_api(
                 kwargs["end_date"] = end_date
             while True:
                 df_batch = client.read_lr_forecasts(**kwargs, skip=skip, limit=batch_size)
+                if strict and df_batch is None:
+                    raise RuntimeError("Incomplete LR API response")
                 if df_batch is None or df_batch.empty:
                     break
                 all_records.append(df_batch)
@@ -2069,12 +2111,14 @@ def _read_lr_forecasts_pp_api(
                 skip += batch_size
 
         if not all_records:
-            return None
+            return pd.DataFrame() if strict else None
 
         return pd.concat(all_records, ignore_index=True)
 
     except Exception as e:
         logger.error("Failed to read LR forecasts from API: %s", e)
+        if strict:
+            raise
         return None
 
 
@@ -2084,12 +2128,16 @@ def _read_ml_forecasts_pp_api(
     codes: list[str] | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
+    *,
+    stored_period_only: bool = False,
+    strict: bool = False,
 ) -> pd.DataFrame | None:
     """Read ML forecasts from postprocessing API.
 
     Reads both horizon='day' (current pipeline writes daily targets) and
     horizon=horizon_type (migrated period archive), then keeps period rows
     only before each station/model's first DAY issue date.
+    stored_period_only reads only the persisted period archive for EM hindcasts.
 
     Args:
         model: Model short name (e.g. 'TFT', 'TiDE').
@@ -2097,10 +2145,13 @@ def _read_ml_forecasts_pp_api(
         codes: Station codes to filter. None reads all.
         start_year: First year (inclusive).
         end_year: Last year (inclusive).
+        strict: Propagate API read failures; never fall back to CSV.
 
     Returns:
         Raw DataFrame from API, or None if unavailable.
     """
+
+    strict = strict or stored_period_only
 
     def _fetch_archive(try_horizon: str) -> pd.DataFrame | None:
         all_records = []
@@ -2122,6 +2173,8 @@ def _read_ml_forecasts_pp_api(
                     df_batch = client.read_short_term_forecasts(
                         **kwargs, skip=skip, limit=batch_size
                     )
+                    if strict and df_batch is None:
+                        raise RuntimeError("Incomplete period-forecast API response")
                     if df_batch is None or df_batch.empty:
                         break
                     all_records.append(df_batch)
@@ -2140,6 +2193,8 @@ def _read_ml_forecasts_pp_api(
                 kwargs["end_date"] = end_date
             while True:
                 df_batch = client.read_short_term_forecasts(**kwargs, skip=skip, limit=batch_size)
+                if strict and df_batch is None:
+                    raise RuntimeError("Incomplete period-forecast API response")
                 if df_batch is None or df_batch.empty:
                     break
                 all_records.append(df_batch)
@@ -2148,7 +2203,7 @@ def _read_ml_forecasts_pp_api(
                 skip += batch_size
 
         if not all_records:
-            return None
+            return pd.DataFrame() if strict else None
 
         return pd.concat(all_records, ignore_index=True)
 
@@ -2249,11 +2304,15 @@ def _read_ml_forecasts_pp_api(
 
     if not SAPPHIRE_API_AVAILABLE:
         logger.debug("sapphire-api-client not installed, skipping API read")
+        if strict:
+            raise RuntimeError("Period API unavailable for EM reconstruction")
         return None
 
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
     if api_enabled == "false":
         logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        if strict:
+            raise RuntimeError("Period API disabled for EM reconstruction")
         return None
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
@@ -2262,12 +2321,17 @@ def _read_ml_forecasts_pp_api(
         client = SapphirePostprocessingClient(base_url=api_url)
         if not client.readiness_check():
             logger.warning("Postprocessing API not ready at %s", api_url)
+            if strict:
+                raise RuntimeError("Period API not ready for EM reconstruction")
             return None
 
         api_horizon = "decade" if horizon_type == "decad" else horizon_type
 
         start_date = f"{start_year}-01-01" if start_year is not None else None
         end_date = f"{end_year}-12-31" if end_year is not None else None
+
+        if stored_period_only:
+            return _fetch_archive(api_horizon)
 
         day_records = _fetch_archive("day")
         period_records = _fetch_archive(api_horizon)
@@ -2279,6 +2343,8 @@ def _read_ml_forecasts_pp_api(
             model,
             e,
         )
+        if strict:
+            raise
         return None
 
 
@@ -2807,6 +2873,8 @@ def read_short_term_observations(
     codes: list[str] | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
+    *,
+    strict: bool = False,
 ) -> pd.DataFrame:
     """Read pentad or decad runoff observations from API or CSV.
 
@@ -2815,6 +2883,7 @@ def read_short_term_observations(
         codes: Station codes to filter. None reads all.
         start_year: First year (inclusive).
         end_year: Last year (inclusive).
+        strict: Propagate API read failures; never fall back to CSV.
 
     Returns:
         DataFrame with columns: [code, date, discharge_avg,
@@ -2828,7 +2897,8 @@ def read_short_term_observations(
         raise ValueError(f"horizon_type must be 'pentad' or 'decad', got: {horizon_type}")
 
     # API-first
-    raw = _read_short_term_runoff_api(horizon_type, codes, start_year, end_year)
+    read_options = {"strict": True} if strict else {}
+    raw = _read_short_term_runoff_api(horizon_type, codes, start_year, end_year, **read_options)
     if raw is not None and not raw.empty:
         df = _normalize_observed_runoff(raw, horizon_type)
         logger.info(
@@ -2837,6 +2907,9 @@ def read_short_term_observations(
             horizon_type,
         )
         return df
+
+    if strict:
+        return pd.DataFrame()
 
     # CSV fallback (deprecated)
     logger.info(
@@ -2897,6 +2970,9 @@ def read_individual_model_forecasts(
     codes: list[str] | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
+    *,
+    stored_period_only: bool = False,
+    strict: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Read all individual model forecasts (LR + ML) for a horizon.
 
@@ -2905,6 +2981,8 @@ def read_individual_model_forecasts(
         codes: Station codes to filter. None reads all.
         start_year: First year (inclusive).
         end_year: Last year (inclusive).
+        strict: Propagate API read failures; never fall back to CSV.
+        stored_period_only: Read stored ML period rows without DAY aggregation.
 
     Returns:
         Tuple of (forecasts_df, stats_df).
@@ -2921,7 +2999,10 @@ def read_individual_model_forecasts(
     stats = pd.DataFrame(columns=["date", "code", "q_mean", "q_std_sigma", "delta"])
 
     # 1. Read LR forecasts
-    lr_raw = _read_lr_forecasts_pp_api(horizon_type, codes, start_year, end_year)
+    if strict or stored_period_only:
+        lr_raw = _read_lr_forecasts_pp_api(horizon_type, codes, start_year, end_year, strict=True)
+    else:
+        lr_raw = _read_lr_forecasts_pp_api(horizon_type, codes, start_year, end_year)
     if lr_raw is not None and not lr_raw.empty:
         lr_fc, lr_stats = _normalize_lr_forecasts(lr_raw, horizon_type)
         if not lr_fc.empty:
@@ -2952,8 +3033,28 @@ def read_individual_model_forecasts(
             available_models = []
 
         for model in available_models:
-            ml_raw = _read_ml_forecasts_pp_api(model, horizon_type, codes, start_year, end_year)
+            if stored_period_only:
+                ml_raw = _read_ml_forecasts_pp_api(
+                    model, horizon_type, codes, start_year, end_year, stored_period_only=True
+                )
+            elif strict:
+                ml_raw = _read_ml_forecasts_pp_api(
+                    model, horizon_type, codes, start_year, end_year, strict=True
+                )
+            else:
+                ml_raw = _read_ml_forecasts_pp_api(model, horizon_type, codes, start_year, end_year)
             if ml_raw is not None and not ml_raw.empty:
+                if stored_period_only:
+                    # Validate period identity before normalization drops target/horizon.
+                    expected_horizon = "decade" if horizon_type == "decad" else "pentad"
+                    issue = pd.to_datetime(ml_raw["date"]).dt.normalize()
+                    target = pd.to_datetime(ml_raw["target"]).dt.normalize()
+                    valid = (ml_raw["horizon_type"] == expected_horizon) & (
+                        target == issue + pd.Timedelta(days=1)
+                    )
+                    ml_raw = ml_raw.loc[valid].drop_duplicates().copy()
+                    if ml_raw.duplicated(["code", "date", "target"]).any():
+                        raise ValueError("Conflicting stored ML period forecasts")
                 ml_fc = _normalize_ml_forecasts(ml_raw, model, horizon_type)
                 if not ml_fc.empty:
                     all_forecasts.append(ml_fc)
@@ -3041,6 +3142,8 @@ def read_observed_and_modelled_data(
     codes: list[str] | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
+    *,
+    strict: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Read observed and modelled data for pentad or decad horizon.
 
@@ -3059,6 +3162,7 @@ def read_observed_and_modelled_data(
         codes: Station codes to filter. None reads all.
         start_year: First year (inclusive).
         end_year: Last year (inclusive).
+        strict: Propagate API read failures; never fall back to CSV.
 
     Returns:
         Tuple of (observed_df, modelled_df).
@@ -3072,11 +3176,17 @@ def read_observed_and_modelled_data(
     if horizon_type not in ("pentad", "decad"):
         raise ValueError(f"horizon_type must be 'pentad' or 'decad', got: {horizon_type}")
 
+    read_options = {"strict": True} if strict else {}
+
     # Read observations
-    observed = read_short_term_observations(horizon_type, codes, start_year, end_year)
+    observed = read_short_term_observations(
+        horizon_type, codes, start_year, end_year, **read_options
+    )
 
     # Read individual model forecasts
-    forecasts, stats = read_individual_model_forecasts(horizon_type, codes, start_year, end_year)
+    forecasts, stats = read_individual_model_forecasts(
+        horizon_type, codes, start_year, end_year, **read_options
+    )
 
     # Merge stats into observed
     if (

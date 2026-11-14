@@ -39,9 +39,10 @@ from long_term_horizon_resolver import (
     supported_long_term_modes,
 )
 from skill_lead_aware_flag import skill_lead_aware_enabled
-from src import data_reader, file_writer, skill_metrics
+from src import api_writer, data_reader, file_writer, skill_metrics
 from src import postprocessing_tools as pt
 from src.horizon_config import ShortTermHorizonConfig
+from src.model_names import canonical_model_short_series
 from src.postprocessing_tools import TimingStats, timer
 from src.stale_tombstones import build_stale_tombstones
 
@@ -182,6 +183,19 @@ def _read_station_codes(config):
     return codes
 
 
+def _stale_short_term_em(config, skill_metrics_year, codes, emitted):
+    """Find existing EM skills omitted by this reporting-year recalculation."""
+    existing = data_reader._read_skill_metrics_api(config.name, codes=codes, strict=True)
+    if not existing.empty:
+        existing = existing[
+            (canonical_model_short_series(existing["model_short"]) == "ENSEMBLE_MEAN")
+            & (pd.to_datetime(existing["date"]).dt.year == skill_metrics_year)
+        ].copy()
+        existing["horizon_value"] = 0
+    emitted["horizon_value"] = 0
+    return build_stale_tombstones(existing, emitted, config.period_col)
+
+
 def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_, codes=None):
     """Read data, recalculate skill metrics, save results for one horizon."""
     label = config.name.upper()
@@ -189,21 +203,29 @@ def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_, co
     with timer(timing_stats_, f"reading {config.name} data"):
         logger.info(f"\n\n------ Reading {config.name} observed and modelled data -------")
         observed, modelled = data_reader.read_observed_and_modelled_data(
-            config.name,
-            codes=codes,
+            config.name, codes=codes, strict=True
         )
-        if observed.empty and modelled.empty:
+        if observed.empty or modelled.empty:
             logger.warning(
-                "No observed or modelled data for %s codes=%s — skipping skill recalc",
+                "Confirmed empty scoring history for %s codes=%s — invalidating stale EM skills",
                 config.name,
                 codes,
             )
-            return timing_stats_
-        if observed.empty:
-            logger.warning("No observed data for %s codes=%s — skipping", config.name, codes)
-            return timing_stats_
-        if modelled.empty:
-            logger.warning("No modelled data for %s codes=%s — skipping", config.name, codes)
+            empty_skills = pd.DataFrame(
+                columns=[
+                    "code",
+                    config.period_col,
+                    "model_short",
+                    "horizon_value",
+                    *skill_metrics.METRIC_REGISTRY,
+                    "composition",
+                ]
+            )
+            stale_em = _stale_short_term_em(config, skill_metrics_year, codes, empty_skills)
+            if not stale_em.empty:
+                ret = file_writer.save_skill_metrics(config, stale_em, year=skill_metrics_year)
+                if ret is False:
+                    errors.append(f"{label} skill metrics save failed — see log above for detail.")
             return timing_stats_
 
         # Skip virtual station computation for scoped recalcs — the
@@ -222,6 +244,7 @@ def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_, co
                 modelled,
                 timing_stats_,
                 exclude_models=["EM"],  # PP-030: skip EM re-derivation at boundaries
+                target_year_window=True,
             )
         )
 
@@ -229,6 +252,30 @@ def _run_short_term_recalc(config, skill_metrics_year, errors, timing_stats_, co
         returned_timing_stats if returned_timing_stats is not None else timing_stats_,
         f"saving {config.name} results",
     ):
+        # PP-075: stored period rows only, using the same membership rule as
+        # operational EM. The normal reader above also uses DAY aggregates.
+        period_members, _ = data_reader.read_individual_model_forecasts(
+            config.name, codes=codes, stored_period_only=True
+        )
+        if not period_members.empty and not os.getenv("SAPPHIRE_RECALC_STATION_CODE", "").strip():
+            period_members = sl.calculate_virtual_stations_data(period_members)
+        em_forecasts, em_skills = skill_metrics.calculate_short_term_em_hindcast(
+            config, observed, period_members, skill_metrics_result
+        )
+        stale_em = _stale_short_term_em(config, skill_metrics_year, codes, em_skills)
+        # Short-term skills use sentinel lead 0, including member rows.
+        skill_metrics_result["horizon_value"] = 0
+        skill_metrics_result = pd.concat(
+            [skill_metrics_result, em_skills, stale_em], ignore_index=True
+        )
+        # save_forecast_data writes only the latest row per calendar period.
+        # Send the actual historical EM series directly to the existing API sink.
+        if not em_forecasts.empty and not api_writer._write_combined_forecast_to_api(
+            em_forecasts, config.name
+        ):
+            errors.append(f"{label} EM hindcast forecast save failed")
+            return returned_timing_stats
+
         logger.info(f"\n\n------ Saving {config.name} results --------------------")
         ret = file_writer.save_forecast_data(config, modelled)
         if ret is None:
