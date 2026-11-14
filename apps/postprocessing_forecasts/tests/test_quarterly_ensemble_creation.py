@@ -170,8 +170,8 @@ def _set_thresholds(monkeypatch):
 class TestQuarterlyEnsembleEM:
     """Quarter never forms an EM row (PP-065 P1c decision 3).
 
-    EM remains fully supported for season — see TestSeasonalEnsembleEM
-    below, unchanged. These tests lock the quarter-only removal across the
+    Season no longer forms EM either (PP-072 P3) — see TestSeasonalNoEM
+    below. These tests lock the quarter removal across the
     scenarios that used to produce EM (two skilled models, fixed-LR bypass
     of failing skill thresholds, DB-form LR model names).
     """
@@ -363,21 +363,23 @@ class TestQuarterlyEnsembleEdgeCases:
 # ===================================================================
 
 
-class TestSeasonalEnsembleEM:
-    def test_em_created(self):
-        skill = _two_model_seasonal_skill()
-        fcst = _two_model_seasonal_fcst()
-        result = create_seasonal_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
-        assert not em.empty
+class TestSeasonalNoEM:
+    """Season forms Naive Mean + Skilled Mean only (long-term EM removed, PP-072 P3)."""
 
-    def test_em_discharge_is_mean(self):
+    def test_no_em_created(self):
         skill = _two_model_seasonal_skill()
         fcst = _two_model_seasonal_fcst()
         result = create_seasonal_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
+        assert "EM" not in set(result["model_short"])
+        assert {"Naive Mean", "Skilled Mean"} <= set(result["model_short"])
+
+    def test_naive_mean_discharge_is_mean(self):
+        skill = _two_model_seasonal_skill()
+        fcst = _two_model_seasonal_fcst()
+        result = create_seasonal_ensemble_forecasts(fcst, skill)
+        nm = result[result["model_short"] == "Naive Mean"]
         expected = (100.0 + 120.0) / 2
-        assert np.isclose(em.iloc[0]["forecasted_discharge"], expected)
+        assert np.isclose(nm.iloc[0]["forecasted_discharge"], expected)
 
     def test_four_issue_leads_produce_independent_ensembles(self):
         leads = [3, 2, 1, 0]
@@ -429,7 +431,8 @@ class TestSeasonalEnsembleEM:
             _make_seasonal_skill(skill_rows),
         )
 
-        for model_short in {"EM", "Naive Mean", "Skilled Mean"}:
+        assert "EM" not in set(result["model_short"])
+        for model_short in {"Naive Mean", "Skilled Mean"}:
             rows = result[result["model_short"] == model_short]
             assert len(rows) == 4
             assert set(rows["season_in_year"]) == {0, 1, 2, 3}
@@ -437,7 +440,8 @@ class TestSeasonalEnsembleEM:
             assert set(rows["valid_from"]) == {"2025-04-01"}
             assert set(rows["valid_to"]) == {"2025-09-30"}
 
-    def test_em_uses_lr_mean_when_lr_skills_fail_thresholds(self):
+    def test_no_em_when_lr_skills_fail_thresholds(self):
+        """The former fixed-LR EM bypass is gone: no EM, NM pools all three models."""
         skill = _make_seasonal_skill(
             [
                 (1, "S1", "LR_Base", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
@@ -454,16 +458,13 @@ class TestSeasonalEnsembleEM:
         )
 
         result = create_seasonal_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
 
-        assert len(em) == 1
-        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
-        assert np.isclose(em.iloc[0]["q05"], 85.0)
-        assert np.isclose(em.iloc[0]["q50"], 110.0)
-        assert np.isclose(em.iloc[0]["q95"], 130.0)
-        assert str(em.iloc[0]["composition"]) == "LR_Base, LR_SM"
+        assert result[result["model_short"] == "EM"].empty
+        nm = result[result["model_short"] == "Naive Mean"]
+        assert len(nm) == 1
+        assert np.isclose(nm.iloc[0]["forecasted_discharge"], (100.0 + 120.0 + 1000.0) / 3)
 
-    def test_em_accepts_db_form_lr_model_names(self):
+    def test_no_em_with_db_form_lr_model_names(self):
         skill = _make_seasonal_skill(
             [
                 (1, "S1", "LR_BASE", 0.9, -1.0, 5.0, 0.10, 20.0, 10),
@@ -480,12 +481,23 @@ class TestSeasonalEnsembleEM:
         )
 
         result = create_seasonal_ensemble_forecasts(fcst, skill)
-        em = result[result["model_short"] == "EM"]
 
-        assert len(em) == 1
-        assert np.isclose(em.iloc[0]["forecasted_discharge"], 110.0)
-        assert np.isclose(em.iloc[0]["q50"], 110.0)
-        assert str(em.iloc[0]["composition"]) == "LR_BASE, LR_SM"
+        assert result[result["model_short"] == "EM"].empty
+
+    def test_pre_existing_season_em_row_dropped_not_re_emitted(self):
+        """A stored EM row in the input is dropped (baseline set) and not recreated."""
+        skill = _two_model_seasonal_skill()
+        fcst = pd.concat(
+            [
+                _two_model_seasonal_fcst(),
+                _make_seasonal_fcst(
+                    [("S1", 2025, 1, "EM", 999.0, 900, 905, 915, 999, 925, 935, 940)]
+                ),
+            ],
+            ignore_index=True,
+        )
+        result = create_seasonal_ensemble_forecasts(fcst, skill)
+        assert result[result["model_short"] == "EM"].empty
 
 
 class TestSeasonalEnsembleNaiveMean:
@@ -552,7 +564,7 @@ class TestSeasonalEnsembleEdgeCases:
 
 
 class TestMonthlyEnsembleRegression:
-    def test_monthly_em_remains_skill_gated(self):
+    def test_monthly_em_not_produced_when_lr_sm_fails_skill(self):
         forecasts = pd.DataFrame(
             {
                 "code": ["S1", "S1"],

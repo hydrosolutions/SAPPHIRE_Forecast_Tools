@@ -19,12 +19,8 @@ import pandas as pd
 STATION = "19999"
 MODELS = ["LR", "TFT"]
 
-# The aggregated (quarter/season) EM path only forms an Ensemble Mean from
-# the canonical model pair AGGREGATED_EM_RAW_MODELS = {"LR_BASE", "LR_SM"}
-# (src/model_names.py) — an arbitrary two-model pool (e.g. LR/TFT, used for
-# the monthly fixture below) never produces an aggregated EM row. Use the
-# restricted pair for quarter/season so the golden snapshot actually
-# exercises the aggregated EM code path instead of silently skipping it.
+# Quarter/season use the canonical LR pair below (long-term EM no longer exists
+# — PP-072 P3 — so these models only feed Naive Mean / Skilled Mean).
 AGGREGATED_MODELS = ["LR_BASE", "LR_SM"]
 
 # Threshold/gate env vars pinned explicitly so the golden snapshot is

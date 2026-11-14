@@ -300,7 +300,9 @@ class TestNoHorizonValueBackwardCompat:
 
 
 class TestEMPerLead:
-    """EM rows are computed per lead, not pooled across leads."""
+    """With long-term EM removed (PP-072 P3), the same two-model/two-lead
+    fixture is used to check no EM is emitted and Naive Mean (an unweighted
+    mean of the same models here) is still computed per lead."""
 
     @pytest.fixture
     def obs_2yr(self):
@@ -353,40 +355,46 @@ class TestEMPerLead:
             ]
         )
 
+    def test_no_em_rows_emitted(self, obs_2yr, two_model_two_lead_fcst):
+        """No EM row in skill_stats or joint_forecasts for any lead."""
+        stats, joint, _ = calculate_monthly_skill_metrics(obs_2yr, two_model_two_lead_fcst)
+        assert "EM" not in set(stats["model_short"])
+        assert "EM" not in set(joint["model_short"])
+
     def test_em_has_one_row_per_lead(self, obs_2yr, two_model_two_lead_fcst):
-        """EM produces one row per lead present in input, not one pooled row."""
+        """Naive Mean produces one row per lead present in input, not one pooled row."""
         stats, _, _ = calculate_monthly_skill_metrics(obs_2yr, two_model_two_lead_fcst)
-        em_rows = stats[stats["model_short"] == "EM"]
-        assert len(em_rows) == 2, f"Expected 2 EM rows (one per lead), got {len(em_rows)}"
+        em_rows = stats[stats["model_short"] == "Naive Mean"]
+        assert len(em_rows) == 2, f"Expected 2 Naive Mean rows (one per lead), got {len(em_rows)}"
         assert set(em_rows["horizon_value"].unique()) == {0, 1}
 
     def test_em_lead0_mae_from_lead0_models_only(self, obs_2yr, two_model_two_lead_fcst):
-        """EM lead-0 averages only lead-0 model forecasts.
+        """Naive Mean lead-0 averages only lead-0 model forecasts.
 
-        M1 q50=[102,108], M2 q50=[101,109] -> EM q50=[101.5,108.5]
+        M1 q50=[102,108], M2 q50=[101,109] -> NM q50=[101.5,108.5]
         obs=[100,110] -> MAE = 1.5
         """
         stats, _, _ = calculate_monthly_skill_metrics(obs_2yr, two_model_two_lead_fcst)
-        em_lead0 = stats[(stats["model_short"] == "EM") & (stats["horizon_value"] == 0)]
+        em_lead0 = stats[(stats["model_short"] == "Naive Mean") & (stats["horizon_value"] == 0)]
         assert len(em_lead0) == 1
         assert em_lead0.iloc[0]["mae"] == pytest.approx(1.5, rel=1e-6)
 
     def test_em_lead0_differs_from_lead1(self, obs_2yr, two_model_two_lead_fcst):
-        """EM has different MAE per lead (leads not mixed).
+        """Naive Mean has different MAE per lead (leads not mixed).
 
-        Lead-0 EM: MAE=1.5, Lead-1 EM: MAE=0.25 (different values confirm no pooling).
+        Lead-0 NM: MAE=1.5, Lead-1 NM: MAE=0.25 (different values confirm no pooling).
         """
         stats, _, _ = calculate_monthly_skill_metrics(obs_2yr, two_model_two_lead_fcst)
-        em = stats[stats["model_short"] == "EM"]
-        assert len(em) == 2, "Both leads must produce EM for this comparison"
+        em = stats[stats["model_short"] == "Naive Mean"]
+        assert len(em) == 2, "Both leads must produce Naive Mean for this comparison"
         mae0 = em[em["horizon_value"] == 0]["mae"].iloc[0]
         mae1 = em[em["horizon_value"] == 1]["mae"].iloc[0]
-        assert mae0 != mae1, "EM MAE must differ across leads (leads not pooled)"
+        assert mae0 != mae1, "NM MAE must differ across leads (leads not pooled)"
 
     def test_em_joint_forecasts_carries_horizon_value(self, obs_2yr, two_model_two_lead_fcst):
-        """EM rows appended to joint_forecasts carry horizon_value for each lead."""
+        """Naive Mean rows appended to joint_forecasts carry horizon_value for each lead."""
         _, joint, _ = calculate_monthly_skill_metrics(obs_2yr, two_model_two_lead_fcst)
-        em_joint = joint[joint["model_short"] == "EM"]
+        em_joint = joint[joint["model_short"] == "Naive Mean"]
         assert not em_joint.empty
         if "horizon_value" in em_joint.columns:
             # Both leads should be present in joint_forecasts

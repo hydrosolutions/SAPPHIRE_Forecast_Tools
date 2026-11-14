@@ -11,9 +11,10 @@ are patched. Everything else runs real: aggregation, skill metrics,
 ensemble creation, file writing, logging.
 
 Test data uses the same 3-station skill-profile pattern as pentad/decad:
-- 99001: all models pass  -> 3-model EM
-- 99002: GBT+LR_Base pass -> 2-model EM
-- 99003: only LR_Base     -> no EM
+- 99001: all models pass  -> 3-model Skilled/Naive Mean
+- 99002: GBT+LR_Base pass -> 2-model Skilled Mean, 3-model Naive Mean
+- 99003: only LR_Base     -> no Skilled Mean (Naive Mean still formed)
+Long-term EM is no longer produced (PP-072 P3).
 """
 
 import importlib.util
@@ -383,11 +384,8 @@ class TestMonthlyRecalcIntegration:
             station_rows = skill[skill["code"].astype(str) == station]
             assert len(station_rows) > 0, f"Station {station} should have skill metric rows"
 
-    def test_monthly_em_rows_with_correct_discharge(self, monthly_integration_env):
-        """99001 has 3-model EM, 99002 has 2-model EM, 99003 has no EM.
-
-        EM discharge = mean of qualifying models' q50 values.
-        """
+    def test_monthly_no_em_and_naive_mean_correct_discharge(self, monthly_integration_env):
+        """No EM anywhere; Naive Mean discharge = mean of ALL models' q50 values."""
         tmp_path, data_dir = monthly_integration_env
         daily = _make_daily_runoff_all()
         forecasts = _make_long_forecasts_all()
@@ -396,28 +394,25 @@ class TestMonthlyRecalcIntegration:
         assert exit_code == 0
 
         skill = _read_output_csv(data_dir, "skill_metrics_monthly.csv")
-        em = skill[skill["model_short"] == "EM"]
-        em_stations = set(em["code"].astype(str))
+        assert skill[skill["model_short"] == "EM"].empty, "Long-term EM must not be produced"
+        nm_stations = set(skill[skill["model_short"] == "Naive Mean"]["code"].astype(str))
+        assert {"99001", "99002"} <= nm_stations
 
-        assert "99001" in em_stations, "99001 should have EM (all 3 models pass)"
-        assert "99002" in em_stations, "99002 should have EM (GBT+LR_Base pass)"
-        assert "99003" not in em_stations, "99003 should NOT have EM (only LR_Base passes)"
-
-        # Spot-check EM discharge for 99001, month 1
+        # Spot-check Naive Mean discharge for 99001, month 1
         combined = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
         assert not combined.empty, "combined_forecasts_monthly.csv should not be empty"
-        em_combined = combined[
-            (combined["model_short"] == "EM") & (combined["code"].astype(str) == "99001")
+        assert combined[combined["model_short"] == "EM"].empty
+        nm_combined = combined[
+            (combined["model_short"] == "Naive Mean") & (combined["code"].astype(str) == "99001")
         ]
-        assert not em_combined.empty, "99001 should have EM rows in combined monthly output"
-        # EM should be mean of 3 models' q50
+        assert not nm_combined.empty, "99001 should have Naive Mean rows in combined monthly output"
         sample_year = 2023
-        sample = em_combined[em_combined["year"] == sample_year]
-        assert not sample.empty, f"99001 EM should have a row for year {sample_year}"
+        sample = nm_combined[nm_combined["year"] == sample_year]
+        assert not sample.empty, f"99001 Naive Mean should have a row for year {sample_year}"
         expected = np.mean([_fc("99001", sample_year, m) for m in MODELS])
         actual = sample.iloc[0]["forecasted_discharge"]
         assert actual == pytest.approx(expected, abs=0.1), (
-            f"99001 EM discharge: expected {expected}, got {actual}"
+            f"99001 Naive Mean discharge: expected {expected}, got {actual}"
         )
 
     def test_monthly_skill_csv_column_schema(self, monthly_integration_env):
@@ -547,7 +542,7 @@ class TestMonthlyRecalcIntegration:
         assert row["nse"] > 0.99, f"NSE should be >0.99, got {row['nse']}"
 
     def test_monthly_crps_computed_for_models(self, monthly_integration_env):
-        """CRPS is finite+non-negative for base models; NaN for EM/baselines."""
+        """CRPS is finite+non-negative for base models; NaN for baselines."""
         tmp_path, data_dir = monthly_integration_env
         daily = _make_daily_runoff_all()
         forecasts = _make_long_forecasts_all()
@@ -565,8 +560,9 @@ class TestMonthlyRecalcIntegration:
             assert (crps_values >= 0).all(), f"{model} CRPS values should be non-negative"
             assert np.isfinite(crps_values).all(), f"{model} CRPS values should be finite"
 
-        # EM and baselines now have CRPS from aggregated quantiles
-        for baseline in ["EM", "Naive Mean", "Skilled Mean"]:
+        # Baselines have CRPS from aggregated quantiles; EM is not produced.
+        assert skill[skill["model_short"] == "EM"].empty
+        for baseline in ["Naive Mean", "Skilled Mean"]:
             baseline_rows = skill[skill["model_short"] == baseline]
             assert not baseline_rows.empty, f"{baseline} should have rows in skill metrics"
             crps_values = baseline_rows["crps"].dropna()
@@ -577,6 +573,7 @@ class TestMonthlyRecalcIntegration:
 # ===================================================================
 # TestMonthlyAllModeIntegration
 # ===================================================================
+@pytest.mark.usefixtures("em_recalc_api_boundaries")
 class TestMonthlyAllModeIntegration:
     """ALL mode (pentad + decad + monthly) integration."""
 
@@ -1113,21 +1110,22 @@ def _make_normalized_monthly_forecasts(year, month, stations=None):
 def _make_monthly_combined_csv(
     data_dir,
     year_months,
-    include_em_months=None,
+    include_ensemble_months=None,
 ):
     """Write a monthly combined forecasts CSV to data_dir.
 
     Args:
         data_dir: Path to write the CSV.
         year_months: List of (year, month) tuples to include.
-        include_em_months: List of (year, month) tuples that should
-            have EM/Naive Mean/Skilled Mean rows. Default: none.
+        include_ensemble_months: List of (year, month) tuples that should
+            have Naive Mean/Skilled Mean rows (long-term EM is no longer
+            produced, PP-072 P3). Default: none.
 
     Returns:
         The written DataFrame.
     """
-    if include_em_months is None:
-        include_em_months = []
+    if include_ensemble_months is None:
+        include_ensemble_months = []
     all_rows = []
     for year, month in year_months:
         for station in STATIONS:
@@ -1148,25 +1146,26 @@ def _make_monthly_combined_csv(
                         "flag": 0,
                     }
                 )
-        if (year, month) in include_em_months:
+        if (year, month) in include_ensemble_months:
             for station in STATIONS:
                 fc_vals = [_fc(station, year, m) for m in MODELS]
-                all_rows.append(
-                    {
-                        "code": station,
-                        "year": year,
-                        "month": month,
-                        "month_in_year": month,
-                        "model_short": "EM",
-                        "forecasted_discharge": round(np.mean(fc_vals), 3),
-                        "q50": round(np.mean(fc_vals), 3),
-                        "valid_from": f"{year}-{month:02d}-01",
-                        "valid_to": f"{year}-{month:02d}-28",
-                        "date": f"{year}-{month:02d}-01",
-                        "flag": 0,
-                        "composition": ", ".join(sorted(MODELS)),
-                    }
-                )
+                for ens_name in ("Naive Mean", "Skilled Mean"):
+                    all_rows.append(
+                        {
+                            "code": station,
+                            "year": year,
+                            "month": month,
+                            "month_in_year": month,
+                            "model_short": ens_name,
+                            "forecasted_discharge": round(np.mean(fc_vals), 3),
+                            "q50": round(np.mean(fc_vals), 3),
+                            "valid_from": f"{year}-{month:02d}-01",
+                            "valid_to": f"{year}-{month:02d}-28",
+                            "date": f"{year}-{month:02d}-01",
+                            "flag": 0,
+                            "composition": ", ".join(sorted(MODELS)),
+                        }
+                    )
     df = pd.DataFrame(all_rows)
     df.to_csv(
         os.path.join(data_dir, "combined_forecasts_monthly.csv"),
@@ -1238,7 +1237,7 @@ class TestOperationalLongTermIntegration:
         self,
         monthly_integration_env,
     ):
-        """99001: 3-model EM, 99002: 2-model EM, 99003: no EM."""
+        """No EM rows; Naive Mean = mean of all 3 models for every station."""
         tmp_path, data_dir = monthly_integration_env
 
         _seed_monthly_skill_csv(data_dir)
@@ -1266,40 +1265,22 @@ class TestOperationalLongTermIntegration:
         output = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
         assert not output.empty, "Output CSV should not be empty"
 
-        em = output[output["model_short"] == "EM"]
-        em_codes = set(em["code"].astype(str))
-        assert "99001" in em_codes, "99001 should have EM (3 models pass)"
-        assert "99002" in em_codes, "99002 should have EM (GBT+LR_Base pass)"
-        assert "99003" not in em_codes, "99003 should NOT have EM (only LR_Base)"
+        assert output[output["model_short"] == "EM"].empty, "Long-term EM must not be produced"
+        nm = output[output["model_short"] == "Naive Mean"]
+        for code in ("99001", "99002", "99003"):
+            nm_code = nm[nm["code"].astype(str) == code]
+            assert len(nm_code) == 1
+            expected = np.mean([_fc(code, 2026, m) for m in MODELS])
+            actual = nm_code["forecasted_discharge"].iloc[0]
+            assert actual == pytest.approx(expected, abs=0.01), (
+                f"{code} Naive Mean: expected {expected}, got {actual}"
+            )
 
-        # Spot-check EM discharge for 99001
-        em_99001 = em[em["code"].astype(str) == "99001"]
-        assert len(em_99001) == 1
-        expected_em = np.mean([_fc("99001", 2026, m) for m in MODELS])
-        actual = em_99001["forecasted_discharge"].iloc[0]
-        assert actual == pytest.approx(expected_em, abs=0.01), (
-            f"99001 EM: expected {expected_em}, got {actual}"
-        )
-
-        # Spot-check EM for 99002: mean(GBT, LR_Base) only
-        em_99002 = em[em["code"].astype(str) == "99002"]
-        assert len(em_99002) == 1
-        expected_em_2 = np.mean(
-            [
-                _fc("99002", 2026, "GBT"),
-                _fc("99002", 2026, "LR_Base"),
-            ]
-        )
-        actual_2 = em_99002["forecasted_discharge"].iloc[0]
-        assert actual_2 == pytest.approx(expected_em_2, abs=0.01), (
-            f"99002 EM: expected {expected_em_2}, got {actual_2}"
-        )
-
-    def test_quantile_columns_in_em_rows(
+    def test_quantile_columns_in_naive_mean_rows(
         self,
         monthly_integration_env,
     ):
-        """EM rows have q05-q95 columns with correct averaged values."""
+        """Naive Mean rows have q05-q95 columns with correct averaged values."""
         tmp_path, data_dir = monthly_integration_env
 
         _seed_monthly_skill_csv(data_dir)
@@ -1324,7 +1305,10 @@ class TestOperationalLongTermIntegration:
                 assert exc_info.value.code == 0
 
         output = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
-        em_99001 = output[(output["model_short"] == "EM") & (output["code"].astype(str) == "99001")]
+        assert output[output["model_short"] == "EM"].empty
+        em_99001 = output[
+            (output["model_short"] == "Naive Mean") & (output["code"].astype(str) == "99001")
+        ]
         assert len(em_99001) == 1
 
         q_cols = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
@@ -1332,7 +1316,7 @@ class TestOperationalLongTermIntegration:
             assert qcol in em_99001.columns, f"{qcol} missing"
             assert pd.notna(em_99001[qcol].iloc[0]), f"{qcol} should not be NaN"
 
-        # q50 for 99001 EM = mean of 3 models' q50
+        # q50 for 99001 Naive Mean = mean of 3 models' q50
         expected_q50 = np.mean([_fc("99001", 2026, m) for m in MODELS])
         assert em_99001["q50"].iloc[0] == pytest.approx(
             expected_q50,
@@ -1343,7 +1327,7 @@ class TestOperationalLongTermIntegration:
         self,
         monthly_integration_env,
     ):
-        """Naive Mean and Skilled Mean rows created alongside EM."""
+        """Naive Mean and Skilled Mean rows are created (and EM is not)."""
         tmp_path, data_dir = monthly_integration_env
 
         _seed_monthly_skill_csv(data_dir)
@@ -1552,16 +1536,16 @@ class TestMaintenanceLongTermIntegration:
         self,
         monthly_integration_env,
     ):
-        """Month 1/2026 has models but no EM → gap-fill creates EM."""
+        """Month 1/2026 has models but no ensembles → gap-fill creates Naive Mean + Skilled Mean (no EM)."""
         tmp_path, data_dir = monthly_integration_env
 
         _seed_monthly_skill_csv(data_dir)
 
-        # Combined CSV: month 12/2025 WITH EM, month 1/2026 WITHOUT
+        # Combined CSV: month 12/2025 WITH ensembles, month 1/2026 WITHOUT
         _make_monthly_combined_csv(
             data_dir,
             year_months=[(2025, 12), (2026, 1)],
-            include_em_months=[(2025, 12)],
+            include_ensemble_months=[(2025, 12)],
         )
 
         gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
@@ -1591,17 +1575,20 @@ class TestMaintenanceLongTermIntegration:
         output = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
         assert not output.empty
 
-        # EM now exists for month 1/2026
+        # No EM is ever created by the gap-fill.
+        assert output[output["model_short"] == "EM"].empty
+
+        # Naive Mean now exists for month 1/2026
         em_m1 = output[
-            (output["model_short"] == "EM")
+            (output["model_short"] == "Naive Mean")
             & (output["month"].astype(int) == 1)
             & (output["year"].astype(int) == 2026)
         ]
         em_m1_codes = set(em_m1["code"].astype(str))
-        assert "99001" in em_m1_codes, "99001 should get EM after gap-fill"
-        assert "99002" in em_m1_codes, "99002 should get EM after gap-fill"
+        assert "99001" in em_m1_codes, "99001 should get Naive Mean after gap-fill"
+        assert "99002" in em_m1_codes, "99002 should get Naive Mean after gap-fill"
 
-        # Spot-check EM discharge
+        # Spot-check Naive Mean discharge
         em_99001 = em_m1[em_m1["code"].astype(str) == "99001"]
         assert len(em_99001) == 1
         expected = np.mean([_fc("99001", 2026, m) for m in MODELS])
@@ -1614,14 +1601,14 @@ class TestMaintenanceLongTermIntegration:
         self,
         monthly_integration_env,
     ):
-        """All recent months have EM → no gaps, exits 0."""
+        """All recent months have Naive Mean + Skilled Mean (no EM) → no gaps, exits 0."""
         tmp_path, data_dir = monthly_integration_env
 
         _seed_monthly_skill_csv(data_dir)
         _make_monthly_combined_csv(
             data_dir,
             year_months=[(2025, 12), (2026, 1)],
-            include_em_months=[(2025, 12), (2026, 1)],
+            include_ensemble_months=[(2025, 12), (2026, 1)],
         )
 
         with patch.dict(
@@ -1646,6 +1633,53 @@ class TestMaintenanceLongTermIntegration:
 
                     assert exc_info.value.code == 0
 
+    def test_no_em_gap_reported_when_outputs_are_naive_and_skilled_only(
+        self,
+        monthly_integration_env,
+    ):
+        """PP-072 P3 regression: the gap detector must not report a permanent EM gap.
+
+        Every recent month carries Naive Mean + Skilled Mean and NO EM row. The
+        real gap detector runs; it must find nothing to fill, leave the combined
+        CSV untouched and never ask the API for gap forecasts.
+        """
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        _make_monthly_combined_csv(
+            data_dir,
+            year_months=[(2025, 12), (2026, 1)],
+            include_ensemble_months=[(2025, 12), (2026, 1)],
+        )
+
+        with patch.dict(
+            os.environ,
+            {"POSTPROCESSING_GAPFILL_WINDOW_MONTHS": "3"},
+        ):
+            with patch.dict(sys.modules, {}):
+                _setup_modules_with_real_io()
+                from src import data_reader as dr
+
+                with patch.object(
+                    dr,
+                    "read_monthly_forecasts",
+                    return_value=pd.DataFrame(),
+                ) as mock_read_fc:
+                    module, spec = _import_maintenance_lt()
+                    with patch("os.getcwd", return_value=str(tmp_path)):
+                        spec.loader.exec_module(module)
+
+                        with pytest.raises(SystemExit) as exc_info:
+                            module.postprocessing_maintenance_long_term()
+
+                    assert exc_info.value.code == 0
+
+        # No gap detected -> the gap-fill never asked the API for forecasts.
+        mock_read_fc.assert_not_called()
+        assert "EM" not in set(
+            _read_output_csv(data_dir, "combined_forecasts_monthly.csv")["model_short"]
+        )
+
     def test_missing_combined_csv_exits_cleanly(
         self,
         monthly_integration_env,
@@ -1668,14 +1702,14 @@ class TestMaintenanceLongTermIntegration:
         self,
         monthly_integration_env,
     ):
-        """Existing rows (models + old EM) survive the merge."""
+        """Existing rows (models + ensembles) survive the merge."""
         tmp_path, data_dir = monthly_integration_env
 
         _seed_monthly_skill_csv(data_dir)
         _make_monthly_combined_csv(
             data_dir,
             year_months=[(2025, 11), (2025, 12), (2026, 1)],
-            include_em_months=[(2025, 11), (2025, 12)],
+            include_ensemble_months=[(2025, 11), (2025, 12)],
         )
 
         gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
@@ -1720,28 +1754,29 @@ class TestMaintenanceLongTermIntegration:
         ]
         assert len(m11_models) == 9, f"9 model rows for Nov 2025, got {len(m11_models)}"
 
-        # Dec 2025 EM rows preserved (3 stations)
+        # Dec 2025 Naive Mean rows preserved (3 stations)
         em_m12 = output[
-            (output["model_short"] == "EM")
+            (output["model_short"] == "Naive Mean")
             & (output["year"].astype(int) == 2025)
             & (output["month"].astype(int) == 12)
         ]
-        assert len(em_m12) == 3, f"3 EM rows for Dec 2025, got {len(em_m12)}"
+        assert len(em_m12) == 3, f"3 Naive Mean rows for Dec 2025, got {len(em_m12)}"
 
-    def test_partial_em_coverage_fills_only_missing(
+    def test_partial_ensemble_coverage_fills_only_missing(
         self,
         monthly_integration_env,
     ):
-        """99001 already has EM (not refilled); 99002 gets new EM.
+        """99001 already has Naive Mean (not refilled); 99002/99003 get a new one.
 
-        Gap detector only flags (year, month, code) tuples where EM
-        is completely absent. Existing EM rows are preserved as-is.
+        Gap detector flags (year, month, code, model_short) tuples whose
+        ensemble row is absent. Existing ensemble rows are preserved as-is,
+        and no EM row is ever produced (PP-072 P3).
         """
         tmp_path, data_dir = monthly_integration_env
 
         _seed_monthly_skill_csv(data_dir)
 
-        # Combined CSV: 99001 has EM, 99002/99003 don't
+        # Combined CSV: 99001 has a Naive Mean, 99002/99003 don't
         rows = []
         for station in STATIONS:
             for model in MODELS:
@@ -1761,14 +1796,14 @@ class TestMaintenanceLongTermIntegration:
                         "flag": 0,
                     }
                 )
-        # EM exists only for 99001
+        # Naive Mean exists only for 99001
         rows.append(
             {
                 "code": "99001",
                 "year": 2026,
                 "month": 1,
                 "month_in_year": 1,
-                "model_short": "EM",
+                "model_short": "Naive Mean",
                 "forecasted_discharge": 42.0,
                 "q50": 42.0,
                 "valid_from": "2026-01-01",
@@ -1809,9 +1844,11 @@ class TestMaintenanceLongTermIntegration:
 
         output = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
 
-        # 99001 EM preserved (value=42.0, not recalculated)
+        assert output[output["model_short"] == "EM"].empty, "No EM must be produced"
+
+        # 99001 Naive Mean preserved (value=42.0, not recalculated)
         em_99001 = output[
-            (output["model_short"] == "EM")
+            (output["model_short"] == "Naive Mean")
             & (output["code"].astype(str) == "99001")
             & (output["year"].astype(int) == 2026)
         ]
@@ -1819,30 +1856,15 @@ class TestMaintenanceLongTermIntegration:
         assert em_99001["forecasted_discharge"].iloc[0] == pytest.approx(
             42.0,
             abs=0.01,
-        ), "99001 EM should be preserved (not refilled)"
+        ), "99001 Naive Mean should be preserved (not refilled)"
 
-        # 99002 now has EM (gap was filled)
-        em_99002 = output[
-            (output["model_short"] == "EM")
-            & (output["code"].astype(str) == "99002")
-            & (output["year"].astype(int) == 2026)
-        ]
-        assert len(em_99002) == 1, "99002 should get EM after gap-fill"
-        expected_99002 = np.mean(
-            [
-                _fc("99002", 2026, "GBT"),
-                _fc("99002", 2026, "LR_Base"),
+        # 99002 and 99003 now have Naive Mean (gap was filled): mean of all 3 models
+        for code in ("99002", "99003"):
+            nm = output[
+                (output["model_short"] == "Naive Mean")
+                & (output["code"].astype(str) == code)
+                & (output["year"].astype(int) == 2026)
             ]
-        )
-        assert em_99002["forecasted_discharge"].iloc[0] == pytest.approx(
-            expected_99002,
-            abs=0.01,
-        )
-
-        # 99003 still no EM (only 1 model passes → single-model discard)
-        em_99003 = output[
-            (output["model_short"] == "EM")
-            & (output["code"].astype(str) == "99003")
-            & (output["year"].astype(int) == 2026)
-        ]
-        assert len(em_99003) == 0, "99003 should NOT have EM (only LR_Base passes)"
+            assert len(nm) == 1, f"{code} should get Naive Mean after gap-fill"
+            expected = np.mean([_fc(code, 2026, m) for m in MODELS])
+            assert nm["forecasted_discharge"].iloc[0] == pytest.approx(expected, abs=0.01)

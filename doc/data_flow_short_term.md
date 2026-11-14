@@ -63,7 +63,7 @@ flowchart TD
         AGG["Aggregate ML forecasts<br/>─────────────────<br/>day → pentad/decade<br/>(period-aware averaging)"]
         NE["Create NE<br/>─────────────────<br/>Neural Ensemble<br/>mean(TFT, TiDE, TSMixer)<br/>No skill threshold"]
         SK["Read skill metrics<br/>─────────────────<br/>From skill_metrics table<br/>(yearly recalculation)"]
-        EM["Create EM<br/>─────────────────<br/>Ensemble Mean<br/>mean(models passing threshold)<br/>Requires ≥ 2 models"]
+        EM["Create EM<br/>─────────────────<br/>Ensemble Mean<br/>equal-weight mean of Skilled-Mean pool<br/>(NSE &gt; 0, n_pairs ≥ 4)<br/>Requires ≥ 2 models"]
         WR["Write combined forecasts<br/>─────────────────<br/>All models + NE + EM<br/>horizon_type = pentad | decade"]
     end
 
@@ -109,7 +109,7 @@ flowchart TD
     %% Ensemble creation
     AGG --> NE
     AGG --> EM
-    SK -- "threshold filter" --> EM
+    SK -- "NSE / n_pairs filter" --> EM
 
     %% Writing
     NE --> WR
@@ -203,9 +203,13 @@ before the API write, without changing any upstream computation.
 2. **Create NE**: During data reading, `setup_library.py` averages
    TFT + TiDE + TSMixer (no skill threshold). Consider moving this method
    to the postprocessing module where it is exclusively used.
-3. **Create EM**: Read yearly skill metrics from skill_metrics table, filter
-   models by threshold (sdivsigma, accuracy), average qualifying models
-   (≥ 2 required).
+3. **Create EM**: Read yearly skill metrics from skill_metrics table, keep
+   models in the Skilled-Mean pool (finite NSE > 0 by default, `n_pairs` ≥ 4;
+   optional sdivsigma/accuracy gates off by default; env vars
+   `ieasyhydroforecast_*_short_term`, each falling back to the un-suffixed
+   `ieasyhydroforecast_*_threshold` var, then the default) and take the equal-weight mean
+   (≥ 2 distinct models required). LR contributes q25/q75 = point -/+ delta
+   (delta from the LR skill row; LR dropped if unusable, no LR q05/q95).
 4. **Write**: All models + NE + EM to forecasts table with
    `horizon_type = pentad | decade`.
 
@@ -328,11 +332,11 @@ it — procedure in
 | Ensemble | Models | Threshold | Created In |
 |----------|--------|-----------|------------|
 | **NE** (Neural Ensemble) | TFT + TiDE + TSMixer | None (always created) | `setup_library.py` |
-| **EM** (Ensemble Mean) | All models passing skill filter | sdivsigma < threshold, accuracy > threshold | `ensemble_calculator.py` |
+| **EM** (Ensemble Mean) | Skilled-Mean pool (equal weights) | NSE > 0 (`ieasyhydroforecast_nse_threshold_short_term`), `n_pairs` ≥ 4 (`ieasyhydroforecast_min_pairs_short_term`); sdivsigma/accuracy off by default | `ensemble_calculator.py` |
 
 EM requires **≥ 2 qualifying models** per (date, code). Single-model
-"ensembles" are discarded. Thresholds are configured via environment variables
-(`ieasyhydroforecast_efficiency_threshold`, `ieasyhydroforecast_accuracy_threshold`).
+"ensembles" are discarded. Thresholds are configured via the `ieasyhydroforecast_*_threshold_short_term`
+environment variables (precedence: `_short_term` var, else the un-suffixed `ieasyhydroforecast_*_threshold` var, else default; `min_pairs` has no fallback) (see `apps/postprocessing_forecasts/README.md`).
 
 ## Database Tables
 

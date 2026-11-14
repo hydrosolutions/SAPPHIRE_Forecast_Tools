@@ -111,6 +111,12 @@ def _setup_mocks(mock_data, mock_skill):
     mock_sl.calculate_neural_ensemble_forecast_decade.side_effect = lambda x: x
 
     mock_data_reader.read_observed_and_modelled_data.return_value = (mock_data, mock_data)
+    mock_data_reader.read_individual_model_forecasts.return_value = (pd.DataFrame(), pd.DataFrame())
+    mock_data_reader._read_skill_metrics_api.return_value = pd.DataFrame()
+    mock_skill_metrics.calculate_short_term_em_hindcast.return_value = (
+        pd.DataFrame(),
+        mock_skill.iloc[:0].copy(),
+    )
 
     mock_skill_metrics.calculate_skill_metrics.return_value = (mock_skill, mock_data, None)
     mock_file_writer.save_forecast_data.return_value = None

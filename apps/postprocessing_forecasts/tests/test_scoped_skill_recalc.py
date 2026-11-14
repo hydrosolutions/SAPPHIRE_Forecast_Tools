@@ -64,8 +64,14 @@ def _make_mocks():
     mock_sl.calculate_neural_ensemble_forecast_decade.side_effect = lambda x: x
 
     mock_skill_metrics = MagicMock()
+    mock_skill_metrics.calculate_short_term_em_hindcast.return_value = (
+        pd.DataFrame(),
+        pd.DataFrame(columns=["code", "pentad_in_year", "model_short", "n_pairs"]),
+    )
     mock_file_writer = MagicMock()
     mock_data_reader = MagicMock()
+    mock_data_reader.read_individual_model_forecasts.return_value = (pd.DataFrame(), pd.DataFrame())
+    mock_data_reader._read_skill_metrics_api.return_value = pd.DataFrame()
 
     mock_pt = MagicMock()
     # timer() is used as a context manager — make it behave like one

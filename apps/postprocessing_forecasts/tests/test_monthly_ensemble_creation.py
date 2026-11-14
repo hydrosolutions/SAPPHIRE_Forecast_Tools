@@ -1,8 +1,8 @@
 """Tests for create_monthly_ensemble_forecasts() in src/ensemble_calculator.py.
 
-Covers EM (threshold-filtered average), Skilled Mean (1/MAE weighted),
-and Naive Mean (unweighted all-model average) creation for monthly
-forecasts.  Tests verify discharge values, quantile propagation,
+Covers Skilled Mean (1/MAE weighted) and Naive Mean (unweighted all-model
+average) creation for monthly forecasts.  Long-term EM is no longer produced
+(PP-072 P3); TestNoEMCreation locks that.  Tests verify discharge values, quantile propagation,
 composition strings, baseline exclusion, and edge cases.
 """
 
@@ -148,65 +148,43 @@ def _two_model_forecasts():
 # ---------------------------------------------------------------------------
 
 
-class TestEMCreation:
-    """Ensemble Mean: threshold-filtered multi-model average."""
+class TestNoEMCreation:
+    """Long-term EM is no longer produced for monthly (PP-072 P3)."""
 
-    def test_em_discharge_is_mean_of_qualified_models(self):
-        """EM forecasted_discharge = mean(LR, TFT) when both pass."""
+    def test_no_em_row_when_models_qualify(self):
         skill = _two_model_skill()
         forecasts = _two_model_forecasts()
 
         with patch.dict(os.environ, THRESHOLD_ENV):
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        em_rows = result[result["model_short"] == "EM"]
-        assert len(em_rows) == 1, "Expected exactly one EM row"
-        expected = (100.0 + 120.0) / 2.0
-        assert em_rows.iloc[0]["forecasted_discharge"] == pytest.approx(expected)
+        assert "EM" not in set(result["model_short"])
+        assert {"Skilled Mean", "Naive Mean"} <= set(result["model_short"])
 
-    def test_em_quantiles_are_averaged(self):
-        """EM quantile columns are simple means of contributing models."""
-        skill = _two_model_skill()
-        forecasts = _two_model_forecasts()
-
-        with patch.dict(os.environ, THRESHOLD_ENV):
-            result = create_monthly_ensemble_forecasts(forecasts, skill)
-
-        em = result[result["model_short"] == "EM"].iloc[0]
-        # LR q05=80, TFT q05=90 -> EM q05=85
-        assert em["q05"] == pytest.approx(85.0)
-        assert em["q50"] == pytest.approx(110.0)
-        assert em["q95"] == pytest.approx(130.0)
-
-    def test_em_composition_string(self):
-        """EM composition lists contributing models, sorted."""
-        skill = _two_model_skill()
-        forecasts = _two_model_forecasts()
-
-        with patch.dict(os.environ, THRESHOLD_ENV):
-            result = create_monthly_ensemble_forecasts(forecasts, skill)
-
-        em = result[result["model_short"] == "EM"].iloc[0]
-        assert em["composition"] == "LR, TFT"
-
-    def test_em_single_model_discarded(self):
-        """EM is not created when only one model passes thresholds."""
+    def test_no_em_row_with_three_qualifying_models(self):
         skill = _make_skill(
             [
                 (3, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
-                (3, "S1", "TFT", 0.9, 0.50, 5.0, 0.50, 8.0, 10),  # fails
+                (3, "S1", "TFT", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
+                (3, "S1", "TiDE", 0.2, 0.92, 5.0, 0.88, 2.5, 10),
             ]
         )
-        forecasts = _two_model_forecasts()
+        base = _two_model_forecasts()
+        tide = base.iloc[[1]].copy()
+        tide["model_short"] = "TiDE"
+        tide["forecasted_discharge"] = 130.0
+        forecasts = pd.concat([base, tide], ignore_index=True)
 
         with patch.dict(os.environ, THRESHOLD_ENV):
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        em_rows = result[result["model_short"] == "EM"]
-        assert len(em_rows) == 0, "Single-model EM should be discarded"
+        assert "EM" not in set(result["model_short"])
+        nm = result[result["model_short"] == "Naive Mean"]
+        assert nm.iloc[0]["forecasted_discharge"] == pytest.approx((100.0 + 120.0 + 130.0) / 3.0)
+        assert nm.iloc[0]["composition"] == "LR, TFT, TiDE"
 
-    def test_em_excludes_baseline_models(self):
-        """Baseline models (EM, Naive Mean, Skilled Mean) are not in pool."""
+    def test_pre_existing_em_row_not_pooled_and_not_regenerated(self):
+        """A pre-existing EM row is passed through untouched and never pooled."""
         # Add an existing EM row to forecasts -- it should not be included
         # in the new EM computation
         skill = _make_skill(
@@ -280,102 +258,15 @@ class TestEMCreation:
         with patch.dict(os.environ, THRESHOLD_ENV):
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        em_new = result[(result["model_short"] == "EM") & (result["forecasted_discharge"] != 999.0)]
-        assert len(em_new) == 1
-        # EM should be mean of LR(100) and TFT(120) only, not 999
-        assert em_new.iloc[0]["forecasted_discharge"] == pytest.approx(110.0)
-
-    def test_em_three_models_qualified(self):
-        """EM averages three models when all pass thresholds."""
-        skill = _make_skill(
-            [
-                (3, "S1", "LR", 0.3, 0.95, 5.0, 0.90, 2.0, 10),
-                (3, "S1", "TFT", 0.4, 0.88, 5.0, 0.85, 3.0, 10),
-                (3, "S1", "TiDE", 0.2, 0.92, 5.0, 0.88, 2.5, 10),
-            ]
-        )
-        forecasts = _make_forecasts(
-            [
-                (
-                    "S1",
-                    2025,
-                    3,
-                    3,
-                    "LR",
-                    100.0,
-                    80.0,
-                    85.0,
-                    90.0,
-                    100.0,
-                    110.0,
-                    115.0,
-                    120.0,
-                    "2025-03-01",
-                    "2025-03-31",
-                    "2025-03-01",
-                    0,
-                ),
-                (
-                    "S1",
-                    2025,
-                    3,
-                    3,
-                    "TFT",
-                    120.0,
-                    90.0,
-                    95.0,
-                    100.0,
-                    120.0,
-                    130.0,
-                    135.0,
-                    140.0,
-                    "2025-03-01",
-                    "2025-03-31",
-                    "2025-03-01",
-                    0,
-                ),
-                (
-                    "S1",
-                    2025,
-                    3,
-                    3,
-                    "TiDE",
-                    130.0,
-                    100.0,
-                    105.0,
-                    110.0,
-                    130.0,
-                    140.0,
-                    145.0,
-                    150.0,
-                    "2025-03-01",
-                    "2025-03-31",
-                    "2025-03-01",
-                    0,
-                ),
-            ]
-        )
-
-        with patch.dict(os.environ, THRESHOLD_ENV):
-            result = create_monthly_ensemble_forecasts(forecasts, skill)
-
-        em = result[result["model_short"] == "EM"]
-        assert len(em) == 1
-        expected = (100.0 + 120.0 + 130.0) / 3.0
-        assert em.iloc[0]["forecasted_discharge"] == pytest.approx(expected)
-        assert em.iloc[0]["composition"] == "LR, TFT, TiDE"
-
-    def test_em_flag_is_zero(self):
-        """Ensemble rows get flag=0."""
-        skill = _two_model_skill()
-        forecasts = _two_model_forecasts()
-
-        with patch.dict(os.environ, THRESHOLD_ENV):
-            result = create_monthly_ensemble_forecasts(forecasts, skill)
-
-        em = result[result["model_short"] == "EM"]
-        assert len(em) == 1
-        assert em.iloc[0]["flag"] == 0
+        em_rows = result[result["model_short"] == "EM"]
+        # Only the pre-existing input row remains; none was regenerated.
+        assert len(em_rows) == 1
+        assert em_rows.iloc[0]["forecasted_discharge"] == pytest.approx(999.0)
+        # The pre-existing EM row is not in the Naive Mean pool: mean(100, 120).
+        nm = result[result["model_short"] == "Naive Mean"]
+        assert len(nm) == 1
+        assert nm.iloc[0]["forecasted_discharge"] == pytest.approx(110.0)
+        assert nm.iloc[0]["composition"] == "LR, TFT"
 
 
 # ---------------------------------------------------------------------------
@@ -1190,8 +1081,8 @@ class TestEdgeCases:
         with patch.dict(os.environ, THRESHOLD_ENV):
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        em_s1 = result[(result["model_short"] == "EM") & (result["code"] == "S1")]
-        em_s2 = result[(result["model_short"] == "EM") & (result["code"] == "S2")]
+        em_s1 = result[(result["model_short"] == "Naive Mean") & (result["code"] == "S1")]
+        em_s2 = result[(result["model_short"] == "Naive Mean") & (result["code"] == "S2")]
         assert len(em_s1) == 1
         assert len(em_s2) == 1
         assert em_s1.iloc[0]["forecasted_discharge"] == pytest.approx(110.0)
@@ -1291,8 +1182,8 @@ class TestEdgeCases:
         with patch.dict(os.environ, THRESHOLD_ENV):
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        em_m3 = result[(result["model_short"] == "EM") & (result["month"] == 3)]
-        em_m4 = result[(result["model_short"] == "EM") & (result["month"] == 4)]
+        em_m3 = result[(result["model_short"] == "Naive Mean") & (result["month"] == 3)]
+        em_m4 = result[(result["model_short"] == "Naive Mean") & (result["month"] == 4)]
         assert len(em_m3) == 1
         assert len(em_m4) == 1
         assert em_m3.iloc[0]["forecasted_discharge"] == pytest.approx(110.0)
@@ -1387,12 +1278,13 @@ class TestEdgeCases:
         with patch.dict(os.environ, THRESHOLD_ENV):
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        em = result[result["model_short"] == "EM"]
+        em = result[result["model_short"] == "Naive Mean"]
         assert len(em) == 1
-        # EM from LR(100) and TiDE(130) only; TFT(NaN) dropped
+        # Naive Mean from LR(100) and TiDE(130) only; TFT(NaN) dropped
         expected = (100.0 + 130.0) / 2.0
         assert em.iloc[0]["forecasted_discharge"] == pytest.approx(expected)
         assert "TFT" not in em.iloc[0]["composition"]
+        assert "EM" not in set(result["model_short"])
 
     def test_no_models_pass_thresholds(self):
         """No ensembles created when all models fail thresholds.
@@ -1420,8 +1312,8 @@ class TestEdgeCases:
         assert len(nm) == 1
         assert nm.iloc[0]["forecasted_discharge"] == pytest.approx(110.0)
 
-    def test_all_three_ensembles_created(self):
-        """EM, Skilled Mean, and Naive Mean all appear when conditions met."""
+    def test_both_ensembles_created_and_no_em(self):
+        """Skilled Mean and Naive Mean appear (and no EM) when conditions met."""
         skill = _two_model_skill()
         forecasts = _two_model_forecasts()
 
@@ -1431,7 +1323,7 @@ class TestEdgeCases:
         ensemble_types = set(
             result[result["model_short"].isin({"EM", "Skilled Mean", "Naive Mean"})]["model_short"]
         )
-        assert ensemble_types == {"EM", "Skilled Mean", "Naive Mean"}
+        assert ensemble_types == {"Skilled Mean", "Naive Mean"}
 
     def test_result_row_count(self):
         """Result has original rows + ensemble rows (one per type)."""
@@ -1441,8 +1333,8 @@ class TestEdgeCases:
         with patch.dict(os.environ, THRESHOLD_ENV):
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        # 2 original + 3 ensemble types = 5 rows
-        assert len(result) == 5
+        # 2 original + 2 ensemble types (Skilled Mean, Naive Mean) = 4 rows
+        assert len(result) == 4
 
     def test_month_in_year_derived_from_month_column(self):
         """month_in_year is derived from month if missing."""
@@ -1455,7 +1347,7 @@ class TestEdgeCases:
             result = create_monthly_ensemble_forecasts(forecasts, skill)
 
         # Should still work -- month_in_year derived from month
-        em = result[result["model_short"] == "EM"]
+        em = result[result["model_short"] == "Naive Mean"]
         assert len(em) == 1
         assert em.iloc[0]["forecasted_discharge"] == pytest.approx(110.0)
 
@@ -1502,9 +1394,10 @@ class TestMonthlyEnsembleHorizonValueGroupby:
         )
         result = create_monthly_ensemble_forecasts(forecasts, skill_stats)
 
-        # --- EM ---
-        em_rows = result[result["model_short"] == "EM"]
-        assert len(em_rows) == 2, f"Expected 2 EM rows (one per horizon_value), got {len(em_rows)}"
+        # --- Naive Mean (simple average; replaces the removed EM check) ---
+        assert "EM" not in set(result["model_short"])
+        em_rows = result[result["model_short"] == "Naive Mean"]
+        assert len(em_rows) == 2, f"Expected 2 NM rows (one per horizon_value), got {len(em_rows)}"
         assert set(em_rows["horizon_value"]) == {0, 1}
         # horizon_value=0 ensemble: mean(100, 110) = 105
         em_hv0 = em_rows[em_rows["horizon_value"] == 0]
@@ -1517,11 +1410,6 @@ class TestMonthlyEnsembleHorizonValueGroupby:
         sm_rows = result[result["model_short"] == "Skilled Mean"]
         assert len(sm_rows) == 2, "Skilled Mean must also separate by horizon_value"
         assert set(sm_rows["horizon_value"]) == {0, 1}
-
-        # --- Naive Mean ---
-        nm_rows = result[result["model_short"] == "Naive Mean"]
-        assert len(nm_rows) == 2, "Naive Mean must also separate by horizon_value"
-        assert set(nm_rows["horizon_value"]) == {0, 1}
 
     def test_single_horizon_value_works_unchanged(self):
         """When all records have the same horizon_value, behavior unchanged."""
@@ -1555,7 +1443,8 @@ class TestMonthlyEnsembleHorizonValueGroupby:
             }
         )
         result = create_monthly_ensemble_forecasts(forecasts, skill_stats)
-        em_rows = result[result["model_short"] == "EM"]
+        assert "EM" not in set(result["model_short"])
+        em_rows = result[result["model_short"] == "Naive Mean"]
         assert len(em_rows) == 1
         assert em_rows["horizon_value"].iloc[0] == 1
 
@@ -1590,7 +1479,8 @@ class TestMonthlyEnsembleHorizonValueGroupby:
             }
         )
         result = create_monthly_ensemble_forecasts(forecasts, skill_stats)
-        em_rows = result[result["model_short"] == "EM"]
+        assert "EM" not in set(result["model_short"])
+        em_rows = result[result["model_short"] == "Naive Mean"]
         assert len(em_rows) == 1
         # horizon_value should NOT be in the output since it wasn't in input
         assert "horizon_value" not in em_rows.columns or em_rows["horizon_value"].isna().all()

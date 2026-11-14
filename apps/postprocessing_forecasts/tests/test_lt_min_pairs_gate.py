@@ -12,9 +12,8 @@ Locked invariants:
 - Short-term gate/skill calls receive no min_pairs (behaviour unchanged).
 - NM membership stays ungated (all models enter the pool regardless of n_pairs);
   NM *output* rows < K are dropped by the shared output floor.
-- Season EM membership is fixed-LR (AGGREGATED_EM_RAW_MODELS) and is NOT
-  skill-gated; only the output floor applies. Quarter never forms EM at all
-  (PP-065 P1c decision 3), regardless of membership or n_pairs.
+- Long-term EM is no longer produced for month/season (PP-072 P3) and quarter
+  never forms EM (PP-065 P1c decision 3), regardless of membership or n_pairs.
 - Env var parsing: default (unset) → 4/5; override is honoured; invalid → error.
 
 Placeholder station code: ``19999`` throughout (never a real code).
@@ -284,14 +283,19 @@ class TestFilterMinPairsKwarg:
         assert result.empty
 
     def test_short_term_wrapper_receives_no_min_pairs(self):
-        """The legacy wrapper in ensemble_calculator passes no min_pairs → unchanged."""
+        """The backward-compat wrapper in ensemble_calculator defaults min_pairs=None.
+
+        (create_ensemble_forecasts itself calls the canonical filter directly
+        with min_pairs=_short_term_min_pairs(), default 4; the wrapper is only
+        for legacy callers.)
+        """
         # Import the wrapper (not the canonical) to verify it still works
         from src.ensemble_calculator import (
             filter_for_highly_skilled_forecasts as wrapper,
         )
 
         df = self._base_df([1, 2, 3])
-        # The wrapper never sets min_pairs → None → byte-identical to original
+        # The wrapper defaults min_pairs to None → byte-identical to original
         # Both should return the same rows as a plain call with default thresholds.
         canonical_result = filter_for_highly_skilled_forecasts(df)
         wrapper_result = wrapper(df)
@@ -366,11 +370,14 @@ class TestMonthlyOutputFloor:
 # ---------------------------------------------------------------------------
 
 
-class TestMonthlyEMGate:
-    """EM membership rejects members with n_pairs < K, accepts n_pairs >= K.
+class TestMonthlyMinNGate:
+    """Monthly pool membership (Skilled Mean) rejects members with n_pairs < K,
+    accepts n_pairs >= K.  Long-term EM is no longer produced (PP-072 P3), so
+    these tests lock that no EM appears while the min_pairs gate still governs
+    Skilled Mean membership.
 
     We can only observe this indirectly: if a model's n_pairs < K, it should
-    not appear in any EM composition string.
+    not appear in any Skilled Mean composition string.
     """
 
     def _run_monthly(self, n_pairs_per_model: dict[str, int]):
@@ -389,25 +396,26 @@ class TestMonthlyEMGate:
         skill_out, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         return skill_out
 
-    def test_low_n_model_not_in_em_composition(self):
-        """A model with n_pairs=K-1 must not appear in any EM composition."""
-        # LR_Base: K-1 years (n_pairs=K-1 → excluded from EM)
-        # LR_SM:   K   years (n_pairs=K   → eligible for EM)
+    def test_low_n_model_excluded_from_ensemble_rows(self):
+        """A model with n_pairs=K-1 must not appear in any ensemble composition."""
+        # LR_Base: K-1 years (n_pairs=K-1 → below the min-n floor, excluded)
+        # LR_SM:   K   years (n_pairs=K   → eligible for Skilled Mean)
         skill_out = self._run_monthly({"LR_Base": K_MONTH - 1, "LR_SM": K_MONTH})
-        em_rows = skill_out[skill_out["model_short"] == "EM"]
-        if not em_rows.empty:
-            compositions = em_rows["composition"].fillna("").tolist()
-            for comp in compositions:
-                assert "LR_Base" not in comp, (
-                    f"LR_Base (n_pairs=K-1) must not appear in EM composition: {comp!r}"
-                )
+        # Only LR_SM clears the n_pairs floor, so no multi-model aggregate can
+        # form: no EM and no Skilled Mean row (single-model groups are
+        # discarded), and LR_Base (n_pairs=K-1) is absent from every row.
+        assert set(skill_out["model_short"]) == {"LR_SM"}
+        assert "LR_Base" not in set(skill_out["model_short"])
+        for comp in skill_out["composition"].fillna("").tolist():
+            assert "LR_Base" not in comp, (
+                f"LR_Base (n_pairs=K-1) must not appear in any composition: {comp!r}"
+            )
 
-    def test_sufficient_n_model_can_enter_em(self):
-        """Both models with n_pairs >= K that pass the default EM gate produce an EM row.
+    def test_sufficient_n_model_can_enter_skilled_mean_and_no_em(self):
+        """Both models with n_pairs >= K produce a Skilled Mean row and NO EM row.
 
-        The monthly EM pool uses the DEFAULT skill gate (nse>0.8, sdivsigma<0.6,
-        accuracy>0.8) plus the min_pairs floor.  This fixture is designed so that
-        both member models genuinely pass that gate, confirming EM is produced.
+        This fixture is designed so that both member models pass even the
+        default skill gate (it formerly produced EM).
 
         Fixture: obs=[70,90,110,130], LR_Base q50=[84,95,107,118],
         LR_SM q50=[82,94,105,116].  Both yield nse≈0.81, sdivsigma≈0.57,
@@ -425,22 +433,22 @@ class TestMonthlyEMGate:
         obs = _make_monthly_obs(obs_rows)
         fcst = _make_monthly_fcst(fcst_rows)
         skill_out, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_rows = skill_out[skill_out["model_short"] == "EM"]
-        assert not em_rows.empty, (
-            "Expected an EM row when both models pass the default gate "
-            "(nse>0.8, sdivsigma<0.6, accuracy>0.8) with n_pairs >= K"
+        assert "EM" not in set(skill_out["model_short"])
+        sm_rows = skill_out[skill_out["model_short"] == "Skilled Mean"]
+        assert not sm_rows.empty, (
+            "Expected a Skilled Mean row when both models pass the gate with n_pairs >= K"
         )
 
-    def test_em_membership_gates_on_min_pairs(self, monkeypatch):
-        """min_pairs — not the NSE gate — controls whether EM members qualify.
+    def test_skilled_mean_membership_gates_on_min_pairs(self, monkeypatch):
+        """min_pairs — not the NSE gate — controls whether SM members qualify.
 
-        Both models pass the default EM gate (nse≈0.82, sdivsigma≈0.57,
-        accuracy=1.0) and have n_pairs=5 (≥K=4 but <10).
+        Both models pass the gate (nse≈0.82, sdivsigma≈0.57, accuracy=1.0)
+        and have n_pairs=5 (≥K=4 but <10).
 
-        With ieasyhydroforecast_min_pairs_long_term=4 → EM row IS produced
-        (n_pairs=5 ≥ K=4, metric gate passes).
-        With ieasyhydroforecast_min_pairs_long_term=10 → EM row ABSENT
+        With ieasyhydroforecast_min_pairs_long_term=4 → SM row IS produced.
+        With ieasyhydroforecast_min_pairs_long_term=10 → SM row ABSENT
         (n_pairs=5 < K=10, members are excluded by the min_pairs floor).
+        No EM row in either case (PP-072 P3).
 
         Fixture: obs=[70,85,100,115,130], LR_Base q50=[84,92,101,110,118],
         LR_SM q50=[82,90,99,108,116].  Both yield nse≈0.82, sdivsigma≈0.57,
@@ -462,19 +470,21 @@ class TestMonthlyEMGate:
         # --- K=4: members have n_pairs=5 >= K → EM row produced ---
         monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term", "4")
         skill_k4, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_k4 = skill_k4[skill_k4["model_short"] == "EM"]
+        assert "EM" not in set(skill_k4["model_short"])
+        em_k4 = skill_k4[skill_k4["model_short"] == "Skilled Mean"]
         assert not em_k4.empty, (
-            "EM row must be present when n_pairs=5 >= min_pairs=4 "
+            "SM row must be present when n_pairs=5 >= min_pairs=4 "
             "and both models pass the default skill gate"
         )
 
         # --- K=10: members have n_pairs=5 < K → excluded from EM → absent ---
         monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term", "10")
         skill_k10, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        em_k10 = skill_k10[skill_k10["model_short"] == "EM"]
+        assert "EM" not in set(skill_k10["model_short"])
+        em_k10 = skill_k10[skill_k10["model_short"] == "Skilled Mean"]
         assert em_k10.empty, (
-            "EM row must be absent when n_pairs=5 < min_pairs=10 "
-            "(min_pairs gate excludes both members from the EM pool)"
+            "SM row must be absent when n_pairs=5 < min_pairs=10 "
+            "(min_pairs gate excludes both members from the SM pool)"
         )
 
 
@@ -590,25 +600,19 @@ class TestAggregatedOutputFloor:
 
 
 # ---------------------------------------------------------------------------
-# 7. Quarter/season EM membership is fixed-LR (not skill-gated)
+# 7. Quarter/season never form EM
 # ---------------------------------------------------------------------------
 
 
 class TestAggregatedEMFixedMembership:
-    """Season EM derives from AGGREGATED_EM_RAW_MODELS, not a skill gate.
-
-    The output floor still applies to the season EM row, but membership is
-    NOT gated by skill thresholds or n_pairs. Quarter never forms EM at all
-    (PP-065 P1c decision 3), regardless of n_pairs or membership — the two
-    tests below (both quarter) lock that removal; season is covered
-    elsewhere in this module and in test_quarterly_ensemble_creation.py's
-    TestSeasonalEnsembleEM.
+    """Neither quarter (PP-065 P1c decision 3) nor season (PP-072 P3) forms EM,
+    regardless of n_pairs or membership.  The first two tests are quarter; the
+    third is season.
     """
 
     def test_quarterly_em_absent_even_with_two_qualifying_lr_models(self):
         """Quarter never forms EM, even when both fixed-LR models would
-        otherwise qualify by AGGREGATED_EM_RAW_MODELS membership and have
-        n_pairs >= K (output floor)."""
+        otherwise be fixed-LR candidates and have n_pairs >= K (output floor)."""
         n = K_QUARTER  # enough pairs to survive the output floor
         obs_rows = [(STATION, 2010 + i, 2, 100.0 + i * 2) for i in range(n)]
         fcst_rows = [(STATION, 2010 + i, 2, "LR_Base", 102.0 + i) for i in range(n)] + [
@@ -633,6 +637,21 @@ class TestAggregatedEMFixedMembership:
         em_rows = skill_out[skill_out["model_short"] == "EM"]
         assert em_rows.empty, "Quarter EM must remain absent regardless of n_pairs"
 
+    def test_seasonal_em_absent_with_two_lr_models_at_k_pairs(self):
+        """Season never forms EM (PP-072 P3) even with two LR models at n_pairs >= K."""
+        n = K_QS
+        obs_rows = [(STATION, 2010 + i, 100.0 + i * 2) for i in range(n)]
+        fcst_rows = [(STATION, 2010 + i, 1, "LR_Base", 102.0 + i) for i in range(n)] + [
+            (STATION, 2010 + i, 1, "LR_SM", 98.0 + i) for i in range(n)
+        ]
+        obs = _make_seasonal_obs(obs_rows)
+        fcst = _make_seasonal_fcst(fcst_rows)
+        skill_out, joint_out, _ = calculate_seasonal_skill_metrics(obs, fcst)
+        assert "EM" not in set(skill_out["model_short"])
+        assert "EM" not in set(joint_out["model_short"])
+        # Raw models and the remaining baselines are still emitted.
+        assert {"LR_Base", "LR_SM", "Naive Mean"} <= set(skill_out["model_short"])
+
 
 # ---------------------------------------------------------------------------
 # 8. Short-term path is byte-unchanged
@@ -644,16 +663,17 @@ class TestShortTermUnchanged:
 
     We verify that:
     1. Setting the long-term env vars has no effect on short-term output.
-    2. The short-term call at calculate_skill_metrics (create_ensemble_forecasts
-       path) does not receive min_pairs.
+    2. The short-term EM path (create_ensemble_forecasts) uses its own
+       short-term min_pairs (``_short_term_min_pairs()``, default 4) and
+       ignores the long-term env var.
     """
 
     def test_monthly_env_var_does_not_affect_short_term_filter(self, monkeypatch):
         """The long-term env var must not change short-term filter behaviour.
 
-        The short-term filter_for_highly_skilled_forecasts call at
-        skill_metrics.py:~1958 uses no min_pairs.  We verify this by comparing
-        the canonical filter output with and without the env var set.
+        The canonical filter called without min_pairs (as the backward-compat
+        wrapper does) never reads the long-term env var.  We verify this by
+        comparing the filter output with and without the env var set.
         """
         # Build a minimal skill_stats with n_pairs < K_MONTH but good metrics
         # so it would pass the default short-term gates.
@@ -681,7 +701,7 @@ class TestShortTermUnchanged:
         monkeypatch.setenv("ieasyhydroforecast_min_pairs_long_term", "99")
 
         # Build minimal forecasts and skill_stats for 2 pentads, 2 models,
-        # 3+ years so n_pairs >= 2 but < 99 (would be filtered if min_pairs=99).
+        # n_pairs=10 passes the short-term K=4 but would fail the long-term K=99.
         n_years = 3
         period_col = "pentad_in_year"
         pentad = 5
@@ -714,7 +734,8 @@ class TestShortTermUnchanged:
                     "sdivsigma": 0.4,
                     "accuracy": 0.9,
                     "mae": 5.0,
-                    "n_pairs": n_years,
+                    "delta": 5.0,
+                    "n_pairs": 10,
                 }
             )
 
@@ -745,7 +766,7 @@ class TestShortTermUnchanged:
 
 
 class TestMonthlyEMLeadAwareMembership:
-    """Monthly EM pool membership must be per (month_in_year, horizon_value, code, model_short)
+    """Monthly Skilled Mean pool membership (formerly EM; EM removed in PP-072 P3) must be per (month_in_year, horizon_value, code, model_short)
     when horizon_value is present on both the forecast and skill sides.
 
     Scenario: model LR_SM has n_pairs = K-1 at lead 0 and n_pairs = K at lead 1.
@@ -753,9 +774,10 @@ class TestMonthlyEMLeadAwareMembership:
     LR_Base has n_pairs = K at both leads (always eligible).
 
     Expected:
-    - lead 0 EM: LR_Base only (LR_SM excluded by min_pairs floor) → single-model
-      composition → EM is ABSENT (is_multi_model_composition guard).
-    - lead 1 EM: LR_Base + LR_SM (both eligible) → EM IS PRESENT.
+    - lead 0 SM: LR_Base only (LR_SM excluded by min_pairs floor) → single-model
+      composition → SM is ABSENT (is_multi_model_composition guard).
+    - lead 1 SM: LR_Base + LR_SM (both eligible) → SM IS PRESENT.
+    - No EM row at either lead.
 
     This locks per-lead EM membership under the min_pairs floor.
     Placeholder station code: ``19999``.
@@ -857,7 +879,8 @@ class TestMonthlyEMLeadAwareMembership:
 
         result = create_monthly_ensemble_forecasts(forecasts, skill)
 
-        em = result[result["model_short"] == "EM"]
+        assert "EM" not in set(result["model_short"])
+        em = result[result["model_short"] == "Skilled Mean"]
         em_lead0 = em[em["horizon_value"] == 0]
         em_lead1 = em[em["horizon_value"] == 1]
 

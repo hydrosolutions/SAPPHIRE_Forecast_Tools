@@ -206,7 +206,7 @@ class TestStaleTombstones:
 
     def test_composition_column_in_tombstone(self):
         """When emitted has a 'composition' column, tombstone rows carry composition=None."""
-        existing_row = _make_skill_row(month_in_year=3, model_short="ENSEMBLE_MEAN")
+        existing_row = _make_skill_row(month_in_year=3, model_short="LR_BASE")
         existing = _df([existing_row])
 
         # emitted has composition column but a different key
@@ -1295,3 +1295,126 @@ class TestFlagOffEmittedEmptyUnchanged:
         assert "horizon_value" not in result.columns
         assert len(result) == 1
         assert result.iloc[0]["n_pairs"] == 0
+
+
+# ---------------------------------------------------------------------------
+# PP-072 D4/D8: old long-term (month/season) EM skill rows are KEPT.
+#
+# Long-term EM is no longer produced for month/season, so its stored skill
+# rows would otherwise become stale and be tombstoned (n_pairs=0). The
+# tombstone builder exempts the canonical ENSEMBLE_MEAN key for month_in_year
+# and season_in_year ONLY; quarter keeps tombstoning EM (PP-065 P1c).
+# ---------------------------------------------------------------------------
+
+
+def _generic_row(period_col: str, period: int, model_short: str, horizon_value: int = 0) -> dict:
+    return {
+        "code": "19999",
+        period_col: period,
+        "horizon_value": horizon_value,
+        "model_short": model_short,
+        "n_pairs": 6,
+        "sdivsigma": 0.7,
+        "nse": 0.5,
+        "delta": 0.2,
+        "accuracy": 0.8,
+        "mae": 10.0,
+    }
+
+
+def _empty_emitted(period_col: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "code",
+            period_col,
+            "horizon_value",
+            "model_short",
+            "n_pairs",
+            "sdivsigma",
+            "nse",
+            "delta",
+            "accuracy",
+            "mae",
+        ]
+    )
+
+
+@pytest.fixture(params=["flag_off", "flag_on"])
+def lead_aware_flag(request, monkeypatch):
+    if request.param == "flag_on":
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "1")
+    else:
+        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
+    return request.param
+
+
+class TestLongTermEmSkillRowsKept:
+    @pytest.mark.parametrize("period_col", ["month_in_year", "season_in_year"])
+    def test_stored_em_not_tombstoned_other_stale_row_is(self, period_col, lead_aware_flag):
+        """Stored EM (both spellings, mixed case) is exempt; an LR row is still tombstoned."""
+        existing = _df(
+            [
+                _generic_row(period_col, 3, "EM", 0),
+                _generic_row(period_col, 3, "ENSEMBLE_MEAN", 1),
+                _generic_row(period_col, 3, "em", 2),
+                _generic_row(period_col, 3, "LR_BASE", 0),
+            ]
+        )
+        # Emitted has neither EM nor the LR row (a different, non-stale key).
+        emitted = _df([_generic_row(period_col, 4, "NAIVE_MEAN", 0)])
+
+        result = build_stale_tombstones(existing, emitted, period_col)
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "LR_BASE"
+        assert result.iloc[0]["n_pairs"] == 0
+        assert not result["model_short"].str.upper().isin({"EM", "ENSEMBLE_MEAN"}).any()
+
+    @pytest.mark.parametrize("period_col", ["month_in_year", "season_in_year"])
+    def test_emitted_empty_path_still_exempts_em(self, period_col, lead_aware_flag):
+        """With nothing emitted, every stored row is stale EXCEPT the EM rows."""
+        existing = _df(
+            [
+                _generic_row(period_col, 3, "EM", 0),
+                _generic_row(period_col, 3, "ENSEMBLE_MEAN", 1),
+                _generic_row(period_col, 3, "LR_BASE", 0),
+                _generic_row(period_col, 3, "LR_SM", 1),
+            ]
+        )
+        emitted = _empty_emitted(period_col)
+
+        result = build_stale_tombstones(existing, emitted, period_col)
+
+        assert sorted(result["model_short"]) == ["LR_BASE", "LR_SM"]
+        assert (result["n_pairs"] == 0).all()
+
+    @pytest.mark.parametrize("period_col", ["month_in_year", "season_in_year"])
+    def test_only_em_stored_yields_no_tombstones(self, period_col, lead_aware_flag):
+        existing = _df([_generic_row(period_col, 3, "EM", 0), _generic_row(period_col, 5, "EM", 0)])
+        for emitted in (_empty_emitted(period_col), _df([_generic_row(period_col, 4, "LR_BASE")])):
+            result = build_stale_tombstones(existing, emitted, period_col)
+            assert result.empty
+
+    def test_quarter_em_is_still_tombstoned(self, lead_aware_flag):
+        """Regression guard (PP-072 D8): quarter is NOT exempted."""
+        existing = _df(
+            [
+                _generic_row("quarter_in_year", 2, "EM", 0),
+                _generic_row("quarter_in_year", 2, "LR_BASE", 0),
+            ]
+        )
+        emitted = _empty_emitted("quarter_in_year")
+
+        result = build_stale_tombstones(existing, emitted, "quarter_in_year")
+
+        assert sorted(result["model_short"]) == ["EM", "LR_BASE"]
+        assert (result["n_pairs"] == 0).all()
+
+    def test_quarter_em_tombstoned_against_non_empty_emitted(self, lead_aware_flag):
+        existing = _df([_generic_row("quarter_in_year", 2, "EM", 0)])
+        emitted = _df([_generic_row("quarter_in_year", 3, "NAIVE_MEAN", 0)])
+
+        result = build_stale_tombstones(existing, emitted, "quarter_in_year")
+
+        assert len(result) == 1
+        assert result.iloc[0]["model_short"] == "EM"

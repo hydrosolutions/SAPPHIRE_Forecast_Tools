@@ -109,7 +109,7 @@ def pentad_skill_csv(env_setup):
                     "n_pairs": 10,
                 }
             )
-            # TFT: passes at 15001, fails at 15002
+            # TFT: passes at 15001, intentionally ineligible at 15002
             tft_skilled = station == "15001"
             rows.append(
                 {
@@ -117,21 +117,21 @@ def pentad_skill_csv(env_setup):
                     "code": station,
                     "model_short": "TFT",
                     "sdivsigma": 0.4 if tft_skilled else 0.7,
-                    "nse": 0.9 if tft_skilled else 0.7,
+                    "nse": 0.9 if tft_skilled else -0.1,
                     "delta": 5.0,
                     "accuracy": 0.88 if tft_skilled else 0.7,
                     "mae": 3.0 if tft_skilled else 6.0,
                     "n_pairs": 10,
                 }
             )
-            # TiDE fails at both stations
+            # TiDE intentionally ineligible at both stations
             rows.append(
                 {
                     "pentad_in_year": pentad,
                     "code": station,
                     "model_short": "TiDE",
                     "sdivsigma": 0.9,
-                    "nse": 0.5,
+                    "nse": -0.1,
                     "delta": 5.0,
                     "accuracy": 0.6,
                     "mae": 8.0,
@@ -389,7 +389,7 @@ class TestOperationalDataRouting:
                 "code": ["15001", "15001", "15001"],
                 "model_short": ["LR", "TFT", "TiDE"],
                 "sdivsigma": [0.9, 0.9, 0.9],
-                "nse": [0.5, 0.5, 0.5],
+                "nse": [-0.1, -0.1, -0.1],
                 "delta": [5.0, 5.0, 5.0],
                 "accuracy": [0.6, 0.6, 0.6],
                 "mae": [8.0, 8.0, 8.0],
@@ -719,7 +719,7 @@ class TestOperationalDataRouting:
                     "code": "15002",
                     "model_short": "TFT",
                     "sdivsigma": 0.9,
-                    "nse": 0.5,
+                    "nse": -0.1,
                     "delta": 5.0,
                     "accuracy": 0.6,
                     "mae": 8.0,
@@ -731,7 +731,7 @@ class TestOperationalDataRouting:
                     "code": "15003",
                     "model_short": "LR",
                     "sdivsigma": 0.9,
-                    "nse": 0.5,
+                    "nse": -0.1,
                     "delta": 5.0,
                     "accuracy": 0.6,
                     "mae": 8.0,
@@ -979,7 +979,7 @@ class TestDecadalOperationalPipeline:
                         "n_pairs": 10,
                     }
                 )
-                # TFT: passes at 15001, fails at 15002
+                # TFT: passes at 15001, intentionally ineligible at 15002
                 tft_skilled = station == "15001"
                 rows.append(
                     {
@@ -987,7 +987,7 @@ class TestDecadalOperationalPipeline:
                         "code": station,
                         "model_short": "TFT",
                         "sdivsigma": 0.4 if tft_skilled else 0.7,
-                        "nse": 0.9 if tft_skilled else 0.7,
+                        "nse": 0.9 if tft_skilled else -0.1,
                         "delta": 5.0,
                         "accuracy": 0.88 if tft_skilled else 0.7,
                         "mae": 3.0 if tft_skilled else 6.0,
@@ -1950,10 +1950,10 @@ class TestSingleModelEnsembleBug:
                 "pentad_in_year": [1, 1, 1],
                 "code": ["15001"] * 3,
                 "model_short": ["LR", "TFT", "TiDE"],
-                "sdivsigma": [0.9, 0.3, 0.3],  # LR fails
-                "nse": [0.5, 0.95, 0.95],  # LR fails
+                "sdivsigma": [0.9, 0.3, 0.3],  # LR intentionally ineligible
+                "nse": [-0.1, 0.95, 0.95],  # LR intentionally ineligible
                 "delta": [5.0, 5.0, 5.0],
-                "accuracy": [0.6, 0.95, 0.95],  # LR fails
+                "accuracy": [0.6, 0.95, 0.95],  # LR intentionally ineligible
                 "mae": [8.0, 2.0, 2.0],
                 "n_pairs": [10, 10, 10],
             }
@@ -2486,7 +2486,13 @@ class TestQuantileFields:
         assert tft_row["q05"] == 90.0
 
     def test_ensemble_rows_have_averaged_quantiles(self, env_setup):
-        """EM rows have averaged quantile columns (PP-019: vincentization)."""
+        """EM rows carry quantile columns sourced only from TFT (PP-019).
+
+        LR quantile bands are supplied but ignored by the ensemble calculator;
+        LR contributes its hydromet delta band (point -/+ delta=5) to q25/q75 only.
+        EM point mean = mean(LR=100, TFT=110) = 105;
+        EM q05=90 and q95=130 (TFT only), q25=mean(95, 100)=97.5, q75=mean(105, 120)=112.5.
+        """
         skill = pd.DataFrame(
             {
                 "pentad_in_year": [1, 1],
@@ -2519,11 +2525,9 @@ class TestQuantileFields:
         assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
         # EM discharge = mean(LR=100, TFT=110) = 105.0
         assert abs(em_rows.iloc[0]["forecasted_discharge"] - 105.0) < 0.01
-        # EM rows should have averaged quantile columns
-        # Both LR and TFT have quantiles here, so mean(80,90)=85, mean(120,130)=125
-        for qcol, expected in [("q05", 85.0), ("q95", 125.0)]:
-            if qcol in em_rows.columns:
-                assert abs(em_rows.iloc[0][qcol] - expected) < 0.01
+        # Supplied LR bands are ignored; q05/q95 from TFT only, q25/q75 include LR -/+ delta.
+        for qcol, expected in [("q05", 90.0), ("q25", 97.5), ("q75", 112.5), ("q95", 130.0)]:
+            assert abs(em_rows.iloc[0][qcol] - expected) < 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -2682,7 +2686,7 @@ class TestRecalculateWithRealisticData:
     ):
         """Station 15001 has both LR and TFT with good forecasts.
 
-        Skill metrics should pass thresholds and EM rows should appear.
+        Per-model skill is computed; EM rows are NOT derived here (PP-072 P2).
         """
         observed, simulated = realistic_data
 
@@ -2700,11 +2704,9 @@ class TestRecalculateWithRealisticData:
         # NSE should be high for good forecasts
         assert lr_15001_p1.iloc[0]["nse"] > 0.8
 
-        # EM rows should exist for 15001
-        em_rows = skill_stats[
-            (skill_stats["code"] == "15001") & (skill_stats["model_short"] == "EM")
-        ]
-        assert len(em_rows) >= 1, f"Station 15001 should have EM skill rows, got {len(em_rows)}"
+        # EM rows are no longer emitted by calculate_skill_metrics
+        em_rows = skill_stats[skill_stats["model_short"] == "EM"]
+        assert len(em_rows) == 0, f"calculate_skill_metrics must not emit EM, got {len(em_rows)}"
 
     def test_poorly_skilled_station_no_em(
         self,
@@ -2733,48 +2735,23 @@ class TestRecalculateWithRealisticData:
         ]
         assert len(em_15003) == 0, f"Station 15003 should have no EM rows, got {len(em_15003)}"
 
-    def test_joint_forecasts_contain_em_rows(
+    def test_joint_forecasts_contain_no_em_rows(
         self,
         recalc_env,
         realistic_data,
     ):
-        """Joint forecasts include original + EM rows for qualifying stations.
+        """Joint forecasts are exactly the input simulated rows (no EM added).
 
         Original: 3 stations x 2 pentads x 5 dates x 2 models = 60 rows.
-        Plus EM rows for station 15001 (10 dates x 1 EM).
         """
         observed, simulated = realistic_data
 
         skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(PENTAD, observed, simulated)
 
-        # Original rows preserved
-        original_count = len(simulated)
-        assert original_count == 60
-        non_em = joint[joint["model_short"] != "EM"]
-        assert len(non_em) == 60, f"Original 60 rows should be preserved, got {len(non_em)}"
-
-        # EM rows added for 15001
-        em_rows = joint[joint["model_short"] == "EM"]
-        assert len(em_rows) > 0, "EM rows should be in joint forecasts"
-
-        # EM discharge should be mean of LR and TFT
-        for _, em in em_rows.iterrows():
-            date = em["date"]
-            code = em["code"]
-            lr_val = simulated[
-                (simulated["date"] == date)
-                & (simulated["code"] == code)
-                & (simulated["model_short"] == "LR")
-            ]["forecasted_discharge"].iloc[0]
-            tft_val = simulated[
-                (simulated["date"] == date)
-                & (simulated["code"] == code)
-                & (simulated["model_short"] == "TFT")
-            ]["forecasted_discharge"].iloc[0]
-            expected_em = (lr_val + tft_val) / 2.0
-            assert abs(em["forecasted_discharge"] - expected_em) < 0.01, (
-                f"EM for {code} on {date}: expected {expected_em}, got {em['forecasted_discharge']}"
-            )
+        assert len(simulated) == 60
+        assert len(joint) == 60, f"Joint should equal the 60 input rows, got {len(joint)}"
+        assert set(joint["model_short"]) == {"LR", "TFT"}
+        assert "EM" not in set(joint["model_short"])
 
     def test_save_writes_csv_and_api(self, recalc_env, realistic_data):
         """Full pipeline: calculate → save skill metrics + forecasts to CSV.
@@ -2795,8 +2772,8 @@ class TestRecalculateWithRealisticData:
         assert os.path.exists(skill_csv), "Skill metrics CSV not created"
         saved_skill = pd.read_csv(skill_csv)
 
-        # Should have all base groups + EM groups
-        assert len(saved_skill) >= 12, f"Skill CSV should have >= 12 rows, got {len(saved_skill)}"
+        # Per-model groups only (no EM)
+        assert len(saved_skill) == 12, f"Skill CSV should have 12 rows, got {len(saved_skill)}"
         # Sorted by pentad_in_year, code, model_short
         assert saved_skill.iloc[0]["pentad_in_year"] <= saved_skill.iloc[-1]["pentad_in_year"]
 
@@ -2828,10 +2805,9 @@ class TestRecalculateWithRealisticData:
         forecast_csv = os.path.join(str(tmp_path), "combined_pentad.csv")
         assert os.path.exists(forecast_csv), "Forecast CSV not created"
         saved_fc = pd.read_csv(forecast_csv)
-        # Should have original + EM rows
-        assert len(saved_fc) >= 60, f"Forecast CSV should have >= 60 rows, got {len(saved_fc)}"
-        # EM rows present in CSV
-        assert "EM" in saved_fc["model_short"].values, "EM rows should be in saved forecast CSV"
+        # Original rows only (no EM)
+        assert len(saved_fc) == 60, f"Forecast CSV should have 60 rows, got {len(saved_fc)}"
+        assert "EM" not in saved_fc["model_short"].values, "EM must not be in saved forecast CSV"
 
 
 # ---------------------------------------------------------------------------
@@ -3047,6 +3023,11 @@ class TestRecalculateSkillMetricsIntegration:
     def test_pentad_mode_calls_correct_functions(self, env_setup):
         """PENTAD mode calls load_environment, read, calculate, save."""
         with (
+            patch(
+                "src.data_reader.read_individual_model_forecasts",
+                return_value=(pd.DataFrame(), pd.DataFrame()),
+            ),
+            patch("src.data_reader._read_skill_metrics_api", return_value=pd.DataFrame()),
             patch("setup_library.load_environment") as mock_load,
             patch(
                 "postprocessing_forecasts.recalculate_skill_metrics._read_station_codes",
@@ -3124,6 +3105,11 @@ class TestRecalculateSkillMetricsIntegration:
     def test_save_error_exits_with_error_code(self, env_setup):
         """save returning error string -> exit(1)."""
         with (
+            patch(
+                "src.data_reader.read_individual_model_forecasts",
+                return_value=(pd.DataFrame(), pd.DataFrame()),
+            ),
+            patch("src.data_reader._read_skill_metrics_api", return_value=pd.DataFrame()),
             patch("setup_library.load_environment"),
             patch(
                 "postprocessing_forecasts.recalculate_skill_metrics._read_station_codes",
@@ -3399,8 +3385,9 @@ class TestMultiEntityEnsembleSkillStats:
     def test_multi_station_multi_pentad_em_skill_rows(self, env_setup):
         """Station A qualifies for EM in pentad 1+2; station B does not.
 
-        skill_out should have exactly 2 EM rows (A pentad 1, A pentad 2).
-        Station B's skill rows should be unchanged (no EM added).
+        skill_out is the input skill stats passed through unchanged (PP-009).
+        Station A produces 4 EM forecast rows (2 pentads × 2 dates);
+        station B produces none (single qualifying model).
         """
         dates_p1 = pd.to_datetime(["2026-01-01", "2026-01-03"])
         dates_p2 = pd.to_datetime(["2026-01-06", "2026-01-08"])
@@ -3423,7 +3410,7 @@ class TestMultiEntityEnsembleSkillStats:
                         "n_pairs": 5,
                     }
                 )
-                # TFT: passes for 15001, fails for 15002
+                # TFT: passes for 15001, intentionally ineligible for 15002
                 tft_ok = station == "15001"
                 skill_rows.append(
                     {
@@ -3431,7 +3418,7 @@ class TestMultiEntityEnsembleSkillStats:
                         "code": station,
                         "model_short": "TFT",
                         "sdivsigma": 0.4 if tft_ok else 0.9,
-                        "nse": 0.9 if tft_ok else 0.5,
+                        "nse": 0.9 if tft_ok else -0.1,
                         "delta": 5.0,
                         "accuracy": 0.88 if tft_ok else 0.6,
                         "mae": 3.0 if tft_ok else 8.0,
@@ -3969,20 +3956,18 @@ class TestDecadalRecalculateWithRealisticData:
 
         assert (base_groups["n_pairs"] == 5).all(), "Each group should have 5 data points"
 
-    def test_decad_em_created_for_good_station(
+    def test_decad_no_em_created_for_good_station(
         self,
         decad_recalc_env,
         decad_realistic_data,
     ):
-        """Station 15001 gets EM rows (both LR and TFT close to observed)."""
+        """Station 15001 gets no EM rows even with good LR and TFT (PP-072 P2)."""
         observed, simulated = decad_realistic_data
 
         skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
-        em_rows = skill_stats[
-            (skill_stats["code"] == "15001") & (skill_stats["model_short"] == "EM")
-        ]
-        assert len(em_rows) >= 1, f"Station 15001 should have EM skill rows, got {len(em_rows)}"
+        em_rows = skill_stats[skill_stats["model_short"] == "EM"]
+        assert len(em_rows) == 0, f"calculate_skill_metrics must not emit EM, got {len(em_rows)}"
 
     def test_decad_no_em_for_bad_station(
         self,
@@ -3999,36 +3984,18 @@ class TestDecadalRecalculateWithRealisticData:
         ]
         assert len(em_15003) == 0, f"Station 15003 should have no EM rows, got {len(em_15003)}"
 
-    def test_decad_joint_forecasts_em_discharge(
+    def test_decad_joint_forecasts_no_em(
         self,
         decad_recalc_env,
         decad_realistic_data,
     ):
-        """EM discharge in joint forecasts = mean(LR, TFT)."""
+        """Joint forecasts are exactly the input simulated rows (no EM added)."""
         observed, simulated = decad_realistic_data
 
         skill_stats, joint, _ = skill_metrics.calculate_skill_metrics(DECAD, observed, simulated)
 
-        em_rows = joint[joint["model_short"] == "EM"]
-        assert len(em_rows) > 0, "EM rows should be in joint forecasts"
-
-        for _, em in em_rows.iterrows():
-            date = em["date"]
-            code = em["code"]
-            lr_val = simulated[
-                (simulated["date"] == date)
-                & (simulated["code"] == code)
-                & (simulated["model_short"] == "LR")
-            ]["forecasted_discharge"].iloc[0]
-            tft_val = simulated[
-                (simulated["date"] == date)
-                & (simulated["code"] == code)
-                & (simulated["model_short"] == "TFT")
-            ]["forecasted_discharge"].iloc[0]
-            expected_em = (lr_val + tft_val) / 2.0
-            assert abs(em["forecasted_discharge"] - expected_em) < 0.01, (
-                f"EM for {code} on {date}: expected {expected_em}, got {em['forecasted_discharge']}"
-            )
+        assert len(joint) == len(simulated)
+        assert "EM" not in set(joint["model_short"])
 
     def test_decad_save_writes_csv(
         self,
@@ -4048,6 +4015,7 @@ class TestDecadalRecalculateWithRealisticData:
         skill_csv = os.path.join(str(tmp_path), "skill_decad.csv")
         assert os.path.exists(skill_csv), "Skill metrics CSV not created"
         saved_skill = pd.read_csv(skill_csv)
+        assert "EM" not in saved_skill["model_short"].values
         assert len(saved_skill) >= 12, f"Skill CSV should have >= 12 rows, got {len(saved_skill)}"
 
         # Save combined forecasts
@@ -4062,7 +4030,7 @@ class TestDecadalRecalculateWithRealisticData:
         forecast_csv = os.path.join(str(tmp_path), "combined_decad.csv")
         assert os.path.exists(forecast_csv), "Forecast CSV not created"
         saved_fc = pd.read_csv(forecast_csv)
-        assert "EM" in saved_fc["model_short"].values, "EM rows should be in saved forecast CSV"
+        assert "EM" not in saved_fc["model_short"].values, "EM must not be in saved forecast CSV"
 
 
 # ---------------------------------------------------------------------------
@@ -4108,6 +4076,7 @@ class TestPeriodAwareEnsemble:
                 "model_short": ["LR", "TFT", "LR", "TFT"],
                 "sdivsigma": [0.3, 0.4, 0.3, 0.4],
                 "nse": [0.95, 0.9, 0.95, 0.9],
+                "delta": [5.0, 5.0, 5.0, 5.0],
                 "accuracy": [0.95, 0.88, 0.95, 0.88],
                 "mae": [2.0, 3.0, 2.0, 3.0],
                 "n_pairs": [10, 10, 10, 10],
@@ -4162,6 +4131,7 @@ class TestPeriodAwareEnsemble:
                 "model_short": ["LR", "TFT"],
                 "sdivsigma": [0.3, 0.4],
                 "nse": [0.95, 0.9],
+                "delta": [5.0, 5.0],
                 "accuracy": [0.95, 0.88],
                 "mae": [2.0, 3.0],
                 "n_pairs": [10, 10],

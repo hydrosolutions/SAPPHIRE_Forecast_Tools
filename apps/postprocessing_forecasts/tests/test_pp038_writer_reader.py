@@ -79,9 +79,7 @@ class TestWriterHorizonValue:
 
         call_args = mock_client.write_skill_metrics.call_args[0][0]
 
-        assert len(call_args) == 2, (
-            f"Expected 2 records (one per lead), got {len(call_args)}"
-        )
+        assert len(call_args) == 2, f"Expected 2 records (one per lead), got {len(call_args)}"
         leads = {r["horizon_value"] for r in call_args}
         assert leads == {0, 1}, f"Expected leads {{0, 1}}, got {leads}"
 
@@ -242,7 +240,7 @@ class TestWriterHorizonValue:
                 "code": [STATION, STATION],
                 "month_in_year": [4, 4],
                 "model_short": ["Naive Mean", "Naive Mean"],
-                "horizon_value": [0, 0],   # same lead → upsert_key collision
+                "horizon_value": [0, 0],  # same lead → upsert_key collision
                 "composition": [None, "GBT, LR"],
                 "sdivsigma": [0.5, 0.5],
                 "nse": [0.8, 0.8],

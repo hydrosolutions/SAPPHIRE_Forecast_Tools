@@ -778,6 +778,7 @@ class TestMaintenanceIntegration:
 # ===================================================================
 # TestRecalcIntegration
 # ===================================================================
+@pytest.mark.usefixtures("em_recalc_api_boundaries")
 class TestRecalcIntegration:
     """Recalculate skill metrics entry point with real file I/O."""
 
@@ -867,13 +868,8 @@ class TestRecalcIntegration:
         assert os.path.exists(os.path.join(data_dir, "combined_forecasts_decad.csv"))
         assert os.path.exists(os.path.join(data_dir, "skill_metrics_decad.csv"))
 
-    def test_em_excluded_in_recalc_output(self, integration_env):
-        """PP-030: recalculation skips EM derivation (exclude_models=["EM"]).
-
-        No EM rows should appear in the recalculation output because the
-        recalculation path now passes exclude_models=["EM"] to avoid
-        boundary-pentad date misalignment producing bad EM records.
-        """
+    def test_recalc_em_history_published_to_api(self, integration_env, em_recalc_api_boundaries):
+        """Recalculation publishes EM history to the API, separately from peers."""
         tmp_path, data_dir = integration_env
 
         with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
@@ -892,7 +888,21 @@ class TestRecalcIntegration:
 
         output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
         em = output[output["model_short"] == "EM"]
-        assert em.empty, "Recalculation should not produce EM rows (PP-030)"
+        assert em.empty, "The peer CSV output must not duplicate the API-only EM history"
+        published = pd.concat(
+            [
+                frame
+                for horizon, frame in em_recalc_api_boundaries
+                if horizon == "pentad" and set(frame["model_short"]) == {"EM"}
+            ]
+        )
+        assert set(published["model_short"]) == {"EM"}
+        assert published["date"].dt.year.nunique() == 5
+        assert not published.duplicated(["code", "date", "pentad_in_year"]).any()
+        metrics = _read_output_csv(data_dir, "skill_metrics_pentad.csv")
+        em_metrics = metrics[metrics["model_short"] == "EM"]
+        assert not em_metrics.empty
+        assert (em_metrics["n_pairs"] == 5).all()
 
     def test_cross_workflow_recalc_then_operational(self, integration_env):
         """Run recalc -> writes skill CSV -> run operational -> creates EM.
@@ -1017,6 +1027,7 @@ class TestEdgeCases:
             composition = str(row.get("composition", ""))
             assert "NE" not in composition, f"NE should not be in EM composition: {composition}"
 
+    @pytest.mark.usefixtures("em_recalc_api_boundaries")
     def test_zero_discharge_values_processed_correctly(self, integration_env):
         """Zero discharge values don't cause division errors."""
         tmp_path, data_dir = integration_env
@@ -1055,10 +1066,10 @@ class TestEdgeCases:
         # Rewrite skill CSV: only LR passes, TFT + TiDE fail
         skill_path = os.path.join(data_dir, "skill_metrics_pentad.csv")
         skill = pd.read_csv(skill_path)
-        # Set TFT and TiDE to failing metrics
+        # Set TFT and TiDE to intentionally ineligible metrics
         mask_fail = skill["model_short"].isin(["TFT", "TiDE"])
         skill.loc[mask_fail, "sdivsigma"] = 0.9  # > 0.6 → fail
-        skill.loc[mask_fail, "nse"] = 0.3  # < 0.8 → fail
+        skill.loc[mask_fail, "nse"] = -0.1  # negative → fail under finiteNSE>=0 gate
         skill.loc[mask_fail, "accuracy"] = 0.3  # < 0.8 → fail
         skill.to_csv(skill_path, index=False)
 
@@ -1133,6 +1144,7 @@ class TestEdgeCases:
         em_99001 = em[(em["code"].astype(str) == "99001") & (em["date"] == "2026-01-05")]
         assert len(em_99001) >= 1, "99001 gap at 2026-01-05 should be filled"
 
+    @pytest.mark.usefixtures("em_recalc_api_boundaries")
     def test_nan_discharge_in_modelled_excluded_from_ensemble(self, integration_env):
         """NaN discharge in one model is handled gracefully.
 

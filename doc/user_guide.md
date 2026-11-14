@@ -35,6 +35,7 @@ The structure of this document is as follows:
       - [Predictor tab](#predictor-tab)
       - [Forecast tab](#forecast-tab)
       - [Bulletin tab](#bulletin-tab)
+      - [Ensemble Mean (EM) forecasts](#ensemble-mean-em-forecasts)
   - [Forecast horizons](#forecast-horizons)
 
 
@@ -212,6 +213,73 @@ a) The forecast range is calculated based on 0.674 times the standard deviation 
 b) The forecast range is plus/minus a manually selected percentage of the forecasted discharge.
 
 #### Bulletin tab
+
+#### Ensemble Mean (EM) forecasts
+
+The **Ensemble Mean (EM)** is an automatically computed aggregate of individual
+model forecasts for a given station and period. When EM rows are available for a
+station they appear alongside individual model forecasts (LR, TFT, TiDE,
+TSMixer) in the forecast view.
+
+**Eligibility (short-term — pentad/decad):** A model is included in the EM if
+its NSE for that station and period-of-year is above 0 and it is based on at
+least 4 forecast–observation pairs. Both limits can be changed by the
+administrator (`ieasyhydroforecast_nse_threshold_short_term`, which falls back to the existing
+`ieasyhydroforecast_nse_threshold` if unset, and `ieasyhydroforecast_min_pairs_short_term`). NE (Neural Ensemble) is never an EM
+candidate. A non-LR model that is missing any of its four bands (q05, q25, q75,
+q95) is left out of the EM entirely.
+
+**Point vs. bands:**
+- The EM **point forecast** is the equal-weight mean of all qualifying models'
+  central discharge values, including LR.
+- LR has no native uncertainty bands. It contributes q25 = point − delta and
+  q75 = point + delta, where delta is the station's hydromet tolerance for that
+  period, read from LR's own skill record. If delta is not available, LR is
+  left out of the EM completely.
+  This is a tolerance band, not a prediction interval.
+- The EM **q25/q75** are the equal-weight mean over LR and the non-LR models;
+  the EM **q05/q95** are the mean over the non-LR models only.
+  If no non-LR model qualifies, no EM row is produced for that station/period.
+- The EM point can therefore lie outside its own bands — no clamping is applied.
+
+**Minimum composition:** At least 2 distinct models must qualify. If only one
+model qualifies for a station and period, no EM is shown for that station.
+
+**Caveats:** The skill values used to select members are computed on the same
+history the forecasts were made from (in-sample), so they are optimistic. NSE > 0
+only means "better than the climatological mean", which is a weak filter at
+pentad/decad lead; administrators can tighten it (e.g. 0.8) with the NSE
+variable above.
+
+**EM skill update (PP-075; module tests and review passed, full test gate unmet,
+deployment pending):** Historical EM forecasts are generated from stored member forecasts for the same station,
+horizon, target period and boundary issue date. Skill is calculated across the
+resulting EM series even when its members change; a combined member label lists
+members seen in that history, not a fixed composition. At least **four distinct
+years** with matched EM forecasts and observations are required. An undefined
+metric remains unavailable, and an insufficient-history result replaces the old
+EM skill value for the affected reporting key. This does not remove old
+long-term EM records.
+
+These skills are in-sample: the history used to choose members is also used to
+score EM. Scoring years refer to the forecast target year: the first period
+of January includes its issue on 31 December of the preceding year.
+Historical inputs mix hindcasts and operational forecasts, so these
+scores should not be read as independent out-of-sample validation. The reported
+hydromet delta is the same for all models at a station and period, selected
+from the latest applicable LR/observation delta. Historical accuracy continues
+to use the tolerance belonging to each historical date. The dashboard's range
+selector changes are a separate, deferred update.
+
+**Example** (synthetic): LR forecasts 10 with delta 2 (q25 = 8, q75 = 12); TFT
+forecasts 20 with q05/q25/q75/q95 = 10/15/25/30. The EM point is 15, q05 = 10,
+q25 = 11.5, q75 = 18.5, q95 = 30.
+
+**Long-term horizons have no EM.** Monthly, quarterly and seasonal forecasts
+produce Naive Mean and Skilled Mean only (monthly and seasonal EM were removed in
+PP-072; quarterly EM was already removed in PP-065 P1c). Previously stored monthly/seasonal EM rows
+remain in the database, so the dashboard may keep showing the last stored EM
+until it is superseded; operators should not read it as a current forecast.
 
 
 

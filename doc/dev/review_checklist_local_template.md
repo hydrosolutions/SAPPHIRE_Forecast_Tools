@@ -1799,10 +1799,13 @@ ensemble row means the ensemble step skipped that lead.
 - Ensemble rows at `horizon_value` = calendar month (e.g. 7 in July) — the
   stale-aggregate sentinel bug (`hv` should be a **lead**, never a month).
 
-### 9.6.5 Quarter/season EM parity — EM = mean(LR_Base, LR_SM)
+### 9.6.5 Quarter/season EM parity — OBSOLETE since PP-072 P3
 
-For quarter and season, `EM` is defined as the plain mean of `LR_Base` and
-`LR_SM` (de-skill-gated, two-model). This is a closed-form check.
+**Obsolete.** Long-term EM is no longer produced (quarter EM was removed in
+PP-065 P1c; monthly/season EM in PP-072 P3). Skip this section and its result
+rows. Old `ENSEMBLE_MEAN` rows may remain in the DB and must not be counted as
+pass or fail. The historical definition was `EM` = plain mean of `LR_Base` and
+`LR_SM`; the check below is kept for reference only.
 
 - [ ] $S1 — quarter and season EM parity:
   ```bash
@@ -2089,11 +2092,11 @@ not just PASS/FAIL where a threshold applies.
 | Truncation check (result count ≠ limit) | | | TRUE for every query | |
 | Min-n floor violations (9.6.2) | | | 0 | |
 | Malformed tombstones (9.6.3) | | | 0 | |
-| LT EM present, all 3 horizons (9.6.4) | | | ≥ 1 row each | |
+| LT EM present, all 3 horizons (9.6.4) | | | N/A — obsolete since PP-072 P3 | |
 | LT Naive Mean present (9.6.4) | | | ≥ 1 row each | |
 | LT Skilled Mean present (9.6.4) | | | ≥ 1 row each | |
-| Quarter EM = mean(LR_Base,LR_SM) (9.6.5) | | | comparable > 0, 0 mismatch | |
-| Season EM = mean(LR_Base,LR_SM) (9.6.5) | | | comparable > 0, 0 mismatch | |
+| Quarter EM = mean(LR_Base,LR_SM) (9.6.5) | | | N/A — obsolete since PP-072 P3 | |
+| Season EM = mean(LR_Base,LR_SM) (9.6.5) | | | N/A — obsolete since PP-072 P3 | |
 | Short-term EM/NE vs per-model (9.6.6) | | | counts track | |
 
 ---
@@ -2124,6 +2127,6 @@ not just PASS/FAIL where a threshold applies.
 | `Skilled Mean` missing while `EM` present | Skilled pool starved — no model cleared the long-term NSE>0 gate | Confirm in 9.6.1 that some model has a long-term row with `nse > 0` |
 | Long-term row with tiny `n_pairs` and a wild NSE | Min-n floor not applied on this path | Check the `ieasyhydroforecast_min_pairs_long_term*` values in effect (defaults 4/5/5) |
 | Tombstone (`n_pairs=0`) carrying metrics | Tombstone written malformed | Real defect — capture the row and file it |
-| EM parity `comparable=0` at quarter/season | EM and LR_Base/LR_SM share no key — usually a `horizon_value` mismatch | Compare `horizon_value` on the EM row vs its inputs before assuming EM is wrong |
+| EM parity `comparable=0` at quarter/season (obsolete since PP-072 P3: no new long-term EM) | EM and LR_Base/LR_SM share no key — usually a `horizon_value` mismatch | Compare `horizon_value` on the EM row vs its inputs before assuming EM is wrong |
 | Per-model period rows **absent** on a boundary date | Missed boundary-day postprocessing, or inputs never produced | Establish coverage first, then `doc/prod/backfill_period_forecasts_runbook.md` (PP-045). No coverage ⇒ upstream `machine_learning` fix |
 | Per-model period rows present but EM/NE absent | **Not the PP-045 signature.** EM requires ≥2 models past the skill gate and is skipped when skill metrics are empty; NE needs ML members | Check skill-metric availability for the horizon before suspecting a stranded period |

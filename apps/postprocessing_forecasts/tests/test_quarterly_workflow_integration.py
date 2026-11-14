@@ -302,7 +302,7 @@ class TestQuarterlyOperationalWorkflow:
 
         result_models = set(result["model_short"].unique())
         # Quarter never forms EM (PP-065 P1c decision 3) — season's
-        # equivalent below (TestSeasonalOperationalWorkflow) is unaffected.
+        # equivalent below (TestSeasonalOperationalWorkflow) also has none (PP-072 P3).
         assert "EM" not in result_models
         assert "Naive Mean" in result_models
 
@@ -347,5 +347,7 @@ class TestSeasonalOperationalWorkflow:
         assert not result.empty
 
         result_models = set(result["model_short"].unique())
-        assert "EM" in result_models
+        # Season no longer forms EM either (PP-072 P3).
+        assert "EM" not in result_models
         assert "Naive Mean" in result_models
+        assert "Skilled Mean" in result_models

@@ -366,16 +366,19 @@ class TestSeasonalLeadAwarePointMetricsAndCRPS:
 
 
 class TestSeasonalLeadAwareEnsembles:
-    def test_em_two_leads_two_rows(self, lead_aware_on):
+    def test_no_em_and_naive_mean_two_leads_two_rows(self, lead_aware_on):
         obs = _seasonal_obs()
         fcst = _two_lead_seasonal_fcst()
         skill_stats, joint, _ = calculate_seasonal_skill_metrics(obs, fcst)
 
-        em_skill = skill_stats[skill_stats["model_short"] == "EM"]
-        em_joint = joint[joint["model_short"] == "EM"]
-        assert set(em_skill["horizon_value"]) == {2, 3}
-        assert set(em_joint["horizon_value"]) == {2, 3}
-        assert len(em_joint) == 10
+        # Season no longer forms EM (PP-072 P3).
+        assert skill_stats[skill_stats["model_short"] == "EM"].empty
+        assert joint[joint["model_short"] == "EM"].empty
+        nm_skill = skill_stats[skill_stats["model_short"] == "Naive Mean"]
+        nm_joint = joint[joint["model_short"] == "Naive Mean"]
+        assert set(nm_skill["horizon_value"]) == {2, 3}
+        assert set(nm_joint["horizon_value"]) == {2, 3}
+        assert len(nm_joint) == 10
 
     def test_naive_mean_two_leads(self, lead_aware_on):
         obs = _seasonal_obs()
@@ -426,7 +429,8 @@ class TestSeasonalLeadAwareEnsembles:
         skill_stats, _, _ = calculate_seasonal_skill_metrics(obs, fcst)
 
         result = create_seasonal_ensemble_forecasts(fcst, skill_stats)
-        for model_short in ("EM", "Naive Mean", "Skilled Mean"):
+        assert result[result["model_short"] == "EM"].empty
+        for model_short in ("Naive Mean", "Skilled Mean"):
             rows = result[result["model_short"] == model_short]
             assert set(rows["horizon_value"]) == {2, 3}, model_short
 
@@ -573,7 +577,8 @@ class TestSeasonalNullLeadSkill:
         base_rows = skill_stats[skill_stats["model_short"] == "LR_BASE"]
         assert set(base_rows["horizon_value"]) == {2}
         assert set(base_rows["n_pairs"]) == {5}
-        for ms in ("EM", "Naive Mean", "Skilled Mean"):
+        assert skill_stats[skill_stats["model_short"] == "EM"].empty
+        for ms in ("Naive Mean", "Skilled Mean"):
             assert set(skill_stats[skill_stats["model_short"] == ms]["horizon_value"]) == {2}
         assert any(_WARN_FRAGMENT in r.message for r in caplog.records)
 
@@ -644,7 +649,8 @@ class TestSeasonalNullLeadEnsembleCreator:
         with caplog.at_level(logging.WARNING):
             result = create_seasonal_ensemble_forecasts(mixed_fcst, skill_stats)
 
-        for ms in ("EM", "Naive Mean", "Skilled Mean"):
+        assert result[result["model_short"] == "EM"].empty
+        for ms in ("Naive Mean", "Skilled Mean"):
             rows = result[result["model_short"] == ms]
             assert set(rows["horizon_value"]) == {2}, ms
         raw = result[result["model_short"].isin({"LR_BASE", "LR_SM"})]
@@ -796,7 +802,8 @@ class TestSeasonalOneSidedLegacySkill:
         with caplog.at_level(logging.WARNING):
             result = create_seasonal_ensemble_forecasts(fcst, skill)
 
-        for ms in ("EM", "Naive Mean", "Skilled Mean"):
+        assert result[result["model_short"] == "EM"].empty
+        for ms in ("Naive Mean", "Skilled Mean"):
             rows = result[result["model_short"] == ms]
             assert set(rows["horizon_value"].dropna()) == {2}, ms
         assert _BAD not in set(result["horizon_value"].astype("object"))

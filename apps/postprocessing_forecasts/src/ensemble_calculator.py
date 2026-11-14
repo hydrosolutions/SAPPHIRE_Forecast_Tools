@@ -10,7 +10,7 @@ import logging
 import numpy as np
 import pandas as pd
 from skill_lead_aware_flag import skill_lead_aware_enabled
-from src.model_names import AGGREGATED_EM_RAW_MODELS, canonical_model_short_series
+from src.model_names import canonical_model_short_series
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
@@ -39,21 +39,6 @@ def is_multi_model_composition(composition: str) -> bool:
     False
     """
     return bool(composition) and "," in composition
-
-
-def _skip_em_for_quarter(period_col: str) -> bool:
-    """True when the EM block must be skipped entirely for *period_col*.
-
-    Quarter (``period_col == "quarter_in_year"``) never produces or persists
-    an Ensemble Mean (EM) row (PP-065 P1c decision 3), in either the
-    operational ensemble-creation path (this module's
-    ``_create_aggregated_ensemble_forecasts``) or the recalc skill-metrics
-    path (``src.skill_metrics._calculate_aggregated_skill_metrics``). Season
-    keeps today's EM behaviour, byte-identical — this guard is imported and
-    called identically by both modules so the quarter-only removal cannot
-    drift between the two paths.
-    """
-    return period_col == "quarter_in_year"
 
 
 def _quarter_null_if_any_missing(series: pd.Series) -> float:
@@ -149,8 +134,25 @@ def create_ensemble_forecasts(
         joint_forecasts: forecasts with ensemble rows appended.
         skill_stats: passed through unchanged.
     """
-    # Step 1: filter for highly skilled models
-    skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
+    # Step 1: filter — short-term EM gate (PP-072 D6): NSE > 0 and n_pairs >= K by
+    # default, configurable via the *_short_term env vars; sdivsigma/accuracy off
+    # by default.  Non-finite NSE (NaN or Inf) is excluded: Inf would otherwise pass.
+    from src.skill_metrics import (
+        _short_term_min_pairs,
+        _short_term_threshold_overrides,
+    )
+    from src.skill_metrics import filter_for_highly_skilled_forecasts as _canonical_filter
+
+    if "nse" in skill_stats.columns:
+        _nse_num = pd.to_numeric(skill_stats["nse"], errors="coerce")
+        _skill_nse_ok = skill_stats[np.isfinite(_nse_num.values.astype(float))].copy()
+    else:
+        _skill_nse_ok = skill_stats
+    skill_stats_ensemble = _canonical_filter(
+        _skill_nse_ok,
+        **_short_term_threshold_overrides(),
+        min_pairs=_short_term_min_pairs(),
+    )
     logger.debug("Highly skilled models: %d rows", len(skill_stats_ensemble))
 
     # Normalize merge key types to avoid object/int64 mismatches.
@@ -183,8 +185,11 @@ def create_ensemble_forecasts(
             ", ".join(sorted(_gate_a_skipped)),
         )
 
-    # Step 3: exclude NE (neural ensemble) from ensemble candidates
-    qualifying = qualifying[qualifying["model_short"] != "NE"].copy()
+    # Step 3: exclude NE and canonical EM from candidates (never constituent feedback)
+    _canonical_shorts = canonical_model_short_series(qualifying["model_short"])
+    qualifying = qualifying[
+        (qualifying["model_short"] != "NE") & (_canonical_shorts != "ENSEMBLE_MEAN")
+    ].copy()
 
     # --- PP-027: Gate B diagnostic — codes lost to NE-only models ---
     _post_ne_codes = set(qualifying["code"].unique()) if not qualifying.empty else set()
@@ -202,11 +207,14 @@ def create_ensemble_forecasts(
 
     # Step 4: group by [period, date, code], compute mean forecasted_discharge
     # Also average quantile columns when present (vincentization —
-    # same pattern as monthly ensembles at line 276-278).
+    # same pattern as the long-term Skilled/Naive Mean aggregation).
     from src.skill_metrics import _QUANTILE_COLS
 
-    # ALL 4 quantile columns must be present and finite for every contributor (MR-H).
-    # Missing any q-col entirely => no eligible contributors => no EM.
+    # ALL 4 quantile columns must be present as columns (MR-H).
+    # LR has no native quantiles: its bands are the hydromet tolerance band
+    # q50 = point, q25/q75 = point -/+ delta (q05/q10/q90/q95 stay NaN, so
+    # q05/q95 come from non-LR members only).  Non-LR contributors must have
+    # all four q-bands finite to qualify.
     _all_em_qcols = ["q05", "q25", "q75", "q95"]
     _em_missing_qcols = [q for q in _all_em_qcols if q not in qualifying.columns]
     if _em_missing_qcols:
@@ -215,9 +223,85 @@ def create_ensemble_forecasts(
             _em_missing_qcols,
         )
         return forecasts.copy(), skill_stats.copy()
-    qualifying = qualifying.dropna(subset=_all_em_qcols)
-    _em_q_finite = np.isfinite(qualifying[_all_em_qcols].values.astype(float)).all(axis=1)
-    qualifying = qualifying[_em_q_finite].copy()
+
+    # PP-072: delta is taken from the LR skill row only (see PP-074 for the
+    # per-model delta inconsistency).  Per (period_col, code) use the finite,
+    # non-negative LR delta with the latest skill `date` (first such value if
+    # skill_stats has no `date` column), independent of which models passed
+    # the gate.
+    qualifying = qualifying.copy()
+    _lr_mask = qualifying["model_short"] == "LR"
+    if _lr_mask.any():
+        if "delta" in skill_stats.columns:
+            _src_cols = [period_col, "code", "delta"]
+            _has_date = "date" in skill_stats.columns
+            if _has_date:
+                _src_cols.append("date")
+            _delta_src = skill_stats.loc[skill_stats["model_short"] == "LR", _src_cols].copy()
+            _delta_src[period_col] = pd.to_numeric(_delta_src[period_col], errors="coerce")
+            _delta_src["code"] = _delta_src["code"].astype(str)
+            _delta_src["delta"] = pd.to_numeric(_delta_src["delta"], errors="coerce")
+            _delta_src = _delta_src[np.isfinite(_delta_src["delta"]) & (_delta_src["delta"] >= 0)]
+            if _has_date:
+                _delta_src["date"] = pd.to_datetime(_delta_src["date"], errors="coerce")
+                _delta_src = _delta_src.sort_values("date", kind="stable", na_position="first")
+                _delta_map = _delta_src.drop_duplicates([period_col, "code"], keep="last")
+            else:
+                _delta_map = _delta_src.drop_duplicates([period_col, "code"])
+            _delta_map = _delta_map[[period_col, "code", "delta"]]
+        else:
+            _delta_map = pd.DataFrame(columns=[period_col, "code", "delta"])
+        qualifying = qualifying.merge(
+            _delta_map.rename(columns={"delta": "_lr_delta"}),
+            on=[period_col, "code"],
+            how="left",
+        )
+        _lr_mask = qualifying["model_short"] == "LR"
+        _lr_no_delta = qualifying.loc[
+            _lr_mask & qualifying["_lr_delta"].isna(), [period_col, "code"]
+        ]
+        if len(_lr_no_delta):
+            _lr_pairs = sorted(
+                {
+                    (p, c)
+                    for p, c in zip(_lr_no_delta[period_col], _lr_no_delta["code"], strict=True)
+                },
+                key=str,
+            )
+            logger.info(
+                "EM: LR dropped for %d (code, %s) group(s) without a usable delta: %s%s",
+                len(_lr_pairs),
+                period_col,
+                [(c, p) for p, c in _lr_pairs[:10]],
+                " ..." if len(_lr_pairs) > 10 else "",
+            )
+        # LR rows without a usable delta are dropped entirely (point and bands).
+        qualifying = qualifying[~(_lr_mask & qualifying["_lr_delta"].isna())].copy()
+        _lr_mask = qualifying["model_short"] == "LR"
+        _lr_qcols_present = [q for q in _QUANTILE_COLS if q in qualifying.columns]
+        qualifying.loc[_lr_mask, _lr_qcols_present] = np.nan
+        _pt = qualifying.loc[_lr_mask, "forecasted_discharge"].astype(float)
+        _dl = qualifying.loc[_lr_mask, "_lr_delta"].astype(float)
+        if "q50" in qualifying.columns:
+            qualifying.loc[_lr_mask, "q50"] = _pt
+        qualifying.loc[_lr_mask, "q25"] = _pt - _dl
+        qualifying.loc[_lr_mask, "q75"] = _pt + _dl
+        qualifying = qualifying.drop(columns="_lr_delta")
+
+    # Drop non-LR rows that lack finite four q-bands (LR is exempt: q05/q95 NaN).
+    # Missing (pd.NA/NaN) bands are excluded first so astype(float) is safe;
+    # the finite check then catches infinity in the remaining non-null rows.
+    _non_lr_ok = qualifying["model_short"] != "LR"
+    if _non_lr_ok.any():
+        _non_lr_any_missing = qualifying.loc[_non_lr_ok, _all_em_qcols].isna().any(axis=1)
+        qualifying = qualifying.drop(index=qualifying.index[_non_lr_ok][_non_lr_any_missing]).copy()
+        # Recompute after drop to avoid misaligned indexing on the inf check.
+        _non_lr_ok = qualifying["model_short"] != "LR"
+    if _non_lr_ok.any():
+        _non_lr_q_finite = np.isfinite(
+            qualifying.loc[_non_lr_ok, _all_em_qcols].values.astype(float)
+        ).all(axis=1)
+        qualifying = qualifying.drop(index=qualifying.index[_non_lr_ok][~_non_lr_q_finite]).copy()
 
     if qualifying.empty:
         logger.info("No qualifying forecasts after requiring finite quantile fields")
@@ -232,6 +316,19 @@ def create_ensemble_forecasts(
             agg_dict[qcol] = "mean"
 
     ensemble_avg = qualifying.groupby([period_col, "date", "code"]).agg(agg_dict).reset_index()
+    ensemble_avg = ensemble_avg.dropna(
+        subset=_all_em_qcols
+    )  # NullableFloat64 pd.NA → drop before astype
+
+    # Require finite averaged q-bands (guards against all-LR groups that have no
+    # non-LR q05/q95 contributor — their q05/q95 means are NaN)
+    _avg_q_finite = np.isfinite(ensemble_avg[_all_em_qcols].values.astype(float)).all(axis=1)
+    ensemble_avg = ensemble_avg[_avg_q_finite].copy()
+
+    if ensemble_avg.empty:
+        logger.info("No qualifying forecasts: no group has a non-LR quantile contributor")
+        return forecasts.copy(), skill_stats.copy()
+
     ensemble_avg = enforce_quantile_monotonicity(
         ensemble_avg, [c for c in _QUANTILE_COLS if c in ensemble_avg.columns]
     )
@@ -283,7 +380,7 @@ def create_monthly_ensemble_forecasts(
     forecasts: pd.DataFrame,
     skill_stats: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Create EM, Skilled Mean, Naive Mean for monthly forecasts.
+    """Create Skilled Mean and Naive Mean for monthly forecasts (no EM, PP-072 P3).
 
     Uses pre-calculated skill metrics to determine highly skilled
     models, then averages their forecasts (point + quantiles).
@@ -305,12 +402,12 @@ def create_monthly_ensemble_forecasts(
 
     Returns:
         DataFrame with ensemble rows appended to input forecasts.
-        Ensemble rows have model_short in {'EM', 'Skilled Mean',
-        'Naive Mean'} and a 'composition' column.
+        Ensemble rows have model_short in {'Skilled Mean', 'Naive Mean'}
+        and a 'composition' column.  Long-term EM is no longer produced
+        (PP-072 P3).
     """
     from src.skill_metrics import (
         _QUANTILE_COLS,
-        _append_to_joint,
         _long_term_min_pairs,
         _long_term_threshold_overrides,
         filter_for_highly_skilled_forecasts,
@@ -342,74 +439,20 @@ def create_monthly_ensemble_forecasts(
     if "horizon_value" in forecasts.columns:
         group_cols.append("horizon_value")
 
-    # --- EM (threshold-filtered average, DEFAULT gate — EM must not change) ---
-    skill_filtered = filter_for_highly_skilled_forecasts(
-        skill_stats, min_pairs=_long_term_min_pairs("MONTH")
-    )
-    # Lead-aware ONLY when horizon_value is present on BOTH sides; a one-sided
-    # presence must keep the 3-key merge (a 4-key merge with horizon_value on
-    # one side only would mismatch and drop every row).
-    _em_use_hv = "horizon_value" in joint.columns and "horizon_value" in skill_filtered.columns
-    merge_keys = (
-        ["month_in_year", "horizon_value", "code", "model_short"]
-        if _em_use_hv
-        else ["month_in_year", "code", "model_short"]
-    )
-
-    # Long-term Skilled-Mean pool: relaxed NSE>0 gate.  Split from the EM pool
-    # so EM membership/output stays byte-identical while Skilled Mean widens.
+    # Long-term Skilled-Mean pool: relaxed NSE>0 gate.  Long-term EM is no
+    # longer produced (PP-072 P3): monthly outputs are Naive Mean + Skilled Mean.
     skill_filtered_lt = filter_for_highly_skilled_forecasts(
         skill_stats,
         min_pairs=_long_term_min_pairs("MONTH"),
         **_long_term_threshold_overrides(),
     )
 
-    # Normalize types for merge (both pools, matching joint)
-    for df in (joint, skill_filtered, skill_filtered_lt):
+    # Normalize types for merge (pool, matching joint)
+    for df in (joint, skill_filtered_lt):
         if "month_in_year" in df.columns:
             df["month_in_year"] = pd.to_numeric(df["month_in_year"], errors="coerce")
         if "code" in df.columns:
             df["code"] = df["code"].astype(str)
-
-    qualifying = joint.merge(
-        skill_filtered[merge_keys].drop_duplicates(),
-        on=merge_keys,
-        how="inner",
-    )
-    qualifying = qualifying[~qualifying["model_short"].isin(baselines)].copy()
-    qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
-
-    n_models = joint[~joint["model_short"].isin(baselines)]["model_short"].nunique()
-
-    if n_models > 1 and not qualifying.empty:
-        em_agg = {
-            "month_in_year": "first",
-            "forecasted_discharge": "mean",
-            "model_short": composition_agg,
-        }
-        for qcol in _QUANTILE_COLS:
-            if qcol in qualifying.columns:
-                em_agg[qcol] = "mean"
-        for dcol in ("valid_from", "valid_to", "date"):
-            if dcol in qualifying.columns:
-                # "first" for date: assumes all models in a
-                # (year, month, code, horizon_value) group share
-                # the same issue date (single pipeline invocation).
-                em_agg[dcol] = "first"
-
-        em_avg = qualifying.groupby(group_cols).agg(em_agg).reset_index()
-        em_avg = enforce_quantile_monotonicity(
-            em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
-        )
-        em_avg = em_avg.rename(columns={"model_short": "composition"})
-        em_avg["model_short"] = "EM"
-
-        # Discard single-model ensembles
-        em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
-
-        if not em_avg.empty:
-            em_avg["flag"] = 0
-            joint = _append_to_joint(joint, em_avg)
 
     # --- Skilled Mean (1/MAE weighted average, relaxed NSE>0 pool) ---
     joint = _add_skilled_mean_monthly(
@@ -595,7 +638,7 @@ def create_quarterly_ensemble_forecasts(
     forecasts: pd.DataFrame,
     skill_stats: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Create EM, Skilled Mean, Naive Mean for quarterly forecasts.
+    """Create Skilled Mean and Naive Mean for quarterly forecasts (no EM, PP-072 P3).
 
     Uses pre-calculated quarterly skill metrics. Same algorithm as
     monthly but with quarter_in_year instead of month_in_year.
@@ -612,7 +655,7 @@ def create_quarterly_ensemble_forecasts(
         DataFrame with ensemble rows appended to input forecasts.
     """
     # Under SAPPHIRE_SKILL_LEAD_AWARE, quarter_in_year is the TARGET quarter,
-    # not the issue lead. Add horizon_value to the grouping so EM/Naive/
+    # not the issue lead. Add horizon_value to the grouping so Naive/
     # Skilled Mean are generated per lead instead of pooling across leads
     # (mirrors the P2 change in skill_metrics.calculate_quarterly_skill_metrics).
     time_group_cols = ["year", "quarter_in_year", "code"]
@@ -630,7 +673,7 @@ def create_seasonal_ensemble_forecasts(
     forecasts: pd.DataFrame,
     skill_stats: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Create EM, Skilled Mean, Naive Mean for seasonal forecasts.
+    """Create Skilled Mean and Naive Mean for seasonal forecasts (no EM, PP-072 P3).
 
     Uses pre-calculated seasonal skill metrics.
 
@@ -658,7 +701,7 @@ def create_seasonal_ensemble_forecasts(
         skill_stats,
         period_col="season_in_year",
         # Group by `date` so each (re-)issued seasonal forecast forms its own
-        # ensemble (one EM per issue = clean 2-model mean) rather than
+        # ensemble (one aggregate per issue) rather than
         # collapsing distinct issue dates into one blended row.
         time_group_cols=time_group_cols,
     )
@@ -698,7 +741,7 @@ def _create_aggregated_ensemble_forecasts(
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
     # Drop any pre-existing aggregated ensembles so operational generation
-    # matches the maintenance recalc: regenerate EM / Naive Mean / Skilled Mean
+    # matches the maintenance recalc: regenerate Naive Mean / Skilled Mean
     # from the raw models rather than re-emitting stored copies, which would
     # duplicate the long_forecasts unique key on write. Other ensembles
     # (e.g. NE) are left untouched.
@@ -721,10 +764,8 @@ def _create_aggregated_ensemble_forecasts(
         )
     _horizon_type_ens = _PERIOD_COL_TO_HORIZON_ENS[period_col]
 
-    # --- EM (two-LR average; not skill-gated for quarter/season) ---
-    # EM membership derives from AGGREGATED_EM_RAW_MODELS (fixed-LR, no skill
-    # gate); `skill_filtered` (computed with min_pairs) feeds only the Skilled
-    # Mean below.
+    # Long-term EM is no longer produced (PP-072 P3); `skill_filtered`
+    # (computed with min_pairs) feeds the Skilled Mean below.
     skill_filtered = filter_for_highly_skilled_forecasts(
         skill_stats,
         min_pairs=_long_term_min_pairs(_horizon_type_ens),
@@ -741,7 +782,7 @@ def _create_aggregated_ensemble_forecasts(
     if "code" in skill_filtered.columns:
         skill_filtered["code"] = skill_filtered["code"].astype(str)
 
-    # The forecast-side groupbys (EM / Naive / Skilled Mean aggregation) key
+    # The forecast-side groupbys (Naive / Skilled Mean aggregation) key
     # on `time_group_cols`, which the wrappers extend with `horizon_value`
     # under the flag (then filtered above to columns present in `joint`). So
     # the grouping USES the lead whenever `horizon_value` survived into
@@ -756,7 +797,7 @@ def _create_aggregated_ensemble_forecasts(
     # Under the flag, exclude NULL/non-numeric-lead rows from ensemble
     # GROUPING before the lead-aware groupby (pandas groupby(dropna=True)
     # would otherwise silently drop them, so NULL-lead groups would get no
-    # EM/Naive/Skilled Mean whereas flag-OFF's 3-key grouping generates
+    # Naive/Skilled Mean whereas flag-OFF's 3-key grouping generates
     # them). The excluded raw rows are preserved as passthrough (restored
     # at the end), matching the skill path's joint_forecasts handling.
     # Flag-OFF (3-key grouping) is unchanged.
@@ -792,40 +833,6 @@ def _create_aggregated_ensemble_forecasts(
         if _hv_in_skill
         else [period_col, "code", "model_short"]
     )
-
-    if not _skip_em_for_quarter(period_col):
-        model_keys = canonical_model_short_series(joint["model_short"])
-        qualifying = joint[model_keys.isin(AGGREGATED_EM_RAW_MODELS)].copy()
-        qualifying = qualifying.dropna(subset=["forecasted_discharge"]).copy()
-
-        n_models = qualifying["model_short"].nunique()
-
-        if n_models > 1 and not qualifying.empty:
-            em_agg = {
-                "forecasted_discharge": "mean",
-                "model_short": composition_agg,
-            }
-            if period_col not in time_group_cols:
-                em_agg[period_col] = "first"
-            for qcol in _QUANTILE_COLS:
-                if qcol in qualifying.columns:
-                    em_agg[qcol] = "mean"
-            for dcol in ("valid_from", "valid_to", "date"):
-                if dcol in qualifying.columns and dcol not in time_group_cols:
-                    em_agg[dcol] = "first"
-
-            em_avg = qualifying.groupby(time_group_cols).agg(em_agg).reset_index()
-            em_avg = enforce_quantile_monotonicity(
-                em_avg, [c for c in _QUANTILE_COLS if c in em_avg.columns]
-            )
-            em_avg = em_avg.rename(columns={"model_short": "composition"})
-            em_avg["model_short"] = "EM"
-
-            em_avg = em_avg[em_avg["composition"].apply(is_multi_model_composition)].copy()
-
-            if not em_avg.empty:
-                em_avg["flag"] = 0
-                joint = _append_aggregated_to_joint(joint, em_avg)
 
     # --- Skilled Mean (1/MAE weighted) ---
     joint = _add_skilled_mean_aggregated_ens(
