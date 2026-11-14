@@ -445,3 +445,204 @@ def test_compute_backfill_records_end_to_end_through_real_writers():
     # The real client's store was never touched: only the capturing client saw writes.
     assert real.store == {}
     assert all(record["code"] == CODE for record in records)
+
+
+def test_capturing_client_forwards_std_and_count_not_in_compare_fields(monkeypatch):
+    """_CapturingClient captures std/count even though _COMPARE_FIELDS omits them.
+
+    Uses a 2-year reference window so the fixture is minimal and the stats
+    threshold (min_eligible=2) is reachable.
+    """
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    import calendar as _calendar
+
+    def _full_rows(year, discharge):
+        rows = []
+        for month in range(1, 13):
+            days = _calendar.monthrange(year, month)[1]
+            for day in range(1, days + 1):
+                rows.append(
+                    {
+                        "code": CODE,
+                        "date": dt.date(year, month, day).isoformat(),
+                        "discharge": discharge,
+                    }
+                )
+        return rows
+
+    class FakeClientWithRefData(FakeClient):
+        def read_runoff(self, horizon, code, start_date=None, end_date=None, limit=None):
+            if start_date is None:
+                return []
+            year = int(str(start_date)[:4])
+            if year == 2024:
+                return _full_rows(2024, 10.0)
+            if year == 2025:
+                return _full_rows(2025, 20.0)
+            return []
+
+    real = FakeClientWithRefData()
+    sdk = _StubSDK()
+
+    records = bda.compute_backfill_records(
+        codes=[CODE],
+        iehhf_sdk=sdk,
+        real_client=real,
+        target_year=2025,
+        today=dt.date(2026, 7, 3),
+    )
+
+    # _COMPARE_FIELDS does not include 'std' or 'count'
+    assert "std" not in bda._COMPARE_FIELDS
+    assert "count" not in bda._COMPARE_FIELDS
+
+    # Monthly/quarterly/seasonal records should have been produced
+    long_records = [r for r in records if r["horizon_type"] in {"month", "quarter", "season"}]
+    assert len(long_records) > 0, "expected month/quarter/season records in captured output"
+
+    # std/count must be captured even though _COMPARE_FIELDS omits them
+    for record in long_records:
+        assert "std" in record, f"std missing from {record['horizon_type']} record"
+        assert "count" in record, f"count missing from {record['horizon_type']} record"
+        # Both reference years have full coverage → count=2, std is not None
+        assert record["count"] == 2
+        assert record["std"] is not None
+
+
+# ---------------------------------------------------------------------------
+# 11. backfill(dry_run=False) forwards std/count all the way to real_client
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_live_forwards_std_and_count_to_real_client(tmp_path, monkeypatch):
+    """backfill(dry_run=False) must write std AND count into real_client.store for every
+    month, quarter, and season record — not just capture them in _CapturingClient.
+
+    Uses a 2-year reference window (2024-2025) so min_eligible=2 is met and stats
+    are non-None.  Uses FakeClientWithRefData for read_runoff; real_client for the
+    final write destination.
+    """
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    import calendar as _calendar
+
+    def _full_rows(year, discharge):
+        rows = []
+        for month in range(1, 13):
+            days = _calendar.monthrange(year, month)[1]
+            for day in range(1, days + 1):
+                rows.append(
+                    {
+                        "code": CODE,
+                        "date": dt.date(year, month, day).isoformat(),
+                        "discharge": discharge,
+                    }
+                )
+        return rows
+
+    class FakeClientWithRefData(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self._disable_2024 = False
+
+        def read_runoff(self, horizon, code, start_date=None, end_date=None, limit=None):
+            if start_date is None:
+                return []
+            year = int(str(start_date)[:4])
+            if year == 2024 and not self._disable_2024:
+                return _full_rows(2024, 10.0)
+            if year == 2025:
+                return _full_rows(2025, 20.0)
+            return []
+
+    real = FakeClientWithRefData()
+    sdk = _StubSDK()
+
+    bda.backfill(
+        codes=[CODE],
+        iehhf_sdk=sdk,
+        real_client=real,
+        target_years=[2025],
+        today=dt.date(2026, 7, 3),
+        dry_run=False,
+        snapshot_dir=str(tmp_path),
+    )
+
+    # Collect stored records by horizon type
+    stored = list(real.store.values())
+    monthly = [r for r in stored if r["horizon_type"] == "month"]
+    quarterly = [r for r in stored if r["horizon_type"] == "quarter"]
+    seasonal = [r for r in stored if r["horizon_type"] == "season"]
+
+    assert len(monthly) == 12, f"expected 12 monthly records, got {len(monthly)}"
+    assert len(quarterly) == 4, f"expected 4 quarterly records, got {len(quarterly)}"
+    assert len(seasonal) == 1, f"expected 1 seasonal record, got {len(seasonal)}"
+
+    import math as _math
+
+    # Every long-horizon record must carry std and count
+    for record in monthly + quarterly + seasonal:
+        assert "std" in record, f"std missing from {record['horizon_type']} record"
+        assert "count" in record, f"count missing from {record['horizon_type']} record"
+        assert record["count"] == 2, f"expected count=2 (2 reference years), got {record['count']}"
+        assert record["std"] is not None, (
+            f"expected non-None std for {record['horizon_type']} with 2 reference years"
+        )
+
+    # First-run monthly std: sample std of [10.0, 20.0] = sqrt(50)
+    expected_monthly_std = _math.sqrt(50)
+    for record in monthly:
+        assert _math.isclose(record["std"], expected_monthly_std, rel_tol=1e-6), (
+            f"expected monthly std=sqrt(50)={expected_monthly_std:.6f}, got {record['std']}"
+        )
+
+    # Verify JSON-serialisability: no NaN leakage
+    for record in monthly + quarterly + seasonal:
+        json.dumps(record, allow_nan=False)
+
+    # --- insufficient-history replacement clears std, retains actual count ---
+    # Shrink to 1 reference year (below min_eligible=2) to trigger replacement path.
+    # Reuse the SAME populated store (real) so the second run overwrites existing records,
+    # proving that the replacement path applies to already-stored records too.
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2025")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    # Toggle 2024 availability off on the same client so only 2025 data is returned.
+    real._disable_2024 = True
+    bda.backfill(
+        codes=[CODE],
+        iehhf_sdk=sdk,
+        real_client=real,
+        target_years=[2025],
+        today=dt.date(2026, 7, 3),
+        dry_run=False,
+        snapshot_dir=str(tmp_path),
+    )
+
+    stored2 = list(real.store.values())
+    monthly2 = [r for r in stored2 if r["horizon_type"] == "month"]
+    quarterly2 = [r for r in stored2 if r["horizon_type"] == "quarter"]
+    seasonal2 = [r for r in stored2 if r["horizon_type"] == "season"]
+
+    assert len(monthly2) == 12, f"expected 12 monthly records after second run, got {len(monthly2)}"
+    assert len(quarterly2) == 4, (
+        f"expected 4 quarterly records after second run, got {len(quarterly2)}"
+    )
+    assert len(seasonal2) == 1, f"expected 1 seasonal record after second run, got {len(seasonal2)}"
+
+    for record in monthly2 + quarterly2 + seasonal2:
+        assert "std" in record, f"std key missing from {record['horizon_type']} record"
+        assert "count" in record, f"count key missing from {record['horizon_type']} record"
+        assert record["std"] is None, (
+            f"std must be None when count < min_eligible; got {record['std']} "
+            f"for {record['horizon_type']}"
+        )
+        assert record["count"] == 1, (
+            f"count must equal 1 (actual reference years); got {record['count']} "
+            f"for {record['horizon_type']}"
+        )
+        # Strict JSON must not raise for any of the 17 records
+        json.dumps(record, allow_nan=False)

@@ -609,10 +609,16 @@ def test_write_long_horizon_hydrograph_writes_quarterly_records():
     sdk = MagicMock()
     sdk.get_norm_for_site.return_value = _norms()
     client = MagicMock()
-    client.read_runoff.side_effect = [
-        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
-        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
-    ]
+
+    def _read_runoff(horizon, code, start_date, end_date, limit):
+        year = int(start_date[:4])
+        if year == 2026:
+            return _full_year_rows(2026, {month: 20.0 for month in range(1, 13)})
+        if year == 2025:
+            return _full_year_rows(2025, {month: 10.0 for month in range(1, 13)})
+        return []
+
+    client.read_runoff.side_effect = _read_runoff
 
     records = sync_lhh.write_long_horizon_hydrograph(
         codes=[TEST_CODE],
@@ -1562,7 +1568,7 @@ def test_leap_year_february_threshold_still_uses_29_days_with_norm_absent(monkey
         iehhf_sdk=FakeSDK([]),
         client=client,
         target_year=2024,
-        today=dt.date(2025, 1, 1),
+        today=dt.date(2026, 1, 1),  # today.year=2026 > default end_year=2025
     )
 
     february = _record_for_month(_records_by_horizon(records, "month"), 2)
@@ -1618,12 +1624,26 @@ def test_orchestrator_continues_after_quarterly_api_write_failure(caplog):
     sdk = MagicMock()
     sdk.get_norm_for_site.side_effect = [_norms(), _norms()]
     client = MagicMock()
-    client.read_runoff.side_effect = [
-        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
-        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
-        _full_year_rows(2026, {month: 30.0 for month in range(1, 13)}),
-        _full_year_rows(2025, {month: 15.0 for month in range(1, 13)}),
-    ]
+
+    _data = {
+        first_code: {
+            2026: {month: 20.0 for month in range(1, 13)},
+            2025: {month: 10.0 for month in range(1, 13)},
+        },
+        second_code: {
+            2026: {month: 30.0 for month in range(1, 13)},
+            2025: {month: 15.0 for month in range(1, 13)},
+        },
+    }
+
+    def _read_runoff(horizon, code, start_date, end_date, limit):
+        year = int(start_date[:4])
+        values = _data.get(code, {}).get(year)
+        if values is not None:
+            return _full_year_rows(year, values)
+        return []
+
+    client.read_runoff.side_effect = _read_runoff
     write_calls = []
 
     def fail_third_write(_records):
@@ -1655,10 +1675,16 @@ def test_orchestrator_preserves_monthly_when_seasonal_api_write_fails(caplog):
     sdk = MagicMock()
     sdk.get_norm_for_site.return_value = _norms()
     client = MagicMock()
-    client.read_runoff.side_effect = [
-        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
-        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
-    ]
+
+    def _read_runoff(horizon, code, start_date, end_date, limit):
+        year = int(start_date[:4])
+        if year == 2026:
+            return _full_year_rows(2026, {month: 20.0 for month in range(1, 13)})
+        if year == 2025:
+            return _full_year_rows(2025, {month: 10.0 for month in range(1, 13)})
+        return []
+
+    client.read_runoff.side_effect = _read_runoff
     write_calls = []
 
     def fail_second_write(_records):
@@ -1695,10 +1721,16 @@ def test_orchestrator_sole_api_failed_status_when_sdk_raises_then_seasonal_write
     # records; the station is not completed; the run exits 5 (API_FAILED
     # takes precedence over SDK_FAILED).
     client = MagicMock()
-    client.read_runoff.side_effect = [
-        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
-        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
-    ]
+
+    def _read_runoff(horizon, code, start_date, end_date, limit):
+        year = int(start_date[:4])
+        if year == 2026:
+            return _full_year_rows(2026, {month: 20.0 for month in range(1, 13)})
+        if year == 2025:
+            return _full_year_rows(2025, {month: 10.0 for month in range(1, 13)})
+        return []
+
+    client.read_runoff.side_effect = _read_runoff
     client.read_hydrograph.return_value = []
     write_calls = []
 
@@ -2113,10 +2145,16 @@ def test_orchestrator_does_not_catch_programming_errors():
     sdk = MagicMock()
     sdk.get_norm_for_site.return_value = _norms()
     client = MagicMock()
-    client.read_runoff.side_effect = [
-        _full_year_rows(2026, {month: 20.0 for month in range(1, 13)}),
-        _full_year_rows(2025, {month: 10.0 for month in range(1, 13)}),
-    ]
+
+    def _read_runoff(horizon, code, start_date, end_date, limit):
+        year = int(start_date[:4])
+        if year == 2026:
+            return _full_year_rows(2026, {month: 20.0 for month in range(1, 13)})
+        if year == 2025:
+            return _full_year_rows(2025, {month: 10.0 for month in range(1, 13)})
+        return []
+
+    client.read_runoff.side_effect = _read_runoff
     write_calls = []
 
     def fail_third_write(_records):
@@ -2160,3 +2198,675 @@ def test_build_quarterly_records_api_contract_fields():
         assert record["horizon_type"] == "quarter"
         assert record["code"] == TEST_CODE
         assert record["horizon_value"] == record["horizon_in_year"]
+
+
+# ---------------------------------------------------------------------------
+# Range statistics integration: std/count appear in written records
+# ---------------------------------------------------------------------------
+
+
+def _make_reference_data_client(ref_value_by_year_month: dict, target_year: int = 2026):
+    """Return a FakeHydrographClient whose read_runoff serves reference data.
+
+    ref_value_by_year_month: {year: {month: float}} for reference years.
+    target_year and target_year-1 that overlap the reference window are reused.
+    """
+    runoff_by_year = {
+        year: _full_year_rows(year, {m: v for m, v in months.items()})
+        for year, months in ref_value_by_year_month.items()
+    }
+    return FakeHydrographClient(runoff_by_year=runoff_by_year)
+
+
+def test_range_stats_std_count_appear_in_monthly_records(monkeypatch):
+    """Monthly records carry std/count when >= min_eligible reference years available.
+
+    Uses a 2-year reference window (min_eligible=2) so a small fixture produces
+    a valid std, without loading 26 years of data.
+    """
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    # 2024: Jan discharge 10; 2025: Jan discharge 20 → sample std = sqrt(50)
+    # 2026 = current year (target), 2025 = previous year
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2024: _full_year_rows(2024, {m: 10.0 for m in range(1, 13)}),
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    # Find any monthly record and verify std/count present
+    monthly = [r for r in client.written_records() if r["horizon_type"] == "month"]
+    assert len(monthly) > 0, "expected monthly records to be written"
+
+    import math
+
+    expected_std = math.sqrt(50.0)  # std of [10, 20], ddof=1
+    for record in monthly:
+        assert "std" in record, f"std missing from record {record}"
+        assert "count" in record, f"count missing from record {record}"
+        assert record["count"] == 2
+        assert record["std"] == pytest.approx(expected_std, rel=1e-9)
+
+
+def test_range_stats_std_none_when_below_min_eligible(monkeypatch):
+    """std=None in monthly records when only 1 of a 2-year reference window has data."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    # Only 2025 has data for the reference window; 2024 is empty → 1 accepted year
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    monthly = [r for r in client.written_records() if r["horizon_type"] == "month"]
+    assert len(monthly) > 0
+    for record in monthly:
+        assert record.get("std") is None
+        assert record["count"] == 1
+
+
+def test_range_stats_std_count_in_quarterly_records(monkeypatch):
+    """Quarterly records carry std/count when reference window is sufficient."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2024: _full_year_rows(2024, {m: 10.0 for m in range(1, 13)}),
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    quarterly = [r for r in client.written_records() if r["horizon_type"] == "quarter"]
+    assert len(quarterly) == 4
+    for record in quarterly:
+        assert "std" in record
+        assert "count" in record
+        assert record["count"] == 2  # 2024 and 2025 both qualify for all quarters
+
+
+def test_range_stats_std_count_in_seasonal_record(monkeypatch):
+    """Seasonal (Apr-Sep) record carries std/count when reference window is sufficient."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2024: _full_year_rows(2024, {m: 10.0 for m in range(1, 13)}),
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    seasonal = [r for r in client.written_records() if r["horizon_type"] == "season"]
+    assert len(seasonal) == 1
+    record = seasonal[0]
+    assert "std" in record
+    assert "count" in record
+    assert record["count"] == 2
+
+
+def test_range_stats_reference_read_api_failure_routes_station_to_api_failed(monkeypatch):
+    """When a reference-year read raises SapphireAPIError, the station is API_FAILED
+    and no records are written for it."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    client = MagicMock()
+    # First reference read (year 2024) raises immediately
+    client.read_runoff.side_effect = sync_lhh.SapphireAPIError(
+        "reference read failed", status_code=503
+    )
+    client.write_hydrograph.return_value = None
+
+    result = sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    assert len(result.attempted_station_codes) == 1
+    assert len(result.failed_station_codes) == 1
+    # No write calls when the first read already fails
+    client.write_hydrograph.assert_not_called()
+
+
+def test_range_stats_invalid_window_raises_before_any_write(monkeypatch):
+    """Invalid reference window (start > end) raises ValueError before any write."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2025")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2020")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    with pytest.raises(ValueError, match="must be <="):
+        sync_lhh.write_long_horizon_hydrograph(
+            codes=[TEST_CODE],
+            iehhf_sdk=sdk,
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+
+    assert client.write_calls == [], "no writes should occur when config is invalid"
+
+
+def test_range_stats_norms_unchanged_golden_values(monkeypatch):
+    """Adding range stats must not alter the norm/previous/current field values."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2024: _full_year_rows(2024, {m: 10.0 for m in range(1, 13)}),
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    monthly = [r for r in client.written_records() if r["horizon_type"] == "month"]
+    for record in monthly:
+        month = record["horizon_value"]
+        assert record["norm"] == pytest.approx(float(month), abs=1e-9), (
+            f"norm changed for month {month}"
+        )
+        assert record["previous"] == pytest.approx(20.0, abs=1e-9)
+        assert record["current"] == pytest.approx(30.0, abs=1e-9)
+
+
+def test_write_long_horizon_hydrograph_raises_on_malformed_start_year(monkeypatch):
+    """Malformed SAPPHIRE_RANGE_REFERENCE_START_YEAR raises ValueError before any write."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "not_a_year")
+    client = FakeHydrographClient(runoff_by_year={})
+    with pytest.raises(ValueError, match="malformed"):
+        sync_lhh.write_long_horizon_hydrograph(
+            codes=[TEST_CODE],
+            iehhf_sdk=FakeSDK(_norms()),
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+    assert client.write_calls == []
+
+
+def test_write_long_horizon_hydrograph_raises_on_incomplete_reference_end_year(monkeypatch):
+    """end_year == today.year means that year is still in progress - must raise before any write."""
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2027")
+    client = FakeHydrographClient(runoff_by_year={})
+    with pytest.raises(ValueError, match="strictly less than"):
+        sync_lhh.write_long_horizon_hydrograph(
+            codes=[TEST_CODE],
+            iehhf_sdk=FakeSDK(_norms()),
+            client=client,
+            target_year=2026,
+            today=dt.date(2027, 1, 1),
+        )
+    assert client.write_calls == []
+
+
+def test_direct_writers_preserve_stats_when_range_stats_omitted(monkeypatch):
+    """write_station_{monthly,seasonal,quarterly}_hydrograph called without
+    range_stats must preserve previously written std/count (not erase them via
+    an API PUT that omits those fields)."""
+    monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2024: _full_year_rows(2024, {m: 10.0 for m in range(1, 13)}),
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    # Seed std/count via the orchestrator (2024-2025: 2 years → valid std)
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=FakeSDK(_norms()),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    seeded = {(r["horizon_type"], r.get("horizon_value")): r for r in client.written_records()}
+    assert "std" in seeded[("month", 1)], "orchestrator must seed std"
+    seeded_jan_std = seeded[("month", 1)]["std"]
+    seeded_jan_count = seeded[("month", 1)]["count"]
+    seeded_season_std = seeded[("season", 1)]["std"]
+    seeded_q1_std = seeded[("quarter", 1)]["std"]
+
+    # Direct write WITHOUT range_stats: existing std/count must survive
+    monthly_result = sync_lhh.write_station_monthly_hydrograph(
+        code=TEST_CODE,
+        iehhf_sdk=FakeSDK(_norms()),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+        # range_stats omitted
+    )
+    jan_record = next(r for r in monthly_result.records if r["horizon_value"] == 1)
+    assert jan_record.get("std") == seeded_jan_std, "monthly std must survive direct write"
+    assert jan_record.get("count") == seeded_jan_count, "monthly count must survive direct write"
+
+    seasonal_record = sync_lhh.write_station_seasonal_hydrograph(
+        code=TEST_CODE,
+        monthly_records=monthly_result.records,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+        # range_stats omitted
+    )
+    assert seasonal_record.get("std") == seeded_season_std, "seasonal std must survive direct write"
+
+    quarterly_records = sync_lhh.write_station_quarterly_hydrograph(
+        code=TEST_CODE,
+        monthly_records=monthly_result.records,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+        # range_stats omitted
+    )
+    q1_record = next(r for r in quarterly_records if r["horizon_value"] == 1)
+    assert q1_record.get("std") == seeded_q1_std, "quarterly std must survive direct write"
+
+
+def test_range_stats_valid_then_insufficient_clears_old_std(monkeypatch):
+    """When the reference window shrinks so that stats are insufficient, the
+    orchestrator must CLEAR (overwrite with std=None) any previously written std,
+    not preserve it.  Uses a 2-year window (2024-2025) for the first run, then a
+    1-year window (2025-2025, min_eligible=2 → count=1 < 2 → std=None)."""
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    client = FakeHydrographClient(
+        runoff_by_year={
+            2024: _full_year_rows(2024, {m: 10.0 for m in range(1, 13)}),
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    # First run: 2024-2025 → 2 years → valid std
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2024")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    first_monthly = [r for r in client.written_records() if r["horizon_type"] == "month"]
+    assert first_monthly[0].get("std") is not None, "first run must produce valid std"
+
+    # Second run: 2025-2025 → 1 year → insufficient → std must be cleared
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2025")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+    sdk2 = MagicMock()
+    sdk2.get_norm_for_site.return_value = _norms()
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk2,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    second_monthly = [r for r in client.written_records() if r["horizon_type"] == "month"]
+    for record in second_monthly:
+        assert record.get("std") is None, "std must be None when below min_eligible threshold"
+        assert record.get("count") == 1
+
+
+def test_range_stats_reference_reads_reused_for_actuals_overlap(monkeypatch):
+    """Reference reads that overlap the target/previous year must not be re-fetched.
+
+    With reference window 2025-2025 and target_year=2026, the reference read
+    for 2025 should be reused as the previous-year actuals.  read_runoff must be
+    called for each reference year once, plus current-year once if not in window
+    (target_year=2026 is NOT in 2025-2025 so it still needs a separate read).
+    Total reads: 1 (ref 2025) + 1 (current 2026) = 2.
+    """
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR", "2025")
+    monkeypatch.setenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR", "2025")
+
+    sdk = MagicMock()
+    sdk.get_norm_for_site.return_value = _norms()
+
+    read_calls: list[int] = []
+
+    class TrackingClient(FakeHydrographClient):
+        def read_runoff(self, horizon, code, start_date, end_date, limit):
+            year = int(start_date[:4])
+            read_calls.append(year)
+            return super().read_runoff(horizon, code, start_date, end_date, limit)
+
+    client = TrackingClient(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {m: 20.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 30.0 for m in range(1, 13)}),
+        }
+    )
+
+    sync_lhh.write_long_horizon_hydrograph(
+        codes=[TEST_CODE],
+        iehhf_sdk=sdk,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    # 2025 must appear exactly once (reused for actuals, not re-fetched)
+    assert read_calls.count(2025) == 1, (
+        f"2025 read_runoff called {read_calls.count(2025)} times, expected 1 (reuse)"
+    )
+
+
+def test_monthly_preservation_null_count_does_not_break_json(monkeypatch):
+    """Preservation path must normalize NaN counts to None so JSON serialization succeeds.
+
+    The API-shaped DataFrame can yield NaN for null integer counts (pandas upcasts to float).
+    Previously only std was guarded by _json_safe; count was forwarded raw.
+    """
+    monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
+    # No reference window so range_stats are not computed; preservation path is exercised.
+
+    # Build a client whose read_hydrograph returns a mixed populated/null count DataFrame.
+    existing_jan = {
+        "horizon_type": "month",
+        "code": TEST_CODE,
+        "date": "2026-01-01",
+        "horizon_value": 1,
+        "current": 10.0,
+        "std": 1.5,
+        "count": 13,
+    }
+    existing_feb = {
+        "horizon_type": "month",
+        "code": TEST_CODE,
+        "date": "2026-02-01",
+        "horizon_value": 2,
+        "current": 9.0,
+        "std": float("nan"),  # preserved as None by _json_safe
+        "count": float("nan"),  # was forwarded raw before fix → JSON error
+    }
+
+    class _ClientWithNullCount(FakeHydrographClient):
+        def read_hydrograph(self, horizon, code, start_date, end_date, limit):
+            # Simulate what the pinned API client builds: a DataFrame with NaN counts.
+            import pandas as pd
+
+            return pd.DataFrame([existing_jan, existing_feb])
+
+    client = _ClientWithNullCount(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {m: 10.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 20.0 for m in range(1, 13)}),
+        }
+    )
+
+    # write_station_monthly_hydrograph without range_stats triggers the preservation path.
+    result = sync_lhh.write_station_monthly_hydrograph(
+        code=TEST_CODE,
+        iehhf_sdk=FakeSDK(_norms()),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    # JSON serialization must not raise (allow_nan=False catches any NaN leakage).
+    payload = json.dumps(result.records, allow_nan=False)
+    assert payload  # round-trip
+
+    jan = next(r for r in result.records if r["horizon_value"] == 1)
+    feb = next(r for r in result.records if r["horizon_value"] == 2)
+    assert jan["count"] == 13
+    assert feb["count"] is None  # NaN → None
+
+
+def test_quarterly_preservation_null_count_does_not_break_json(monkeypatch):
+    """Quarterly preservation path (line ~954) must also normalize NaN counts via _json_safe."""
+    monkeypatch.setenv("SAPPHIRE_MONTHLY_FROM_DECADAL", "false")
+
+    existing_q1 = {
+        "horizon_type": "quarter",
+        "code": TEST_CODE,
+        "date": "2026-01-01",
+        "horizon_value": 1,
+        "current": 15.0,
+        "std": 2.0,
+        "count": 10,
+    }
+    existing_q2 = {
+        "horizon_type": "quarter",
+        "code": TEST_CODE,
+        "date": "2026-04-01",
+        "horizon_value": 2,
+        "current": 12.0,
+        "std": float("nan"),
+        "count": float("nan"),
+    }
+
+    class _ClientWithNullCountQ(FakeHydrographClient):
+        def read_hydrograph(self, horizon, code, start_date, end_date, limit):
+            import pandas as pd
+
+            if horizon == "quarter":
+                return pd.DataFrame([existing_q1, existing_q2])
+            return super().read_hydrograph(horizon, code, start_date, end_date, limit)
+
+    client = _ClientWithNullCountQ(
+        runoff_by_year={
+            2025: _full_year_rows(2025, {m: 10.0 for m in range(1, 13)}),
+            2026: _full_year_rows(2026, {m: 20.0 for m in range(1, 13)}),
+        }
+    )
+    monthly_result = sync_lhh.write_station_monthly_hydrograph(
+        code=TEST_CODE,
+        iehhf_sdk=FakeSDK(_norms()),
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+    quarterly_records = sync_lhh.write_station_quarterly_hydrograph(
+        code=TEST_CODE,
+        monthly_records=monthly_result.records,
+        client=client,
+        target_year=2026,
+        today=dt.date(2027, 1, 1),
+    )
+
+    payload = json.dumps(quarterly_records, allow_nan=False)
+    assert payload
+
+    q1 = next(r for r in quarterly_records if r["horizon_value"] == 1)
+    q2 = next(r for r in quarterly_records if r["horizon_value"] == 2)
+    assert q1["count"] == 10
+    assert q2["count"] is None
+
+
+# ---------------------------------------------------------------------------
+# Seasonal count/std preservation: _json_safe applied to count
+# ---------------------------------------------------------------------------
+
+
+class _SeasonalFakeClient:
+    """In-memory client returning pre-seeded seasonal rows for read_hydrograph."""
+
+    def __init__(self, seed_rows: list[dict]):
+        self._seed = seed_rows
+        self.written: list[dict] = []
+
+    def read_hydrograph(self, horizon, code, start_date=None, end_date=None, limit=None):
+        import pandas as pd
+
+        rows = [r for r in self._seed if r.get("horizon_type") == horizon]
+        if not rows:
+            return pd.DataFrame(columns=["horizon_type", "code", "date"])
+        return pd.DataFrame(rows)
+
+    def write_hydrograph(self, records):
+        self.written.extend(records)
+        return len(records)
+
+
+def test_seasonal_count_json_safe_nan_becomes_none():
+    """Existing seasonal row with count=NaN must not cause strict JSON failure.
+
+    When an API-shaped row carries count=NaN (a float NaN from a nullable
+    integer column), write_station_seasonal_hydrograph must normalise it via
+    _json_safe so the written record is strict-JSON-serialisable.
+    Non-matching-date rows must be ignored; populated int values must survive.
+    """
+
+    monthly_records = _monthly_records_for_season(target_year=2025)
+
+    # Row on the exact April-1 target date with count=NaN (nullable integer gap)
+    april_first_row = {
+        "horizon_type": "season",
+        "code": TEST_CODE,
+        "date": "2025-04-01",
+        "std": float("nan"),
+        "count": float("nan"),
+    }
+    # Non-matching date row that must be ignored
+    non_matching_row = {
+        "horizon_type": "season",
+        "code": TEST_CODE,
+        "date": "2025-05-01",
+        "std": 99.0,
+        "count": 99.0,
+    }
+
+    client_nan = _SeasonalFakeClient([april_first_row, non_matching_row])
+    result_nan = sync_lhh.write_station_seasonal_hydrograph(
+        TEST_CODE,
+        monthly_records,
+        client_nan,
+        target_year=2025,
+        today=dt.date(2026, 6, 15),
+    )
+
+    # Strict JSON must not raise
+    json.dumps(result_nan, allow_nan=False)
+    # NaN normalises to None
+    assert result_nan.get("std") is None
+    assert result_nan.get("count") is None
+
+    # Non-matching date row (2025-05-01) must NOT bleed into result
+    assert result_nan.get("std") != 99.0
+    assert result_nan.get("count") != 99.0
+
+    # Populated int count must survive
+    populated_row = {
+        "horizon_type": "season",
+        "code": TEST_CODE,
+        "date": "2025-04-01",
+        "std": 1.5,
+        "count": 10,
+    }
+    client_populated = _SeasonalFakeClient([populated_row])
+    result_populated = sync_lhh.write_station_seasonal_hydrograph(
+        TEST_CODE,
+        monthly_records,
+        client_populated,
+        target_year=2025,
+        today=dt.date(2026, 6, 15),
+    )
+    json.dumps(result_populated, allow_nan=False)
+    assert result_populated["count"] == 10
+    assert result_populated["std"] == 1.5
+
+    # Genuine zero count must survive (not coerced to None)
+    zero_row = {
+        "horizon_type": "season",
+        "code": TEST_CODE,
+        "date": "2025-04-01",
+        "std": None,
+        "count": 0,
+    }
+    client_zero = _SeasonalFakeClient([zero_row])
+    result_zero = sync_lhh.write_station_seasonal_hydrograph(
+        TEST_CODE,
+        monthly_records,
+        client_zero,
+        target_year=2025,
+        today=dt.date(2026, 6, 15),
+    )
+    json.dumps(result_zero, allow_nan=False)
+    assert result_zero["count"] == 0
+    assert result_zero["std"] is None
