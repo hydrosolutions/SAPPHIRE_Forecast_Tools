@@ -343,6 +343,7 @@ class TestDeltaBoundsOnCard:
                 _quarter_row(
                     model_short="GBT",
                     delta=5.0,
+                    range_delta=5.0,
                     forecasted_discharge=100.0,
                     Q25=np.nan,
                     Q75=np.nan,
@@ -351,6 +352,7 @@ class TestDeltaBoundsOnCard:
                 _quarter_row(
                     model_short="Skilled Mean",
                     delta=5.0,
+                    range_delta=5.0,
                     forecasted_discharge=100.0,
                     Q25=np.nan,
                     Q75=np.nan,
@@ -379,12 +381,9 @@ class TestDeltaBoundsOnCard:
         assert pd.isna(table.loc["Naive Mean", "Forecast lower bound"])
         assert pd.isna(table.loc["Naive Mean", "Forecast upper bound"])
 
-    def test_delta_fill_preserves_native_bounds(self):
-        """V4(d): a row with NATIVE Q25/Q75 already present must keep
-        them unchanged — the delta-fill only applies when Q25/Q75 are
-        null. A mutant that drops the `Q25.isna()` check (i.e.
-        `need_lower = delta.notna()` alone) would overwrite this row's
-        native lower bound of 90 with forecast-delta = 95."""
+    def test_native_method_uses_q25_q75(self):
+        """V4(d): with range_selector='native', a row with Q25/Q75 uses those
+        bounds directly — the range method selector drives bound selection."""
         quarterly_df = pd.DataFrame(
             [
                 _quarter_row(
@@ -399,6 +398,7 @@ class TestDeltaBoundsOnCard:
             ]
         )
         pm, _site = _make_stub_pm(quarterly_df)
+        pm._wm.range_selector = "native"
 
         pm.update_quarterly_summary_tabulator()
 

@@ -27,6 +27,22 @@ Key functions:
 | `src/profiling.py` | Performance profiling utilities (enabled via `PREPROCESSING_PROFILING=true`) |
 | `src/google_sheets_reader.py` | Google Sheets discharge ingestion for manual sites (requires `gspread`) |
 
+## Long-term range statistics (PP-075)
+
+`sync_long_horizon_hydrograph.py::write_long_horizon_hydrograph` computes observation sample standard
+deviation and accepted-year count using `src/long_term_range_stats.py`. It includes `std/count` in the
+existing complete monthly, seasonal and quarterly payloads, preserving the actual/norm calculations.
+Reference-history reads finish before that station’s first write; read failures remain failures, not
+successful empty history. An insufficient history writes unavailable std with its actual count;
+constant eligible history writes genuine std=0.
+
+The existing yearly writer/maintenance entry points own publication; there is no new model or job.
+Direct component writers preserve existing statistics when invoked without newly calculated ones.
+See [reference configuration](../../doc/configuration.md#long-term-range-reference-period) for the
+2000–2025 defaults and coverage rules, and the [rollout handoff](../../doc/plans/pp075_range_deployment_handoff.md)
+for coordinated refresh. The backfill utility’s existing verification fields do not prove std/count
+round-trip; verify those API fields explicitly. No operational backfill is implied by this checkpoint.
+
 ## Quick Start
 
 ```bash

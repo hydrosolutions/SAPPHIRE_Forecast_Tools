@@ -1,6 +1,7 @@
 import calendar
 import contextlib
 
+import numpy as np
 import pandas as pd
 import panel as pn
 from skill_lead_aware_flag import skill_lead_aware_enabled
@@ -287,13 +288,23 @@ def _apply_delta_bounds(forecasts: pd.DataFrame, mask, delta, *, ndigits: int = 
     if discharge_col not in forecasts.columns:
         return False
 
+    lb_col = _('Forecast lower bound')
+    ub_col = _('Forecast upper bound')
     delta_value = pd.to_numeric(delta, errors='coerce')
-    if pd.isna(delta_value):
-        return False
+
+    # Cleared/invalid (non-numeric → NaN), non-finite (Inf), or negative δ:
+    # both endpoints unavailable.  Return True so the caller persists and
+    # patches the UI — leaving stale numeric bounds would contradict the cleared δ.
+    if pd.isna(delta_value) or not np.isfinite(delta_value) or delta_value < 0:
+        forecasts.loc[mask, lb_col] = float('nan')
+        forecasts.loc[mask, ub_col] = float('nan')
+        return True
 
     discharge = pd.to_numeric(forecasts.loc[mask, discharge_col], errors='coerce')
-    forecasts.loc[mask, _('Forecast lower bound')] = (discharge - delta_value).round(ndigits)
-    forecasts.loc[mask, _('Forecast upper bound')] = (discharge + delta_value).round(ndigits)
+    # Non-finite Q (Inf, -Inf) cannot produce meaningful bounds.
+    discharge = discharge.where(np.isfinite(discharge), other=float('nan'))
+    forecasts.loc[mask, lb_col] = (discharge - delta_value).clip(lower=0).round(ndigits)
+    forecasts.loc[mask, ub_col] = (discharge + delta_value).round(ndigits)
     return True
 
 

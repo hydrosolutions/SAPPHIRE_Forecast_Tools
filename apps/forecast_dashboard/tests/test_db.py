@@ -2884,11 +2884,12 @@ class TestSeasonSummaryRendering:
         base = table[table["Model"] == "LR_Base"].iloc[0]
         sm = table[table["Model"] == "LR_SM"].iloc[0]
         assert base["Accuracy"] == 91.0
-        assert base["δ"] == 1.0
+        # δ shows range_delta (NaN when absent — season has no range_delta source here)
+        assert pd.isna(base["δ"])
         assert base["s/σ"] == 1.5
         assert base["MAE"] == 2.0
         assert sm["Accuracy"] == 93.0
-        assert sm["δ"] == 3.0
+        assert pd.isna(sm["δ"])
         assert sm["s/σ"] == 3.5
         assert sm["MAE"] == 4.0
 

@@ -481,27 +481,6 @@ class PlotManager:
             card.visible = False
             return
 
-        # FD-029 P1 item 7: fill delta-based bounds for rows without native
-        # quantiles (the derived models, and ensembles with a derived
-        # member) — same arithmetic as processing.calculate_forecast_range's
-        # delta branch, applied here since the quarter/month renderer
-        # branch reads Q25/Q75 directly instead of routing through it. Rows
-        # with native Q25/Q75, or with no delta, are left untouched (empty
-        # bounds when delta is unavailable).
-        if "delta" in selected.columns and "forecasted_discharge" in selected.columns:
-            if "Q25" in selected.columns:
-                need_lower = selected["Q25"].isna() & selected["delta"].notna()
-                selected.loc[need_lower, "Q25"] = (
-                    selected.loc[need_lower, "forecasted_discharge"]
-                    - selected.loc[need_lower, "delta"]
-                )
-            if "Q75" in selected.columns:
-                need_upper = selected["Q75"].isna() & selected["delta"].notna()
-                selected.loc[need_upper, "Q75"] = (
-                    selected.loc[need_upper, "forecasted_discharge"]
-                    + selected.loc[need_upper, "delta"]
-                )
-
         # All conditions met: populate the table and show the card. Pass
         # max(date) OF THE SELECTED ROWS as date_picker, and skip the
         # renderer's own max-date reduction (filter_by_date=False) so every
@@ -550,6 +529,16 @@ class PlotManager:
     # ------------------------------------------------------------------
     def update_forecast_plots(self, event=None):
         """Refresh the forecast hydrograph and skill plots."""
+        horizon = self._wm.horizon_selector.value
+        if horizon in _LONG_TERM_HORIZONS:
+            # Long-term Apply: refresh tables only — chart code below is for
+            # pentad/decade and must not run for month/quarter/season horizons.
+            self.update_forecast_tabulator()
+            if horizon == "month":
+                self.update_forecast_tabulator_m0()
+                self.update_quarterly_summary_tabulator()
+            return
+
         # Updates 2nd, 3rd and 4th plots on Forecast tab
         self.pentad_forecast.object = self._build_forecast_hydrograph()
 

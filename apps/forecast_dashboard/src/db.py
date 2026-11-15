@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from datetime import date, datetime
@@ -1189,6 +1190,225 @@ def get_long_forecasts_season(
 
 
 # ---------------------------------------------------------------------------
+# Long-term observation range statistics (E2 reader)
+# ---------------------------------------------------------------------------
+
+def _range_reference_years(pub_year: int) -> tuple[int, int]:
+    """Parse and validate SAPPHIRE_RANGE_REFERENCE_*_YEAR env vars.
+
+    Returns (start, end) after validating calendar bounds (1–9999),
+    ordering (start <= end), and that end < pub_year. Raises ValueError
+    on any violation. Defaults: start=2000, end=2025.
+    """
+    raw_start = os.getenv("SAPPHIRE_RANGE_REFERENCE_START_YEAR")
+    raw_end = os.getenv("SAPPHIRE_RANGE_REFERENCE_END_YEAR")
+
+    start = 2000
+    if raw_start is not None:
+        try:
+            start = int(raw_start.strip())
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(
+                f"SAPPHIRE_RANGE_REFERENCE_START_YEAR malformed: {raw_start!r}"
+            ) from exc
+
+    end = 2025
+    if raw_end is not None:
+        try:
+            end = int(raw_end.strip())
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(
+                f"SAPPHIRE_RANGE_REFERENCE_END_YEAR malformed: {raw_end!r}"
+            ) from exc
+
+    if not (1 <= start <= 9999):
+        raise ValueError(
+            f"SAPPHIRE_RANGE_REFERENCE_START_YEAR ({start}) out of valid calendar range 1–9999"
+        )
+    if not (1 <= end <= 9999):
+        raise ValueError(
+            f"SAPPHIRE_RANGE_REFERENCE_END_YEAR ({end}) out of valid calendar range 1–9999"
+        )
+    if start > end:
+        raise ValueError(
+            f"SAPPHIRE_RANGE_REFERENCE_START_YEAR ({start}) > "
+            f"SAPPHIRE_RANGE_REFERENCE_END_YEAR ({end})"
+        )
+    if end >= pub_year:
+        raise ValueError(
+            f"SAPPHIRE_RANGE_REFERENCE_END_YEAR ({end}) must be strictly less than "
+            f"pub_year ({pub_year})"
+        )
+    return start, end
+
+
+def _range_period_label_or_raise(pub_year: int) -> str:
+    """Return "YYYY–YYYY" label for the configured reference period."""
+    start, end = _range_reference_years(pub_year)
+    return f"{start}–{end}"
+
+
+def _is_valid_period_date(
+    date_val, horizon: str, horizon_value: int, pub_year: int
+) -> bool:
+    """True iff date_val is the expected first-of-period date."""
+    if date_val is None:
+        return False
+    try:
+        d = pd.Timestamp(date_val)
+    except Exception:
+        return False
+    if pd.isna(d) or d.year != pub_year:
+        return False
+    if horizon == "month":
+        return int(d.month) == horizon_value and d.day == 1
+    if horizon == "quarter":
+        expected_month = (horizon_value - 1) * 3 + 1  # Q1→1, Q2→4, Q3→7, Q4→10
+        return int(d.month) == expected_month and d.day == 1
+    if horizon == "season":
+        return horizon_value == 1 and d.month == 4 and d.day == 1
+    return False
+
+
+def _read_long_term_hydrograph_stats(
+    code: str, horizon: str, pub_year: int
+) -> dict:
+    """Fetch hydrograph range statistics for one station/horizon/publication-year.
+
+    Returns {horizon_value: range_delta_or_None} where
+    range_delta = 0.674 * std when std is finite and non-negative and count
+    meets the threshold (max(2, ceil((end-start+1)/2)) for the configured
+    reference period), else None. Duplicate valid rows for the same period
+    are marked unavailable (None). API and config exceptions propagate.
+    """
+    ref_start, ref_end = _range_reference_years(pub_year)
+    min_count = max(2, math.ceil((ref_end - ref_start + 1) / 2))
+
+    df = _read_data("preprocessing", "hydrograph", {
+        "horizon": horizon,
+        "code": code,
+        "start_date": f"{pub_year}-01-01",
+        "end_date": f"{pub_year}-12-31",
+        "limit": 20,
+    })
+    if df.empty or "std" not in df.columns or "horizon_value" not in df.columns:
+        return {}
+
+    # Filter to the requested station and horizon type
+    if "code" in df.columns:
+        df = df[df["code"] == code].copy()
+    if "horizon_type" in df.columns:
+        df = df[df["horizon_type"] == horizon].copy()
+    if df.empty:
+        return {}
+
+    result: dict = {}
+    _seen: set[int] = set()
+    for _idx, row in df.iterrows():
+        hv_raw = row.get("horizon_value")
+        if hv_raw is None or pd.isna(hv_raw):
+            continue
+        try:
+            hv = int(hv_raw)
+        except (ValueError, TypeError):
+            continue
+
+        date_val = row.get("date") if "date" in df.columns else None
+        if not _is_valid_period_date(date_val, horizon, hv, pub_year):
+            continue
+
+        if hv in _seen:
+            result[hv] = None  # duplicate period → unavailable
+            continue
+        _seen.add(hv)
+
+        # Count gate: require sufficient observations
+        count_raw = row.get("count")
+        if count_raw is None or pd.isna(count_raw):
+            result[hv] = None
+            continue
+        try:
+            count_f = float(count_raw)
+            # Reject non-finite or fractional counts (13.5 is not a valid year count)
+            if not math.isfinite(count_f) or count_f != math.floor(count_f):
+                result[hv] = None
+                continue
+            count_val = int(count_f)
+        except (ValueError, TypeError, OverflowError):
+            result[hv] = None
+            continue
+        if count_val < min_count:
+            result[hv] = None
+            continue
+
+        std_raw = row.get("std")
+        range_delta = None
+        if std_raw is not None and not pd.isna(std_raw):
+            try:
+                std_f = float(std_raw)
+                if math.isfinite(std_f) and std_f >= 0:
+                    range_delta = 0.674 * std_f
+            except (ValueError, TypeError):
+                pass
+        result[hv] = range_delta
+
+    return result
+
+
+def _attach_range_delta(
+    df: pd.DataFrame,
+    stats_lookup: dict,
+    horizon: str,
+    station_code: str | None = None,
+) -> pd.DataFrame:
+    """Attach range_delta column to a long-term forecast DataFrame.
+
+    Preserves row count, order, and index. Never modifies existing columns.
+    Maps NaN when stats are unavailable or the period is not in the lookup.
+    When station_code is provided, only rows whose 'code' matches receive a
+    non-NaN range_delta; other-station rows stay NaN.
+    """
+    result = df.copy()
+    result["range_delta"] = np.nan
+    if result.empty:
+        return result
+
+    if station_code is not None and "code" in result.columns:
+        active = result["code"] == station_code
+    else:
+        active = pd.Series(True, index=result.index)
+
+    if not active.any():
+        return result
+
+    if horizon == "month":
+        if "valid_from" in result.columns:
+            vf = pd.to_datetime(result["valid_from"], errors="coerce")
+            result.loc[active, "range_delta"] = vf[active].dt.month.map(stats_lookup)
+        elif "month_in_year" in result.columns:
+            result.loc[active, "range_delta"] = result.loc[active, "month_in_year"].map(stats_lookup)
+
+    elif horizon == "quarter":
+        if "quarter_in_year" in result.columns:
+            result.loc[active, "range_delta"] = result.loc[active, "quarter_in_year"].map(stats_lookup)
+
+    elif (  # season: Both valid_from=April-1 AND valid_to=September-30 required.
+        horizon == "season"
+        and 1 in stats_lookup
+        and stats_lookup[1] is not None
+        and "valid_from" in result.columns
+        and "valid_to" in result.columns
+    ):
+        vf = pd.to_datetime(result["valid_from"], errors="coerce")
+        vt = pd.to_datetime(result["valid_to"], errors="coerce")
+        is_apr = (vf.dt.month == 4) & (vf.dt.day == 1)
+        is_sep = (vt.dt.month == 9) & (vt.dt.day == 30) & (vt.dt.year == vf.dt.year)
+        result.loc[active & is_apr & is_sep, "range_delta"] = stats_lookup[1]
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
@@ -1325,6 +1545,17 @@ def _get_data_monthly(
     ]
     lead_aware = skill_lead_aware_enabled()
 
+    # --- Range stats (E2): fetch once per station/load, before skill joins ---
+    _code = _resolve_station(station)
+    _range_ref_period = None
+    _month_lkp: dict = {}
+    _quarter_lkp: dict = {}
+    if snow_ref_date is not None:
+        _range_ref_period = _range_period_label_or_raise(snow_ref_date.year)
+        _month_lkp = _read_long_term_hydrograph_stats(_code, "month", snow_ref_date.year)
+        if "quarter" in supported_modes:
+            _quarter_lkp = _read_long_term_hydrograph_stats(_code, "quarter", snow_ref_date.year)
+
     # M1 P3 review #1: resolve an operational lead using ONLY the config's
     # lead-time field (operational_lead_for_mode), not the schedule accessor
     # that also requires operational_issue_day. A taj-style monthly config
@@ -1392,6 +1623,7 @@ def _get_data_monthly(
             how="left",
             suffixes=("", "_stats"),
         )
+    forecasts_all = _attach_range_delta(forecasts_all, _month_lkp, "month", station_code=_code)
 
     long_forecasts_quarter = pd.DataFrame()
     quarter_forecast_stats = pd.DataFrame()
@@ -1541,6 +1773,7 @@ def _get_data_monthly(
                 how="left",
                 suffixes=("", "_stats"),
             )
+        long_forecasts_quarter = _attach_range_delta(long_forecasts_quarter, _quarter_lkp, "quarter", station_code=_code)
 
     data = {
         "hydrograph_day_all":   add_labels(get_hydrograph_day_all(station)),
@@ -1556,6 +1789,7 @@ def _get_data_monthly(
         "forecast_stats":       forecast_stats,
         "long_forecasts_m0":    pd.DataFrame(),
         "long_forecasts_quarter": long_forecasts_quarter,
+        "range_reference_period": _range_ref_period,
     }
     if "month_0" in supported_modes:
         m0_lead = _safe_lead("month_0", 0) if lead_aware else 0
@@ -1573,6 +1807,7 @@ def _get_data_monthly(
                 how="left",
                 suffixes=("", "_stats"),
             )
+        m0 = _attach_range_delta(m0, _month_lkp, "month", station_code=_code)
         data["long_forecasts_m0"] = m0
 
     if lead_aware:
@@ -1609,6 +1844,7 @@ def _get_data_monthly(
                     how="left",
                     suffixes=("", "_stats"),
                 )
+            mode_df = _attach_range_delta(mode_df, _month_lkp, "month", station_code=_code)
             by_mode[mode] = mode_df
         data["long_forecasts_by_month_mode"] = by_mode
 
@@ -1649,6 +1885,14 @@ def _get_data_quarter(
             suffixes=("", "_stats"),
         )
 
+    _code = _resolve_station(station)
+    _range_ref_period = None
+    _quarter_lkp: dict = {}
+    if snow_ref_date is not None:
+        _range_ref_period = _range_period_label_or_raise(snow_ref_date.year)
+        _quarter_lkp = _read_long_term_hydrograph_stats(_code, "quarter", snow_ref_date.year)
+    forecasts_all = _attach_range_delta(forecasts_all, _quarter_lkp, "quarter", station_code=_code)
+
     return {
         "hydrograph_day_all":    add_labels(get_hydrograph_day_all(station)),
         "hydrograph_pentad_all": pd.DataFrame(),
@@ -1661,6 +1905,7 @@ def _get_data_quarter(
         "linreg_predictor":      pd.DataFrame(),
         "forecasts_all":         forecasts_all,
         "forecast_stats":        forecast_stats,
+        "range_reference_period": _range_ref_period,
     }
 
 
@@ -1693,6 +1938,14 @@ def _get_data_season(
             suffixes=("", "_stats"),
         )
 
+    _code = _resolve_station(station)
+    _range_ref_period = None
+    _season_lkp: dict = {}
+    if snow_ref_date is not None:
+        _range_ref_period = _range_period_label_or_raise(snow_ref_date.year)
+        _season_lkp = _read_long_term_hydrograph_stats(_code, "season", snow_ref_date.year)
+    forecasts_all = _attach_range_delta(forecasts_all, _season_lkp, "season", station_code=_code)
+
     return {
         "hydrograph_day_all":    add_labels(get_hydrograph_day_all(station)),
         "hydrograph_pentad_all": pd.DataFrame(),
@@ -1705,4 +1958,5 @@ def _get_data_season(
         "linreg_predictor":      pd.DataFrame(),
         "forecasts_all":         forecasts_all,
         "forecast_stats":        forecast_stats,
+        "range_reference_period": _range_ref_period,
     }

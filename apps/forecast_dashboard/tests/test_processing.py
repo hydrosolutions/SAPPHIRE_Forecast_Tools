@@ -137,13 +137,14 @@ class TestCalculateForecastRange:
         assert result["fc_lower"].iloc[0] == pytest.approx(95.0)
         assert result["fc_upper"].iloc[0] == pytest.approx(105.0)
 
-    def test_unknown_range_type_falls_back_to_delta(self, identity_gettext, forecast_table):
+    def test_unknown_range_type_gives_nan(self, identity_gettext, forecast_table):
         result = processing.calculate_forecast_range(
             identity_gettext, forecast_table, "unknown_type", 0
         )
-        # Fallback is delta mode
-        assert result["fc_lower"].iloc[0] == pytest.approx(90.0)
-        assert result["fc_upper"].iloc[0] == pytest.approx(110.0)
+        # Unknown method: both bounds are NaN, no silent fallback
+        import math
+        assert math.isnan(result["fc_lower"].iloc[0])
+        assert math.isnan(result["fc_upper"].iloc[0])
 
 
 # ── get_bulletin_header_info ───────────────────────────────────────────────

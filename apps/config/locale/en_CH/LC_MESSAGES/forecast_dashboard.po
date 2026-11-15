@@ -337,3 +337,18 @@ msgstr "Current season {season}"
 #: vizualization.py:2359
 msgid "Previous season {season}"
 msgstr "Previous season {season}"
+
+# Range method selector (PP-075 E2)
+msgid "Native"
+msgstr "Native"
+
+# Reference period label for forecast configuration card
+msgid "Reference period: {period}"
+msgstr "Reference period: {period}"
+
+# PP-075 E2: range selector label and help note
+msgid "Select period forecast range (for both summary table and figures):"
+msgstr "Select period forecast range (for both summary table and figures):"
+
+msgid "Note: daily forecasts retain native model bounds."
+msgstr "Note: daily forecasts retain native model bounds."

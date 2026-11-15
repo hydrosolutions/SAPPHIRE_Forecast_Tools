@@ -1,7 +1,7 @@
 # Shared long-term observation delta — vision and draft plan
 
-**Status:** In Progress — E0 and E1 complete locally; E1 independently reviewed and verified. E2 has not started; no deployment or live refresh is claimed.
-Implementation has not started. Exact E2 presentation test/locale files are fixed before E2 delegation.
+**Status:** In Progress — E0 and E1 complete locally; E1 independently reviewed and verified. E1 committed as `2b924654`; E2 dashboard integration is in progress. No deployment or live refresh is claimed.
+E2 is a locally verified implementation checkpoint, not a completed phase. Completion depends on agreement with Maxat and implementation of the [supplementary quarterly bulletin snapshot](mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md).
 **Modules:** `apps/preprocessing_runoff`, `apps/postprocessing_forecasts`, `apps/forecast_dashboard`.
 **Priority:** Medium (proposed). **Related:** [PP-075](mid_prio_gi_draft_pp_short_term_em_skill_and_delta_ranges.md), PP-074, FD-023.
 **Evidence baseline:** `origin/maxat_sapphire_2` at `4c8899f6`, inspected 2026-11-14. No live payload or deployment verification.
@@ -154,7 +154,7 @@ affected-scope tests. E0 recorded the decisions; E1 implements only the scoped a
 |---|---|---|---|
 | E0 / — **Complete** | Verify seasonal mapping/wiring; record owner decisions and the scope below. | Orchestrator + independent read-only review | April–September mapping and fixed-reference historical display resolved; no service/schema dependency for this scope; review corrections confirmed. |
 | E1 / E0 **Complete locally** | Produce and persist statistics using the exact producer scope below. Existing postprocessing aggregators remain unchanged reference evidence. | 1 implementation agent | Synthetic std/count, thresholds, pre-write read failures and complete repeated writes verified; norms/actuals unchanged. |
-| E2 / E1 | Add the independent dashboard statistics read/joins; integrate with the already-agreed PP-075 frontend behavior using the scope below. | 1 implementation agent | All existing surfaces use the selected method; every model targeting the same period receives the same range delta even without skill; no row multiplication or lead confusion. |
+| E2 / E1 **In progress** | Add the independent dashboard statistics read/joins; integrate with the already-agreed PP-075 frontend behavior using the scope below. | 1 implementation agent | All existing surfaces use the selected method; every model targeting the same period receives the same range delta even without skill; no row multiplication or lead confusion. |
 | E3 / E2 | Independent open-ended review, operational verification plan and documentation. Scope: changed tests plus relevant module READMEs, `doc/configuration.md`, `doc/data_flow_long_term.md`, `doc/user_guide.md`. | 1 independent reviewer; fixes delegated separately | Review findings resolved, affected/full tests pass, cross-module pipeline/smoke evidence recorded, deployment readiness distinguished from deployment. |
 
 **E1 allowlist (relative to `apps/preprocessing_runoff/`):** new `src/long_term_range_stats.py` (small pure
@@ -267,3 +267,96 @@ stage 1. Carry it forward in the issue index and handover without implementing o
   "E3":{"depends_on":["E2"],"parallel_agents":1}
 }}
 ```
+
+### E2 interim verification — incomplete
+
+E1 is committed as `2b924654`. The initial E2 dashboard patch passed the module runner
+with **842 passed, 6 existing skips**, but parent inspection found missing integration:
+both short-term period chart paths still use old formulas; the long-term summary restores
+skill delta and can fall back to it when `range_delta` is absent; the reference label is
+not wired; monthly Apply omits supplementary tables; bulletin delta edits lack the lower
+clamp. These are required corrections, not deferred enhancements. Production-path tests
+are needed because helper-only assertions did not catch these gaps. Separate daily
+forecast overlays retain their native bounds.
+
+Independent CLI review was blocked by automatic approval review because it would send
+private source to an external model process. The owner explicitly approved scoped external review
+and correction agents on November 15; work has resumed. E2 remains uncommitted and incomplete; no deployment
+or service changes have been made.
+
+### E2 storage dependency discovered during review
+
+On November 15 the owner chose to plan persistent storage for the monthly reservoir bulletin’s
+supplementary quarterly section with Maxat before completing E2. See the [bounded storage proposal](mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md).
+Existing Hydrograph fields still suffice for observation delta; the new API dependency is specifically
+bulletin snapshot persistence. E2 must not be marked complete while this path reconstructs native bounds.
+
+### E2 verification checkpoint, November 15
+
+The expanded dashboard suite passed with 869 tests and the same six live-integration skips before
+the final chart/bulletin regressions were added. Eight non-ML Docker builds and import smoke tests
+passed from a source-only context. New chart tests then exposed fixture errors and a genuine zero-bound
+rendering issue; corrections are undergoing verification. These earlier passing counts are not a claim
+that the final E2 patch is complete. The initial full runner’s five pipeline failures were all Docker Hub
+DNS resolution failures under the sandbox; they require a network-enabled rerun, not a new skip exception.
+
+Independent patch review found the supplementary quarterly storage dependency and stale bounds on a
+cleared bulletin delta. The storage proposal is independently reviewed and awaits Maxat/owner contract
+agreement. Broader callback and save/reload/export regressions, final patch confirm-fixes, and final
+full-run evidence must be checked when completing E2 after that agreement.
+
+### Verified interim E2 state (supersedes earlier failing checkpoints)
+
+- Final network-enabled full runner: **9,139 passed, 12 accepted skips, 2 expected failures**, all 16
+  suites successful. Skip identities/reasons match the E1 baseline; Docker Hub failures disappeared
+  with network access. Log: `/tmp/pp075-e2-full-final.log`.
+- After the last daily-renderer correction, dashboard runner: **926 passed, 6 existing skips**.
+  Log: `/tmp/pp075-e2-verified-dashboard.log`. New tests cover actual table output, period chart input
+  bounds, missing intervals/zero bounds, retained daily native intervals, and bulletin delta clearing.
+- All eight non-ML Docker builds/import smokes passed; the dashboard is rebuilt separately after final
+  rendering edits. No live pipeline or operational data refresh was run.
+- The independently reviewed quarterly storage proposal is ready for Maxat’s contract review. The current
+  supplemental quarter path is deliberately not claimed fixed; E2 remains incomplete and uncommitted.
+  Callback and full saved-quarter round-trip acceptance remains part of completion after that agreement.
+- No `sapphire/services/` files were changed. Original dirty checkout remains separate from this worktree.
+- Final narrow daily-overlay confirm-fixes review returned no findings; final dashboard Docker build
+  and smoke passed. The unresolved quarterly persistence finding is tracked in the linked proposal.
+
+### Storage proposal refinement
+
+The owner confirmed that monthly bulletins retain their own frozen quarterly copy. The revised storage
+proposal preserves potentially edited Forecast-tab values through the existing monthly Add/Add-m0
+action, with one nullable snapshot field on the existing monthly bulletin row. No second quarterly
+write, new table, linking/versioning system or separate editing screen is proposed. Independent review
+and confirm-fixes of this revision returned no remaining findings; service implementation still requires
+Maxat’s agreement.
+
+### Authorized E2 checkpoint completion work
+
+The owner authorized finishing work independent of quarterly storage, then committing a clearly
+labelled checkpoint. Scope: one Sonnet implementation agent for
+`apps/forecast_dashboard/tests/test_range_callbacks_e2.py`; existing production behavior is unchanged
+unless a separately scoped correction is required. The orchestrator updates `doc/user_guide.md`,
+`doc/configuration.md`, `doc/data_flow_long_term.md`, producer/dashboard READMEs and
+`doc/plans/pp075_range_deployment_handoff.md`. Dependency: existing E1 and E2 range implementation.
+Acceptance: real Apply/station/horizon/tab/slider callbacks, exact rendered monthly/main/m0/quarter
+bounds, current reference label, focused/full runner with unchanged accepted skips/xfails, independent
+review, sensitive-data audit and checkpoint commit. Quarterly storage, deployment and operational
+refresh remain pending; this checkpoint must not mark E2 complete.
+
+### E2 checkpoint verification for commit
+
+- Callback regression suite: **960 passed, 6 existing live-integration skips**; exact rendered values
+  are checked across primary/m0/quarter tables for Delta, Manual and Native, alongside registered
+  station/horizon/slider callbacks, tab visibility and reference labels.
+- Final full runner: **9,174 passed, 12 accepted skips, 2 expected failures**, all 16 suites
+  successful. Skip identities and reasons match the E1 baseline. Log: `/tmp/pp075-e2-checkpoint-full.log`.
+- Independent documentation review corrections (cached writer-image verification and rollout versus
+  implementation gates) were applied. Fresh independent review of callback tests and those corrections
+  returned no findings. Repository hooks and `git diff --check` passed.
+- No production code changed during this callback/docs substep, so prior eight-target non-ML Docker
+  evidence and final dashboard rebuild/smoke remain applicable. No live pipeline/deployment was performed.
+- User/configuration docs, module READMEs and long-term data-flow notes now describe the implemented
+  ranges and the outstanding quarterly export exception. See the [deployment handoff](../pp075_range_deployment_handoff.md).
+- This is the authorized checkpoint commit, **not E2 completion**. Quarterly-copy persistence, its
+  save/reload/export acceptance and coordinated operational rollout remain pending with Maxat.

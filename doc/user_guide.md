@@ -208,11 +208,47 @@ Please note that forecasts for sites which are newly configured for short-term f
 In the current version of the software, the predictor tab shows
 
 #### Forecast tab
-The method to calculate the forecast range can be selected in the side pane. Following options are available:
-a) The forecast range is calculated based on 0.674 times the standard deviation of the observed discharge data.
-b) The forecast range is plus/minus a manually selected percentage of the forecasted discharge.
+Select the **period forecast range** in the side pane, then click **Apply changes**. The choice
+controls the forecast summary tables and period forecast ranges in the short-term hydrographs.
+Monthly tables (including the available m0 and quarterly reservoir cards) and seasonal tables use
+the same calculation. This does not add long-term forecast charts or a separate quarter selector.
+
+| Method | Bounds |
+|---|---|
+| **Delta** (initial selection) | Forecast ± shared δ |
+| **Native** | Stored Q25–Q75; EM uses its stored calculated bounds; LR uses forecast ± shared δ |
+| **Manual** | Forecast ± the selected percentage of the forecast (initial slider value: 20%) |
+| **Mixed** | Forecast ± the smaller of shared δ and the selected percentage of the forecast |
+
+The percentage slider appears for Manual and Mixed. Calculated negative lower bounds are limited
+to zero; stored Native quantiles are preserved. If a required input is missing, **both bounds are
+unavailable**: the table has no numeric bounds and the period chart has no interval. The dashboard
+does not switch methods or treat missing δ as zero. A genuine zero δ is valid.
+
+The figure-only range visibility control does not change table values. Separate **daily** forecast
+overlays keep their native model ranges; the selector applies to period forecasts.
+
+For long-term ranges, δ comes from observation variability for the same calendar month, quarter or
+April–September season. The deployment’s reference years appear beside the controls (default
+2000–2025). Older forecasts use that same reference window. The displayed long-term δ is a range
+tolerance; historical accuracy and other skill scores are unchanged. Other seasonal windows have no
+Delta/Mixed interval. See [reference settings and eligibility](configuration.md#long-term-range-reference-period).
+
+**Rollout status:** these PP-075 controls are implemented locally; availability on a server depends
+on deployment and publication of observation statistics. Complete monthly reservoir bulletin parity
+is pending the [quarterly storage agreement](plans/issues/mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md).
 
 #### Bulletin tab
+
+Add the selected forecast to save its numeric bounds. Saved primary bounds are not recalculated when
+the range selector changes or the bulletin is reloaded. Editing bulletin δ explicitly replaces bounds
+with forecast ± δ (lower bound limited to zero); clearing δ clears both bounds. Missing values export
+as blank cells or JSON nulls.
+
+The supplementary quarterly section of a monthly reservoir bulletin is an **outstanding exception**:
+it still reconstructs native bounds from live forecasts. Do not assume it preserves quarterly edits or
+matches the selected range method. The reviewed storage proposal will capture the edited quarterly
+values with monthly Add/save and read that frozen copy thereafter; this is **planned, not implemented**.
 
 #### Ensemble Mean (EM) forecasts
 
