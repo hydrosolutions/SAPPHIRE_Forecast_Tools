@@ -360,3 +360,25 @@ refresh remain pending; this checkpoint must not mark E2 complete.
   ranges and the outstanding quarterly export exception. See the [deployment handoff](../pp075_range_deployment_handoff.md).
 - This is the authorized checkpoint commit, **not E2 completion**. Quarterly-copy persistence, its
   save/reload/export acceptance and coordinated operational rollout remain pending with Maxat.
+
+### E2 quarterly-copy implementation — 2026-11-15
+
+The owner authorized including the scoped service change in this PR. The dashboard now saves the
+selected, potentially edited quarter with monthly Add/Add-m0 in one POST, and reads its frozen numeric
+values/dates on reload, Excel export and public share. Ordinary monthly edits preserve that copy; failed
+Adds preserve prior saved state. The existing monthly row gains one nullable typed JSON field through
+migration `c3d4e5f6a7b8`; omission preserves, explicit null clears, and legacy rows remain absent.
+
+Local evidence: 244 postprocessing service tests passed; 1,072 dashboard tests passed with the six
+accepted live-integration skips; final full runner 9,328 passed, 12 accepted skips and two expected
+failures (identities/reasons match the E2 checkpoint). Eight non-ML Docker builds/import smokes passed,
+plus the service image build and PostgreSQL 16 migration upgrade/downgrade on a synthetic legacy row.
+Independent review found no production defects; the final confirm-fixes/documentation pass cleared the
+strengthened regression tests with no remaining findings.
+See the [quarterly implementation record](mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md) and
+[deployment handoff](../pp075_range_deployment_handoff.md).
+
+This completes the local quarterly storage implementation, not deployment or operational refresh.
+Deploy the migration/service before the dashboard and verify POST→GET persistence with Maxat. The live
+pipeline remains deferred pending an agreed non-operational configuration. Short-term/backend
+harmonization remains the planned follow-up, outside this maintenance patch.

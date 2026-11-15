@@ -386,7 +386,18 @@ def get_skill_metric(
 def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> List[Bulletin]:
     """Create or update multiple bulletins in bulk (upsert based on horizon_type, year, horizon_value, code)"""
     try:
-        incoming = [item.model_dump() for item in bulk_data.data]
+        # Track which items explicitly set quarterly_snapshot (omitted ≠ explicit null).
+        # JSON-mode dump the nested snapshot so date objects become ISO strings.
+        qs_explicitly_set: set[int] = set()
+        incoming = []
+        for idx, item in enumerate(bulk_data.data):
+            data = item.model_dump()
+            if "quarterly_snapshot" in item.model_fields_set:
+                qs_explicitly_set.add(idx)
+                if item.quarterly_snapshot is not None:
+                    data["quarterly_snapshot"] = item.quarterly_snapshot.model_dump(mode="json")
+            incoming.append(data)
+
         keys = {(i["horizon_type"], i["year"], i["horizon_value"], i["code"]) for i in incoming}
 
         existing_map = {
@@ -401,13 +412,19 @@ def create_bulletin(db: Session, bulk_data: BulletinBulkCreate) -> List[Bulletin
 
         db_bulletins = []
         changed = []
-        for data in incoming:
+        for idx, data in enumerate(incoming):
             key = (data["horizon_type"], data["year"], data["horizon_value"], data["code"])
             existing = existing_map.get(key)
 
             if existing:
-                if _has_changes(existing, data):
-                    for k, v in data.items():
+                # Omitted quarterly_snapshot: exclude from change detection and update
+                # so the stored snapshot is preserved unchanged.
+                if idx in qs_explicitly_set:
+                    effective_data = data
+                else:
+                    effective_data = {k: v for k, v in data.items() if k != "quarterly_snapshot"}
+                if _has_changes(existing, effective_data):
+                    for k, v in effective_data.items():
                         setattr(existing, k, v)
                     changed.append(existing)
                     logger.info(f"Updated bulletin: {key}")

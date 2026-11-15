@@ -306,6 +306,7 @@ class Bulletin(Base):
     sdivsigma = Column(Float)
     mae = Column(Float)
     accuracy = Column(Float)
+    quarterly_snapshot = Column(JSON, nullable=True)
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (

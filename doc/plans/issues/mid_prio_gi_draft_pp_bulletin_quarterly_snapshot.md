@@ -1,9 +1,9 @@
 # PP-075: persist the monthly bulletin’s quarterly reservoir section
 
-**Status:** Draft — owner confirmed frozen monthly quarterly copies; revised proposal independently reviewed with no remaining findings. Awaiting Maxat’s contract and rollout agreement.
+**Status:** Review — owner approved including the scoped service changes in this PR on 2026-11-15. Local implementation, tests and independent review are complete; owner/Maxat review and service-first deployment remain separate.
 **Priority:** Medium. **Parent:** [PP-075 long-term ranges](mid_prio_gi_draft_pp_shared_long_term_observation_delta.md).
 **Owner decision, 2026-11-15:** plan persistent quarterly storage with Maxat before completing E2.
-No service edits, migration, deployment or message to Maxat has been performed.
+The owner has authorized service implementation in this PR. No deployment or message to Maxat has been performed.
 
 **Latest owner direction:** save potentially edited quarterly forecasts from the Forecast tab and let
 bulletin writers read persisted values, as for other horizons. Keep the solution minimal. The owner
@@ -149,11 +149,11 @@ is part of the proposal for agreement; per-period layout redesign is deferred.
 4. To replace the monthly copy, explicitly select/edit and Add again. An ordinary monthly bulletin-cell
    edit carries the existing snapshot unchanged; it must not recapture the Forecast tab.
 
-## Rollout and review questions for Maxat
+## Deployment review for Maxat
 
 1. Is one typed nullable `quarterly_snapshot` JSON field on the existing bulletin row acceptable?
 2. Can the service preserve this new field when omitted and clear it only on explicit null?
-3. Agree the six-field contract, quarter-date validation, and old-row null behavior before implementation.
+3. Review the implemented six-field contract, quarter-date validation, and old-row null behavior before deployment.
 4. Deploy migration/service support first, verify POST→GET on synthetic records, then deploy the dashboard.
    An old service may ignore unknown request fields: deployment verification must prove persistence, not just HTTP success.
 
@@ -164,8 +164,8 @@ belong in migrations, fixtures, documentation examples or commits; tests use syn
 
 | Phase / dependencies | Owner / allowed scope | Acceptance |
 |---|---|---|
-| Q0 / — | Orchestrator + independent read-only reviewer; this proposal and PP-075 index only | Maxat and owner agree contract and rollout; E2 stays incomplete |
-| Q1 / Q0 | Maxat coordinates service implementation: Bulletin model/schema, one additive migration, narrow CRUD handling and service tests | New/old row POST→GET; omission preserves, null clears; no changes to primary fields or uniqueness |
+| Q0 / — | Orchestrator + independent read-only reviewer; this proposal and PP-075 index only | Owner authorized this PR’s contract and scoped service work; Maxat reviews migration/rollout before deployment |
+| Q1 / Q0 | Owner-authorized delegated service implementation in this PR: Bulletin model/schema, one additive migration, narrow CRUD handling and service tests | New/old row POST→GET; omission preserves, null clears; no changes to primary fields or uniqueness |
 | Q2 / Q1 contract | One delegated dashboard agent; bulletin_manager, site, bulletin_publish; widgets/widget_manager/plot_manager (quarterly read-only identity and row-period handoff only); bulletins (section-presence and period-conflict checks only); focused tests | Selected quarter captured; same numeric bounds after save/reload/export/share; missing stays blank/null; no live reconstruction |
 | Q3 / Q1 + Q2 | Independent read-only reviewer; fixes delegated separately | Focused/full runner checks; synthetic API round-trip; existing monthly/quarter/season/short-term behavior and accepted baseline preserved; deployment separately verified |
 
@@ -197,10 +197,39 @@ the revised contract above explicitly distinguishes absent entries from present 
 Share JSON shape and the feasible remedy for conflicting quarter headings are now stated. The latest
 owner direction requires preserving Forecast-tab edits. Reusing a mutable standalone quarter row was
 considered; the owner explicitly retained frozen monthly copies. One nullable field on the existing
-monthly bulletin row remains the proposed minimum. This revision is being sent back for independent review.
+monthly bulletin row remains the proposed minimum. This revision was sent back for independent review.
 
 The revised independent simplicity review supports one nullable field and one monthly POST. Its only
 remaining finding was local state replacement before save success; the Add-path staging/failure rule
 and focused acceptance cases above address that concrete edited-bound rejection scenario. The narrow
 confirm-fixes review returned no remaining findings. No implementation changes are included in this
 planning revision; this is proposal review, not service implementation or deployment approval.
+
+## Implementation evidence — 2026-11-15 (in progress)
+
+The owner explicitly authorized including the service changes in this PR. The service patch adds
+`quarterly_snapshot` through revision `c3d4e5f6a7b8` after `b2c3d4e5f6a7`, with typed nested validation
+and omission-preserving updates. The focused postprocessing service runner passed 244 tests with no
+skips after test corrections. Independent review requested stronger preservation assertions; these
+were added, and the final confirm-fixes pass returned no remaining findings. This is local evidence,
+not deployment approval.
+
+A source-only service image built locally. An isolated PostgreSQL 16 database successfully ran the
+existing migration chain, accepted a synthetic legacy row, and upgraded to the new revision with the
+row intact and its snapshot SQL NULL. Downgrading removed only the new column and retained the primary
+row. The temporary container/network were removed; no operational database was accessed.
+
+Dashboard implementation now captures edited quarterly values in monthly Add/Add-m0, stages candidate
+state until save success, and reloads/exports only the saved snapshot. Quarter identity is readonly;
+hidden/stale cards are unavailable. Monthly cell edits preserve the snapshot. Excel and share checks
+cover missing bounds, frozen dates/volumes, mixed presence and selected-station period conflicts.
+
+The final focused dashboard runner passed 1,072 tests with the six accepted live-integration skips.
+The final full runner passed 9,328 tests with the same 12 accepted skips and two expected failures;
+skip identities/reasons matched the checkpoint. Independent review found no production defects and
+requested stronger regression tests; these are corrected, and the final confirm-fixes/documentation
+review returned no remaining findings. Eight non-ML Docker builds and eight import smokes passed.
+
+Deploy the migration and service before the dashboard, then verify persistence on the actual deployment
+with Maxat. No deployment, operational refresh or live pipeline run is claimed; the latter still needs
+an agreed non-operational configuration.

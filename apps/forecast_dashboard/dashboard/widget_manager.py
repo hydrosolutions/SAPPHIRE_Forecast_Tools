@@ -146,6 +146,15 @@ class WidgetManager:
             self.forecast_tabulator_q
         )
         self.forecast_info_q = widgets.create_forecast_info_pane()
+        # Model column is identity (readonly); numeric cells remain editable.
+        self.forecast_tabulator_q.editors = {widgets._('Model'): None}
+        # Monthly Add buttons also save the quarterly forecast for reservoir stations.
+        _q_add_help = widgets._(
+            "For monthly forecasts at reservoir stations, also saves "
+            "the displayed quarterly forecast selection."
+        )
+        self.add_to_bulletin_button.description = _q_add_help
+        self.add_to_bulletin_m0_button.description = _q_add_help
 
         # ── Hydrograph ──────────────────────────────────────────────────────
         self.aggregate_radiobutton = widgets.create_aggregate_radiobutton()

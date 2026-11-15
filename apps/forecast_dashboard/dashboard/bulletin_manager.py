@@ -1,5 +1,6 @@
 import calendar
 import contextlib
+import copy
 
 import numpy as np
 import pandas as pd
@@ -346,11 +347,238 @@ def _ensure_site_defaults(site) -> None:
             setattr(site, attr, default)
 
 # ---------------------------------------------------------------------------
+# Quarterly snapshot helpers
+# ---------------------------------------------------------------------------
+
+
+def _snap_float(value) -> float | None:
+    """Return a finite float or None; non-finite / non-numeric values become None."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if not np.isfinite(f) else f
+
+
+def _is_valid_quarter(vf: pd.Timestamp, vt: pd.Timestamp) -> bool:
+    """Return True when vf is the first day of a calendar quarter and vt is its last."""
+    if vf.day != 1 or (vf.month - 1) % 3 != 0:
+        return False
+    q_end_month = vf.month + 2
+    last_day = calendar.monthrange(vf.year, q_end_month)[1]
+    expected_vt = pd.Timestamp(year=vf.year, month=q_end_month, day=last_day)
+    return vt == expected_vt
+
+
+def _sanitize_quarterly_snapshot(snap: dict | None) -> dict | None:
+    """Sanitize a quarterly_snapshot dict for JSON serialization.
+
+    Converts non-finite / non-numeric values in numeric fields to None;
+    coerces date fields to ISO strings.  Returns None for None input.
+    """
+    if snap is None:
+        return None
+    out: dict = {}
+    for k, v in snap.items():
+        if k in ("valid_from", "valid_to"):
+            if v is None:
+                out[k] = None
+            elif hasattr(v, 'strftime'):
+                out[k] = v.strftime("%Y-%m-%d")
+            else:
+                out[k] = str(v)
+        elif k == "model_type":
+            out[k] = str(v) if v is not None else None
+        else:
+            out[k] = _snap_float(v)
+    return out
+
+
+def _capture_quarterly_snapshot(wm, _) -> dict | None:
+    """Capture the quarterly card's current row identity and edited numeric values.
+
+    Reads identity (model_type, valid_from, valid_to) from
+    ``wm._quarterly_source_df`` (set by PlotManager when the card is
+    populated) and numeric values from the edited ``wm.forecast_tabulator_q``.
+    Returns the six-field dict, or None when:
+    - The quarterly card is hidden (``wm._pm.summary_table_q_card.visible``
+      is False) — guards against a stale source df left from the previous
+      station when the station selector changes before the renderer fires.
+    - The source df is absent or empty (card hidden / not a reservoir).
+    - The source df contains no rows for the current station
+      (``wm.station_selector.value``).
+    - The tabulator is empty.
+    - The selected row index is negative or out of range.
+    - The selected row's model cannot be matched in the source df.
+    - The model maps to multiple source rows with conflicting
+      (valid_from, valid_to) pairs — ambiguous, not silently first-row.
+    - Dates do not form a complete calendar quarter.
+    - Bounds are one-sided or inverted (both-null is accepted).
+    """
+    # Card visibility guard: if the quarterly card is hidden (e.g. station
+    # switched away from a reservoir), the source df may still be populated
+    # from the previous station.  Check the card itself before trusting it.
+    _pm = getattr(wm, '_pm', None)
+    if _pm is not None:
+        q_card = getattr(_pm, 'summary_table_q_card', None)
+        if q_card is not None and not getattr(q_card, 'visible', True):
+            return None
+
+    source_df = getattr(wm, '_quarterly_source_df', None)
+    if source_df is None or source_df.empty:
+        return None
+
+    # Station identity: source rows must belong to the current station.
+    # update_quarterly_summary_tabulator filters to the current station, but a
+    # station switch between that render and this capture would leave stale rows.
+    station = getattr(getattr(wm, 'station_selector', None), 'value', None)
+    if station is not None and 'station_labels' in source_df.columns:
+        source_df = source_df[source_df['station_labels'] == station]
+        if source_df.empty:
+            return None
+
+    tabulator_df = getattr(wm.forecast_tabulator_q, 'value', None)
+    if tabulator_df is None or tabulator_df.empty:
+        return None
+
+    selected_indices = getattr(wm.forecast_tabulator_q, 'selection', None) or (
+        [0] if len(tabulator_df) > 0 else []
+    )
+    if not selected_indices:
+        return None
+    idx = selected_indices[0]
+    # Guard against negative index (e.g. programmatic -1 / cleared selection).
+    if not isinstance(idx, int) or idx < 0 or idx >= len(tabulator_df):
+        return None
+    selected_row = tabulator_df.iloc[idx]
+
+    model_col = _('Model')
+    if model_col not in selected_row.index:
+        return None
+    model = selected_row[model_col]
+    if model is None or (isinstance(model, float) and np.isnan(model)) or not str(model).strip():
+        return None
+
+    # Resolve identity from the source df (unaffected by sorting/editing).
+    if 'model_short' not in source_df.columns:
+        return None
+    matching = source_df[source_df['model_short'] == model]
+    if matching.empty:
+        return None
+    if 'valid_from' not in source_df.columns or 'valid_to' not in source_df.columns:
+        return None
+
+    # Ambiguity guard: multiple source rows for the same model are only
+    # accepted when all carry the same (valid_from, valid_to) pair. Disagreement
+    # means the source df spans multiple quarters — return None instead of
+    # silently picking the first row (which could belong to a different quarter).
+    if len(matching) > 1:
+        vf_set = {str(v) for v in matching['valid_from']}
+        vt_set = {str(v) for v in matching['valid_to']}
+        if len(vf_set) > 1 or len(vt_set) > 1:
+            logger.warning(
+                "_capture_quarterly_snapshot: model '%s' maps to %d source "
+                "rows with conflicting periods; snapshot rejected.",
+                model, len(matching),
+            )
+            return None
+
+    src_row = matching.iloc[0]
+    vf_raw = src_row['valid_from']
+    vt_raw = src_row['valid_to']
+    if pd.isna(vf_raw) or pd.isna(vt_raw):
+        return None
+    try:
+        vf = pd.Timestamp(vf_raw)
+        vt = pd.Timestamp(vt_raw)
+        if pd.isna(vf) or pd.isna(vt):
+            return None
+    except (TypeError, ValueError):
+        return None
+    if not _is_valid_quarter(vf, vt):
+        logger.warning(
+            "_capture_quarterly_snapshot: dates (%s – %s) do not form a "
+            "complete calendar quarter; snapshot rejected.", vf.date(), vt.date(),
+        )
+        return None
+
+    # Numeric values from the potentially-edited tabulator row.
+    q = _snap_float(selected_row.get(_('Forecasted discharge')))
+    lb = _snap_float(selected_row.get(_('Forecast lower bound')))
+    ub = _snap_float(selected_row.get(_('Forecast upper bound')))
+
+    # Both bounds null is accepted; one-sided or inverted is a validation failure.
+    if lb is not None and ub is None:
+        raise ValueError(
+            "_capture_quarterly_snapshot: one-sided bounds (lower present, upper missing)"
+        )
+    if lb is None and ub is not None:
+        raise ValueError(
+            "_capture_quarterly_snapshot: one-sided bounds (upper present, lower missing)"
+        )
+    if lb is not None and ub is not None and lb > ub:
+        raise ValueError(
+            f"_capture_quarterly_snapshot: inverted bounds ({lb:.3f} > {ub:.3f})"
+        )
+
+    return {
+        "model_type": str(model),
+        "valid_from": vf.strftime("%Y-%m-%d"),
+        "valid_to": vt.strftime("%Y-%m-%d"),
+        "forecasted_discharge": q,
+        "fc_lower": lb,
+        "fc_upper": ub,
+    }
+
+
+def _populate_quarterly_from_snapshot(site, _) -> None:
+    """Populate a site's quarterly attrs from its saved quarterly_snapshot.
+
+    Reads ``site.quarterly_snapshot`` (None or the six-field dict) and
+    calls ``site.get_quarterly_forecast_attributes_for_site`` with an
+    appropriate DataFrame and seconds_in_quarter value.  Clears all
+    quarterly attrs when the snapshot is absent or invalid.
+    """
+    snap = getattr(site, 'quarterly_snapshot', None)
+    if snap is None:
+        site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
+        return
+    try:
+        vf = pd.Timestamp(snap['valid_from'])
+        vt = pd.Timestamp(snap['valid_to'])
+        seconds = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+    except (KeyError, TypeError, ValueError):
+        logger.warning(
+            "_populate_quarterly_from_snapshot: invalid dates in snapshot for "
+            "site '%s'; clearing quarterly attrs.", getattr(site, 'code', '?'),
+        )
+        site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
+        return
+    q_df = pd.DataFrame([{
+        _('Model'): snap.get('model_type', ''),
+        _('Forecasted discharge'): snap.get('forecasted_discharge'),
+        _('Forecast lower bound'): snap.get('fc_lower'),
+        _('Forecast upper bound'): snap.get('fc_upper'),
+        'valid_from': vf,
+        'valid_to': vt,
+    }])
+    site.get_quarterly_forecast_attributes_for_site(_, q_df, seconds)
+
+
+# ---------------------------------------------------------------------------
 # Bulletin-specific API helpers  (thin wrappers around db primitives)
 # ---------------------------------------------------------------------------
 
 def _site_to_records(horizon_type: str, year: int, horizon_value: int, site) -> list[dict]:
     """Flatten one site's forecasts DataFrame into API-ready bulletin dicts."""
+    # Service rejects non-null quarterly_snapshot for non-month horizons.
+    q_snap = (
+        _sanitize_quarterly_snapshot(getattr(site, 'quarterly_snapshot', None))
+        if horizon_type == "month"
+        else None
+    )
     records = []
     for _idx, row in site.forecasts.iterrows():
         model = row.get(_('Model'), '')
@@ -371,6 +599,7 @@ def _site_to_records(horizon_type: str, year: int, horizon_value: int, site) -> 
             "sdivsigma":           row.get(_('s/σ')),
             "mae":                 row.get(_('MAE')),
             "accuracy":            row.get(_('Accuracy')),
+            "quarterly_snapshot":  q_snap,
         })
     return records
 
@@ -402,24 +631,8 @@ def _populate_forecast_attributes(
         days_in_month = calendar.monthrange(year_for_calc, month_for_calc)[1]
         hydrate_month_hydrograph_stats(site, month_for_calc, db)
         site.get_monthly_forecast_attributes_for_site(_, site.forecasts, days_in_month)
-        if 'вдхр' in (site.punkt_name_ru or ''):
-            q_df = db.get_long_forecasts_quarter(site.code)
-            if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
-                filtered_q = q_df[q_df["code"] == site.code]
-                if not filtered_q.empty:
-                    filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
-            else:
-                filtered_q = pd.DataFrame()
-            if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
-                vf = pd.to_datetime(filtered_q["valid_from"].values[0])
-                vt = pd.to_datetime(filtered_q["valid_to"].values[0])
-                seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
-            else:
-                seconds_in_quarter = 0
-            filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
-            site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
-        else:
-            site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
+        # Quarterly attrs come from the saved snapshot; no live API fetch.
+        _populate_quarterly_from_snapshot(site, _)
     elif horizon_type == 'season':
         # The frozen bulletin record (site.forecasts) holds the same
         # forecast bounds the API and UI show. Use it for the seasonal
@@ -529,6 +742,19 @@ def _load_bulletin_from_api(
                 for _idx, row in site_df.iterrows()
             ])
             site.forecasts = site.forecasts.where(site.forecasts.notna(), other=float('nan'))
+
+            # Restore the saved quarterly_snapshot from the first row that
+            # carries a non-null value.  Old rows (pre-feature) have no such
+            # column and return None, which correctly clears all quarterly attrs.
+            q_snap = None
+            for _qrow_idx, row in site_df.iterrows():
+                raw = row.get("quarterly_snapshot")
+                if raw is not None and not (isinstance(raw, float) and np.isnan(raw)):
+                    if isinstance(raw, dict):
+                        q_snap = raw
+                    break
+            site.quarterly_snapshot = q_snap
+
             # Kill the stale-cache hazard: never trust a `bulletin_target_period`
             # left on this (possibly reused) site object from an earlier
             # in-session add/reload — see the docstring above. Reload always
@@ -724,106 +950,123 @@ class BulletinManager:
         if selected_site is None:
             print(f"Site '{selected_station}' not found in sites_list.")
             return
-        
-        # Assign forecasts to selected site object
-        selected_site.forecasts = selected_rows.reset_index(drop=True)
-        # Add forecast attributes to site object
-        horizon = self.wm.horizon_selector.value
-        if horizon == "month":
-            target_month, _target_year, days_in_month = self._month_hydration_params()
-            hydrate_month_hydrograph_stats(selected_site, target_month, db)
-            selected_site.get_monthly_forecast_attributes_for_site(
-                _, selected_rows, days_in_month,
-            )
-            # FD-018: capture this site's OWN target period (from the main
-            # panel's own forecast data, via valid_from) so a later
-            # same-session bulletin WRITE can honour it instead of
-            # re-deriving a single bulletin-wide period from whatever
-            # station happens to be loaded at that later time. A RELOAD
-            # never honours this — see `_load_bulletin_from_api`, which
-            # always clears it and uses the bulletin-wide period (identical
-            # to trunk; a correct per-site reload needs a schema change,
-            # PP-040). Gated on the flag; a resolution failure (missing/NaT
-            # valid_from) is not fatal — it just leaves the site without an
-            # override, so write falls back to the bulletin-wide period as
-            # before.
-            #
-            # FD-018 review #5: the date-picker bound must be the SAME one
-            # `create_forecast_summary_tabulator` built `wm.forecast_tabulator`
-            # with for the main panel — `wm.date_picker.value`
-            # (`PlotManager.update_forecast_tabulator` passes `self._wm.
-            # date_picker`). Without it, a later, unrelated issue-date row
-            # for the same model elsewhere in `dm.forecasts_all` outranks
-            # the row the operator actually saw and picked while the date
-            # picker was wound back to an earlier issue date.
-            if skill_lead_aware_enabled():
-                period = _resolve_month_target_period(
-                    self.dm.forecasts_all, selected_site, self.wm.date_picker.value,
-                )
-                selected_site.bulletin_target_period = period
-                if period is None:
-                    logger.warning(
-                        "_on_add: could not resolve site '%s' own target "
-                        "month from valid_from; write will fall back to the "
-                        "bulletin-wide target month.", selected_site.code,
-                    )
-            # Populate quarterly attributes for reservoir sites
-            if 'вдхр' in (selected_site.punkt_name_ru or ''):
-                q_df = db.get_long_forecasts_quarter(selected_site.code)
-                if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
-                    filtered_q = q_df[q_df["code"] == selected_site.code]
-                    if not filtered_q.empty:
-                        filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
-                else:
-                    filtered_q = pd.DataFrame()
-                if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
-                    vf = pd.to_datetime(filtered_q["valid_from"].values[0])
-                    vt = pd.to_datetime(filtered_q["valid_to"].values[0])
-                    seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
-                else:
-                    seconds_in_quarter = 0
-                filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
-                selected_site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
-            else:
-                selected_site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
-        elif horizon == "season":
-            s_df = db.get_long_forecasts_season(selected_site.code)
-            model_short = None
-            if not selected_rows.empty and _("Model") in selected_rows.columns:
-                model_short = selected_rows[_("Model")].values[0]
-            if (
-                not s_df.empty
-                and "code" in s_df.columns
-                and "date" in s_df.columns
-                and "model_short" in s_df.columns
-                and model_short is not None
-            ):
-                filtered_s = s_df[
-                    (s_df["code"] == selected_site.code)
-                    & (s_df["model_short"] == model_short)
-                ]
-                if not filtered_s.empty:
-                    filtered_s = filtered_s.sort_values("date", ascending=False).head(1)
-            else:
-                filtered_s = pd.DataFrame()
-            if (
-                not filtered_s.empty
-                and "valid_from" in filtered_s.columns
-                and "valid_to" in filtered_s.columns
-            ):
-                vf = pd.to_datetime(filtered_s["valid_from"].values[0])
-                vt = pd.to_datetime(filtered_s["valid_to"].values[0])
-                seconds_in_season = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
-            else:
-                seconds_in_season = 0
-            filtered_s = _reshape_long_forecast_for_bulletin(filtered_s, _)
-            hydrate_season_hydrograph_stats(selected_site, db)
-            selected_site.get_seasonal_forecast_attributes_for_site(_, filtered_s, seconds_in_season)
-        else:
-            selected_site.get_forecast_attributes_for_site(_, selected_rows)
-        # Debugging: Print site details
-        print(f"DEBUG: Adding site '{selected_site.code}' to bulletin: {selected_site.forecasts}")
 
+        horizon = self.wm.horizon_selector.value
+
+        if horizon == "month":
+            # Candidate-staging: work on a shallow copy so selected_site is
+            # never partially mutated if validation or POST fails. Promote
+            # attrs to selected_site only after POST succeeds.
+            candidate = copy.copy(selected_site)
+            try:
+                candidate.forecasts = selected_rows.reset_index(drop=True)
+                target_month, _target_year, days_in_month = self._month_hydration_params()
+                hydrate_month_hydrograph_stats(candidate, target_month, db)
+                candidate.get_monthly_forecast_attributes_for_site(
+                    _, selected_rows, days_in_month,
+                )
+                # FD-018: capture this site's OWN target period (from the main
+                # panel's own forecast data, via valid_from) so a later
+                # same-session bulletin WRITE can honour it instead of
+                # re-deriving a single bulletin-wide period from whatever
+                # station happens to be loaded at that later time. A RELOAD
+                # never honours this — see `_load_bulletin_from_api`, which
+                # always clears it and uses the bulletin-wide period (identical
+                # to trunk; a correct per-site reload needs a schema change,
+                # PP-040). Gated on the flag; a resolution failure (missing/NaT
+                # valid_from) is not fatal — it just leaves the site without an
+                # override, so write falls back to the bulletin-wide period as
+                # before.
+                #
+                # FD-018 review #5: the date-picker bound must be the SAME one
+                # `create_forecast_summary_tabulator` built `wm.forecast_tabulator`
+                # with for the main panel — `wm.date_picker.value`
+                # (`PlotManager.update_forecast_tabulator` passes `self._wm.
+                # date_picker`). Without it, a later, unrelated issue-date row
+                # for the same model elsewhere in `dm.forecasts_all` outranks
+                # the row the operator actually saw and picked while the date
+                # picker was wound back to an earlier issue date.
+                if skill_lead_aware_enabled():
+                    period = _resolve_month_target_period(
+                        self.dm.forecasts_all, candidate, self.wm.date_picker.value,
+                    )
+                    candidate.bulletin_target_period = period
+                    if period is None:
+                        logger.warning(
+                            "_on_add: could not resolve site '%s' own target "
+                            "month from valid_from; write will fall back to the "
+                            "bulletin-wide target month.", selected_site.code,
+                        )
+                # Capture quarterly snapshot from the visible card; populate attrs.
+                candidate.quarterly_snapshot = _capture_quarterly_snapshot(self.wm, _)
+                _populate_quarterly_from_snapshot(candidate, _)
+                _save_bulletin_to_api(*self._horizon_context(), [candidate])
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "_on_add: failed to save site '%s' to bulletin: %s",
+                    getattr(selected_site, 'code', '?'), exc,
+                )
+                self._show_popup(
+                    _("Failed to add to bulletin") + f": {exc}", alert_type="danger",
+                )
+                return
+            # POST succeeded — promote ALL candidate attrs to selected_site so
+            # derived quarterly attrs (forecast_q_min_q, quarterly_valid_from,
+            # forecast_v_min_q, etc.) set by _populate_quarterly_from_snapshot
+            # and get_monthly_forecast_attributes_for_site are not stale.
+            selected_site.__dict__.update(candidate.__dict__)
+            print(f"DEBUG: Adding site '{selected_site.code}' to bulletin: {selected_site.forecasts}")
+        else:
+            selected_site.forecasts = selected_rows.reset_index(drop=True)
+            if horizon == "season":
+                s_df = db.get_long_forecasts_season(selected_site.code)
+                model_short = None
+                if not selected_rows.empty and _("Model") in selected_rows.columns:
+                    model_short = selected_rows[_("Model")].values[0]
+                if (
+                    not s_df.empty
+                    and "code" in s_df.columns
+                    and "date" in s_df.columns
+                    and "model_short" in s_df.columns
+                    and model_short is not None
+                ):
+                    filtered_s = s_df[
+                        (s_df["code"] == selected_site.code)
+                        & (s_df["model_short"] == model_short)
+                    ]
+                    if not filtered_s.empty:
+                        filtered_s = filtered_s.sort_values("date", ascending=False).head(1)
+                else:
+                    filtered_s = pd.DataFrame()
+                if (
+                    not filtered_s.empty
+                    and "valid_from" in filtered_s.columns
+                    and "valid_to" in filtered_s.columns
+                ):
+                    vf = pd.to_datetime(filtered_s["valid_from"].values[0])
+                    vt = pd.to_datetime(filtered_s["valid_to"].values[0])
+                    seconds_in_season = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
+                else:
+                    seconds_in_season = 0
+                filtered_s = _reshape_long_forecast_for_bulletin(filtered_s, _)
+                hydrate_season_hydrograph_stats(selected_site, db)
+                selected_site.get_seasonal_forecast_attributes_for_site(_, filtered_s, seconds_in_season)
+            else:
+                selected_site.get_forecast_attributes_for_site(_, selected_rows)
+            print(f"DEBUG: Adding site '{selected_site.code}' to bulletin: {selected_site.forecasts}")
+            existing = next((s for s in self.bulletin_sites if s.code == selected_site.code), None)
+            if existing is None:
+                self.bulletin_sites.append(selected_site)
+                print(f"DEBUG: Added new site '{selected_site.station_label}' to bulletin_sites.")
+            else:
+                self.bulletin_sites[self.bulletin_sites.index(existing)] = selected_site
+                print(f"DEBUG: Updated existing site '{selected_site.station_label}' in bulletin_sites.")
+            _save_bulletin_to_api(*self._horizon_context(), [selected_site])
+            self._update_bulletin_table()
+            self._show_popup(_("Added to bulletin table"))
+            return
+
+        # Monthly: bulletin_sites promotion and update run only after confirmed POST.
         existing = next((s for s in self.bulletin_sites if s.code == selected_site.code), None)
         if existing is None:
             self.bulletin_sites.append(selected_site)
@@ -832,7 +1075,6 @@ class BulletinManager:
             self.bulletin_sites[self.bulletin_sites.index(existing)] = selected_site
             print(f"DEBUG: Updated existing site '{selected_site.station_label}' in bulletin_sites.")
 
-        _save_bulletin_to_api(*self._horizon_context(), [selected_site])
         # Update bulletin table
         self._update_bulletin_table()
         self._show_popup(_("Added to bulletin table"))
@@ -858,74 +1100,86 @@ class BulletinManager:
             print(f"Site '{selected_station}' not found in sites_list.")
             return
 
-        selected_site.forecasts = selected_rows.reset_index(drop=True)
         horizon = self.wm.horizon_selector.value
-        if horizon == "month":
-            target_month, _target_year, days_in_month = self._month_hydration_params()
-            hydrate_month_hydrograph_stats(selected_site, target_month, db)
-            selected_site.get_monthly_forecast_attributes_for_site(
-                _, selected_rows, days_in_month,
-            )
-            # FD-018: capture this site's OWN target period from the m0
-            # card's own forecast data (dm.long_forecasts_m0), NOT from the
-            # main panel — the m0 target month can and does diverge from the
-            # main panel's target month once the calendar rolls over. See
-            # _on_add for the symmetric main-panel capture, and its comment
-            # above about the write-only (not reload) scope of this
-            # override.
-            #
-            # FD-018 review #5: the m0 card has no shared date-picker bound
-            # of its own — `PlotManager.update_forecast_tabulator_m0` builds
-            # `wm.forecast_tabulator_m0` using the m0 frame's OWN max date
-            # (`m0['date'].max()`) instead of `wm.date_picker`, precisely
-            # because the m0 card always shows the latest available m0
-            # data. Mirror that here rather than reusing `wm.date_picker`
-            # (the main panel's bound), which would be the wrong source for
-            # this frame.
-            if skill_lead_aware_enabled():
-                m0_df = self.dm.long_forecasts_m0
-                m0_date_bound = None
-                if m0_df is not None and not m0_df.empty and "date" in m0_df.columns:
-                    m0_date_bound = m0_df["date"].max()
-                period = _resolve_month_target_period(
-                    m0_df, selected_site, m0_date_bound,
-                )
-                selected_site.bulletin_target_period = period
-                if period is None:
-                    logger.warning(
-                        "_on_add_m0: could not resolve site '%s' own target "
-                        "month from valid_from; write will fall back to the "
-                        "bulletin-wide target month.", selected_site.code,
-                    )
-            # Populate quarterly attributes for reservoir sites
-            if 'вдхр' in (selected_site.punkt_name_ru or ''):
-                q_df = db.get_long_forecasts_quarter(selected_site.code)
-                if "code" in q_df.columns and "date" in q_df.columns and not q_df.empty:
-                    filtered_q = q_df[q_df["code"] == selected_site.code]
-                    if not filtered_q.empty:
-                        filtered_q = filtered_q.sort_values("date", ascending=False).head(1)
-                else:
-                    filtered_q = pd.DataFrame()
-                if not filtered_q.empty and "valid_from" in filtered_q.columns and "valid_to" in filtered_q.columns:
-                    vf = pd.to_datetime(filtered_q["valid_from"].values[0])
-                    vt = pd.to_datetime(filtered_q["valid_to"].values[0])
-                    seconds_in_quarter = int((vt - vf + pd.Timedelta(days=1)).total_seconds())
-                else:
-                    seconds_in_quarter = 0
-                filtered_q = _reshape_long_forecast_for_bulletin(filtered_q, _)
-                selected_site.get_quarterly_forecast_attributes_for_site(_, filtered_q, seconds_in_quarter)
-            else:
-                selected_site.get_quarterly_forecast_attributes_for_site(_, pd.DataFrame(), 0)
-        else:
-            selected_site.get_forecast_attributes_for_site(_, selected_rows)
 
+        if horizon == "month":
+            # Candidate-staging: work on a shallow copy so selected_site is
+            # never partially mutated if validation or POST fails.
+            candidate = copy.copy(selected_site)
+            try:
+                candidate.forecasts = selected_rows.reset_index(drop=True)
+                target_month, _target_year, days_in_month = self._month_hydration_params()
+                hydrate_month_hydrograph_stats(candidate, target_month, db)
+                candidate.get_monthly_forecast_attributes_for_site(
+                    _, selected_rows, days_in_month,
+                )
+                # FD-018: capture this site's OWN target period from the m0
+                # card's own forecast data (dm.long_forecasts_m0), NOT from the
+                # main panel — the m0 target month can and does diverge from the
+                # main panel's target month once the calendar rolls over. See
+                # _on_add for the symmetric main-panel capture, and its comment
+                # above about the write-only (not reload) scope of this
+                # override.
+                #
+                # FD-018 review #5: the m0 card has no shared date-picker bound
+                # of its own — `PlotManager.update_forecast_tabulator_m0` builds
+                # `wm.forecast_tabulator_m0` using the m0 frame's OWN max date
+                # (`m0['date'].max()`) instead of `wm.date_picker`, precisely
+                # because the m0 card always shows the latest available m0
+                # data. Mirror that here rather than reusing `wm.date_picker`
+                # (the main panel's bound), which would be the wrong source for
+                # this frame.
+                if skill_lead_aware_enabled():
+                    m0_df = self.dm.long_forecasts_m0
+                    m0_date_bound = None
+                    if m0_df is not None and not m0_df.empty and "date" in m0_df.columns:
+                        m0_date_bound = m0_df["date"].max()
+                    period = _resolve_month_target_period(
+                        m0_df, candidate, m0_date_bound,
+                    )
+                    candidate.bulletin_target_period = period
+                    if period is None:
+                        logger.warning(
+                            "_on_add_m0: could not resolve site '%s' own target "
+                            "month from valid_from; write will fall back to the "
+                            "bulletin-wide target month.", selected_site.code,
+                        )
+                # Capture quarterly snapshot from the visible card; populate attrs.
+                candidate.quarterly_snapshot = _capture_quarterly_snapshot(self.wm, _)
+                _populate_quarterly_from_snapshot(candidate, _)
+                _save_bulletin_to_api(*self._horizon_context(), [candidate])
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "_on_add_m0: failed to save site '%s' to bulletin: %s",
+                    getattr(selected_site, 'code', '?'), exc,
+                )
+                self._show_popup_m0(
+                    _("Failed to add to bulletin") + f": {exc}", alert_type="danger",
+                )
+                return
+            # POST succeeded — promote ALL candidate attrs to selected_site so
+            # derived quarterly attrs are not stale (mirrors _on_add).
+            selected_site.__dict__.update(candidate.__dict__)
+        else:
+            selected_site.forecasts = selected_rows.reset_index(drop=True)
+            selected_site.get_forecast_attributes_for_site(_, selected_rows)
+            existing = next((s for s in self.bulletin_sites if s.code == selected_site.code), None)
+            if existing is None:
+                self.bulletin_sites.append(selected_site)
+            else:
+                self.bulletin_sites[self.bulletin_sites.index(existing)] = selected_site
+            _save_bulletin_to_api(*self._horizon_context(), [selected_site])
+            self._update_bulletin_table()
+            self._show_popup_m0(_("Added to bulletin table"))
+            return
+
+        # Monthly: bulletin_sites promotion and update run only after confirmed POST.
         existing = next((s for s in self.bulletin_sites if s.code == selected_site.code), None)
         if existing is None:
             self.bulletin_sites.append(selected_site)
         else:
             self.bulletin_sites[self.bulletin_sites.index(existing)] = selected_site
 
-        _save_bulletin_to_api(*self._horizon_context(), [selected_site])
         self._update_bulletin_table()
         self._show_popup_m0(_("Added to bulletin table"))
 

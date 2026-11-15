@@ -261,6 +261,45 @@ def _iso_z(value: datetime | date) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _quarterly_snapshot_to_public(snap: dict | None) -> dict | None:
+    """Convert a saved quarterly_snapshot to the public JSON representation.
+
+    Returns None for a None snap.  For a present snap, returns the six
+    persisted fields plus v_min/v_max derived from frozen Q * inclusive
+    seconds.  Stored Q/bounds are not rounded (raw stored values per plan).
+    Volume bounds are None when bounds are absent.
+    """
+    if snap is None:
+        return None
+    vf_str = snap.get("valid_from")
+    vt_str = snap.get("valid_to")
+    fc_lower = _json_safe(snap.get("fc_lower"))
+    fc_upper = _json_safe(snap.get("fc_upper"))
+    v_min = v_max = None
+    if vf_str and vt_str:
+        try:
+            from datetime import date as _date
+            d_vf = _date.fromisoformat(vf_str)
+            d_vt = _date.fromisoformat(vt_str)
+            seconds = (d_vt - d_vf).days * 86400 + 86400  # inclusive
+            if fc_lower is not None:
+                v_min = fc_lower * seconds / 1_000_000
+            if fc_upper is not None:
+                v_max = fc_upper * seconds / 1_000_000
+        except (ValueError, TypeError):
+            pass
+    return {
+        "model_type": snap.get("model_type"),
+        "valid_from": vf_str,
+        "valid_to": vt_str,
+        "forecasted_discharge": _json_safe(snap.get("forecasted_discharge")),
+        "fc_lower": fc_lower,
+        "fc_upper": fc_upper,
+        "v_min": v_min,
+        "v_max": v_max,
+    }
+
+
 def serialize_site(site, horizon: str) -> dict:
     """Serialize one hydrated SapphireSite into a JSON-safe bulletin row.
 
@@ -269,6 +308,10 @@ def serialize_site(site, horizon: str) -> dict:
     metrics; month/season/quarter sites additionally carry volumes and
     the norm (there is no skill-metric column set for long-term
     horizons in the Excel bulletin).
+
+    For ``horizon == "month"`` a ``quarterly`` key is added: null when
+    no snapshot is saved, otherwise the six persisted fields plus
+    derived v_min/v_max (no rounding of raw stored values).
     """
     base = {
         "code": _json_safe(getattr(site, "code", None)),
@@ -287,6 +330,9 @@ def serialize_site(site, horizon: str) -> dict:
             norm=_round_discharge(getattr(site, "forecast_norm", None)),
             perc_norm=_round_percent(getattr(site, "perc_norm", None)),
         )
+        if horizon == "month":
+            snap = getattr(site, "quarterly_snapshot", None)
+            base["quarterly"] = _quarterly_snapshot_to_public(snap)
     else:
         base.update(
             forecasted_discharge=_round_discharge(getattr(site, "forecast_expected", None)),
@@ -386,6 +432,24 @@ def assemble_bulletin_snapshot(horizon: str, selected_codes, dm, forecast_date) 
     bulletin_sites = _load_bulletin_from_api(
         horizon, forecast_year, forecast_horizon, dm.sites_list
     )
+
+    # Reject conflicting quarterly periods before freezing the share snapshot.
+    # Scope to selected_set only — non-selected sites in the bulletin DB must
+    # not block a valid share of a consistent selected subset.
+    if horizon == "month":
+        _q_periods: set[tuple[str, str]] = set()
+        for _site in bulletin_sites:
+            if str(getattr(_site, "code", "")) not in selected_set:
+                continue
+            _snap = getattr(_site, "quarterly_snapshot", None)
+            if _snap and _snap.get("valid_from") and _snap.get("valid_to"):
+                _q_periods.add((_snap["valid_from"], _snap["valid_to"]))
+        if len(_q_periods) > 1:
+            _period_str = "; ".join(f"{vf} – {vt}" for vf, vt in sorted(_q_periods))
+            raise ValueError(
+                f"Cannot create share: conflicting quarterly periods: {_period_str}. "
+                "Remove conflicting stations or re-add them after aligning quarters."
+            )
 
     found_codes: set[str] = set()
     stations = []

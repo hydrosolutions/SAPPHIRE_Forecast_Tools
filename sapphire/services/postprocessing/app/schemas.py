@@ -1,7 +1,8 @@
+import math
 from datetime import date as DateType
 from datetime import datetime
 
-from pydantic import BaseModel, computed_field, field_validator
+from pydantic import BaseModel, computed_field, field_validator, model_validator
 
 from app.models import HorizonType, ModelType
 
@@ -217,6 +218,57 @@ class SkillMetricResponse(SkillMetricBase):
         from_attributes = True
 
 
+class QuarterlySnapshot(BaseModel):
+    """Frozen quarterly forecast copy stored on a monthly bulletin row."""
+
+    model_type: ModelType
+    valid_from: DateType
+    valid_to: DateType
+    forecasted_discharge: float | None
+    fc_lower: float | None
+    fc_upper: float | None
+
+    @field_validator("model_type", mode="before")
+    @classmethod
+    def _coerce_model_type(cls, value):
+        return ModelType.coerce(value)
+
+    @field_validator("forecasted_discharge", "fc_lower", "fc_upper", mode="after")
+    @classmethod
+    def _reject_nonfinite(cls, v):
+        if v is not None and not math.isfinite(v):
+            raise ValueError("numeric bound must be finite")
+        return v
+
+    @model_validator(mode="after")
+    def _check_quarter_period_and_bounds(self) -> "QuarterlySnapshot":
+        Q_STARTS = {(1, 1), (4, 1), (7, 1), (10, 1)}
+        Q_ENDS = {(3, 31), (6, 30), (9, 30), (12, 31)}
+        Q_NUM = {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 3, 9: 3, 10: 4, 11: 4, 12: 4}
+
+        vf, vt = self.valid_from, self.valid_to
+        if (vf.month, vf.day) not in Q_STARTS:
+            raise ValueError(
+                "valid_from must be the first day of a calendar quarter (Jan 1, Apr 1, Jul 1, Oct 1)"
+            )
+        if (vt.month, vt.day) not in Q_ENDS:
+            raise ValueError(
+                "valid_to must be the last day of a calendar quarter (Mar 31, Jun 30, Sep 30, Dec 31)"
+            )
+        if Q_NUM[vf.month] != Q_NUM[vt.month] or vf.year != vt.year:
+            raise ValueError("valid_from and valid_to must span the same calendar quarter")
+
+        lo, hi = self.fc_lower, self.fc_upper
+        if (lo is None) != (hi is None):
+            raise ValueError("fc_lower and fc_upper must both be null or both be provided")
+        if lo is not None and hi is not None and lo > hi:
+            raise ValueError("fc_lower must be <= fc_upper")
+
+        return self
+
+    model_config = {"from_attributes": True}
+
+
 class BulletinBase(BaseModel):
     horizon_type: HorizonType
     year: int
@@ -233,11 +285,18 @@ class BulletinBase(BaseModel):
     sdivsigma: float | None = None
     mae: float | None = None
     accuracy: float | None = None
+    quarterly_snapshot: QuarterlySnapshot | None = None
 
     @field_validator("model_type", mode="before")
     @classmethod
     def _coerce_model_type(cls, value):
         return ModelType.coerce(value)
+
+    @model_validator(mode="after")
+    def _snapshot_only_on_month(self) -> "BulletinBase":
+        if self.quarterly_snapshot is not None and self.horizon_type != HorizonType.MONTH:
+            raise ValueError("quarterly_snapshot is only valid on month-horizon bulletin rows")
+        return self
 
 
 class BulletinCreate(BulletinBase):

@@ -1,8 +1,8 @@
 # PP-075 range checkpoint — handoff for Maxat
 
 **Status:** local implementation/verification checkpoint; no deployment or live refresh is asserted.
-E1 is committed as `2b924654`. E2 is not complete: monthly reservoir quarterly-copy persistence still
-requires the [storage contract](issues/mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md). This handoff
+E1 is committed as `2b924654`. E2 now includes locally implemented and tested
+[quarterly-copy persistence](issues/mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md), with service support authorized in this PR and independent review complete. This handoff
 is for coordination and verification, not evidence that a server already has these changes.
 
 ## What needs coordination
@@ -10,10 +10,9 @@ is for coordination and verification, not evidence that a server already has the
 - **Observation statistics:** existing preprocessing `Hydrograph.std/count` fields are sufficient.
   Deploy the application writer and dashboard with the same reference settings; no service schema
   change is needed for this part. Defaults are 2000–2025 inclusive.
-- **Quarterly bulletin copies:** the proposed nullable field on the existing monthly bulletin row
-  needs Maxat’s contract agreement before local dashboard consumer implementation and mocked tests.
-  Migration/API deployment and a verified persistence round-trip are required before enabling or deploying
-  that writer. It is not part of this checkpoint’s implemented storage.
+- **Quarterly bulletin copies:** the owner authorized the nullable field and scoped service implementation
+  in this PR. Migration/API deployment and a verified persistence round-trip are required before deploying
+  the dashboard writer. Local implementation and tests are complete; deployment is not asserted.
 - **Short-term backend:** PR #539 is merged, but server deployment remains unverified. Confirm the
   deployed version supports shared delta and stored EM bounds before relying on those values.
 
@@ -66,16 +65,20 @@ with mocked API boundaries; deployed API round-trip remains a separate check.
 - Read an older forecast: it uses the same current reference-period δ. A non-April–September season
   has no Delta/Mixed bounds. No extra long-term chart or quarter selector is introduced.
 
-## Quarterly storage gate — still pending
+## Quarterly storage deployment gate
 
-Agree the reviewed proposal before service work. Its minimal workflow is existing monthly Add/Add-m0
+The owner approved implementing the reviewed proposal in this PR. Its minimal workflow is existing monthly Add/Add-m0
 saving the edited quarterly row as a frozen copy on that same monthly bulletin row, using one POST.
 A successful later quarterly forecast/model refresh must not change the copy. Missing-bound snapshots
 retain a quarterly section with blank cells; absent snapshots do not fabricate one.
 
-After Maxat’s service change, verify real POST→GET persistence, omission/null behavior and nested
+The migration revision is `c3d4e5f6a7b8` (after `b2c3d4e5f6a7`); it adds only nullable
+`bulletins.quarterly_snapshot` and performs no backfill. Deploy the migration/service before the
+dashboard writer.
+
+After deploying the service change with Maxat, verify real POST→GET persistence, omission/null behavior and nested
 ISO dates/null numbers before enabling its dashboard writer. Older services may ignore unknown fields,
-so HTTP success alone is not proof. Then complete the planned Add/save/reload/Excel/public-JSON tests,
+so HTTP success alone is not proof. Local regression tests cover Add/save/reload/Excel/public JSON,
 including failed saves and conflicting quarters. No generic versioning, new table or second quarterly
 write is needed. Existing published share payloads remain frozen.
 
