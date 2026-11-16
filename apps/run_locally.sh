@@ -937,6 +937,98 @@ run_long_term_forecasting_operational() {
 # Maintenance runner functions
 # ---------------------------------------------------------------------------
 
+# _run_long_horizon_sync - shared helper: invoke sync_long_horizon_hydrograph.py
+#
+# Saves CURRENT_MODULE_LOG on entry and sets it to the long-horizon log.
+# Non-fatal exits (0, 2, 4, 6) restore CURRENT_MODULE_LOG to the saved value
+# before returning; exit 6 also records its own FAIL sub-row.  Fatal exits
+# (1, 3, 5, and any other non-zero) leave CURRENT_MODULE_LOG pointing at the
+# long-horizon log so the caller can record its own FAIL row referencing that
+# output; the caller is responsible for restoring CURRENT_MODULE_LOG afterward.
+#
+# RUNOFF_LONG_HORIZON_TARGET_YEAR is forwarded when set; LT_FORECAST_TODAY is
+# never passed to the writer.
+#
+# Returns the exit code of the writer unchanged.
+_run_long_horizon_sync() {
+    local saved_module_log="${CURRENT_MODULE_LOG:-}"
+    local lt_rc=0
+    local lt_start
+    lt_start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_long_horizon.log"
+    > "$CURRENT_MODULE_LOG"
+
+    if [ -n "${RUNOFF_LONG_HORIZON_TARGET_YEAR:-}" ]; then
+        log INFO "  Long-horizon target year: ${RUNOFF_LONG_HORIZON_TARGET_YEAR}"
+        if run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py -- \
+            --target-year "${RUNOFF_LONG_HORIZON_TARGET_YEAR}"; then
+            lt_rc=0
+        else
+            lt_rc=$?
+        fi
+    else
+        if run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py; then
+            lt_rc=0
+        else
+            lt_rc=$?
+        fi
+    fi
+
+    local lt_elapsed=$(( $(get_timestamp) - lt_start ))
+
+    if [ $lt_rc -eq 2 ]; then
+        log WARN "Long-horizon hydrograph sync produced no records; continuing"
+        # Non-fatal: restore the caller's module log.
+        CURRENT_MODULE_LOG="$saved_module_log"
+    elif [ $lt_rc -eq 4 ]; then
+        # PARTIAL SDK norm-lookup failure (INFRA-044): >=1 but not all
+        # attempted stations' iEH HF monthly-norm lookup raised. This is
+        # a known, station-level upstream condition (norms are provided
+        # by iEH HF), not a failure we own -- so no result row is
+        # recorded at all, and the module is not failed (rc stays 0).
+        # See the LONG-HORIZON RUN SUMMARY block for counts.
+        log INFO "Long-horizon hydrograph sync: one or more stations' monthly norm lookup did not return a norm. This is a known upstream (iEH HF) condition, not a failure -- see the LONG-HORIZON RUN SUMMARY counts near the end of ${CURRENT_MODULE_LOG} for details."
+        # Non-fatal, no row recorded: restore the caller's module log.
+        CURRENT_MODULE_LOG="$saved_module_log"
+    elif [ $lt_rc -eq 6 ]; then
+        # TOTAL SDK norm-lookup failure (INFRA-044): every attempted
+        # station's iEH HF monthly-norm lookup raised -- consistent
+        # with, but not proof of, a service-wide iEH HF outage on this
+        # path, not station-level norm absence (a single-station run
+        # with a structural, station-level lookup failure looks
+        # identical). Explicit branch so this does not fall into the
+        # generic non-zero branch below (which would additionally fail
+        # the caller's module by propagating its rc).
+        log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
+        # Pointer only (counts already survive the error-details tail --
+        # see the sub-step's own LONG-HORIZON RUN SUMMARY print, which
+        # lands last in this log, ahead of the tail window). INFRA-037's
+        # advice to tell a few failed stations from a total outage by
+        # reading the counts no longer applies here: INFRA-044 made that
+        # distinction automatic, and reaching this branch at all means
+        # the writer already classified it as total (exit 6).
+        log ERROR "  Counts are in the LONG-HORIZON RUN SUMMARY block near the end of ${CURRENT_MODULE_LOG} -- also tailed under the 'preprocessing_runoff (long-horizon sync)' row below."
+        record_result "preprocessing_runoff (long-horizon sync)" "FAIL" "$lt_elapsed" "$CURRENT_MODULE_LOG"
+        # Downgraded, not fatal to the caller (rc stays 0 there):
+        # restore the caller's module log.
+        CURRENT_MODULE_LOG="$saved_module_log"
+    elif [ $lt_rc -eq 5 ]; then
+        log ERROR "Long-horizon hydrograph sync had API read/write failure(s)"
+        # Fatal: leave CURRENT_MODULE_LOG on the long-horizon log so the
+        # caller's FAIL row references the output that explains it.
+    elif [ $lt_rc -ne 0 ]; then
+        # Fatal: leave CURRENT_MODULE_LOG on the long-horizon log so the
+        # caller's FAIL row references the output that explains it.
+        :
+    else
+        # lt_rc -eq 0: success, restore the caller's module log.
+        CURRENT_MODULE_LOG="$saved_module_log"
+    fi
+
+    return $lt_rc
+}
+
 run_maintenance_preprocessing_runoff() {
     banner "Maintenance: preprocessing_runoff --maintenance + long-horizon hydrograph"
     local start
@@ -951,81 +1043,17 @@ run_maintenance_preprocessing_runoff() {
         local lt_rc=0
         log INFO "Daily runoff maintenance completed; syncing long-horizon hydrograph norms"
 
-        local lt_start
-        lt_start=$(get_timestamp)
-        CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_long_horizon.log"
-        > "$CURRENT_MODULE_LOG"
+        _run_long_horizon_sync
+        lt_rc=$?
 
-        if [ -n "${RUNOFF_LONG_HORIZON_TARGET_YEAR:-}" ]; then
-            log INFO "  Long-horizon target year: ${RUNOFF_LONG_HORIZON_TARGET_YEAR}"
-            if run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py -- \
-                --target-year "${RUNOFF_LONG_HORIZON_TARGET_YEAR}"; then
-                lt_rc=0
-            else
-                lt_rc=$?
-            fi
-        else
-            if run_in_venv preprocessing_runoff sync_long_horizon_hydrograph.py; then
-                lt_rc=0
-            else
-                lt_rc=$?
-            fi
-        fi
-
-        local lt_elapsed=$(( $(get_timestamp) - lt_start ))
-
-        if [ $lt_rc -eq 2 ]; then
-            log WARN "Long-horizon hydrograph sync produced no records; continuing maintenance"
-            # Sub-step was non-fatal: restore the maintenance log now, since
-            # the module log recorded below (rc still 0) should reflect the
-            # successful maintenance run, not this non-fatal sub-step.
-            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
-        elif [ $lt_rc -eq 5 ]; then
-            log ERROR "Long-horizon hydrograph sync had API read/write failure(s)"
+        if [ $lt_rc -ne 0 ] && [ $lt_rc -ne 2 ] && [ $lt_rc -ne 4 ] && [ $lt_rc -ne 6 ]; then
+            # Fatal: helper left CURRENT_MODULE_LOG on the long-horizon log
+            # so the FAIL row recorded below references the output that
+            # explains the failure.  Propagate the exit code.
             rc=$lt_rc
-            # Fatal: leave CURRENT_MODULE_LOG on the long-horizon log so the
-            # FAIL row recorded below references the output that explains it.
-        elif [ $lt_rc -eq 4 ]; then
-            # PARTIAL SDK norm-lookup failure (INFRA-044): >=1 but not all
-            # attempted stations' iEH HF monthly-norm lookup raised. This is
-            # a known, station-level upstream condition (norms are provided
-            # by iEH HF), not a failure we own -- so no result row is
-            # recorded at all, and the module is not failed (rc stays 0).
-            # See the LONG-HORIZON RUN SUMMARY block for counts.
-            log INFO "Long-horizon hydrograph sync: one or more stations' monthly norm lookup did not return a norm. This is a known upstream (iEH HF) condition, not a failure -- see the LONG-HORIZON RUN SUMMARY counts near the end of ${CURRENT_MODULE_LOG} for details."
-            # Not fatal, no row recorded: restore the maintenance log for the
-            # module-level record below.
-            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
-        elif [ $lt_rc -eq 6 ]; then
-            # TOTAL SDK norm-lookup failure (INFRA-044): every attempted
-            # station's iEH HF monthly-norm lookup raised -- consistent
-            # with, but not proof of, a service-wide iEH HF outage on this
-            # path, not station-level norm absence (a single-station run
-            # with a structural, station-level lookup failure looks
-            # identical). Explicit branch so this does not fall into the
-            # generic non-zero branch below (which would additionally fail
-            # the whole maintenance module by assigning its rc from ours).
-            log ERROR "Long-horizon hydrograph sync had SDK norm lookup failure(s)"
-            # Pointer only (counts already survive the error-details tail --
-            # see the sub-step's own LONG-HORIZON RUN SUMMARY print, which
-            # lands last in this log, ahead of the tail window). INFRA-037's
-            # advice to tell a few failed stations from a total outage by
-            # reading the counts no longer applies here: INFRA-044 made that
-            # distinction automatic, and reaching this branch at all means
-            # the writer already classified it as total (exit 6).
-            log ERROR "  Counts are in the LONG-HORIZON RUN SUMMARY block near the end of ${CURRENT_MODULE_LOG} -- also tailed under the 'preprocessing_runoff (long-horizon sync)' row below."
-            record_result "preprocessing_runoff (long-horizon sync)" "FAIL" "$lt_elapsed" "$CURRENT_MODULE_LOG"
-            # Downgraded, not fatal to the overall module (rc stays 0):
-            # restore the maintenance log for the module-level record below.
-            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
-        elif [ $lt_rc -ne 0 ]; then
-            rc=$lt_rc
-            # Fatal: leave CURRENT_MODULE_LOG on the long-horizon log so the
-            # FAIL row recorded below references the output that explains it.
-        else
-            # lt_rc -eq 0: sub-step succeeded, restore the maintenance log.
-            CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
         fi
+        # For 2/4/6: rc stays 0; CURRENT_MODULE_LOG was restored by helper
+        # (and for 6, the sub-step FAIL row was already recorded there).
     fi
 
     local elapsed=$(( $(get_timestamp) - start ))
@@ -1637,7 +1665,38 @@ run_long_term_operational_pipeline() {
 
     # Phase 1: Preprocessing (shared, runs once)
     log INFO "Phase 1: Preprocessing"
-    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
+    local runoff_ok=true
+    run_preprocessing_runoff || {
+        runoff_ok=false
+        [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }
+    }
+
+    # Publish long-horizon observation statistics after successful runoff,
+    # before weather processing and before the no-active-mode return (so
+    # publication still happens on no-active-mode days).  Never publish when
+    # runoff failed, even when --continue-on-error permits later steps.
+    if [ "$runoff_ok" = true ]; then
+        log INFO "Operational runoff succeeded; publishing long-horizon observation statistics"
+        local lhs_start lhs_rc lhs_elapsed
+        local lhs_saved_log="${CURRENT_MODULE_LOG:-}"
+        lhs_start=$(get_timestamp)
+        lhs_rc=0
+        _run_long_horizon_sync || lhs_rc=$?
+        lhs_elapsed=$(( $(get_timestamp) - lhs_start ))
+        if [ $lhs_rc -ne 0 ] && [ $lhs_rc -ne 2 ] && [ $lhs_rc -ne 4 ] && [ $lhs_rc -ne 6 ]; then
+            # Fatal: helper left CURRENT_MODULE_LOG on the long-horizon log.
+            # Record the failure row now, then restore from the saved value so
+            # later steps are not attributed to this log.  This failure is
+            # sticky: later success or a no-active-mode return does not erase it.
+            record_result "preprocessing_runoff (long-horizon sync)" "FAIL" "$lhs_elapsed" "$CURRENT_MODULE_LOG"
+            CURRENT_MODULE_LOG="$lhs_saved_log"
+            [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }
+        fi
+        # For exit 6: sub-step FAIL row already recorded in helper; do not
+        # add a duplicate row here.
+        # For 0/2/4: success/non-fatal; CURRENT_MODULE_LOG restored by helper.
+    fi
+
     run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && { PIPELINE_ABORTED=true; return 1; }; }
 
     if [ -z "${LT_ACTIVE_WINDOW:-}" ]; then

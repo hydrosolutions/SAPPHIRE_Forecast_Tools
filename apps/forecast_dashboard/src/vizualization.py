@@ -3141,14 +3141,21 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
                      'delta', 'sdivsigma', 'mae', 'accuracy']
     forecast_table = forecast_table.reindex(columns=expected_cols)
 
-    # Round delta, sdivsigma and mae to 2 decimals each
-    forecast_table['delta'] = forecast_table['delta'].round(2)
-    forecast_table['sdivsigma'] = forecast_table['sdivsigma'].round(2)
-    forecast_table['mae'] = forecast_table['mae'].round(2)
+    # Round delta, sdivsigma and mae to 2 decimals each.
+    # pd.to_numeric(errors='coerce') converts None (from nullable API columns,
+    # which produce object dtype) to NaN so .round() never sees an object series.
+    forecast_table['delta'] = pd.to_numeric(
+        forecast_table['delta'], errors='coerce').round(2)
+    forecast_table['sdivsigma'] = pd.to_numeric(
+        forecast_table['sdivsigma'], errors='coerce').round(2)
+    forecast_table['mae'] = pd.to_numeric(
+        forecast_table['mae'], errors='coerce').round(2)
 
     # Round lower and  upper bound to 3 decimals each
-    forecast_table['fc_lower'] = forecast_table['fc_lower'].round(3)
-    forecast_table['fc_upper'] = forecast_table['fc_upper'].round(3)
+    forecast_table['fc_lower'] = pd.to_numeric(
+        forecast_table['fc_lower'], errors='coerce').round(3)
+    forecast_table['fc_upper'] = pd.to_numeric(
+        forecast_table['fc_upper'], errors='coerce').round(3)
 
     # Rename columns to be used in the plot to allow internationalization
     forecast_table = forecast_table.rename(columns={

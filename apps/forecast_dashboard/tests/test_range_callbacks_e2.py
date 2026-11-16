@@ -808,6 +808,234 @@ class TestFullApplyE2:
 
 
 # ===========================================================================
+# PP-075 regression: None range_delta object-dtype does not abort callback
+# ===========================================================================
+
+class TestNoneRangeDeltaCallbackRegression:
+    """Regression for PP-075: wired _on_change callback must complete when
+    range_delta is object-dtype containing None; tabulator is populated with
+    the CURRENT station's data, not stale data from a prior station/horizon.
+
+    Drives the REAL _wire_station_period_change watcher:
+      horizon_selector.value change (pentad→month)
+      then station_selector.value change (station1→station2)
+      → _on_change → update_forecast_tabulator (real)
+      → create_forecast_summary_table (real) with object-typed range_delta
+
+    Pre-fix: delta.round(2) raised TypeError on a None-containing object Series,
+    aborting the callback and leaving the tabulator showing the previous station.
+    Must fail on that pre-fix code path.
+
+    Parameterized over Forecast tab (active=1) and Predictors tab (active=0).
+    Predictors tab additionally verifies render_active_tab reaches the new
+    station (label, horizon, dm code), not the stale prior one.
+    """
+
+    _STATION_LABEL_2 = "19998 - Second River"
+
+    @staticmethod
+    def _make_regression_dm():
+        """DataManager whose load_station derives station label and code from
+        its code argument; range_delta is object-dtype None so fc_lower/fc_upper
+        are NaN.  forecasted_discharge = call_count * 100 so each trigger produces
+        a distinct value (100.0, 200.0, …)."""
+
+        _label_map = {
+            STATION_CODE: STATION_LABEL,
+            "19998": "19998 - Second River",
+        }
+
+        class _DM:
+            def __init__(self):
+                self.forecasts_all = pd.DataFrame()
+                self._data: dict = {}
+                self.load_calls: list = []
+                self._last_rendered_predictors_station = None
+                self._last_rendered_forecast_station = None
+
+            def load_station(self, horizon, code):
+                self.load_calls.append((horizon, code))
+                label = _label_map.get(code, f"{code} - Unknown")
+                self.forecasts_all = pd.DataFrame([{
+                    "station_labels": label,
+                    "code": code,
+                    "date": pd.Timestamp("2026-07-01"),
+                    "model_short": "GBT",
+                    "forecasted_discharge": float(len(self.load_calls)) * 100.0,
+                    "delta": 5.0,
+                    "range_delta": None,
+                    "Q25": float("nan"),
+                    "Q75": float("nan"),
+                    "month_in_year": 7,
+                }])
+                self.forecasts_all["range_delta"] = (
+                    self.forecasts_all["range_delta"].astype(object)
+                )
+
+            def update_sites_for_pentad(self, _, horizon, pentad, decad):
+                pass
+
+            def invalidate_render_cache(self):
+                self._last_rendered_predictors_station = None
+                self._last_rendered_forecast_station = None
+
+            def should_render_predictors(self, station):
+                if self._last_rendered_predictors_station == station:
+                    return False
+                self._last_rendered_predictors_station = station
+                return True
+
+            def should_render_forecast(self, station):
+                if self._last_rendered_forecast_station == station:
+                    return False
+                self._last_rendered_forecast_station = station
+                return True
+
+            def get_bulletin_metadata(self, horizon):
+                return (None, 8, 2026)
+
+        return _DM()
+
+    @pytest.mark.parametrize("active_tab", [1, 0], ids=["Forecast", "Predictors"])
+    def test_horizon_then_station_change_with_none_range_delta(self, active_tab):
+        """Switching horizon pentad→month then station1(19999)→station2(19998),
+        each with range_delta=None (object dtype), must populate the tabulator
+        with the current station's exact forecast value without raising TypeError.
+
+        Asserts:
+          - tabulator shows forecasted_discharge=100 (GBT) after trigger 1
+          - tabulator shows forecasted_discharge=200 (GBT) after trigger 2
+          - fc_lower and fc_upper are NaN (range_delta=None)
+          - dm.load_calls == [("month","19999"), ("month","19998")]
+          - Predictors tab: leaf receives station2 label, horizon "month",
+            dm code "19998" — not stale station1 values
+        """
+        from unittest.mock import patch as _patch
+
+        station_label_2 = self._STATION_LABEL_2
+        dm = self._make_regression_dm()
+
+        # -- Real pn.widgets via _make_wm_for_callback --
+        fake_self = _make_wm_for_callback("pentad", is_forecast_tab=(active_tab == 1))
+        fake_self._dashboard_tabs.active = active_tab
+        fake_self.station_selector.options = [STATION_LABEL, station_label_2]
+
+        # Seed tabulator with stale pentad content; proves it gets replaced
+        _stale_df = pd.DataFrame([{
+            "model_short": "OLD",
+            "forecasted_discharge": 999.0,
+            "fc_lower": float("nan"),
+            "fc_upper": float("nan"),
+            "delta": float("nan"),
+        }])
+
+        # -- pm._wm: shares the REAL pn.widgets with fake_self --
+        tabulator = pn.widgets.Tabulator(_stale_df)
+        pm_wm = types.SimpleNamespace(
+            station_selector=fake_self.station_selector,
+            horizon_selector=fake_self.horizon_selector,
+            date_picker=fake_self.date_picker,
+            model_checkbox=types.SimpleNamespace(options={"GBT": "GBT"}, value=["GBT"]),
+            range_selector=types.SimpleNamespace(value="delta"),
+            range_slider=types.SimpleNamespace(value=None),
+            forecast_tabulator=tabulator,
+            forecast_info_m1=types.SimpleNamespace(object=""),
+        )
+
+        # -- Real PlotManager.update_forecast_tabulator; stub LT-only updaters --
+        pm = object.__new__(PlotManager)
+        pm._ = _identity
+        pm._cfg = types.SimpleNamespace(viz=vizualization)
+        pm._wm = pm_wm
+        pm._dm = dm
+        pm.summary_table_m0_card = types.SimpleNamespace(visible=False)
+        pm.summary_table_q_card = types.SimpleNamespace(visible=False)
+        pm.update_forecast_tabulator_m0 = lambda: None
+        pm.update_quarterly_summary_tabulator = lambda: None
+        pm.set_forecast_cards_visibility = lambda *a, **kw: None
+
+        # Predictors tab: stub expensive plot leaf; capture label, horizon, dm code
+        predictors_calls: list = []
+        if active_tab == 0:
+            def _stub_predictors(viz_arg, dm_arg, wm_arg):
+                code_in_dm = (
+                    dm_arg.forecasts_all["code"].iloc[0]
+                    if not dm_arg.forecasts_all.empty else None
+                )
+                predictors_calls.append({
+                    "label": wm_arg.station_selector.value,
+                    "horizon": wm_arg.horizon_selector.value,
+                    "code": code_in_dm,
+                })
+            pm._render_predictors_tab = _stub_predictors
+
+        with _patch("dashboard.plot_manager.skill_lead_aware_enabled", return_value=False):
+            WidgetManager._wire_station_period_change(fake_self, dm, pm)
+
+            # Trigger 1: pentad → month (is_long=True → update_forecast_tabulator called)
+            fake_self.horizon_selector.value = "month"
+
+            assert tabulator.value is not None and not tabulator.value.empty, (
+                "tabulator must be populated after pentad→month with None range_delta; "
+                "pre-fix: TypeError at delta.round(2) aborted the callback"
+            )
+            assert tabulator.value["Model"].iloc[0] == "GBT", (
+                "tabulator must show GBT after trigger 1, not stale OLD"
+            )
+            assert tabulator.value["Forecasted discharge"].iloc[0] == 100.0, (
+                f"expected 100.0 for first load; "
+                f"got {tabulator.value['Forecasted discharge'].iloc[0]}"
+            )
+            assert pd.isna(tabulator.value["Forecast lower bound"].iloc[0]), (
+                "Forecast lower bound must be NaN when range_delta=None"
+            )
+            assert pd.isna(tabulator.value["Forecast upper bound"].iloc[0]), (
+                "Forecast upper bound must be NaN when range_delta=None"
+            )
+
+            # Trigger 2: station1 → station2 (horizon stays month)
+            fake_self.station_selector.value = station_label_2
+
+            assert tabulator.value is not None and not tabulator.value.empty, (
+                "tabulator must still be populated after station change with None range_delta"
+            )
+            assert tabulator.value["Model"].iloc[0] == "GBT", (
+                "tabulator must show GBT after trigger 2"
+            )
+            assert tabulator.value["Forecasted discharge"].iloc[0] == 200.0, (
+                f"expected 200.0 for second load; "
+                f"got {tabulator.value['Forecasted discharge'].iloc[0]}"
+            )
+            assert pd.isna(tabulator.value["Forecast lower bound"].iloc[0]), (
+                "Forecast lower bound must be NaN when range_delta=None after station change"
+            )
+            assert pd.isna(tabulator.value["Forecast upper bound"].iloc[0]), (
+                "Forecast upper bound must be NaN when range_delta=None after station change"
+            )
+
+            # Exact load sequence: station1 code then station2 code
+            assert dm.load_calls == [("month", STATION_CODE), ("month", "19998")], (
+                f"expected [('month','19999'),('month','19998')]; got {dm.load_calls}"
+            )
+
+            if active_tab == 0:
+                assert predictors_calls, (
+                    "render_active_tab must have reached _render_predictors_tab"
+                )
+                last = predictors_calls[-1]
+                assert last["label"] == station_label_2, (
+                    f"after station→station2, leaf must receive station2 label, "
+                    f"not stale {last['label']!r}"
+                )
+                assert last["horizon"] == "month", (
+                    f"selected horizon must be 'month'; got {last['horizon']!r}"
+                )
+                assert last["code"] == "19998", (
+                    f"dm data code must be '19998' for station2; got {last['code']!r}"
+                )
+
+
+# ===========================================================================
 # 6. Station-change watcher — load_station updates ref label
 # ===========================================================================
 

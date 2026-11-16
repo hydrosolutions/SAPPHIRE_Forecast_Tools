@@ -687,3 +687,152 @@ class TestCalculateForecastRangeMultiRow:
         assert result["fc_lower"].iloc[0] == pytest.approx(100.0)
         assert result["fc_upper"].iloc[0] == pytest.approx(100.0)
         assert result["fc_lower"].iloc[1] == pytest.approx(45.0)
+
+
+# ---------------------------------------------------------------------------
+# PP-075 regression: None (Python None) in range_delta produces object dtype
+# ---------------------------------------------------------------------------
+
+class TestNoneRangeDeltaObjectDtypeRegression:
+    """Regression for PP-075: None (not NaN) in range_delta creates an object-dtype
+    column, which caused TypeError at forecast_table['delta'].round(2).
+
+    The API can return null for missing values; pandas stores a mixed None/float
+    column as object dtype.  After the fix, those values must render as NaN
+    (unavailable), never raise.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        from src import vizualization as viz
+        self.viz = viz
+
+    def _call(self, forecasts, horizon="month", range_type="delta", range_slider=0):
+        ms = _FakeModelSelection(forecasts["model_short"].unique().tolist())
+        date_picker = forecasts["date"].max()
+        return self.viz.create_forecast_summary_table(
+            _gettext, horizon, forecasts,
+            "19999 - Test River", date_picker, ms,
+            range_type, range_slider,
+        )
+
+    def test_single_none_range_delta_does_not_raise(self):
+        """Single row with range_delta=None (Python None → object dtype) must not
+        raise TypeError and must display δ as NaN (unavailable)."""
+        df = pd.DataFrame([{
+            "code": "19999",
+            "date": pd.Timestamp("2026-04-01"),
+            "Date": pd.Timestamp("2026-04-02"),
+            "year": 2026,
+            "station_labels": "19999 - Test River",
+            "month_in_year": 4,
+            "model_short": "LR",
+            "model_long": "Linear regression (LR)",
+            "forecasted_discharge": 100.0,
+            "Q25": float("nan"),
+            "Q75": float("nan"),
+            "delta": 5.0,
+            "range_delta": None,  # Python None → object dtype
+            "accuracy": 70.0,
+            "sdivsigma": 0.7,
+            "mae": 3.0,
+        }])
+        assert df["range_delta"].dtype == object, "pre-condition: None makes object dtype"
+        result = self._call(df, "month")
+        displayed_delta = result[_gettext("δ")].iloc[0]
+        assert math.isnan(float(displayed_delta)), (
+            f"None range_delta must render as NaN δ, got {displayed_delta!r}"
+        )
+        # Bounds must also be NaN (no valid range_delta to compute from)
+        assert math.isnan(float(result[_gettext("Forecast lower bound")].iloc[0]))
+        assert math.isnan(float(result[_gettext("Forecast upper bound")].iloc[0]))
+
+    def test_mixed_none_and_finite_range_delta_object_dtype(self):
+        """When range_delta column is object-typed (e.g. API-sourced mixed None/float
+        or an all-None station), rows with finite values get correct bounds and None
+        rows get NaN — no TypeError.
+
+        pandas 2.x coerces mixed None/float to float64, so we explicitly cast to
+        object dtype to match the production case where the column arrives as object.
+        """
+        df = pd.DataFrame([
+            {
+                "code": "19999",
+                "date": pd.Timestamp("2026-04-01"),
+                "Date": pd.Timestamp("2026-04-02"),
+                "year": 2026,
+                "station_labels": "19999 - Test River",
+                "month_in_year": 4,
+                "model_short": "LR",
+                "model_long": "Linear regression (LR)",
+                "forecasted_discharge": 100.0,
+                "Q25": float("nan"),
+                "Q75": float("nan"),
+                "delta": 999.0,
+                "range_delta": 10.0,   # finite — bounds must be computable
+                "accuracy": 70.0,
+                "sdivsigma": 0.7,
+                "mae": 3.0,
+            },
+            {
+                "code": "19999",
+                "date": pd.Timestamp("2026-04-01"),
+                "Date": pd.Timestamp("2026-04-02"),
+                "year": 2026,
+                "station_labels": "19999 - Test River",
+                "month_in_year": 4,
+                "model_short": "GBT",
+                "model_long": "Gradient Boosting (GBT)",
+                "forecasted_discharge": 80.0,
+                "Q25": float("nan"),
+                "Q75": float("nan"),
+                "delta": 888.0,
+                "range_delta": float("nan"),   # unavailable
+                "accuracy": 60.0,
+                "sdivsigma": 0.8,
+                "mae": 4.0,
+            },
+        ])
+        # Explicitly force object dtype to simulate the production API-sourced column.
+        # pandas 2.x coerces mixed None/float to float64, but the API client can
+        # deliver an object-typed column when nulls arrive as Python None.
+        df["range_delta"] = df["range_delta"].astype(object)
+        assert df["range_delta"].dtype == object, "pre-condition: explicitly cast to object"
+        result = self._call(df, "month")
+        lr_row = result[result[_gettext("Model")] == "LR"]
+        gbt_row = result[result[_gettext("Model")] == "GBT"]
+        # LR: range_delta=10 → fc_lower=90, fc_upper=110, δ=10
+        assert lr_row[_gettext("Forecast lower bound")].iloc[0] == pytest.approx(90.0, abs=0.01)
+        assert lr_row[_gettext("Forecast upper bound")].iloc[0] == pytest.approx(110.0, abs=0.01)
+        assert lr_row[_gettext("δ")].iloc[0] == pytest.approx(10.0, abs=0.01)
+        # GBT: range_delta=None → NaN bounds and NaN δ
+        assert math.isnan(float(gbt_row[_gettext("Forecast lower bound")].iloc[0]))
+        assert math.isnan(float(gbt_row[_gettext("δ")].iloc[0]))
+
+    def test_none_sdivsigma_and_mae_do_not_raise(self):
+        """None in sdivsigma and mae (API-nullable fields) must also be safe at round()."""
+        df = pd.DataFrame([{
+            "code": "19999",
+            "date": pd.Timestamp("2026-04-01"),
+            "Date": pd.Timestamp("2026-04-02"),
+            "year": 2026,
+            "station_labels": "19999 - Test River",
+            "month_in_year": 4,
+            "model_short": "LR",
+            "model_long": "Linear regression (LR)",
+            "forecasted_discharge": 100.0,
+            "Q25": float("nan"),
+            "Q75": float("nan"),
+            "delta": 5.0,
+            "range_delta": 12.0,
+            "accuracy": None,   # None — object dtype
+            "sdivsigma": None,  # None — object dtype
+            "mae": None,        # None — object dtype
+        }])
+        result = self._call(df, "month")
+        # Bounds must be finite (range_delta=12 is numeric)
+        assert result[_gettext("Forecast lower bound")].iloc[0] == pytest.approx(88.0, abs=0.01)
+        assert result[_gettext("Forecast upper bound")].iloc[0] == pytest.approx(112.0, abs=0.01)
+        # Skill columns should be NaN (not raise)
+        assert math.isnan(float(result[_gettext("s/σ")].iloc[0]))
+        assert math.isnan(float(result[_gettext("MAE")].iloc[0]))

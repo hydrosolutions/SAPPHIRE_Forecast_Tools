@@ -1,4 +1,14 @@
-"""Static guard for local preprocessing runoff maintenance wiring."""
+"""Static guard for local preprocessing runoff maintenance wiring.
+
+W1 adaptation (PP-075): the lt_rc exit-code handling was extracted from
+run_maintenance_preprocessing_runoff into the shared helper _run_long_horizon_sync.
+_function_body() now returns that helper's body.  The lt_rc branch order
+changed: 2 → 4 → 6 → 5 (non-fatal first, fatal last before the catch-all).
+test_lt_rc_six_matches_historical_exit_four_fail_handling uses idx_5 as the
+upper bound for block_6 because exit-5 is now an explicit branch between
+exit-6 and the catch-all, and including exit-5's own ERROR log would give 3
+instead of the expected 2.
+"""
 
 from pathlib import Path
 
@@ -12,19 +22,32 @@ def _repo_root() -> Path:
 
 
 def _function_body() -> str:
+    """Return the body of the shared _run_long_horizon_sync helper.
+
+    After W1 extraction the lt_rc handling lives in _run_long_horizon_sync,
+    not inline in run_maintenance_preprocessing_runoff.  Locate the helper
+    by its definition marker and slice to the next function definition.
+    """
     content = (_repo_root() / "apps" / "run_locally.sh").read_text()
-    maintenance_start = content.index("run_maintenance_preprocessing_runoff()")
-    next_function = content.index("run_maintenance_preprocessing_gateway()", maintenance_start)
-    return content[maintenance_start:next_function]
+    start = content.index("_run_long_horizon_sync()")
+    # The next function definition immediately follows the helper.
+    next_func = content.index("run_maintenance_preprocessing_runoff()", start)
+    return content[start:next_func]
 
 
 def test_run_locally_preprunoff_maintenance_runs_long_horizon_writer():
+    content = (_repo_root() / "apps" / "run_locally.sh").read_text()
+    # Maintenance wrapper: runoff before helper call.
+    maint_start = content.index("run_maintenance_preprocessing_runoff()")
+    maint_end = content.index("run_maintenance_preprocessing_gateway()", maint_start)
+    maint_body = content[maint_start:maint_end]
+
     function_body = _function_body()
 
-    assert "preprocessing_runoff.py -- --maintenance" in function_body
+    assert "preprocessing_runoff.py -- --maintenance" in maint_body
     assert "sync_long_horizon_hydrograph.py" in function_body
-    assert function_body.index("preprocessing_runoff.py -- --maintenance") < function_body.index(
-        "sync_long_horizon_hydrograph.py"
+    assert maint_body.index("preprocessing_runoff.py -- --maintenance") < maint_body.index(
+        "_run_long_horizon_sync"
     )
     assert "lt_rc -eq 2" in function_body
     assert "Long-horizon hydrograph sync produced no records" in function_body
@@ -33,10 +56,11 @@ def test_run_locally_preprunoff_maintenance_runs_long_horizon_writer():
     assert "lt_rc -eq 4" in function_body
     assert "lt_rc -eq 6" in function_body
     assert "Long-horizon hydrograph sync had SDK norm lookup failure(s)" in function_body
-    assert function_body.index("lt_rc -eq 2") < function_body.index("lt_rc -eq 5")
-    assert function_body.index("lt_rc -eq 5") < function_body.index("lt_rc -eq 4")
+    # Branch order in the helper is 2, 4, 6, 5.
+    assert function_body.index("lt_rc -eq 2") < function_body.index("lt_rc -eq 4")
     assert function_body.index("lt_rc -eq 4") < function_body.index("lt_rc -eq 6")
-    assert "rc=$lt_rc" in function_body[function_body.index("lt_rc -eq 5") :]
+    assert function_body.index("lt_rc -eq 6") < function_body.index("lt_rc -eq 5")
+    assert "rc=$lt_rc" in maint_body
 
 
 def test_lt_rc_four_is_informational_and_records_no_row():
@@ -79,7 +103,10 @@ def test_lt_rc_six_matches_historical_exit_four_fail_handling():
     idx_6 = function_body.index("[ $lt_rc -eq 6 ]")
     idx_catchall = function_body.index("[ $lt_rc -ne 0 ]")
     assert idx_6 < idx_catchall, "the lt_rc=6 branch must precede (and thus pre-empt) the catch-all"
-    block_6 = function_body[idx_6:idx_catchall]
+    # exit-5 is now an explicit branch between exit-6 and the catch-all;
+    # scope block_6 to exit-6 only so the two-ERROR-log count stays exact.
+    idx_5 = function_body.index("[ $lt_rc -eq 5 ]")
+    block_6 = function_body[idx_6:idx_5]
 
     assert block_6.count("log ERROR") == 2, (
         "the historical exit-4 FAIL handling logged exactly two ERROR lines"

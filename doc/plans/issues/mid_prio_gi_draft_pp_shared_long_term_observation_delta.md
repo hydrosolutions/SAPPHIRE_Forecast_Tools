@@ -1,7 +1,6 @@
 # Shared long-term observation delta — vision and draft plan
 
-**Status:** In Progress — E0 and E1 complete locally; E1 independently reviewed and verified. E1 committed as `2b924654`; E2 dashboard integration is in progress. No deployment or live refresh is claimed.
-E2 is a locally verified implementation checkpoint, not a completed phase. Completion depends on agreement with Maxat and implementation of the [supplementary quarterly bulletin snapshot](mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md).
+**Status:** Review — E0/E1/E2, quarterly-copy persistence, dashboard reactivity fixes and workflow wiring are implemented and locally verified. The owner passed visual dashboard testing and authorized PR preparation on 2026-11-16. Server review/deployment remains pending with Maxat.
 **Modules:** `apps/preprocessing_runoff`, `apps/postprocessing_forecasts`, `apps/forecast_dashboard`.
 **Priority:** Medium (proposed). **Related:** [PP-075](mid_prio_gi_draft_pp_short_term_em_skill_and_delta_ranges.md), PP-074, FD-023.
 **Evidence baseline:** `origin/maxat_sapphire_2` at `4c8899f6`, inspected 2026-11-14. No live payload or deployment verification.
@@ -10,6 +9,13 @@ E2 is a locally verified implementation checkpoint, not a completed phase. Compl
 Prefer existing API fields and a narrowly scoped producer/reader change. No major refactoring, general aggregation
 cleanup, new model or all-horizon migration. Defer optional metadata/versioning and short-term/backend harmonization;
 expand the service contract only if the agreed minimum behavior cannot use existing fields safely.
+
+## Workflow follow-up (2026-11-16)
+
+The owner supplied the installed cron entries and requested a reviewed, minimal
+[workflow-wiring plan](mid_prio_gi_draft_pp_long_term_delta_workflow_wiring.md).
+Local long-term publication and API reader verification have now succeeded; server deployment
+remains unverified. The new plan supersedes earlier no-live-refresh statements only for local evidence.
 
 ## Working vision
 
@@ -22,7 +28,7 @@ The owner requested planning after considering a simple runoff regression as a s
 direction is model-independent statistics; a regression may be useful as a forecast baseline, but is unnecessary
 for computing observation variability and is outside this draft's proposed scope.
 
-## Implemented behavior and the gap
+## Pre-implementation baseline (2026-11-14)
 
 - `apps/postprocessing_forecasts/src/data_reader.py::_aggregate_daily_to_monthly` already computes
   `delta = 0.674 * sample_std` across accepted yearly monthly means, grouped by station/calendar month.
@@ -382,3 +388,22 @@ This completes the local quarterly storage implementation, not deployment or ope
 Deploy the migration/service before the dashboard and verify POST→GET persistence with Maxat. The live
 pipeline remains deferred pending an agreed non-operational configuration. Short-term/backend
 harmonization remains the planned follow-up, outside this maintenance patch.
+
+### Final local verification and PR preparation — 2026-11-16
+
+The owner confirmed the visual dashboard test passes. Fresh independent Codex and Sonnet reviews
+of the complete phase-E patch found no confirmed blocking defects after caller/contract verification.
+One cosmetic finding remains deferred: invalid quarterly edited bounds are correctly rejected, but
+the popup contains an internal function-name prefix. No range/storage semantics change is needed.
+
+The full suite passed 9,382 tests with the accepted 12 skips and two expected failures; identities
+and reasons match the baseline. Eight non-ML Docker builds and smoke tests passed. The explicit
+`maintenance:preprocessing_runoff` run exited zero, followed by successful month/quarter/season
+statistics read-back through the actual dashboard reader. Normal-schedule LT publication also passed;
+the complete forecast command failed on the pre-existing 10-day scheduler versus 5-day model window,
+so it is not a green end-to-end forecast run. Historical raw forecast reruns remain deferred.
+
+This record supersedes earlier checkpoint limitations for local implementation and refresh only.
+Deployment, Maxat's PR review, and later short-term/backend harmonization remain separate. See the
+[workflow verification record](mid_prio_gi_draft_pp_long_term_delta_workflow_wiring.md) and
+[deployment handoff](../pp075_range_deployment_handoff.md).

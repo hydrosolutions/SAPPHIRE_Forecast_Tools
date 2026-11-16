@@ -995,7 +995,10 @@ Add the following to the crontab file:
 0 10 <lt_issue_day> * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/bimonthly_long_term_skill_metrics_recalculation.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_bimonthly_longterm_skill_recalc_$(date +\%Y\%m\%d).log 2>&1
 #
 # (5) Daily maintenance via Luigi at 19:00 UTC (replaces individual maintenance cron jobs)
-# Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing → Frontend
+# Luigi enforces dependency order: PrepRunoff + Gateway → LinReg → ML → PostProcessing
+# The host wrapper then publishes month/quarter/April–September observation statistics
+# for delta using the existing hydrograph wrapper, and always attempts frontend refresh.
+# Publication is attempted after Luigi even on failure; returned failures remain visible.
 # ML concurrency is limited to 3 via Luigi resources.
 0 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_daily_maintenance.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_maintenance_$(date +\%Y\%m\%d).log 2>&1
 #
@@ -1013,9 +1016,20 @@ Add the following to the crontab file:
 # Replaces the retired `monthly_norms` Luigi task, which was removed from the
 # task map: run_periodic_maintenance.sh still accepts the retired name and exits
 # 0 without running anything (INFRA-023), so do not reinstate it. Builds the
-# long-horizon monthly, quarterly and April-September seasonal hydrograph view.
+# long-horizon monthly, quarterly and April-September seasonal hydrograph view, including
+# std/count for delta. Daily maintenance also publishes these rows; retain this yearly entry.
 0 3 1 1 * cd /data/SAPPHIRE_Forecast_Tools && bash bin/yearly_runoff_hydrograph_aggregation.sh /data/<data_folder>/config/<env_file> >> /home/ubuntu/logs/sapphire_yearly_runoff_hydrograph_$(date +\%Y\%m\%d).log 2>&1
 ```
+Long-term delta publication uses `SAPPHIRE_RANGE_REFERENCE_START_YEAR` and
+`SAPPHIRE_RANGE_REFERENCE_END_YEAR` from the same external env file as the dashboard (defaults
+2000–2025). Update/verify the preprocessing image before the first publication: the hydrograph
+wrapper pulls absent images but reuses cached tags. Follow the
+[observation-statistics rollout](plans/pp075_range_deployment_handoff.md#observation-statistics-rollout),
+including one initial publication and API read-back; changed references require coordinated
+publication before dashboard consumption resumes. No additional daily cron entry is needed.
+Retain the installed deployment's numeric schedules; these documentation examples do not retime
+existing jobs. Verify the server timezone/CRON_TZ separately when comments disagree with cron fields.
+
 The snow norm/stat cron row uses the same yearly wrapper documented in [`apps/preprocessing_gateway/README.md`](../apps/preprocessing_gateway/README.md#yearly-snow-norms-and-statistics). Run `bin/backfill_snow_stats_history.sh` once after deploying this change to populate historical snow-stat columns used by the dashboard snow tab; the yearly cron keeps future years current.
 To check if the cron jobs have been set up correctly, you can list them with `crontab -l`.
 

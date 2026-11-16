@@ -105,22 +105,37 @@ echo "| Check progress at: http://localhost:${LUIGI_SCHEDULER_PORT}"
 
 # COMPOSE_STATUS now reflects Luigi's own outcome (see the [retcode] block
 # above -- without it a failed task would still exit 0). Report it here, but
-# do NOT exit on it: the frontend update below currently runs unconditionally
-# after this step and must keep doing so (INFRA-047) -- an early exit here
-# would silently stop the frontend from being refreshed on every deployment
-# whenever the Luigi step fails.
+# do NOT exit on it: the publication and frontend update below both run
+# unconditionally after this step -- an early exit here would silently stop
+# publication and the frontend from being refreshed on every deployment
+# whenever the Luigi step fails (INFRA-047).
 if [ "$COMPOSE_STATUS" -eq 0 ]; then
     echo "| Daily maintenance (Luigi): SUCCESS."
 else
     echo "| Daily maintenance (Luigi): FAILED (exit ${COMPOSE_STATUS})."
 fi
 
+# --- Long-horizon publication (after Luigi, before frontend) ---
+# Runs unconditionally: it can read stored observations even when Luigi
+# failed upstream, but must not claim upstream data were refreshed.
+# --reuse-existing-tunnel: this wrapper already owns the tunnel lifecycle.
+# Publication status is captured immediately and included in the sticky
+# aggregate below; all nonzero publication exits fail the overall wrapper.
+echo "| Publishing long-horizon observation statistics..."
+bash bin/yearly_runoff_hydrograph_aggregation.sh "$1" --reuse-existing-tunnel
+PUBLICATION_STATUS=$?
+if [ "$PUBLICATION_STATUS" -eq 0 ]; then
+    echo "| Long-horizon publication: SUCCESS."
+else
+    echo "| Long-horizon publication: FAILED (exit ${PUBLICATION_STATUS})."
+fi
+
 # --- Frontend update (runs on host, not in Luigi DAG) ---
-# Always run this, regardless of COMPOSE_STATUS above -- see the comment
-# there. Its own status is captured immediately and aggregated below (sticky
+# Always run this, regardless of COMPOSE_STATUS or PUBLICATION_STATUS above.
+# Its own status is captured immediately and aggregated below (sticky
 # aggregate, same pattern as bin/initialize_site_backfill.sh's
-# `overall_exit`, main() :594-608): the wrapper exits 0 only if BOTH the
-# Luigi step and the frontend update succeeded. No `set -e`, no early exit.
+# `overall_exit`, main() :594-608): the wrapper exits 0 only if ALL three
+# stages succeeded. No `set -e`, no early exit.
 echo "| Updating frontend dashboard..."
 bash bin/daily_update_sapphire_frontend.sh "$1"
 FRONTEND_STATUS=$?
@@ -131,7 +146,7 @@ else
 fi
 
 OVERALL_STATUS=0
-if [ "$COMPOSE_STATUS" -ne 0 ] || [ "$FRONTEND_STATUS" -ne 0 ]; then
+if [ "$COMPOSE_STATUS" -ne 0 ] || [ "$PUBLICATION_STATUS" -ne 0 ] || [ "$FRONTEND_STATUS" -ne 0 ]; then
     OVERALL_STATUS=1
 fi
 exit "$OVERALL_STATUS"

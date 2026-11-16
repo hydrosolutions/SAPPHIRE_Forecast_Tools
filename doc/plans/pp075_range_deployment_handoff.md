@@ -1,6 +1,6 @@
 # PP-075 range checkpoint — handoff for Maxat
 
-**Status:** local implementation/verification checkpoint; no deployment or live refresh is asserted.
+**Status:** implementation complete and locally verified, including observation-statistics publication and the owner’s visual dashboard check. Server deployment remains unverified.
 E1 is committed as `2b924654`. E2 now includes locally implemented and tested
 [quarterly-copy persistence](issues/mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md), with service support authorized in this PR and independent review complete. This handoff
 is for coordination and verification, not evidence that a server already has these changes.
@@ -64,6 +64,27 @@ with mocked API boundaries; deployed API round-trip remains a separate check.
   refresh together; long-term controls remain reachable; the reference label follows loaded metadata.
 - Read an older forecast: it uses the same current reference-period δ. A non-April–September season
   has no Delta/Mixed bounds. No extra long-term chart or quarter selector is introduced.
+
+## Recurring observation-statistics publication
+
+The [workflow follow-up](issues/mid_prio_gi_draft_pp_long_term_delta_workflow_wiring.md) adds publication
+to local `long-term-operational` and to the existing server daily-maintenance wrapper. Local
+maintenance/daily/initialize retain their existing publication path. The server sequence is Luigi,
+publication via the existing yearly wrapper, then unconditional frontend refresh; all returned
+nonzero stage statuses contribute to the final failure. Keep the existing daily and January 1
+cron rows. The daily parent owns tunnel lifecycle and supplies `--reuse-existing-tunnel` to its child.
+These scripts must be deployed before the installed cron can execute the new sequence.
+
+Local verification (2026-11-16): publication ran once after successful runoff and before weather;
+month/quarter/season statistics read back through the dashboard reader without errors. The full
+normal-schedule command subsequently failed on existing long-term date gates (scheduler admits
+10 days, models allow 5); this is not a green end-to-end forecast result. See the workflow
+follow-up for full test and review evidence. Server deployment remains pending.
+
+Use current publication-year statistics even for a historical forecast issue date. Verify the actual
+frontend container/image and reader after rollout; the inherited frontend child can mask Docker
+failures, so its returned zero alone is not proof of a successful dashboard refresh. This wiring does
+not repair that separate limitation or regenerate existing historical ensembles.
 
 ## Quarterly storage deployment gate
 

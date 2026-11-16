@@ -3002,3 +3002,384 @@ class TestSkipSummaryRows:
         assert "long_term_forecasting: SKIP (not required for demo org)" in out, out
         assert "Modules: 0 passed, 0 failed, 1 skipped" in out, out
         assert not synth_tree.calls(), synth_tree.calls()
+
+
+# ---------------------------------------------------------------------------
+# Group F -- PP-075 W1: long-horizon publication in long-term-operational
+# ---------------------------------------------------------------------------
+#
+# Behavioral contracts for the new publication wiring added by PP-075 W1:
+# `run_long_term_operational_pipeline` calls the shared _run_long_horizon_sync
+# helper after runoff succeeds, before the weather gateway, and before the
+# no-active-mode return gate.  The existing Group C tests cover the same exit
+# codes on the `maintenance:preprocessing_runoff` path; these tests cover the
+# same contracts on the `long-term-operational` path, reusing _override_sync_exit_code
+# and _LONG_HORIZON_ROW from Group C.
+#
+# Note on gateway calls in long-term-operational: run_preprocessing_gateway
+# runs BEFORE the no-active-mode gate (even with no active modes), so gateway
+# calls appear in the call log for all long-term-operational runs where runoff
+# succeeded -- no active-modes stub is needed for ordering tests.
+
+
+def _writer_calls(tree: SynthTree) -> list[str]:
+    """Call-log lines for sync_long_horizon_hydrograph.py via preprocessing_runoff."""
+    return [
+        ln
+        for ln in tree.calls()
+        if "module=preprocessing_runoff" in ln
+        and "script=sync_long_horizon_hydrograph.py" in ln
+    ]
+
+
+# (lt_rc, expect_nonzero_exit, expect_lt_op_row_pass, expect_long_horizon_fail_row)
+#
+# expect_lt_op_row_pass: whether the long-term operational module rows exit
+# successfully (no fatal abort caused by this publication exit alone).
+# expect_long_horizon_fail_row: whether a FAIL row for the long-horizon sync
+# sub-step appears in the output.
+#
+# Operational semantics match the shared helper's contracts:
+#   0  → success; no row; overall exit 0
+#   2  → no-records warning; no row; overall exit 0
+#   4  → informational norm failure; no row; overall exit 0
+#   6  → sub-step FAIL row (from helper); run continues; overall exit nonzero
+#   1/3/5 → fatal; caller records FAIL row; abort or continue
+_LT_OP_RC_CASES = [
+    (0, False, False),
+    (2, False, False),
+    (4, False, False),
+    (6, True, True),
+    (1, True, True),
+    (3, True, True),
+    (5, True, True),
+]
+
+
+class TestLongTermOperationalPublicationWiring:
+    """PP-075 W1: long-horizon publication wiring in run_long_term_operational_pipeline.
+
+    Contracts:
+    - runoff → one publication → weather gateway order
+    - publication occurs on no-active-mode days (before the skip gate)
+    - org-skipped LT pipeline does not publish
+    - failed runoff never publishes (default and continue-on-error)
+    - dry-run performs no writes
+    - RUNOFF_LONG_HORIZON_TARGET_YEAR forwarded as --target-year
+    - LT_FORECAST_TODAY alone → no --today / --target-year to writer
+    - exit 6 → exactly one FAIL row (from helper, not duplicated by caller)
+    - fatal exits (1/3/5) → FAIL row + abort or continue per flag
+    - sticky failure not erased by later no-active-mode skip or success
+    """
+
+    def test_writer_called_exactly_once_on_success(self, synth_tree):
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+        assert result.returncode == 0, out
+        calls = _writer_calls(synth_tree)
+        assert len(calls) == 1, (
+            f"expected exactly one sync_long_horizon_hydrograph.py call, got: {calls}"
+        )
+
+    def test_runoff_precedes_writer_in_call_log(self, synth_tree):
+        """Ordering: preprocessing_runoff.py call appears before the writer."""
+        run_main(synth_tree, "long-term-operational")
+        all_calls = synth_tree.calls()
+        runoff_indices = [
+            i
+            for i, ln in enumerate(all_calls)
+            if "module=preprocessing_runoff" in ln and "script=preprocessing_runoff.py" in ln
+        ]
+        writer_indices = [
+            i for i, ln in enumerate(all_calls) if "script=sync_long_horizon_hydrograph.py" in ln
+        ]
+        assert runoff_indices, "preprocessing_runoff.py was not called"
+        assert writer_indices, "sync_long_horizon_hydrograph.py was not called"
+        assert max(runoff_indices) < min(writer_indices), (
+            "publication must come after the runoff preprocessing call"
+        )
+
+    def test_writer_precedes_gateway_in_call_log(self, synth_tree):
+        """Ordering: writer call appears before any preprocessing_gateway call.
+        run_preprocessing_gateway runs before the no-active-mode gate so this
+        holds even with no active modes (the default synth_tree schedule).
+        """
+        run_main(synth_tree, "long-term-operational")
+        all_calls = synth_tree.calls()
+        writer_indices = [
+            i for i, ln in enumerate(all_calls) if "script=sync_long_horizon_hydrograph.py" in ln
+        ]
+        gateway_indices = [
+            i for i, ln in enumerate(all_calls) if "module=preprocessing_gateway" in ln
+        ]
+        assert writer_indices, "sync_long_horizon_hydrograph.py was not called"
+        assert gateway_indices, (
+            "preprocessing_gateway was not called -- run_preprocessing_gateway must "
+            "run before the no-active-mode gate"
+        )
+        assert min(writer_indices) < min(gateway_indices), (
+            "publication must precede the weather gateway processing"
+        )
+
+    def test_writer_called_on_no_active_mode_day(self, synth_tree):
+        """Publication occurs before the no-active-mode return gate.
+        Default synth_tree returns empty active modes from lt_schedule_query.py.
+        """
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+        assert result.returncode == 0, out
+        calls = _writer_calls(synth_tree)
+        assert calls, (
+            "writer must be called even on a no-active-mode day; output:\n" + out
+        )
+        # The no-active-mode skip row must still appear.
+        assert "long_term_forecasting (operational)" in out, (
+            "long_term_forecasting (operational) skip row must still appear"
+        )
+
+    @pytest.mark.parametrize("continue_on_error", [False, True])
+    def test_runoff_failure_skips_publication(self, synth_tree, continue_on_error):
+        """Failed runoff never triggers publication, with or without continue-on-error."""
+        synth_tree.override(
+            "preprocessing_runoff",
+            'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
+        )
+        result = run_main(
+            synth_tree, "long-term-operational", continue_on_error=continue_on_error
+        )
+        assert result.returncode != 0
+        calls = _writer_calls(synth_tree)
+        assert not calls, (
+            f"writer must not be called when runoff fails "
+            f"(continue_on_error={continue_on_error}); calls: {calls}"
+        )
+
+    def test_dry_run_skips_publication(self, synth_tree):
+        """--dry-run must not invoke sync_long_horizon_hydrograph.py."""
+        run_main(synth_tree, "long-term-operational", dry_run=True)
+        assert not _writer_calls(synth_tree), (
+            "sync_long_horizon_hydrograph.py must not be invoked under --dry-run"
+        )
+
+    def test_org_skip_suppresses_publication(self, synth_tree):
+        """An org that skips long_term_forecasting (demo) must also skip the
+        publication: run_long_term_operational_pipeline returns early before
+        runoff or the writer are ever invoked.
+        """
+        result = run_main(
+            synth_tree,
+            "long-term-operational",
+            extra_env={"ieasyhydroforecast_organization": "demo"},
+        )
+        out = result.stdout + result.stderr
+        assert result.returncode == 0, out
+        # Neither runoff nor the writer may have been called.
+        assert not any(
+            "module=preprocessing_runoff" in ln for ln in synth_tree.calls()
+        ), (
+            "runoff must not be called when the org gate skips long-term-operational"
+        )
+        assert not _writer_calls(synth_tree), (
+            "writer must not be called when the org gate skips long-term-operational"
+        )
+
+    def test_explicit_year_forwarded_as_target_year(self, synth_tree):
+        """RUNOFF_LONG_HORIZON_TARGET_YEAR is forwarded as --target-year."""
+        result = run_main(
+            synth_tree,
+            "long-term-operational",
+            extra_env={"RUNOFF_LONG_HORIZON_TARGET_YEAR": "2024"},
+        )
+        out = result.stdout + result.stderr
+        assert result.returncode == 0, out
+        calls = _writer_calls(synth_tree)
+        assert calls, "writer was not called"
+        assert any("--target-year" in ln and "2024" in ln for ln in calls), (
+            f"--target-year 2024 not found in writer call args: {calls}"
+        )
+
+    def test_lt_forecast_today_alone_not_forwarded_to_writer(self, synth_tree):
+        """LT_FORECAST_TODAY without RUNOFF_LONG_HORIZON_TARGET_YEAR must not
+        pass --today or --target-year to the long-horizon writer.
+        """
+        result = run_main(
+            synth_tree,
+            "long-term-operational",
+            extra_env={"LT_FORECAST_TODAY": "2024-01-15"},
+        )
+        out = result.stdout + result.stderr
+        assert result.returncode == 0, out
+        calls = _writer_calls(synth_tree)
+        assert calls, "writer was not called"
+        assert not any("--today" in ln for ln in calls), (
+            f"--today must not be forwarded from LT_FORECAST_TODAY: {calls}"
+        )
+        assert not any("--target-year" in ln for ln in calls), (
+            f"--target-year must not appear when only LT_FORECAST_TODAY is set: {calls}"
+        )
+
+    @pytest.mark.parametrize(
+        ("lt_rc", "expect_nonzero_exit", "expect_long_horizon_fail_row"),
+        _LT_OP_RC_CASES,
+        ids=[f"lt_rc={case[0]}" for case in _LT_OP_RC_CASES],
+    )
+    def test_lt_op_exit_code_table(
+        self, synth_tree, lt_rc, expect_nonzero_exit, expect_long_horizon_fail_row
+    ):
+        """Exit-code routing for the operational publication path.
+
+        Exit 6: sub-step FAIL row recorded by helper; run continues; overall
+        exit nonzero because print_summary sees the FAIL row.
+        Exits 1/3/5: caller records FAIL row + aborts (CONTINUE_ON_ERROR=false).
+        Exits 0/2/4: no failure row; run exits 0 (all other steps succeed).
+        """
+        _override_sync_exit_code(synth_tree, lt_rc)
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+
+        if expect_nonzero_exit:
+            assert result.returncode != 0, (
+                f"lt_rc={lt_rc}: expected nonzero exit; output:\n{out}"
+            )
+        else:
+            assert result.returncode == 0, (
+                f"lt_rc={lt_rc}: expected zero exit; output:\n{out}"
+            )
+
+        if expect_long_horizon_fail_row:
+            assert f"{_LONG_HORIZON_ROW}: FAIL" in out, (
+                f"lt_rc={lt_rc}: expected a FAIL row for '{_LONG_HORIZON_ROW}'; "
+                f"output:\n{out}"
+            )
+        else:
+            assert _LONG_HORIZON_ROW not in out, (
+                f"lt_rc={lt_rc}: must not record any row for '{_LONG_HORIZON_ROW}'; "
+                f"output:\n{out}"
+            )
+
+    def test_exit6_no_duplicate_failure_row(self, synth_tree):
+        """Exit 6: the helper records exactly one FAIL row; the operational
+        caller must not add a duplicate.
+        """
+        _override_sync_exit_code(synth_tree, 6)
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        fail_row_count = out.count(f"{_LONG_HORIZON_ROW}: FAIL")
+        assert fail_row_count == 1, (
+            f"expected exactly one FAIL row for '{_LONG_HORIZON_ROW}' (exit 6), "
+            f"got {fail_row_count}; output:\n{out}"
+        )
+
+    def test_fatal_exit_records_failure_and_error_details(self, synth_tree):
+        """Exit 1: a distinctive marker emitted by the writer appears under
+        MODULE ERROR DETAILS, confirming CURRENT_MODULE_LOG was still pointing
+        at the long-horizon log when the FAIL row was recorded.
+        """
+        synth_tree.override(
+            "preprocessing_runoff",
+            textwrap.dedent("""\
+                if [ "$script" = "preprocessing_runoff.py" ]; then
+                    exit 0
+                fi
+                if [ "$script" = "sync_long_horizon_hydrograph.py" ]; then
+                    echo "LT_OP_WRITER_FAIL_MARKER_e39b"
+                    exit 1
+                fi
+                """),
+        )
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert f"{_LONG_HORIZON_ROW}: FAIL" in out, (
+            "a FAIL row for the long-horizon sync must appear on fatal exit 1; "
+            f"output:\n{out}"
+        )
+        assert "MODULE ERROR DETAILS" in out, out
+        details = out.split("MODULE ERROR DETAILS", 1)[1]
+        assert "LT_OP_WRITER_FAIL_MARKER_e39b" in details, (
+            "writer output must appear under MODULE ERROR DETAILS so the operator "
+            "sees what caused the publication failure; got:\n" + details
+        )
+
+    def test_exit6_error_points_to_run_summary_and_its_log(self, synth_tree):
+        """Exit 6 on the operational path: the ERROR message names the
+        LONG-HORIZON RUN SUMMARY block and the sub-step log file, matching
+        the same pointer contract as on the maintenance path (Group C).
+        """
+        _override_sync_exit_code(synth_tree, 6)
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert "Long-horizon hydrograph sync had SDK norm lookup failure(s)" in out
+        assert "LONG-HORIZON RUN SUMMARY" in out, (
+            "the exit-6 ERROR line should name the LONG-HORIZON RUN SUMMARY block"
+        )
+        assert "preprocessing_runoff_long_horizon.log" in out, (
+            "the exit-6 ERROR line should point at the sub-step log file"
+        )
+
+    def test_fatal_exit_with_continue_on_error_still_nonzero(self, synth_tree):
+        """With --continue-on-error, a fatal publication exit (exit 1) still
+        makes the final run exit nonzero and records the FAIL row.
+        """
+        _override_sync_exit_code(synth_tree, 1)
+        result = run_main(synth_tree, "long-term-operational", continue_on_error=True)
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, (
+            "--continue-on-error must not mask a fatal publication exit"
+        )
+        assert f"{_LONG_HORIZON_ROW}: FAIL" in out, (
+            "FAIL row must still be recorded under --continue-on-error; output:\n" + out
+        )
+
+    def test_sticky_failure_not_erased_by_no_active_mode_return(self, synth_tree):
+        """Exit 6 (sub-step FAIL row) + no-active-mode skip (the default):
+        the no-active-mode return must not erase the FAIL row; the run must
+        exit nonzero.
+        """
+        # Default synth_tree already has empty active modes.
+        _override_sync_exit_code(synth_tree, 6)
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0, (
+            "a sub-step FAIL row (exit 6) must keep the run nonzero even when "
+            "LT has no active modes and returns early; output:\n" + out
+        )
+        assert f"{_LONG_HORIZON_ROW}: FAIL" in out
+
+    def test_exit_six_operational_log_attributed_to_long_horizon_log(self, synth_tree):
+        """Exit 6 on the operational path: the FAIL row for the long-horizon
+        sync sub-step must reference the long-horizon log (not whatever
+        CURRENT_MODULE_LOG happened to be before the helper ran).
+        """
+        synth_tree.override(
+            "preprocessing_runoff",
+            textwrap.dedent("""\
+                if [ "$script" = "preprocessing_runoff.py" ]; then
+                    exit 0
+                fi
+                if [ "$script" = "sync_long_horizon_hydrograph.py" ]; then
+                    echo "LT_OP_EXIT6_LOG_ATTRIBUTION_MARKER"
+                    exit 6
+                fi
+                """),
+        )
+        result = run_main(synth_tree, "long-term-operational")
+        out = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert f"{_LONG_HORIZON_ROW}: FAIL" in out
+        assert "MODULE ERROR DETAILS" in out
+
+        details = out.split("MODULE ERROR DETAILS", 1)[1]
+        assert "LT_OP_EXIT6_LOG_ATTRIBUTION_MARKER" in details, (
+            "MODULE ERROR DETAILS for exit-6 on the operational path must tail "
+            "the long-horizon log (the sub-step that failed), not the runoff log "
+            "or '(no output captured)'; got:\n" + details
+        )
