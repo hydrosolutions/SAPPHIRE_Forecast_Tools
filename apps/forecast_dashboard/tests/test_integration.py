@@ -833,10 +833,7 @@ def _run_forecast_and_bulletin_for_horizon(page, h_cfg):
     # untranslated strings like "Basin:" stay in English.
     expect(page.get_by_text("Горизонт:", exact=True)).to_be_visible()
     expect(page.get_by_text("Гидропост:", exact=True)).to_be_visible()
-    if is_long:
-        expect(page.get_by_text("Конфигурация прогноза:", exact=True)).not_to_be_visible()
-    else:
-        expect(page.get_by_text("Конфигурация прогноза:", exact=True)).to_be_visible()
+    expect(page.get_by_text("Конфигурация прогноза:", exact=True)).to_be_visible()
     expect(page.get_by_text("Запуск расчета прогноза в ручную", exact=True)).to_be_visible()
     expect(page.get_by_text("Basin:", exact=True)).not_to_be_visible()
     print(f"#### [{horizon}] Sidebar shows only Horizon, Hydropost, Forecast configuration, Manual re-run cards.")
