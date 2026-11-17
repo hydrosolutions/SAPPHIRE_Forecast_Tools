@@ -1241,53 +1241,134 @@ def add_labels_to_hydrograph(hydrograph, all_stations):
 
 # --- Data processing --------------------------------------------------------
 def calculate_forecast_range(_, forecast_table, range_type, range_slider):
+    """Calculate forecast range for all four methods.
+
+    Methods (stable keys and legacy translated labels both accepted):
+      native  / _("Native")                    — Q25/Q75 (LR uses delta)
+      delta   / _("delta")                     — Q ± delta
+      manual  / _("Manual range, select value below") — Q ± (p/100 * Q)
+      mixed   / _("min[delta, %]")             — Q ± min(delta, p/100 * Q)
+
+    For long-term horizons, callers must substitute the ``delta`` column with
+    ``range_delta`` before calling so that the correct observation-derived
+    source is used (not the model-skill delta).  This function is horizon-agnostic.
+
+    Rules:
+    - Both fc_lower/fc_upper are NaN when any required input is missing or invalid.
+    - Calculated negative lower bounds are clamped to 0.
+    - Native mode: both bounds unavailable when either Q25 or Q75 is missing or
+      when Q25 > Q75.  LR rows use Q±delta instead of native quantiles.
+    - Valid 0 (genuine zero delta or zero Q) is preserved; NaN is not replaced with 0.
+    - Unknown range_type logs a warning and sets both bounds to NaN.
     """
-    Calculate the forecast range based on the selected range type and the
-    range slider value.
-
-    Args:
-        _ (gettext.gettext): The gettext function.
-        forecast_table (pd.DataFrame): The forecast table.
-        range_type (str): The selected range type.
-        range_slider (float): The selected range slider value.
-
-    Returns:
-        pd.DataFrame: The forecast table with the calculated forecast range.
-    """
-
-    # Check if range_type is a widget or a string
     if not isinstance(range_type, str):
         range_type = range_type.value
 
-    has_delta = 'delta' in forecast_table.columns and not forecast_table['delta'].isna().all()
-    delta_offset = forecast_table['delta'] if has_delta else 0
-    if range_type == _('delta'):
-        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - delta_offset
-        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + delta_offset
-    elif range_type == _("Manual range, select value below"):
-        if hasattr(range_slider, 'value'):
-            forecast_table['fc_lower'] = (1 - range_slider.value / 100.0) * forecast_table['forecasted_discharge']
-            forecast_table['fc_upper'] = (1 + range_slider.value / 100.0) * forecast_table['forecasted_discharge']
-        else:
-            forecast_table['fc_lower'] = (1 - range_slider / 100.0) * forecast_table['forecasted_discharge']
-            forecast_table['fc_upper'] = (1 + range_slider / 100.0) * forecast_table['forecasted_discharge']
-    elif range_type == _("min[delta, %]"):
-        if hasattr(range_slider, 'value'):
-            forecast_table['fc_lower'] = np.maximum(forecast_table['forecasted_discharge'] - delta_offset,
-                                                    (1 - range_slider.value / 100.0) * forecast_table[
-                                                        'forecasted_discharge'])
-            forecast_table['fc_upper'] = np.minimum(forecast_table['forecasted_discharge'] + delta_offset,
-                                                    (1 + range_slider.value / 100.0) * forecast_table[
-                                                        'forecasted_discharge'])
-        else:
-            forecast_table['fc_lower'] = np.maximum(forecast_table['forecasted_discharge'] - delta_offset,
-                                                    (1 - range_slider / 100.0) * forecast_table['forecasted_discharge'])
-            forecast_table['fc_upper'] = np.minimum(forecast_table['forecasted_discharge'] + delta_offset,
-                                                    (1 + range_slider / 100.0) * forecast_table['forecasted_discharge'])
-    else:
-        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - delta_offset
-        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + delta_offset
+    q = pd.to_numeric(
+        forecast_table.get("forecasted_discharge", pd.Series(np.nan, index=forecast_table.index)),
+        errors="coerce",
+    )
 
+    # Normalise to stable key accepting both stable and legacy translated labels
+    _NATIVE = {"native", _("Native")}
+    _DELTA = {"delta", _("delta")}
+    _MANUAL = {"manual", _("Manual range, select value below"), "Manual range, select value below"}
+    _MIXED = {"mixed", _("min[delta, %]"), "min[delta, %]"}
+
+    if range_type in _NATIVE:
+        method = "native"
+    elif range_type in _DELTA:
+        method = "delta"
+    elif range_type in _MANUAL:
+        method = "manual"
+    elif range_type in _MIXED:
+        method = "mixed"
+    else:
+        logger.warning(
+            "calculate_forecast_range: unknown range_type %r — setting both bounds to NaN",
+            range_type,
+        )
+        forecast_table["fc_lower"] = np.nan
+        forecast_table["fc_upper"] = np.nan
+        return forecast_table
+
+    # Parse slider only for methods that use it; None/NaN/inf → both bounds NaN.
+    if method in ("manual", "mixed"):
+        p_raw = range_slider.value if hasattr(range_slider, "value") else range_slider
+        if p_raw is None:
+            p = float("nan")
+        else:
+            try:
+                p = float(p_raw) / 100.0
+            except (TypeError, ValueError):
+                p = float("nan")
+        if not (np.isfinite(p) and p >= 0):
+            forecast_table["fc_lower"] = np.nan
+            forecast_table["fc_upper"] = np.nan
+            return forecast_table
+    else:
+        p = 0.0  # unused for native / delta
+
+    fc_lower = pd.Series(np.nan, index=forecast_table.index, dtype=float)
+    fc_upper = pd.Series(np.nan, index=forecast_table.index, dtype=float)
+
+    if "delta" in forecast_table.columns:
+        d = pd.to_numeric(forecast_table["delta"], errors="coerce")
+    else:
+        d = pd.Series(np.nan, index=forecast_table.index, dtype=float)
+
+    if method == "native":
+        q25 = pd.to_numeric(forecast_table.get("Q25", pd.Series(np.nan, index=forecast_table.index)), errors="coerce")
+        q75 = pd.to_numeric(forecast_table.get("Q75", pd.Series(np.nan, index=forecast_table.index)), errors="coerce")
+        # Determine LR rows — model_short column may be absent
+        if "model_short" in forecast_table.columns:
+            is_lr = forecast_table["model_short"] == "LR"
+        else:
+            is_lr = pd.Series(False, index=forecast_table.index)
+        # Non-LR: both Q25 and Q75 must be finite and ordered
+        both_valid = (
+            q25.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & q75.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & (q25 <= q75)
+        )
+        fc_lower[both_valid & ~is_lr] = q25[both_valid & ~is_lr]
+        fc_upper[both_valid & ~is_lr] = q75[both_valid & ~is_lr]
+        # LR rows: use Q ± delta (clamp lower to 0); require finite inputs
+        lr_valid = (
+            is_lr
+            & q.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & d.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & (d >= 0)
+        )
+        fc_lower[lr_valid] = (q - d).clip(lower=0)[lr_valid]
+        fc_upper[lr_valid] = (q + d)[lr_valid]
+
+    elif method == "delta":
+        valid = (
+            q.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & d.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & (d >= 0)
+        )
+        fc_lower[valid] = (q - d).clip(lower=0)[valid]
+        fc_upper[valid] = (q + d)[valid]
+
+    elif method == "manual":
+        valid = q.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+        fc_lower[valid] = ((1.0 - p) * q).clip(lower=0)[valid]
+        fc_upper[valid] = ((1.0 + p) * q)[valid]
+
+    elif method == "mixed":
+        valid = (
+            q.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & d.apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+            & (d >= 0)
+        )
+        halfwidth = np.minimum(d, p * q)
+        fc_lower[valid] = (q - halfwidth).clip(lower=0)[valid]
+        fc_upper[valid] = (q + halfwidth)[valid]
+
+    forecast_table["fc_lower"] = fc_lower
+    forecast_table["fc_upper"] = fc_upper
     return forecast_table
 
 

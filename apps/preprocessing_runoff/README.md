@@ -20,12 +20,49 @@ Key functions:
 |--------|---------|
 | `preprocessing_runoff.py` | Main script - orchestrates the preprocessing workflow |
 | `sync_short_horizon_hydrograph.py` | Writes pentad/decade hydrograph actuals; called from `preprocessing_runoff.main()` after the daily hydrograph write |
-| `sync_long_horizon_hydrograph.py` | Writes month/quarter/season hydrograph rows; run yearly via `bin/yearly_runoff_hydrograph_aggregation.sh` |
+| `sync_long_horizon_hydrograph.py` | Writes month/quarter/season hydrograph rows and delta statistics; reused by local long-term/maintenance and daily/yearly server workflows |
 | `backfill_discharge_aggregation.py` | Backfills historical hydrograph rows for all five horizons; run via `bin/backfill_discharge_aggregation.sh` |
 | `src/src.py` | Core functions for data processing and statistics |
 | `src/config.py` | Configuration loading (log level, validation, spot-check, site cache settings) |
 | `src/profiling.py` | Performance profiling utilities (enabled via `PREPROCESSING_PROFILING=true`) |
 | `src/google_sheets_reader.py` | Google Sheets discharge ingestion for manual sites (requires `gspread`) |
+
+## Long-term range statistics (PP-075)
+
+`sync_long_horizon_hydrograph.py::write_long_horizon_hydrograph` computes observation sample standard
+deviation and accepted-year count using `src/long_term_range_stats.py`. It includes `std/count` in the
+existing complete monthly, seasonal and quarterly payloads, preserving the actual/norm calculations.
+Reference-history reads finish before that station’s first write; read failures remain failures, not
+successful empty history. An insufficient history writes unavailable std with its actual count;
+constant eligible history writes genuine std=0.
+
+Publication reuses existing entry points; there is no new model or cron schedule:
+
+- `bash apps/run_locally.sh maintenance:preprocessing_runoff` refreshes runoff history, then publishes
+  long-horizon rows. Aggregate `maintenance`, `daily` and `initialize` retain this path.
+- `bash apps/run_locally.sh long-term-operational` publishes after successful operational runoff
+  preprocessing, before weather/forecasts and before the no-active-mode return. A failed runoff
+  stage does not trigger publication, even with `--continue-on-error`.
+- Server `bin/run_daily_maintenance.sh` runs Luigi, then the existing hydrograph wrapper, then the
+  frontend update. Publication is attempted even if Luigi failed, using stored observations;
+  that does not assert upstream observations were refreshed. Each returned stage status is reported,
+  any nonzero status fails the wrapper, and the frontend update still runs.
+- `bin/yearly_runoff_hydrograph_aggregation.sh <env-file> [--target-year YYYY]` remains the standalone
+  and January 1 entry point. Its `--reuse-existing-tunnel` flag is for the daily parent: the child
+  skips tunnel setup and cleanup, leaving ownership with the parent.
+
+Use the same reference-year settings in the writer and dashboard's deployment env file.
+`LT_FORECAST_TODAY` selects a forecast issue date, not the statistics publication year. Publication
+uses the current year unless explicitly overridden (`RUNOFF_LONG_HORIZON_TARGET_YEAR` locally,
+`--target-year` in the standalone wrapper). Do not point ordinary historical forecast reruns at an
+old publication year. Local maintenance's existing tolerated exits remain unchanged; server
+publication treats every nonzero writer exit as a failure, including no-records/SDK-failure exits.
+
+Direct component writers preserve existing statistics when invoked without newly calculated ones.
+See [reference configuration](../../doc/configuration.md#long-term-range-reference-period) for the
+2000–2025 defaults and coverage rules, and the [rollout handoff](../../doc/plans/pp075_range_deployment_handoff.md)
+for coordinated refresh. The backfill utility’s existing verification fields do not prove std/count
+round-trip; verify those API fields explicitly. No operational backfill is implied by this checkpoint.
 
 ## Quick Start
 

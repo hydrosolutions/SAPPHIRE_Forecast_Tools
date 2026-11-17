@@ -271,11 +271,22 @@ class TestResolveBulletinHeaderDate:
 
 
 class TestBulletinLongTermLeads:
-    def test_month_load_uses_resolved_quarter_default(self, monkeypatch):
+    def test_month_load_uses_frozen_snapshot_not_live_fetch(self, monkeypatch):
+        """_load_bulletin_from_api must read quarterly_snapshot from the
+        bulletin record row — never call get_long_forecasts_quarter."""
         site = _make_site()
+        snap = {
+            "model_type": "LR",
+            "valid_from": "2026-01-01",
+            "valid_to": "2026-03-31",
+            "forecasted_discharge": 100.0,
+            "fc_lower": 80.0,
+            "fc_upper": 120.0,
+        }
+        record = _make_bulletin_record()
+        record["quarterly_snapshot"] = snap
         fake_db = MagicMock()
-        fake_db._read_data.return_value = pd.DataFrame([_make_bulletin_record()])
-        fake_db.get_long_forecasts_quarter.return_value = _make_long_forecast_record()
+        fake_db._read_data.return_value = pd.DataFrame([record])
         monkeypatch.setattr(bulletin_manager, "db", fake_db)
         monkeypatch.setattr(
             bulletin_manager, "hydrate_month_hydrograph_stats", MagicMock()
@@ -283,7 +294,9 @@ class TestBulletinLongTermLeads:
 
         bulletin_manager._load_bulletin_from_api("month", 2026, 4, [site])
 
-        fake_db.get_long_forecasts_quarter.assert_called_once_with(site.code)
+        # Frozen snapshot loaded without any live API call.
+        fake_db.get_long_forecasts_quarter.assert_not_called()
+        assert getattr(site, "quarterly_snapshot", None) == snap
 
     def test_season_load_passes_saved_issue_lead(self, monkeypatch):
         site = _make_site(reservoir=False)

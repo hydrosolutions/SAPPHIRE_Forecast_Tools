@@ -37,8 +37,13 @@
 # non-zero handling below); it is `apps/run_locally.sh` that treats 4
 # and 6 differently.
 #
+# The rows written here are also consumed by the daily long-term observation
+# range publication (PP-075). sync_long_horizon_hydrograph.py derives per-station
+# std and count from accepted yearly period means across the configured runoff
+# reference history (default 2000–2025); the dashboard derives delta = 0.674 × std.
+#
 # Usage:
-#   bash bin/yearly_runoff_hydrograph_aggregation.sh <env_file_path> [--target-year YYYY]
+#   bash bin/yearly_runoff_hydrograph_aggregation.sh <env_file_path> [--target-year YYYY] [--reuse-existing-tunnel]
 #
 # Examples:
 #   # Use current calendar year (default)
@@ -67,13 +72,16 @@ set -euo pipefail
 
 # Print help and exit if requested
 if [ "${1-}" = "--help" ] || [ "${1-}" = "-h" ]; then
-    sed -n '2,46p' "$0"
+    awk 'FNR==1{next} /^set -euo/{exit} {print}' "$0"
     exit 0
 fi
 
-# Parse positional .env path + optional --target-year YYYY
+# Parse positional .env path + optional flags. Parsed here, before
+# source common_functions.sh, so the tunnel flag takes effect before
+# any side effects (tunnel setup, trap installation).
 ENV_FILE_PATH="${1-}"
 TARGET_YEAR=""
+REUSE_TUNNEL=""
 
 # Shift past the env file path so remaining args can be parsed.
 if [ -n "$ENV_FILE_PATH" ]; then
@@ -82,6 +90,10 @@ fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --reuse-existing-tunnel)
+            REUSE_TUNNEL="1"
+            shift
+            ;;
         --target-year)
             if [ $# -lt 2 ]; then
                 echo "| Error: --target-year requires a YYYY argument" >&2
@@ -96,7 +108,7 @@ while [ $# -gt 0 ]; do
             ;;
         *)
             echo "| Error: unknown argument: $1" >&2
-            echo "| Usage: $0 <env_file_path> [--target-year YYYY]" >&2
+            echo "| Usage: $0 <env_file_path> [--target-year YYYY] [--reuse-existing-tunnel]" >&2
             exit 1
             ;;
     esac
@@ -163,11 +175,17 @@ if ! docker image inspect "$IMAGE_ID" > /dev/null 2>&1; then
     fi
 fi
 
-# Establish SSH tunnel (if required for database access)
-establish_ssh_tunnel
+# Establish SSH tunnel and register cleanup only when this script owns
+# the tunnel lifecycle.  When invoked with --reuse-existing-tunnel (e.g.
+# by bin/run_daily_maintenance.sh, which already owns the tunnel), skip
+# both so the parent's cleanup trap remains the sole owner.
+if [ -z "$REUSE_TUNNEL" ]; then
+    # Establish SSH tunnel (if required for database access)
+    establish_ssh_tunnel
 
-# Set the trap to clean up processes on exit
-trap cleanup EXIT
+    # Set the trap to clean up processes on exit
+    trap cleanup EXIT
+fi
 
 # Memory settings — long-horizon hydrograph writer is lightweight
 MEMORY_LIMIT="4g"

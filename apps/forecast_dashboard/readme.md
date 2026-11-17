@@ -13,6 +13,28 @@ The `help` directory holds the two user guide HTML files (`forecast_dashboard_us
 Manually add translation strings in the forecast_dashboard.po file. Then run the following command to compile the translations:
 msgfmt -o /path/to/locale/en_CH/LC_MESSAGES/forecast_dashboard.mo /path/to/locale/en_CH/LC_MESSAGES/forecast_dashboard.po
 
+## Period forecast ranges (PP-075 checkpoint)
+
+The range selector has stable Native / Delta / Manual / Mixed choices, with Delta initially selected.
+`src/processing.py::calculate_forecast_range` supplies table and period-chart bounds. Long-term readers
+attach independent `range_delta` from current-publication-year Hydrograph statistics; the underlying
+skill delta and accuracy frames remain unchanged. The monthly reservoir quarter card uses this same
+range calculation. Separate daily model overlays retain their native bounds.
+
+The reference period label comes from the data loaded for the station. Both producer and dashboard
+must share the [reference settings](../../doc/configuration.md#long-term-range-reference-period).
+See the [user guide](../../doc/user_guide.md#forecast-tab) for formulas and missing-data behavior.
+
+**Checkpoint limitation:** the monthly reservoir bulletin’s supplementary quarterly section still
+reads live native forecasts. Frozen edited quarterly persistence awaits the
+[reviewed contract](../../doc/plans/issues/mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md); do not
+claim complete E2 table/export parity or deploy on the assumption that this storage exists.
+Deployment/statistics refresh is separate from local validation; see the
+[handoff](../../doc/plans/pp075_range_deployment_handoff.md).
+
+For the focused suite, use the repository runner from `apps/`:
+`SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard`.
+
 # Testing
 Additional packages need to be installed for testing:
 ## Installing Playwright Pytest

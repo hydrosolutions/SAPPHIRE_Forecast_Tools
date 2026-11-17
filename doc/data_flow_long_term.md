@@ -186,6 +186,34 @@ flowchart TD
 Entry point: `recalculate_skill_metrics.py` (same as short-term, with
 `horizon_type = month`).
 
+## Observation range statistics for the dashboard (PP-075)
+
+This additional path supplies display ranges, not forecast training or historical accuracy scoring.
+It is implemented in the application modules; deployment and live publication are separate checks.
+
+```mermaid
+flowchart LR
+    O["Daily observations in preprocessing API"] --> W["Existing long-horizon writer"]
+    C["Fixed deployment reference years"] --> W
+    W --> H["Hydrograph: std/count plus existing norm/current/previous"]
+    H --> R["Dashboard reads current load-year publication"]
+    C --> R
+    R --> D["range_delta = 0.674 × std"]
+    D --> T["Period range helper: tables and period chart bounds"]
+```
+
+The writer computes each calendar period’s multiyear variability before publishing a station. The
+reader joins by station and target calendar period, independently of forecast issue year, model or
+skill availability. Seasonal matching requires April 1–September 30 in the same target year; forecast
+lead is not a season identifier. Missing inputs stay unavailable. Existing short-term delta and
+historical accuracy paths remain unchanged; their later harmonization is tracked separately.
+
+See [eligibility and reference settings](configuration.md#long-term-range-reference-period) and the
+[deployment handoff](plans/pp075_range_deployment_handoff.md). Complete monthly reservoir bulletin
+parity remains pending: the supplementary quarterly copy is a
+[storage proposal](plans/issues/mid_prio_gi_draft_pp_bulletin_quarterly_snapshot.md), not a completed link
+in this data flow.
+
 ## Key Data Transformations
 
 ### LT Writer (long_term_forecasting module)

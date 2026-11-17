@@ -1042,7 +1042,10 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
 
     delta_tag = Tag(
         name='DELTA',
-        get_value_fn=lambda obj, **kwargs: f"{round(obj.forecast_delta, 2)}".replace('.', ','),
+        get_value_fn=lambda obj, **kwargs: (
+            "" if obj.forecast_delta is None or (isinstance(obj.forecast_delta, float) and not __import__("math").isfinite(obj.forecast_delta))
+            else f"{round(obj.forecast_delta, 2)}".replace('.', ',')
+        ),
         tag_settings=tag_settings,
         data=True
     )
@@ -1220,11 +1223,31 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         # Split sites into non-reservoirs (section 0) and reservoirs (sections 1 & 2)
         non_reservoirs = [s for s in bulletin_sites if 'вдхр' not in (s.punkt_name_ru or '')]
         reservoirs = [s for s in bulletin_sites if 'вдхр' in (s.punkt_name_ru or '')]
+
+        # Section presence is determined by saved snapshot, not by bound values:
+        # a snapshot with null bounds still shows the section (blank cells).
         has_quarterly = any(
-            getattr(s, 'forecast_q_min_q', None) is not None
-            or getattr(s, 'forecast_q_max_q', None) is not None
+            getattr(s, 'quarterly_snapshot', None) is not None
             for s in reservoirs
         )
+
+        # Reject conflicting quarter periods before writing.  One shared
+        # period heading cannot label two different quarters.
+        if has_quarterly:
+            _q_periods = set()
+            for _s in reservoirs:
+                _snap = getattr(_s, 'quarterly_snapshot', None)
+                if _snap and _snap.get('valid_from') and _snap.get('valid_to'):
+                    _q_periods.add((_snap['valid_from'], _snap['valid_to']))
+            if len(_q_periods) > 1:
+                _period_str = "; ".join(
+                    f"{vf} – {vt}" for vf, vt in sorted(_q_periods)
+                )
+                raise ValueError(
+                    f"Conflicting quarterly periods across reservoirs: {_period_str}. "
+                    "Remove the conflicting stations from this export or re-add them "
+                    "after aligning their quarterly selections."
+                )
 
         non_reservoirs = oder_sites_list_according_to_bulletin_order(non_reservoirs)
         reservoirs = oder_sites_list_according_to_bulletin_order(reservoirs)
@@ -1398,7 +1421,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             list_objects_per_section=[
                 non_reservoirs or None,
                 reservoirs or None,
-                reservoirs if has_quarterly else None,
+                [s for s in reservoirs if getattr(s, 'quarterly_snapshot', None) is not None] if has_quarterly else None,
             ],
             output_filename=bulletin_file_name,
         )

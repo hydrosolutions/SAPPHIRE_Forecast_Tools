@@ -96,17 +96,17 @@ class TestCreateSkillTable:
 
 
 class TestCalculateForecastRange:
-    def test_delta_missing_produces_zero_width_range(self, identity_gettext):
-        """No delta column → fc_lower == fc_upper == forecasted_discharge."""
+    def test_delta_missing_produces_nan_bounds(self, identity_gettext):
+        """No delta column → both bounds NaN (no silent zero-width fallback)."""
         df = pd.DataFrame(
             {"forecasted_discharge": [10.0, 20.0], "model_short": ["LR", "LR"]}
         )
         result = processing.calculate_forecast_range(identity_gettext, df, "delta", 10)
-        assert list(result["fc_lower"]) == [10.0, 20.0]
-        assert list(result["fc_upper"]) == [10.0, 20.0]
+        assert result["fc_lower"].isna().all()
+        assert result["fc_upper"].isna().all()
 
-    def test_delta_all_nan_produces_zero_width_range(self, identity_gettext):
-        """Delta column exists but all NaN → zero-width range."""
+    def test_delta_all_nan_produces_nan_bounds(self, identity_gettext):
+        """Delta column exists but all NaN → both bounds NaN (no fallback)."""
         df = pd.DataFrame(
             {
                 "forecasted_discharge": [10.0, 20.0],
@@ -114,8 +114,8 @@ class TestCalculateForecastRange:
             }
         )
         result = processing.calculate_forecast_range(identity_gettext, df, "delta", 10)
-        assert list(result["fc_lower"]) == [10.0, 20.0]
-        assert list(result["fc_upper"]) == [10.0, 20.0]
+        assert result["fc_lower"].isna().all()
+        assert result["fc_upper"].isna().all()
 
     def test_delta_present_uses_delta(self, identity_gettext):
         """Delta column with values → normal range calculation."""
@@ -138,19 +138,14 @@ class TestCalculateForecastRange:
         assert result["fc_lower"].iloc[0] == pytest.approx(90.0)
         assert result["fc_upper"].iloc[0] == pytest.approx(110.0)
 
-    def test_min_delta_percent_missing_delta(self, identity_gettext):
-        """min[delta, %] with missing delta → zero-width range.
-
-        With delta_offset=0 and slider=10%: delta band=[100,100],
-        pct band=[90,110]. Intersection (narrow): max(100,90)=100,
-        min(100,110)=100 → zero-width.
-        """
+    def test_min_delta_percent_missing_delta_produces_nan(self, identity_gettext):
+        """min[delta, %] with missing delta → both bounds NaN (no silent fallback)."""
         df = pd.DataFrame({"forecasted_discharge": [100.0]})
         result = processing.calculate_forecast_range(
             identity_gettext, df, "min[delta, %]", 10
         )
-        assert result["fc_lower"].iloc[0] == pytest.approx(100.0)
-        assert result["fc_upper"].iloc[0] == pytest.approx(100.0)
+        assert result["fc_lower"].isna().all()
+        assert result["fc_upper"].isna().all()
 
 
 # ---------------------------------------------------------------------------

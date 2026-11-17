@@ -10,7 +10,6 @@ items 4, 6, 8, 9, 10.
 Station code `19999` throughout (no real station codes).
 """
 
-import functools
 import json
 import types
 import warnings
@@ -343,6 +342,7 @@ class TestDeltaBoundsOnCard:
                 _quarter_row(
                     model_short="GBT",
                     delta=5.0,
+                    range_delta=5.0,
                     forecasted_discharge=100.0,
                     Q25=np.nan,
                     Q75=np.nan,
@@ -351,6 +351,7 @@ class TestDeltaBoundsOnCard:
                 _quarter_row(
                     model_short="Skilled Mean",
                     delta=5.0,
+                    range_delta=5.0,
                     forecasted_discharge=100.0,
                     Q25=np.nan,
                     Q75=np.nan,
@@ -379,12 +380,9 @@ class TestDeltaBoundsOnCard:
         assert pd.isna(table.loc["Naive Mean", "Forecast lower bound"])
         assert pd.isna(table.loc["Naive Mean", "Forecast upper bound"])
 
-    def test_delta_fill_preserves_native_bounds(self):
-        """V4(d): a row with NATIVE Q25/Q75 already present must keep
-        them unchanged — the delta-fill only applies when Q25/Q75 are
-        null. A mutant that drops the `Q25.isna()` check (i.e.
-        `need_lower = delta.notna()` alone) would overwrite this row's
-        native lower bound of 90 with forecast-delta = 95."""
+    def test_native_method_uses_q25_q75(self):
+        """V4(d): with range_selector='native', a row with Q25/Q75 uses those
+        bounds directly — the range method selector drives bound selection."""
         quarterly_df = pd.DataFrame(
             [
                 _quarter_row(
@@ -399,6 +397,7 @@ class TestDeltaBoundsOnCard:
             ]
         )
         pm, _site = _make_stub_pm(quarterly_df)
+        pm._wm.range_selector = "native"
 
         pm.update_quarterly_summary_tabulator()
 
@@ -470,62 +469,11 @@ class TestAllNanAccuracyGuard:
 
 
 class TestBulletinQuarterInput:
-    def test_head1_no_longer_picks_a_rolling_backfill(self, monkeypatch, tmp_path):
-        """Through bulletin_manager._populate_forecast_attributes (via
-        _load_bulletin_from_api) with the REAL get_long_forecasts_quarter
-        bound to today=2026-12-26: a native Q1 2027 row (2026-12-25) plus a
-        rolling Feb-Apr 2027 row (2026-12-26, LATER) -> after P1 the
-        rolling row is dropped by the calendar-quarter filter, so head(1)
-        on the remaining single row gives quarterly_valid_from=2027-01-01.
-        On trunk the rolling row wins head(1) by date (2027-02-01)."""
-        config_dir = tmp_path / "kghm_schedule"
-        config_dir.mkdir()
-        (config_dir / "quarter.json").write_text(
-            json.dumps(
-                {
-                    "operational_month_lead_time": 1,
-                    "operational_issue_day": 25,
-                }
-            )
-        )
-        monkeypatch.setenv("ieasyforecast_configuration_path", str(tmp_path))
-        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_configuration", "kghm_schedule")
-        monkeypatch.setenv("ieasyhydroforecast_ml_long_term_supported_modes", "quarter")
-
-        native_row = {
-            "id": 500,
-            "horizon_type": "quarter",
-            "horizon_value": 1,
-            "code": STATION_CODE,
-            "date": "2026-12-25",
-            "model_type": "LR_Base",
-            "model_type_description": "x",
-            "valid_from": "2027-01-01",
-            "valid_to": "2027-03-31",
-            "flag": 0,
-            "composition": "",
-            "q": 150.0,
-            "q_obs": None,
-            "q_xgb": None,
-            "q_lgbm": None,
-            "q_catboost": None,
-            "q_loc": None,
-            "q05": 130.0,
-            "q10": 135.0,
-            "q25": 140.0,
-            "q50": 150.0,
-            "q75": 160.0,
-            "q90": 165.0,
-            "q95": 170.0,
-        }
-        rolling_row = {
-            **native_row,
-            "id": 501,
-            "date": "2026-12-26",
-            "valid_from": "2027-02-01",
-            "valid_to": "2027-04-30",
-            "q": 999.0,
-        }
+    def test_head1_no_longer_picks_a_rolling_backfill(self, monkeypatch):
+        """_load_bulletin_from_api uses the frozen quarterly_snapshot from the
+        bulletin record — no live get_long_forecasts_quarter call.
+        Absent quarterly_snapshot in the bulletin record → quarterly_valid_from
+        is None after reload (pre-feature bulletin rows behave correctly)."""
         bulletin_record = {
             "code": STATION_CODE,
             "model_type": "LR_Base",
@@ -536,60 +484,10 @@ class TestBulletinQuarterInput:
             "sdivsigma": 2.0,
             "mae": 3.0,
             "accuracy": 90.0,
+            # No quarterly_snapshot key — simulates a pre-feature bulletin row.
         }
 
-        def mock_get(url, **kwargs):
-            if "/long-forecast/" in url:
-                return _make_mock_response([native_row, rolling_row])
-            if "/bulletin/" in url:
-                return _make_mock_response([bulletin_record])
-            return _make_mock_response([])
-
-        monkeypatch.setattr(requests, "get", mock_get)
-
-        # `db.get_long_forecasts_quarter` is this test's own (guaranteed
-        # real) `from src import db` — always the genuine implementation
-        # regardless of collection order.
-        #
-        # `bulletin_manager.db`, however, is whatever `bulletin_manager.py`'s
-        # own `from src import db` bound AT ITS IMPORT TIME:
-        # test_bulletin_header_date.py (collected earlier, alphabetically)
-        # temporarily fakes `sys.modules["src.db"]` while it imports
-        # `dashboard.bulletin_manager` for the first time, so in a
-        # full-suite run `bulletin_manager.db` is a stale MagicMock, never
-        # the real module, no matter what `src.db` is restored to
-        # afterward. Standalone (this file alone, or before that other
-        # file), `bulletin_manager.db` IS the real `src.db` module — the
-        # SAME object as this test's own `db` import.
-        #
-        # That identity matters: mutating an ATTRIBUTE of `bulletin_manager.
-        # db` (e.g. `bulletin_manager.db._read_data = ...`) mutates the
-        # REAL module's own global whenever it happens to be the same
-        # object (the standalone/unpolluted case) — which then corrupts
-        # `get_long_forecasts_quarter`'s OWN internal `_read_data_paginated`
-        # -> `_read_data` call (it resolves `_read_data` via its own
-        # module globals, the same ones just overwritten), so it stops
-        # calling `requests.get` for the long-forecast fetch and returns
-        # empty. That is what made the very first version of this test
-        # order-dependent — passing only when the pollution above made
-        # `bulletin_manager.db` a SEPARATE (fake) object.
-        #
-        # Fix: never mutate the real `db` module's attributes. Instead,
-        # replace `bulletin_manager.db` outright with a fresh, disposable
-        # namespace exposing exactly what `_populate_forecast_attributes`/
-        # `_load_bulletin_from_api` call on it. This is unconditional and
-        # object-identity-independent: it does not matter whether
-        # `bulletin_manager.db` started out real or already-polluted —
-        # either way it ends up pointing at this namespace for the
-        # duration of the test, and the REAL `src.db` module (whose
-        # globals `real_get_quarter` closes over) is never touched, so its
-        # own internal `_read_data_paginated`/`_read_data` calls still go
-        # through the unmodified `requests.get` mock above.
-        real_get_quarter = db.get_long_forecasts_quarter
         fake_bulletin_db = types.SimpleNamespace(
-            get_long_forecasts_quarter=functools.partial(
-                real_get_quarter, today=date(2026, 12, 26)
-            ),
             _read_data=lambda *a, **k: pd.DataFrame([bulletin_record]),
         )
         monkeypatch.setattr(bulletin_manager, "db", fake_bulletin_db)
@@ -598,11 +496,13 @@ class TestBulletinQuarterInput:
         )
 
         site = _make_reservoir_site()
-
         bulletin_manager._load_bulletin_from_api("month", 2027, 1, [site])
 
-        assert site.quarterly_valid_from == pd.Timestamp("2027-01-01"), (
-            f"Expected the native Q1 row to win head(1), got "
+        # New contract: reload uses frozen snapshot from bulletin record, not
+        # a live get_long_forecasts_quarter call.  Absent quarterly_snapshot
+        # column → quarterly_valid_from cleared (None).
+        assert getattr(site, "quarterly_valid_from", None) is None, (
+            f"Expected None for absent snapshot, got "
             f"{getattr(site, 'quarterly_valid_from', 'MISSING')!r}"
         )
 

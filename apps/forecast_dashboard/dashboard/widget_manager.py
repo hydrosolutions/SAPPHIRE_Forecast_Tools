@@ -87,7 +87,12 @@ class WidgetManager:
 
         self.apply_changes_button = widgets.create_apply_changes_button()
 
-        self.forecast_card = widgets.create_forecast_card(
+        (
+            self.forecast_card,
+            self.model_section,
+            self.range_vis_section,
+            self.reference_period_pane,
+        ) = widgets.create_forecast_card(
             self.range_selector,
             self.range_slider,
             self.model_checkbox,
@@ -141,6 +146,15 @@ class WidgetManager:
             self.forecast_tabulator_q
         )
         self.forecast_info_q = widgets.create_forecast_info_pane()
+        # Model column is identity (readonly); numeric cells remain editable.
+        self.forecast_tabulator_q.editors = {widgets._('Model'): None}
+        # Monthly Add buttons also save the quarterly forecast for reservoir stations.
+        _q_add_help = widgets._(
+            "For monthly forecasts at reservoir stations, also saves "
+            "the displayed quarterly forecast selection."
+        )
+        self.add_to_bulletin_button.description = _q_add_help
+        self.add_to_bulletin_m0_button.description = _q_add_help
 
         # ── Hydrograph ──────────────────────────────────────────────────────
         self.aggregate_radiobutton = widgets.create_aggregate_radiobutton()
@@ -238,9 +252,25 @@ class WidgetManager:
             # is itself gated on `not is_long`, so this is safe.
             pm.render_active_tab(self._dashboard_tabs)
             pm.set_forecast_cards_visibility(not is_long, is_month=is_month)
-            # Only show forecast_card on Forecast tab and short horizons
+            # Show forecast_card on Forecast tab for all horizons;
+            # model selection and range-vis radio are short-term only.
             is_forecast_tab = self._dashboard_tabs.active == 1
-            self.forecast_card.visible = is_forecast_tab and not is_long
+            self.forecast_card.visible = is_forecast_tab
+            self.model_section.visible = not is_long
+            self.range_vis_section.visible = not is_long
+
+            # Update reference period label for long-term horizons
+            if is_long:
+                ref_period = getattr(dm, "_data", {}).get("range_reference_period")
+                if ref_period:
+                    self.reference_period_pane.object = _(
+                        "Reference period: {period}"
+                    ).format(period=ref_period)
+                    self.reference_period_pane.visible = True
+                else:
+                    self.reference_period_pane.visible = False
+            else:
+                self.reference_period_pane.visible = False
 
             try:
                 self.last_date, self.forecast_horizon, self.forecast_year = (

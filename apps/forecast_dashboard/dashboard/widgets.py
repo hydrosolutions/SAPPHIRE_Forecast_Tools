@@ -181,9 +181,16 @@ def create_model_checkbox(model_dict):
 def create_range_widgets():
     """Create forecast range selection widgets."""
 
+    # Options dict: {display label: stable key} — widget .value returns the
+    # stable key regardless of locale, so calculate_forecast_range is locale-agnostic.
     range_selector = pn.widgets.Select(
-        options=[_("delta"), _("Manual range, select value below"), _("min[delta, %]")],
-        value=_("delta"),
+        options={
+            _("delta"): "delta",
+            _("Native"): "native",
+            _("Manual range, select value below"): "manual",
+            _("min[delta, %]"): "mixed",
+        },
+        value="delta",
         margin=(0, 0, 0, 0)
     )
 
@@ -214,14 +221,35 @@ def create_apply_changes_button():
 
 
 # Used inside sidebar_content
-def create_forecast_card(range_selector, range_slider, model_checkbox, range_radiobutton, apply_changes_button, width):
-    """Create forecast configuration card widget."""
+def create_forecast_card(range_selector, range_slider, model_checkbox, range_radiobutton, apply_changes_button, width,
+                         reference_period_label=None):
+    """Create forecast configuration card widget.
+
+    Returns:
+        tuple: (forecast_card, model_section, range_vis_section)
+            model_section and range_vis_section are pn.Column widgets that can
+            be hidden independently (e.g. for long-term horizons where model
+            selection and the range radio-button are not applicable).
+    """
 
     # Forecast card for sidepanel
     range_label = pn.pane.Markdown(
-        _("Select forecast range (for both summary table and figures):"),
+        _("Select period forecast range (for both summary table and figures):"),
         styles={"white-space": "normal"},  # force wrapping
         margin=(0, 0, -5, 0)
+    )
+
+    range_help = pn.pane.Markdown(
+        _("Note: daily forecasts retain native model bounds."),
+        styles={"white-space": "normal", "font-size": "0.82em", "color": "#666"},
+        margin=(2, 0, 0, 0),
+    )
+
+    reference_pane = pn.pane.Markdown(
+        reference_period_label or "",
+        styles={"white-space": "normal", "font-size": "0.85em", "color": "#666"},
+        margin=(0, 0, 0, 0),
+        visible=bool(reference_period_label),
     )
 
     model_title = pn.pane.Markdown(
@@ -230,16 +258,26 @@ def create_forecast_card(range_selector, range_slider, model_checkbox, range_rad
 
     range_selection_title = pn.pane.Markdown(_("Show ranges (for figures only):"), margin=(0, 0, -15, 0))
 
+    model_section = pn.Column(
+        pn.layout.Divider(),
+        model_title,
+        model_checkbox,
+    )
+
+    range_vis_section = pn.Column(
+        range_selection_title,
+        range_radiobutton,
+    )
+
     forecast_card = pn.Card(
         pn.Column(
             range_label,
             range_selector,
             range_slider,
-            pn.layout.Divider(),
-            model_title,
-            model_checkbox,
-            range_selection_title,
-            range_radiobutton,
+            range_help,
+            reference_pane,
+            model_section,
+            range_vis_section,
             apply_changes_button
         ),
         title=_('Forecast configuration:'),
@@ -249,7 +287,7 @@ def create_forecast_card(range_selector, range_slider, model_checkbox, range_rad
     # Initially hide the card
     forecast_card.visible = False
 
-    return forecast_card
+    return forecast_card, model_section, range_vis_section, reference_pane
 
 
 # Used inside basin_card

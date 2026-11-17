@@ -32,6 +32,8 @@ if _IEHF_DIR not in sys.path:
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
+import importlib.util as _importlib_util
+
 import forecast_library as fl
 import setup_library as sl
 from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
@@ -39,6 +41,20 @@ from setup_library import (
     _get_manual_site_codes,
     get_all_forecast_sites_from_HF_SDK,
 )
+
+_ltr_path = os.path.join(_SCRIPT_DIR, "src", "long_term_range_stats.py")
+_ltr_spec = _importlib_util.spec_from_file_location("_ltr_long_term_range_stats", _ltr_path)
+_ltr_mod = _importlib_util.module_from_spec(_ltr_spec)
+sys.modules["_ltr_long_term_range_stats"] = _ltr_mod
+_ltr_spec.loader.exec_module(_ltr_mod)
+StationRangeStats = _ltr_mod.StationRangeStats
+compute_station_range_stats = _ltr_mod.compute_station_range_stats
+get_reference_end_year = _ltr_mod.get_reference_end_year
+get_reference_start_year = _ltr_mod.get_reference_start_year
+min_eligible_years = _ltr_mod.min_eligible_years
+reference_years = _ltr_mod.reference_years
+validate_reference_window = _ltr_mod.validate_reference_window
+del _importlib_util, _ltr_path, _ltr_spec, _ltr_mod
 
 try:
     from sapphire_api_client import SapphireAPIError, SapphirePreprocessingClient
@@ -273,6 +289,7 @@ def build_monthly_records(
     decad_current: dict[int, float | None] | None = None,
     decad_previous: dict[int, float | None] | None = None,
     from_decadal: bool | None = None,
+    range_stats: StationRangeStats | None = None,
 ) -> list[dict[str, Any]]:
     """Build 12 monthly hydrograph records for one station.
 
@@ -310,19 +327,23 @@ def build_monthly_records(
         if target_year == today.year and month == today.month:
             current = None
 
-        records.append(
-            {
-                "horizon_type": "month",
-                "code": str(code),
-                "date": f"{target_year}-{month:02d}-01",
-                "day_of_year": MID_MONTH_DOY[month - 1],
-                "horizon_value": month,
-                "horizon_in_year": month,
-                "norm": _json_safe(norm_values[month - 1]),
-                "previous": _json_safe(previous),
-                "current": _json_safe(current),
-            }
-        )
+        record: dict[str, Any] = {
+            "horizon_type": "month",
+            "code": str(code),
+            "date": f"{target_year}-{month:02d}-01",
+            "day_of_year": MID_MONTH_DOY[month - 1],
+            "horizon_value": month,
+            "horizon_in_year": month,
+            "norm": _json_safe(norm_values[month - 1]),
+            "previous": _json_safe(previous),
+            "current": _json_safe(current),
+        }
+        if range_stats is not None:
+            ms = range_stats.monthly.get(month)
+            if ms is not None:
+                record["std"] = _json_safe(ms.std)
+                record["count"] = ms.count
+        records.append(record)
     return records
 
 
@@ -617,6 +638,10 @@ def write_station_monthly_hydrograph(
     target_year: int,
     today: dt.date,
     virtual_codes: frozenset[str] | None = None,
+    *,
+    range_stats: StationRangeStats | None = None,
+    _daily_current_year: Any = None,
+    _daily_previous_year: Any = None,
 ) -> LongHorizonStationWriteResult:
     """Build and write monthly hydrograph records for one station.
 
@@ -654,8 +679,17 @@ def write_station_monthly_hydrograph(
         )
         norms = _read_existing_month_norms(client, code, target_year)
 
-    daily_current_year = _read_daily_runoff(client, code, target_year)
-    daily_previous_year = _read_daily_runoff(client, code, target_year - 1)
+    # Use preloaded daily data when available to avoid redundant API reads
+    # (e.g. when write_long_horizon_hydrograph has already read reference history
+    # and the actuals year overlaps the reference window).
+    if _daily_current_year is not None:
+        daily_current_year = _daily_current_year
+    else:
+        daily_current_year = _read_daily_runoff(client, code, target_year)
+    if _daily_previous_year is not None:
+        daily_previous_year = _daily_previous_year
+    else:
+        daily_previous_year = _read_daily_runoff(client, code, target_year - 1)
 
     # Local import: `sync_short_horizon_hydrograph` imports plumbing back out of
     # this module at module load time, so importing it here (call time, once
@@ -686,7 +720,34 @@ def write_station_monthly_hydrograph(
         decad_current=decad_current,
         decad_previous=decad_previous,
         from_decadal=None,
+        range_stats=range_stats,
     )
+    if range_stats is None:
+        _existing_raw = client.read_hydrograph(
+            horizon="month",
+            code=code,
+            start_date=f"{target_year}-01-01",
+            end_date=f"{target_year}-12-31",
+            limit=1000,
+        )
+        _existing_stats_m: dict[str, dict] = {}
+        for _row in _iter_daily_rows(_existing_raw):
+            if not isinstance(_row, dict):
+                continue
+            _d = _row.get("date")
+            if not isinstance(_d, str):
+                continue
+            _se: dict[str, Any] = {}
+            if "std" in _row:
+                _se["std"] = _json_safe(_row["std"])
+            if "count" in _row:
+                _se["count"] = _json_safe(_row["count"])
+            if _se:
+                _existing_stats_m[_d] = _se
+        for _r in records:
+            _d = _r.get("date")
+            if isinstance(_d, str) and _d in _existing_stats_m:
+                _r.update(_existing_stats_m[_d])
     client.write_hydrograph(records)
     logger.info("Wrote %d monthly hydrograph records for station %s", len(records), code)
     if norm_classification is _NormClassification.VALID:
@@ -727,10 +788,12 @@ def build_seasonal_record(
     monthly_records: list[dict[str, Any]],
     code: str,
     target_year: int,
+    *,
+    range_stats: StationRangeStats | None = None,
 ) -> dict[str, Any]:
     """Build the April-September seasonal hydrograph record for one station."""
     season_start = dt.date(target_year, 4, 1)
-    return {
+    record: dict[str, Any] = {
         "horizon_type": "season",
         "code": str(code),
         "date": season_start.isoformat(),
@@ -741,6 +804,10 @@ def build_seasonal_record(
         "previous": _json_safe(fl.round_3sf(_seasonal_field_mean(monthly_records, "previous"))),
         "current": _json_safe(fl.round_3sf(_seasonal_field_mean(monthly_records, "current"))),
     }
+    if range_stats is not None and range_stats.seasonal is not None:
+        record["std"] = _json_safe(range_stats.seasonal.std)
+        record["count"] = range_stats.seasonal.count
+    return record
 
 
 def write_station_seasonal_hydrograph(
@@ -749,6 +816,8 @@ def write_station_seasonal_hydrograph(
     client: Any,
     target_year: int,
     today: dt.date,
+    *,
+    range_stats: StationRangeStats | None = None,
 ) -> dict[str, Any]:
     """Build and write one seasonal hydrograph record for one station."""
     logger.info(
@@ -760,7 +829,27 @@ def write_station_seasonal_hydrograph(
         monthly_records=monthly_records,
         code=code,
         target_year=target_year,
+        range_stats=range_stats,
     )
+    if range_stats is None:
+        _existing_raw = client.read_hydrograph(
+            horizon="season",
+            code=code,
+            start_date=f"{target_year}-04-01",
+            end_date=f"{target_year}-09-30",
+            limit=10,
+        )
+        _season_date = f"{target_year}-04-01"
+        for _row in _iter_daily_rows(_existing_raw):
+            if isinstance(_row, dict) and _row.get("date") == _season_date:
+                _se: dict[str, Any] = {}
+                if "std" in _row:
+                    _se["std"] = _json_safe(_row["std"])
+                if "count" in _row:
+                    _se["count"] = _json_safe(_row["count"])
+                if _se:
+                    record.update(_se)
+                break
     client.write_hydrograph([record])
     logger.info("Wrote seasonal hydrograph record for station %s", code)
     return record
@@ -790,29 +879,35 @@ def build_quarterly_records(
     monthly_records: list[dict[str, Any]],
     code: str,
     target_year: int,
+    *,
+    range_stats: StationRangeStats | None = None,
 ) -> list[dict[str, Any]]:
     """Build quarterly records with leap-aware start-date DOY and all-or-nothing means."""
     records = []
     for quarter in range(1, 5):
         start_month = QUARTER_MONTHS[quarter][0]
         quarter_start = dt.date(target_year, start_month, 1)
-        records.append(
-            {
-                "horizon_type": "quarter",
-                "code": str(code),
-                "date": quarter_start.isoformat(),
-                "day_of_year": quarter_start.timetuple().tm_yday,
-                "horizon_value": quarter,
-                "horizon_in_year": quarter,
-                "norm": _json_safe(_quarterly_field_mean(monthly_records, quarter, "norm")),
-                "previous": _json_safe(
-                    fl.round_3sf(_quarterly_field_mean(monthly_records, quarter, "previous"))
-                ),
-                "current": _json_safe(
-                    fl.round_3sf(_quarterly_field_mean(monthly_records, quarter, "current"))
-                ),
-            }
-        )
+        record: dict[str, Any] = {
+            "horizon_type": "quarter",
+            "code": str(code),
+            "date": quarter_start.isoformat(),
+            "day_of_year": quarter_start.timetuple().tm_yday,
+            "horizon_value": quarter,
+            "horizon_in_year": quarter,
+            "norm": _json_safe(_quarterly_field_mean(monthly_records, quarter, "norm")),
+            "previous": _json_safe(
+                fl.round_3sf(_quarterly_field_mean(monthly_records, quarter, "previous"))
+            ),
+            "current": _json_safe(
+                fl.round_3sf(_quarterly_field_mean(monthly_records, quarter, "current"))
+            ),
+        }
+        if range_stats is not None:
+            qs = range_stats.quarterly.get(quarter)
+            if qs is not None:
+                record["std"] = _json_safe(qs.std)
+                record["count"] = qs.count
+        records.append(record)
     return records
 
 
@@ -822,6 +917,8 @@ def write_station_quarterly_hydrograph(
     client: Any,
     target_year: int,
     today: dt.date,
+    *,
+    range_stats: StationRangeStats | None = None,
 ) -> list[dict[str, Any]]:
     """Build and write quarterly hydrograph records for one station."""
     logger.info(
@@ -833,7 +930,34 @@ def write_station_quarterly_hydrograph(
         monthly_records=monthly_records,
         code=code,
         target_year=target_year,
+        range_stats=range_stats,
     )
+    if range_stats is None:
+        _existing_raw = client.read_hydrograph(
+            horizon="quarter",
+            code=code,
+            start_date=f"{target_year}-01-01",
+            end_date=f"{target_year}-12-31",
+            limit=10,
+        )
+        _existing_stats_q: dict[str, dict] = {}
+        for _row in _iter_daily_rows(_existing_raw):
+            if not isinstance(_row, dict):
+                continue
+            _d = _row.get("date")
+            if not isinstance(_d, str):
+                continue
+            _se: dict[str, Any] = {}
+            if "std" in _row:
+                _se["std"] = _json_safe(_row["std"])
+            if "count" in _row:
+                _se["count"] = _json_safe(_row["count"])
+            if _se:
+                _existing_stats_q[_d] = _se
+        for _r in records:
+            _d = _r.get("date")
+            if isinstance(_d, str) and _d in _existing_stats_q:
+                _r.update(_existing_stats_q[_d])
     client.write_hydrograph(records)
     logger.info("Wrote %d quarterly hydrograph records for station %s", len(records), code)
     return records
@@ -853,13 +977,51 @@ def write_long_horizon_hydrograph(
     station-resolution cache carries no virtual identity. See that helper's
     docstring for the discovery-failure fallback (WARNING, empty set, today's
     behaviour unchanged).
+
+    Before each station's first write, reads the full configured reference
+    history (SAPPHIRE_RANGE_REFERENCE_START_YEAR..SAPPHIRE_RANGE_REFERENCE_END_YEAR)
+    once per year and computes per-period std/count. Reads for years that also
+    serve as actuals (previous/current) are reused from the cache.  Any API
+    failure during the reference reads routes the station to API_FAILED with no
+    writes, the same as a write failure.
     """
     all_records = _LongHorizonWriteResult()
     virtual_codes = get_virtual_station_codes(iehhf_sdk)
+
+    # Resolve the reference window once for the whole run. ValueError from bad config
+    # propagates to the caller without writing any records.
+    _ref_start = get_reference_start_year()
+    _ref_end = get_reference_end_year()
+    validate_reference_window(_ref_start, _ref_end, today.year)
+    _ref_years = reference_years(_ref_start, _ref_end)
+    _min_years = min_eligible_years(len(_ref_years))
+    logger.info(
+        "Range statistics: reference window %d-%d (%d years, min_eligible=%d)",
+        _ref_start,
+        _ref_end,
+        len(_ref_years),
+        _min_years,
+    )
+
     for code in codes:
         code_str = str(code)
         all_records.attempted_station_codes.append(code_str)
         try:
+            # Read reference history and compute stats before any write.
+            # API failures here route to API_FAILED (same as write failures).
+            station_range_stats: StationRangeStats | None = None
+            daily_by_year_cache: dict[int, Any] = {}
+            if _ref_years is not None and _min_years is not None:
+                for year in _ref_years:
+                    daily_by_year_cache[year] = _read_daily_runoff(client, code_str, year)
+                station_range_stats = compute_station_range_stats(
+                    daily_by_year_cache, _ref_years, _min_years
+                )
+
+            # Reuse cached actuals reads that overlap the reference window.
+            preloaded_current = daily_by_year_cache.get(target_year)
+            preloaded_previous = daily_by_year_cache.get(target_year - 1)
+
             monthly_result = write_station_monthly_hydrograph(
                 code=code_str,
                 iehhf_sdk=iehhf_sdk,
@@ -867,6 +1029,9 @@ def write_long_horizon_hydrograph(
                 target_year=target_year,
                 today=today,
                 virtual_codes=virtual_codes,
+                range_stats=station_range_stats,
+                _daily_current_year=preloaded_current,
+                _daily_previous_year=preloaded_previous,
             )
             monthly_records = monthly_result.records
             all_records.extend(monthly_records)
@@ -877,6 +1042,7 @@ def write_long_horizon_hydrograph(
                     client=client,
                     target_year=target_year,
                     today=today,
+                    range_stats=station_range_stats,
                 )
             )
             all_records.extend(
@@ -886,6 +1052,7 @@ def write_long_horizon_hydrograph(
                     client=client,
                     target_year=target_year,
                     today=today,
+                    range_stats=station_range_stats,
                 )
             )
             all_records.completed_station_codes.append(code_str)

@@ -378,6 +378,36 @@ date's delta. Member selection and EM evaluation use the same mixed
 hindcast/operational history and are in-sample; see
 [EM hindcast skills](../apps/postprocessing_forecasts/README.md#em-hindcast-skills-and-shared-delta-pp-075).
 
+### Long-term range reference period
+
+PP-075 uses these deployment settings in both the preprocessing writer and forecast dashboard:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SAPPHIRE_RANGE_REFERENCE_START_YEAR` | `2000` | First observation year, inclusive |
+| `SAPPHIRE_RANGE_REFERENCE_END_YEAR` | `2025` | Last observation year, inclusive |
+
+Use the same values in the external deployment configuration for both processes. Years must be valid
+calendar years in ascending order; the end year must be completed before the captured run/load year.
+Malformed or invalid settings fail explicitly rather than silently selecting another window.
+
+The producer stores unrounded sample standard deviation and accepted-year count in existing
+`Hydrograph.std/count` fields. The dashboard uses **δ = 0.674 × std**, independently of model skill.
+Eligibility requires at least `max(2, ceil(number_of_reference_years / 2))` accepted years: **13 of 26**
+with the defaults. Within each year, a monthly mean needs finite observations on at least half the
+calendar days; duplicate days count once. A quarter needs all three accepted monthly means. The
+April–September season needs at least three of its six monthly means. Quarter/season means weight
+accepted months equally. These rules do not change existing hydrograph actuals, norms or skill scoring.
+
+The dashboard reads the current load-year publication for each calendar period, even when viewing
+older forecasts. A missing/insufficient publication gives unavailable Delta/Mixed bounds; no fallback
+to skill δ or an older publication is used. The existing writer excludes manual/Google Sheets stations.
+
+There is no stored reference-version metadata. Before the first rollout or a reference-window change,
+coordinate a complete publication and dashboard restart with Maxat; keep affected consumption paused
+until all intended stations/horizons have been verified with matching settings. Do not change just the
+label or dashboard environment. See the [deployment handoff](plans/pp075_range_deployment_handoff.md).
+
 ## Configuration of the forecast tools
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.
 ```

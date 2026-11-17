@@ -544,3 +544,18 @@ msgstr "Бюллетень успешно сохранён"
 
 msgid "Failed to write bulletin"
 msgstr "Не удалось сохранить бюллетень"
+
+# Range method selector (PP-075 E2)
+msgid "Native"
+msgstr "Нативный"
+
+# Reference period label for forecast configuration card
+msgid "Reference period: {period}"
+msgstr "Референсный период: {period}"
+
+# PP-075 E2: range selector label and help note
+msgid "Select period forecast range (for both summary table and figures):"
+msgstr "Выбрать диапазон прогноза периода (для таблицы и графиков):"
+
+msgid "Note: daily forecasts retain native model bounds."
+msgstr "Примечание: суточные прогнозы сохраняют собственные границы модели."

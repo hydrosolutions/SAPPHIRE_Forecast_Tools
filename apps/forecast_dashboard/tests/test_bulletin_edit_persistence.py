@@ -371,8 +371,8 @@ class TestDeltaEditUpdatesBounds:
         assert row["Forecast upper bound"] == pytest.approx(110.0)
 
     def test_non_numeric_delta_leaves_bounds_untouched(self, monkeypatch):
-        """A δ the operator typed as text cannot yield bounds; the stored
-        bounds must be left alone rather than blanked."""
+        """A δ the operator typed as text cannot yield bounds; both bounds must
+        be cleared to NaN (not left at stale numeric values) and the UI patched."""
         monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
         site = _make_site_with_forecasts(forecasted_discharge=100.0)
         fake_self = _make_manager_stub(site)
@@ -381,8 +381,59 @@ class TestDeltaEditUpdatesBounds:
         BulletinManager._on_bulletin_edit(fake_self, event)
 
         row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
-        assert row["Forecast lower bound"] == pytest.approx(90.0)
-        assert row["Forecast upper bound"] == pytest.approx(110.0)
+        assert pd.isna(row["Forecast lower bound"])
+        assert pd.isna(row["Forecast upper bound"])
+        fake_self.wm.bulletin_tabulator.patch.assert_called_once()
+
+    def test_cleared_delta_serialises_null_bounds_to_api(self, monkeypatch):
+        """Clearing δ (None) → both bounds NaN in site.forecasts and in the
+        saved API payload (serialised as null, displayed as blank)."""
+        save_mock = MagicMock()
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", save_mock)
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="delta", row=0, value=None)
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
+        assert pd.isna(row["Forecast lower bound"])
+        assert pd.isna(row["Forecast upper bound"])
+        save_mock.assert_called_once()
+        saved_site = save_mock.call_args.args[-1][0]
+        saved_row = saved_site.forecasts.loc[saved_site.forecasts["Model"] == "LR"].iloc[0]
+        assert pd.isna(saved_row["Forecast lower bound"])
+        assert pd.isna(saved_row["Forecast upper bound"])
+
+    def test_cleared_delta_patches_table_with_nan_bounds(self, monkeypatch):
+        """Clearing δ patches both visible bound cells with NaN (blank in UI)."""
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="delta", row=0, value=None)
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        patch_mock = fake_self.wm.bulletin_tabulator.patch
+        patch_mock.assert_called_once()
+        patches = patch_mock.call_args.args[0]
+        assert pd.isna(patches["Forecast lower bound"][0][1])
+        assert pd.isna(patches["Forecast upper bound"][0][1])
+
+    def test_saved_numeric_bounds_frozen_after_non_delta_edit(self, monkeypatch):
+        """Editing any non-δ column leaves existing numeric bounds unchanged."""
+        monkeypatch.setattr(bulletin_manager, "_save_bulletin_to_api", MagicMock())
+        site = _make_site_with_forecasts(forecasted_discharge=100.0)
+        site.forecasts.loc[0, "Forecast lower bound"] = 92.0
+        site.forecasts.loc[0, "Forecast upper bound"] = 108.0
+        fake_self = _make_manager_stub(site)
+        event = FakeEditEvent(column="mae", row=0, value="4.5")
+
+        BulletinManager._on_bulletin_edit(fake_self, event)
+
+        row = site.forecasts.loc[site.forecasts["Model"] == "LR"].iloc[0]
+        assert row["Forecast lower bound"] == pytest.approx(92.0)
+        assert row["Forecast upper bound"] == pytest.approx(108.0)
         fake_self.wm.bulletin_tabulator.patch.assert_not_called()
 
     def test_display_patch_failure_does_not_lose_the_edit(self, monkeypatch):
@@ -435,13 +486,28 @@ class TestApplyDeltaBounds:
         assert df.loc[0, "Forecast lower bound"] == pytest.approx(90.0)
 
     @pytest.mark.parametrize("delta", [None, "", "abc", float("nan")])
-    def test_unusable_delta_is_a_noop(self, delta):
+    def test_cleared_or_invalid_delta_sets_both_bounds_unavailable(self, delta):
+        """Cleared/non-numeric δ → both bounds NaN and returns True.
+
+        Leaving stale numeric bounds when δ is cleared would leave the row
+        internally inconsistent; both endpoints must be set unavailable so the
+        API serialises null and the UI displays blank.
+        """
         df = self._frame()
         mask = df["Model"] == "LR"
 
-        assert _apply_delta_bounds(df, mask, delta) is False
-        assert df.loc[0, "Forecast lower bound"] == pytest.approx(90.0)
-        assert df.loc[0, "Forecast upper bound"] == pytest.approx(110.0)
+        assert _apply_delta_bounds(df, mask, delta) is True
+        assert pd.isna(df.loc[0, "Forecast lower bound"])
+        assert pd.isna(df.loc[0, "Forecast upper bound"])
+
+    def test_negative_delta_sets_both_bounds_unavailable(self):
+        """Negative δ is invalid and must not produce inverted/plausible bounds."""
+        df = self._frame()
+        mask = df["Model"] == "LR"
+
+        assert _apply_delta_bounds(df, mask, -1.0) is True
+        assert pd.isna(df.loc[0, "Forecast lower bound"])
+        assert pd.isna(df.loc[0, "Forecast upper bound"])
 
     def test_missing_discharge_value_yields_undefined_bounds(self):
         """With no Q there is no Q ∓ δ; the bounds become NaN rather than
@@ -450,6 +516,25 @@ class TestApplyDeltaBounds:
         mask = df["Model"] == "LR"
 
         assert _apply_delta_bounds(df, mask, 2.5) is True
+        assert pd.isna(df.loc[0, "Forecast lower bound"])
+        assert pd.isna(df.loc[0, "Forecast upper bound"])
+
+    def test_inf_delta_sets_both_bounds_unavailable(self):
+        """Non-finite δ (Inf) cannot produce meaningful bounds and must be
+        treated as invalid — same behaviour as NaN or negative δ."""
+        df = self._frame()
+        mask = df["Model"] == "LR"
+
+        assert _apply_delta_bounds(df, mask, float("inf")) is True
+        assert pd.isna(df.loc[0, "Forecast lower bound"])
+        assert pd.isna(df.loc[0, "Forecast upper bound"])
+
+    def test_inf_discharge_yields_undefined_bounds(self):
+        """Non-finite Q (Inf) cannot produce meaningful bounds; both must be NaN."""
+        df = self._frame(discharge=float("inf"))
+        mask = df["Model"] == "LR"
+
+        assert _apply_delta_bounds(df, mask, 5.0) is True
         assert pd.isna(df.loc[0, "Forecast lower bound"])
         assert pd.isna(df.loc[0, "Forecast upper bound"])
 

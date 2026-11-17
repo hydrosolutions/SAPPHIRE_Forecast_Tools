@@ -126,7 +126,7 @@ def update_sidepane_card_visibility(tabs, horizon_card, station_card, forecast_c
     elif active_tab == 1:  # 'Forecast' tab
         horizon_card.visible = True
         station_card.visible = True
-        forecast_card.visible = not is_long
+        forecast_card.visible = True
         basin_card.visible = False
         reload_card.visible = True
     elif active_tab == 2:  # 'Bulletin' tab
@@ -145,7 +145,7 @@ def update_sidepane_card_visibility(tabs, horizon_card, station_card, forecast_c
 
 def update_range_slider_visibility(_, range_slider, event):
     range_type = event.new
-    if range_type == _("delta"):
+    if range_type in (_("delta"), _("Native"), "delta", "native"):
         range_slider.visible = False
     else:
         range_slider.visible = True
@@ -1039,19 +1039,19 @@ def plot_current_runoff_forecast_range(
         model_data = data[data[forecast_name_col] == model]
         # Drop all columns except the date, mean, min, and max columns
         model_data = model_data[[date_col, mean_col, min_col, max_col]]
+        # Capture raw bounds BEFORE converting to error offsets so the
+        # availability check uses finite raw values. format_discharge returns
+        # "" for negative values (e.g. upper-mean < 0), which would incorrectly
+        # suppress valid bounds when fc_lower < mean or fc_upper < mean.
+        raw_lower = model_data[min_col].iloc[-1]
+        raw_upper = model_data[max_col].iloc[-1]
+        bounds_available = np.isfinite(raw_lower) and np.isfinite(raw_upper)
         # Get errors instead of lower and upper bounds for the range
         model_data[min_col] = model_data[mean_col] - model_data[min_col]
         model_data[max_col] = model_data[max_col] - model_data[mean_col]
 
         lower_bound = format_discharge(model_data[min_col].iloc[-1])
         upper_bound = format_discharge(model_data[max_col].iloc[-1])
-        range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
-        # print(f"Debug: model_data\n{model_data}")
-        # print("MODEL: ", model)
-        # print("COLOR: ", runoff_forecast_color[i])
-        # print("LEGEND ENTRY: ", range_legend_entry)
-        # print("lower_bound: ", lower_bound)
-        # print("upper_bound: ", upper_bound)
 
         # Get the latest forecast for the model
         latest_forecast = format_discharge(model_data[mean_col].iloc[-1])
@@ -1068,21 +1068,28 @@ def plot_current_runoff_forecast_range(
                   tools=['hover'],
                   show_legend=True)
 
-        range_segment = hv.ErrorBars(
-            model_data,
-            label=range_legend_entry) \
-            .opts(color=runoff_forecast_color[i],
-                  alpha=0.2,
-                  line_width=4,
-                  show_legend=True,
-                  hooks=[partial(cap_color_hook, color=runoff_forecast_color[i])])
-
-        if overlay is None:
-            overlay = range_segment
-            overlay *= point
+        # Only render a range band when both bounds are available.
+        if bounds_available:
+            range_legend_entry = (
+                model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
+            )
+            range_segment = hv.ErrorBars(
+                model_data,
+                label=range_legend_entry) \
+                .opts(color=runoff_forecast_color[i],
+                      alpha=0.2,
+                      line_width=4,
+                      show_legend=True,
+                      hooks=[partial(cap_color_hook, color=runoff_forecast_color[i])])
+            if overlay is None:
+                overlay = range_segment * point
+            else:
+                overlay *= range_segment * point
         else:
-            overlay *= range_segment
-            overlay *= point
+            if overlay is None:
+                overlay = point
+            else:
+                overlay *= point
 
     return overlay
 
@@ -1159,27 +1166,38 @@ def plot_current_runoff_forecast_range_date_format(
         model_data = data[data[forecast_name_col] == model]
         # Drop all columns except the date, mean, min, and max columns
         model_data = model_data[[date_col, mean_col, min_col, max_col]]
-        # Get errors instead of lower and upper bounds for the range
-        model_data[min_col] = model_data[mean_col] - model_data[min_col]
-        model_data[max_col] = model_data[max_col] - model_data[mean_col]
 
-        lower_bound = format_discharge(model_data[min_col].iloc[-1])
-        upper_bound = format_discharge(model_data[max_col].iloc[-1])
-        range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
-        # print(f"Debug: model_data\n{model_data}")
-        # print("MODEL: ", model)
-        # print("COLOR: ", runoff_forecast_color[i])
-        # print("LEGEND ENTRY: ", range_legend_entry)
-        # print("lower_bound: ", lower_bound)
-        # print("upper_bound: ", upper_bound)
+        # Row-wise finite mask on raw endpoints BEFORE converting to error offsets.
+        # This ensures a missing last row does not suppress earlier valid intervals.
+        raw_valid_mask = (
+            model_data[min_col].notna() & np.isfinite(model_data[min_col])
+            & model_data[max_col].notna() & np.isfinite(model_data[max_col])
+        )
+        valid_data = model_data[raw_valid_mask].copy()
+
+        # Convert valid rows to error offsets (mean - lower, upper - mean)
+        if not valid_data.empty:
+            # Save raw endpoints BEFORE converting to offsets so the legend
+            # shows the original bound values (e.g. "80–95"), not the offsets.
+            # An offset of upper - mean can be negative (e.g. upper=95, mean=100
+            # → offset=-5) which format_discharge renders as "" (falsy), causing
+            # the render guard below to suppress a valid interval.
+            raw_lower = valid_data[min_col].iloc[0]
+            raw_upper = valid_data[max_col].iloc[0]
+            valid_data[min_col] = valid_data[mean_col] - valid_data[min_col]
+            valid_data[max_col] = valid_data[max_col] - valid_data[mean_col]
+            # Use first valid row for legend so a missing last row does not hide the label
+            lower_bound = format_discharge(raw_lower)
+            upper_bound = format_discharge(raw_upper)
+        else:
+            lower_bound = ""
+            upper_bound = ""
 
         # Get the latest forecast for the model
         latest_forecast = format_discharge(model_data[mean_col].iloc[-1])
         point_legend_entry = model + ": " + latest_forecast + " " + unit_string
 
-        # print(f"\n\n\n\n\n\n\n\nDebug: latest_forecast\n{latest_forecast}")
-
-        # Create a point
+        # Create a point for ALL rows (mean scatter always shown)
         point = hv.Scatter(
             model_data,
             kdims=[date_col],
@@ -1190,21 +1208,30 @@ def plot_current_runoff_forecast_range_date_format(
                   tools=['hover'],
                   show_legend=True)
 
-        range_segment = hv.ErrorBars(
-            model_data,
-            label=range_legend_entry) \
-            .opts(color=runoff_forecast_color[i],
-                  alpha=0.2,
-                  line_width=4,
-                  show_legend=True,
-                  hooks=[partial(cap_color_hook, color=runoff_forecast_color[i])])
-
-        if overlay is None:
-            overlay = range_segment
-            overlay *= point
+        # Only render a range band when at least one row has valid bounds.
+        # Guard must depend only on valid_data being non-empty; formatted strings
+        # are not safe to test for truthiness (a negative offset formats as "").
+        if not valid_data.empty:
+            range_legend_entry = (
+                model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
+            )
+            range_segment = hv.ErrorBars(
+                valid_data,
+                label=range_legend_entry) \
+                .opts(color=runoff_forecast_color[i],
+                      alpha=0.2,
+                      line_width=4,
+                      show_legend=True,
+                      hooks=[partial(cap_color_hook, color=runoff_forecast_color[i])])
+            if overlay is None:
+                overlay = range_segment * point
+            else:
+                overlay *= range_segment * point
         else:
-            overlay *= range_segment
-            overlay *= point
+            if overlay is None:
+                overlay = point
+            else:
+                overlay *= point
 
     return overlay
 
@@ -1297,105 +1324,54 @@ def plot_current_runoff_forecast_range_date_format_v2(
 
         lower_bound = format_discharge(model_data[min_col].iloc[-1])
         upper_bound = format_discharge(model_data[max_col].iloc[-1])
-        if not lower_bound:
-            lower_bound = "N/A"
-        if not upper_bound:
-            upper_bound = "N/A"
-        range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
-        # print(f"Debug: model_data\n{model_data}")
-        # print("MODEL: ", model)
-        # print("COLOR: ", runoff_forecast_color[i])
-        # print("LEGEND ENTRY: ", range_legend_entry)
-        # print("lower_bound: ", lower_bound)
-        # print("upper_bound: ", upper_bound)
+        # Save string representations before they may be shadowed below.
+        lb_str = lower_bound
+        ub_str = upper_bound
+        bounds_available = bool(lb_str) and bool(ub_str)
 
         # Get the latest forecast for the model
         latest_forecast = format_discharge(model_data[mean_col].iloc[-1])
         point_legend_entry = model + ": " + latest_forecast + " " + unit_string
 
-        if model == 'LR':
-            # Duplicate the row in model_data and replace the date in the second row with the title_date_end
-            # Append the last row to the DataFrame
-            model_data_temp = pd.concat([model_data, model_data], ignore_index=True)
-            model_data_temp.loc[model_data_temp.index[-1], date_col] = pd.Timestamp(
-                title_date_end + dt.timedelta(hours=24))
-            # print('\n\n\n\n\nmodel_data:\n', model_data_temp)
+        # Duplicate the row to extend to title_date_end for step rendering.
+        model_data_temp = pd.concat([model_data, model_data], ignore_index=True)
+        model_data_temp.loc[model_data_temp.index[-1], date_col] = pd.Timestamp(
+            title_date_end + dt.timedelta(hours=24))
 
-            point = hv.Curve(
-                model_data_temp,
-                kdims=[date_col],
-                vdims=[mean_col],
-                label=point_legend_entry) \
-                .opts(color=runoff_forecast_color[i],
-                      line_width=2,
-                      line_dash=line_types[i],
-                      interpolation='steps-mid',
-                      show_legend=True,
-                      muted=False)
-            range_segment = plot_runoff_range_area(
-                model_data_temp, date_col, min_col, max_col, range_legend_entry,
-                runoff_forecast_color[i]).opts(alpha=0.2, muted_alpha=0.05)
-            lower_bound = plot_runoff_range_bound(
-                model_data_temp, date_col, min_col, runoff_forecast_color[i])
-            upper_bound = plot_runoff_range_bound(
-                model_data_temp, date_col, max_col, runoff_forecast_color[i])
-            range_segment = range_segment * lower_bound * upper_bound
-
-        else:
-            # Duplicate the row in model_data and replace the date in the second row with the title_date_end
-            # Append the last row to the DataFrame
-            model_data_temp = pd.concat([model_data, model_data], ignore_index=True)
-            model_data_temp.loc[model_data_temp.index[-1], date_col] = pd.Timestamp(
-                title_date_end + dt.timedelta(hours=24))
-            # print('\n\n\n\n\nmodel_data:\n', model_data_temp)
-
-            point = hv.Curve(
-                model_data_temp,
-                kdims=[date_col],
-                vdims=[mean_col],
-                label=point_legend_entry) \
-                .opts(color=runoff_forecast_color[i],
-                      line_width=2,
-                      line_dash=line_types[i],
-                      interpolation='steps-mid',
-                      show_legend=True,
-                      muted=False)
-            range_segment = plot_runoff_range_area(
-                model_data_temp, date_col, min_col, max_col, range_legend_entry,
-                runoff_forecast_color[i]).opts(alpha=0.2, muted_alpha=0.05)
-            lower_bound = plot_runoff_range_bound(
-                model_data_temp, date_col, min_col, runoff_forecast_color[i])
-            upper_bound = plot_runoff_range_bound(
-                model_data_temp, date_col, max_col, runoff_forecast_color[i])
-            range_segment = range_segment * lower_bound * upper_bound
-
-            '''# Create a point
-            point = hv.Scatter(
-            model_data,
+        point = hv.Curve(
+            model_data_temp,
             kdims=[date_col],
             vdims=[mean_col],
             label=point_legend_entry) \
-                .opts(color=runoff_forecast_color[i],
-                        size=7,
-                        tools=['hover'],
-                        show_legend=True)
+            .opts(color=runoff_forecast_color[i],
+                  line_width=2,
+                  line_dash=line_types[i],
+                  interpolation='steps-mid',
+                  show_legend=True,
+                  muted=False)
 
-            range_segment = hv.ErrorBars(
-            model_data,
-            label=range_legend_entry) \
-                .opts(color=runoff_forecast_color[i],
-                      alpha=0.2,
-                      line_width=4,
-                      show_legend=True,
-                      hooks=[partial(cap_color_hook, color=runoff_forecast_color[i])]
-                )'''
-
-        if overlay is None:
-            overlay = range_segment
-            overlay *= point
+        # Only render a range band when both bounds are available.
+        if bounds_available:
+            range_legend_entry = (
+                model + " " + _("range") + ": " + lb_str + "-" + ub_str + " " + unit_string
+            )
+            range_area = plot_runoff_range_area(
+                model_data_temp, date_col, min_col, max_col, range_legend_entry,
+                runoff_forecast_color[i]).opts(alpha=0.2, muted_alpha=0.05)
+            lower_bound_line = plot_runoff_range_bound(
+                model_data_temp, date_col, min_col, runoff_forecast_color[i])
+            upper_bound_line = plot_runoff_range_bound(
+                model_data_temp, date_col, max_col, runoff_forecast_color[i])
+            range_segment = range_area * lower_bound_line * upper_bound_line
+            if overlay is None:
+                overlay = range_segment * point
+            else:
+                overlay *= range_segment * point
         else:
-            overlay *= range_segment
-            overlay *= point
+            if overlay is None:
+                overlay = point
+            else:
+                overlay *= point
 
     return overlay
 
@@ -2564,41 +2540,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, horizon, hydrograph_day_all, linr
     forecasts = forecasts[forecasts['date'] <= pd.to_datetime(title_date + dt.timedelta(days=1))]
     # print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
-    has_delta = 'delta' in forecasts.columns and not forecasts['delta'].isna().all()
-    delta_offset = forecasts['delta'] if has_delta else 0
-    # Calculate the forecast ranges depending on the values of range_type and range_slider
-    if range_type == _('delta'):
-        if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:
-            # If we have values in columns 'Q25' and 'Q75', we calculate 'fc_lower'
-            # and 'fc_upper' as the 25th and 75th percentiles of the forecasted discharge
-            forecasts['fc_lower'] = forecasts['Q25'].where(
-                ~forecasts['Q25'].isna(),
-                forecasts['forecasted_discharge'] - delta_offset)
-            forecasts['fc_upper'] = forecasts['Q75'].where(
-                ~forecasts['Q75'].isna(),
-                forecasts['forecasted_discharge'] + delta_offset)
-        else:
-            forecasts['fc_lower'] = forecasts['forecasted_discharge'] - delta_offset
-            forecasts['fc_upper'] = forecasts['forecasted_discharge'] + delta_offset
-        # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - delta_offset
-        # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + delta_offset
-    elif range_type == _("Manual range, select value below"):
-        forecasts['fc_lower'] = (1 - range_slider / 100.0) * forecasts['forecasted_discharge']
-        forecasts['fc_upper'] = (1 + range_slider / 100.0) * forecasts['forecasted_discharge']
-    elif range_type == _("min[delta, %]"):
-        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - delta_offset,
-                                                  (1 - range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
-        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + delta_offset,
-                                                  (1 + range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
-
-    if 'fc_lower' not in forecasts.columns:
-        logger.warning(
-            "fc_lower not created (range_type=%r did not match any branch). "
-            "Falling back to forecasted_discharge.",
-            range_type
-        )
-        forecasts['fc_lower'] = forecasts['forecasted_discharge']
-        forecasts['fc_upper'] = forecasts['forecasted_discharge']
+    # Calculate the forecast ranges using the common authoritative routine
+    forecasts = processing.calculate_forecast_range(_, forecasts, range_type, range_slider)
 
     # print tail of forecasts
     # print(f"Tail of forecasts\n{forecasts.tail(10)}")
@@ -2916,30 +2859,8 @@ def plot_pentad_forecast_hydrograph_data(_, horizon, hydrograph_pentad_all, fore
     forecasts = forecasts[forecasts['date'] <= pd.Timestamp(title_date) + dt.timedelta(days=1)]
     # print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
-    has_delta = 'delta' in forecasts.columns and not forecasts['delta'].isna().all()
-    delta_offset = forecasts['delta'] if has_delta else 0
-    # Calculate the forecast ranges depending on the values of range_type and range_slider
-    if range_type == _('delta'):
-        if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:
-            forecasts['fc_lower'] = forecasts['Q25'].where(
-                ~forecasts['Q25'].isna(),
-                forecasts['forecasted_discharge'] - delta_offset)
-            forecasts['fc_upper'] = forecasts['Q75'].where(
-                ~forecasts['Q75'].isna(),
-                forecasts['forecasted_discharge'] + delta_offset)
-        else:
-            forecasts['fc_lower'] = forecasts['forecasted_discharge'] - delta_offset
-            forecasts['fc_upper'] = forecasts['forecasted_discharge'] + delta_offset
-        # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - delta_offset
-        # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + delta_offset
-    elif range_type == _("Manual range, select value below"):
-        forecasts['fc_lower'] = (1 - range_slider / 100.0) * forecasts['forecasted_discharge']
-        forecasts['fc_upper'] = (1 + range_slider / 100.0) * forecasts['forecasted_discharge']
-    elif range_type == _("min[delta, %]"):
-        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - delta_offset,
-                                                  (1 - range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
-        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + delta_offset,
-                                                  (1 + range_slider / 100.0) * forecasts.loc[:, 'forecasted_discharge'])
+    # Calculate the forecast ranges using the common authoritative routine
+    forecasts = processing.calculate_forecast_range(_, forecasts, range_type, range_slider)
 
     # Print column names of hydrograph_pentad_all
     # print("hydrograph_pentad_all.columns\n", hydrograph_pentad_all.columns)
@@ -3192,15 +3113,25 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
         inplace=True)
 
     # Calculate the forecast range
+    for col in ('delta', 'sdivsigma', 'mae', 'accuracy'):
+        if col not in forecast_table.columns:
+            forecast_table[col] = np.nan
     if horizon in ("month", "quarter", "season"):
-        # For long-horizon forecasts, use quantile bounds if available
-        forecast_table['fc_lower'] = pd.to_numeric(
-            forecast_table.get('Q25', np.nan), errors='coerce')
-        forecast_table['fc_upper'] = pd.to_numeric(
-            forecast_table.get('Q75', np.nan), errors='coerce')
-        for col in ('delta', 'sdivsigma', 'mae', 'accuracy'):
-            if col not in forecast_table.columns:
-                forecast_table[col] = np.nan
+        # Long-term: use range_delta (observation-derived) exclusively for bound
+        # computation and display. Never fall back to skill delta — absent
+        # range_delta => NaN bounds and NaN displayed delta.
+        lt_copy = forecast_table.copy()
+        if 'range_delta' in lt_copy.columns:
+            lt_copy['delta'] = lt_copy['range_delta']
+        else:
+            lt_copy['delta'] = np.nan
+        forecast_table = processing.calculate_forecast_range(
+            _, lt_copy, range_type, range_slider)
+        # Display delta = range_delta (NaN if absent), not skill delta
+        if 'range_delta' in lt_copy.columns:
+            forecast_table['delta'] = lt_copy['range_delta'].values
+        else:
+            forecast_table['delta'] = np.nan
     else:
         forecast_table = processing.calculate_forecast_range(
             _, forecast_table, range_type, range_slider)
@@ -3210,14 +3141,21 @@ def create_forecast_summary_table(_, horizon, forecasts_all, station, date_picke
                      'delta', 'sdivsigma', 'mae', 'accuracy']
     forecast_table = forecast_table.reindex(columns=expected_cols)
 
-    # Round delta, sdivsigma and mae to 2 decimals each
-    forecast_table['delta'] = forecast_table['delta'].round(2)
-    forecast_table['sdivsigma'] = forecast_table['sdivsigma'].round(2)
-    forecast_table['mae'] = forecast_table['mae'].round(2)
+    # Round delta, sdivsigma and mae to 2 decimals each.
+    # pd.to_numeric(errors='coerce') converts None (from nullable API columns,
+    # which produce object dtype) to NaN so .round() never sees an object series.
+    forecast_table['delta'] = pd.to_numeric(
+        forecast_table['delta'], errors='coerce').round(2)
+    forecast_table['sdivsigma'] = pd.to_numeric(
+        forecast_table['sdivsigma'], errors='coerce').round(2)
+    forecast_table['mae'] = pd.to_numeric(
+        forecast_table['mae'], errors='coerce').round(2)
 
     # Round lower and  upper bound to 3 decimals each
-    forecast_table['fc_lower'] = forecast_table['fc_lower'].round(3)
-    forecast_table['fc_upper'] = forecast_table['fc_upper'].round(3)
+    forecast_table['fc_lower'] = pd.to_numeric(
+        forecast_table['fc_lower'], errors='coerce').round(3)
+    forecast_table['fc_upper'] = pd.to_numeric(
+        forecast_table['fc_upper'], errors='coerce').round(3)
 
     # Rename columns to be used in the plot to allow internationalization
     forecast_table = forecast_table.rename(columns={
