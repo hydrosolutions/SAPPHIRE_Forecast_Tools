@@ -55,3 +55,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.uv]
+# Security floors for transitive networking dependencies.
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "urllib3>=2.8.0",
+]

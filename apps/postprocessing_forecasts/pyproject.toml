@@ -35,6 +35,11 @@ dev = [
 ]
 
 [tool.uv]
+# Security floors for transitive networking dependencies.
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "urllib3>=2.8.0",
+]
 # Allow git and local path dependencies
 allow-insecure-host = []
 
