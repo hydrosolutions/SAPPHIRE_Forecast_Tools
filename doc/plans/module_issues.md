@@ -6,6 +6,10 @@ For the full workflow, see [README.md](README.md).
 
 ---
 
+## Cross-module recovery plan under review
+
+[Automatic recovery of failed short- and long-term forecasts](issues/high_prio_gi_draft_automatic_forecast_recovery.md) — **In Progress: plan accepted; first ML patch implemented/reviewed, full pipeline validation pending; LT next.** Extends the ML-020 working-branch recovery path and existing dated long-term recovery into bounded daily maintenance; older gaps are manual-only. Covers minimal selective repair and verified downstream rebuilds; broader infrastructure work deferred. Existing general maintenance behavior is outside the new recovery-only guarantee, explicitly documented in the plan. No deployment authorized or completed by this planning task.
+
 ## Decisions Needed
 
 These are blocking decisions — work downstream cannot advance until they are resolved.

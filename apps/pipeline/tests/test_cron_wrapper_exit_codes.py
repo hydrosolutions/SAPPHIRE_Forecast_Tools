@@ -166,10 +166,10 @@ def _run_wrapper(
 
     env_file = _make_env_file(tmp_path)
 
-    # Auto-inject publication stub for daily-maintenance so the new child
-    # invocation resolves to a controllable stub rather than the real script.
+    # Keep the publication harness and isolate the new recovery child.
     all_extra = dict(extra_stub_files or {})
     if "daily_maintenance" in script_name:
+        all_extra.setdefault("bin/run_latest_forecast_recovery.sh", "#!/bin/bash\nexit 0\n")
         pub_key = "bin/yearly_runoff_hydrograph_aggregation.sh"
         if pub_key not in all_extra:
             pub_marker = tmp_path / "publication_ran.log"
@@ -308,10 +308,11 @@ class TestDailyMaintenanceStickyAggregate:
 
 
 def _run_daily_with_shared_log(tmp_path, compose_exit=0, frontend_exit=0, publication_exit=0):
-    """Like _run_daily but all three stages append to a single shared event log.
+    """Like _run_daily but all four stages append to a single shared event log.
 
     Each stub records one line when actually invoked:
       docker compose run  → "event:luigi"
+      latest recovery     → "event:recovery"
       yearly_runoff...sh  → "event:publication"
       daily_update...sh   → "event:frontend"
 
@@ -348,6 +349,9 @@ def _run_daily_with_shared_log(tmp_path, compose_exit=0, frontend_exit=0, public
     env_file = _make_env_file(tmp_path)
 
     extra = {
+        "bin/run_latest_forecast_recovery.sh": (
+            f'#!/bin/bash\nprintf "event:recovery\\n" >> "{shared_log}"\nexit 0\n'
+        ),
         "bin/yearly_runoff_hydrograph_aggregation.sh": (
             "#!/bin/bash\n"
             f'printf "event:publication\\n" >> "{shared_log}"\n'
@@ -387,26 +391,10 @@ def _run_daily_with_shared_log(tmp_path, compose_exit=0, frontend_exit=0, public
 
 
 def _run_daily_spaced_env(tmp_path, publication_exit=0):
-    """Runs daily_maintenance with an env-file arg that contains a space.
-
-    The wrapper calls ``read_configuration $1`` (unquoted), so bash word-splits
-    the arg.  A 'decoy' file is placed at the first token of that split; it
-    ends in 'kghm' and contains valid env content so read_configuration
-    succeeds.  This stubs read_configuration only for this space-path scenario
-    without touching common_functions or the wrapper.
-
-    The publication child is called via ``"$1"`` (properly quoted in the
-    wrapper), so it receives the full original spaced path as a single
-    argument.  The stub records argc on its own line, then each arg on its own
-    line (not $* which word-splits), letting the test assert exact path
-    identity.
-    """
-    # Decoy file: first token of the space-split path, ends in "kghm".
-    decoy = tmp_path / "my_kghm"
-    decoy.write_text("ieasyhydroforecast_organization=demo\n")
-
-    # The full arg the wrapper receives as $1 — contains a space.
-    spaced_arg = str(decoy) + " extra"
+    """Run with a real spaced config path and verify exact child arguments."""
+    env_file = tmp_path / "my config_kghm"
+    env_file.write_text("ieasyhydroforecast_organization=demo\n")
+    spaced_arg = str(env_file)
 
     stub_dir = tmp_path / "stubs_spaced"
     stub_dir.mkdir()
@@ -418,6 +406,7 @@ def _run_daily_spaced_env(tmp_path, publication_exit=0):
     frontend_marker = tmp_path / "frontend_spaced.log"
 
     extra = {
+        "bin/run_latest_forecast_recovery.sh": "#!/bin/bash\nexit 0\n",
         # Records argc on the first line, then one arg per line via "$@".
         "bin/yearly_runoff_hydrograph_aggregation.sh": (
             "#!/bin/bash\n"
@@ -426,9 +415,7 @@ def _run_daily_spaced_env(tmp_path, publication_exit=0):
             'exit "${FAKE_PUBLICATION_EXIT_CODE:-0}"\n'
         ),
         "bin/daily_update_sapphire_frontend.sh": (
-            "#!/bin/bash\n"
-            f'printf "frontend ran\\n" >> "{frontend_marker}"\n'
-            "exit 0\n"
+            f'#!/bin/bash\nprintf "frontend ran\\n" >> "{frontend_marker}"\nexit 0\n'
         ),
     }
     for rel_path, content in extra.items():
@@ -487,7 +474,7 @@ class TestDailyMaintenancePublicationStep:
         assert pub_marker.exists(), "publication did not run"
 
     def test_publication_runs_before_frontend(self, tmp_path):
-        """Ordering: Luigi → publication → frontend.  Each stub appends to a
+        """Ordering: Luigi → recovery → publication → frontend.  Each stub appends to a
         shared event log when actually invoked; the line order proves real
         subprocess invocation order, not echo-text positions in wrapper stdout.
         Each stage must appear exactly once.
@@ -496,7 +483,7 @@ class TestDailyMaintenancePublicationStep:
         assert result.returncode == 0, result.stdout + result.stderr
         assert shared_log.exists(), "no events were logged; stubs may not have run"
         events = [line for line in shared_log.read_text().splitlines() if line.strip()]
-        assert events == ["event:luigi", "event:publication", "event:frontend"], (
+        assert events == ["event:luigi", "event:recovery", "event:publication", "event:frontend"], (
             f"unexpected event order or count: {events}"
         )
 
@@ -515,16 +502,12 @@ class TestDailyMaintenancePublicationStep:
         can be asserted.
         """
         result, spaced_arg, pub_marker = _run_daily_spaced_env(tmp_path)
-        assert pub_marker.exists(), (
-            f"publication stub did not run; stderr: {result.stderr}"
-        )
+        assert pub_marker.exists(), f"publication stub did not run; stderr: {result.stderr}"
         lines = [line for line in pub_marker.read_text().splitlines() if line.strip()]
         assert lines, "publication marker is empty"
         argc = int(lines[0])
         args = lines[1:]
-        assert argc == 2, (
-            f"expected argc=2 (env-path + flag), got {argc}: {args}"
-        )
+        assert argc == 2, f"expected argc=2 (env-path + flag), got {argc}: {args}"
         assert args[0] == spaced_arg, (
             f"env path not forwarded intact; expected {spaced_arg!r}, got {args[0]!r}"
         )
@@ -534,18 +517,14 @@ class TestDailyMaintenancePublicationStep:
 
     def test_frontend_runs_after_publication_failure(self, tmp_path):
         """Publication failure must not stop the frontend update."""
-        result, frontend_marker, pub_marker = self._run_daily(
-            tmp_path, publication_exit=1
-        )
+        result, frontend_marker, pub_marker = self._run_daily(tmp_path, publication_exit=1)
         assert pub_marker.exists(), "publication stub did not run"
         assert frontend_marker.exists(), "frontend did not run after publication failure"
         assert result.returncode != 0
 
     def test_frontend_runs_after_luigi_and_publication_failure(self, tmp_path):
         """Both upstream failures must not prevent the frontend from running."""
-        result, frontend_marker, _ = self._run_daily(
-            tmp_path, compose_exit=1, publication_exit=1
-        )
+        result, frontend_marker, _ = self._run_daily(tmp_path, compose_exit=1, publication_exit=1)
         assert frontend_marker.exists(), "frontend did not run after upstream failures"
         assert result.returncode != 0
 
@@ -559,8 +538,7 @@ class TestDailyMaintenancePublicationStep:
             tmp_path, compose_exit=0, frontend_exit=0, publication_exit=pub_exit
         )
         assert result.returncode != 0, (
-            f"expected nonzero overall for publication exit {pub_exit}; "
-            f"got 0: {result.stdout}"
+            f"expected nonzero overall for publication exit {pub_exit}; got 0: {result.stdout}"
         )
 
     def test_luigi_failure_does_not_prevent_publication(self, tmp_path):
@@ -615,3 +593,27 @@ class TestLuigiRetcodeActuallyRunsForTheseWrappers:
         workdir = harness._layout(luigi_dir, retcode_block)
         mounted = str(luigi_dir / "app" / "luigi.cfg")
         assert harness._run_luigi(workdir, {"LUIGI_CONFIG_PATH": mounted}) == 1
+
+
+@pytest.mark.parametrize("failed", ["none", "luigi", "recovery", "publication", "frontend"])
+def test_daily_finalization_order_and_sticky_status(tmp_path, failed):
+    order = tmp_path / "order.log"
+    scripts = {}
+    for stage, name in [
+        ("recovery", "run_latest_forecast_recovery.sh"),
+        ("publication", "yearly_runoff_hydrograph_aggregation.sh"),
+        ("frontend", "daily_update_sapphire_frontend.sh"),
+    ]:
+        scripts[f"bin/{name}"] = (
+            f'#!/bin/bash\necho "{stage} $*" >> "{order}"\nexit {int(stage == failed)}\n'
+        )
+    result, _, _ = _run_wrapper(
+        tmp_path,
+        WRAPPERS["daily_maintenance"],
+        compose_exit=int(failed == "luigi"),
+        extra_stub_files=scripts,
+    )
+    lines = order.read_text().splitlines()
+    assert [line.split()[0] for line in lines] == ["recovery", "publication", "frontend"]
+    assert all("--reuse-existing-tunnel" in line for line in lines[:2])
+    assert result.returncode == int(failed != "none")

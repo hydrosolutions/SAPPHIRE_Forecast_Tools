@@ -2435,6 +2435,27 @@ class TestRawGetBoundary:
         assert result["blocked"] == []
         assert len(result["skipped"]) == 1
 
+    @pytest.mark.parametrize("payload,eligible", [([], True), (None, False), ("", False)])
+    def test_latest_absent_opt_in_requires_strict_confirmed_empty(self, payload, eligible):
+        with patch.dict(os.environ, _BASE_ENV, clear=False):
+            result = preview_recovery_candidates(
+                issue_dates=["2026-10-20"],
+                models=["TFT"],
+                station_codes=[CODE_A],
+                client_factory=lambda: RawGetFakeClient(payload),
+                allow_absent=True,
+            )
+        assert result["gate_blocked"] is None
+        if eligible:
+            (candidate,) = result["candidates"]
+            assert candidate["replace_keys"] == []
+            assert len(candidate["insert_keys"]) == 11
+            assert candidate["insert_keys"][0] == ("day", CODE_A, "TFT", "2026-10-20", "2026-10-21")
+            assert candidate["insert_keys"][-1][-1] == "2026-10-31"
+        else:
+            assert result["candidates"] == []
+            assert len(result["blocked"]) == 1
+
     # --- Absent quantile key (not null value) blocks the unit ---
 
     @pytest.mark.parametrize("field", list(_Q_FIELDS))

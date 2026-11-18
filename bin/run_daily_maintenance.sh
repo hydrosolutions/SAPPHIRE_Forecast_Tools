@@ -19,7 +19,7 @@ print_banner
 echo "| Running Daily Maintenance via Luigi"
 
 # Read the configuration from the .env file
-read_configuration $1
+read_configuration "$1"
 
 # Always talk to the daemon via its Docker DNS name
 LUIGI_SCHEDULER_HOST="luigi-daemon"
@@ -115,6 +115,14 @@ else
     echo "| Daily maintenance (Luigi): FAILED (exit ${COMPOSE_STATUS})."
 fi
 
+# Run independently of Luigi's result so verified pending results can drain.
+echo "| Recovering latest forecast issues..."
+bash bin/run_latest_forecast_recovery.sh "$1" --reuse-existing-tunnel
+RECOVERY_STATUS=$?
+if [ "$RECOVERY_STATUS" -ne 0 ]; then
+    echo "| Latest forecast recovery: FAILED (exit ${RECOVERY_STATUS})."
+fi
+
 # --- Long-horizon publication (after Luigi, before frontend) ---
 # Runs unconditionally: it can read stored observations even when Luigi
 # failed upstream, but must not claim upstream data were refreshed.
@@ -134,7 +142,7 @@ fi
 # Always run this, regardless of COMPOSE_STATUS or PUBLICATION_STATUS above.
 # Its own status is captured immediately and aggregated below (sticky
 # aggregate, same pattern as bin/initialize_site_backfill.sh's
-# `overall_exit`, main() :594-608): the wrapper exits 0 only if ALL three
+# `overall_exit`, main() :594-608): the wrapper exits 0 only if ALL four
 # stages succeeded. No `set -e`, no early exit.
 echo "| Updating frontend dashboard..."
 bash bin/daily_update_sapphire_frontend.sh "$1"
@@ -146,7 +154,7 @@ else
 fi
 
 OVERALL_STATUS=0
-if [ "$COMPOSE_STATUS" -ne 0 ] || [ "$PUBLICATION_STATUS" -ne 0 ] || [ "$FRONTEND_STATUS" -ne 0 ]; then
+if [ "$RECOVERY_STATUS" -ne 0 ] || [ "$COMPOSE_STATUS" -ne 0 ] || [ "$PUBLICATION_STATUS" -ne 0 ] || [ "$FRONTEND_STATUS" -ne 0 ]; then
     OVERALL_STATUS=1
 fi
 exit "$OVERALL_STATUS"

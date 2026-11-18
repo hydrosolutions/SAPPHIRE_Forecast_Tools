@@ -388,25 +388,50 @@ This is useful for end-to-end validation against real data before building Docke
 
 All commands are run from the repository root.
 
-**Recommended** - run the full pipeline (both pentad and decad) plus maintenance:
+**Known local-run limitation: `BOTH` does not provide both ML output horizons.**
+The current dispatcher forces ML to `DECAD` in `daily`, `short-term`, `all`,
+`maintenance`, `maintenance:machine_learning`, and even the bare
+`machine_learning` target. Passing `PENTAD` explicitly to that target validates
+successfully but is then overwritten with DECAD. Its mode-resolution comments
+and help text must not be treated as evidence that pentad ML actually ran.
+The aggregate per-horizon loops cover linear regression and postprocessing only.
+
+Until the dispatcher is fixed, run ML scripts **directly and separately for
+PENTAD and DECAD** after preprocessing. The daily target can supply the baseline
+preprocessing and maintenance. If DECAD already completed, run only the missing
+PENTAD loop below rather than repeating DECAD.
 
 ```bash
-# 1. Operational pipeline (short-term + long-term, both prediction modes)
-SAPPHIRE_PREDICTION_MODE=BOTH \
-  ieasyhydroforecast_env_file_path=/path/to/.env \
-  bash apps/run_locally.sh all
+# From the repository root; use an absolute path to the deployment config.
+export ieasyhydroforecast_env_file_path=/absolute/path/to/.env
+bash apps/run_locally.sh daily --continue-on-error
 
-# 2. Maintenance pipeline (gap-fill + hindcast, both prediction modes)
-SAPPHIRE_PREDICTION_MODE=BOTH \
-  ieasyhydroforecast_env_file_path=/path/to/.env \
-  bash apps/run_locally.sh maintenance
+# Bypass the runner's forced-DECAD dispatch for explicit ML output horizons.
+cd apps/machine_learning
+for mode in PENTAD DECAD; do
+  for model in TFT TIDE TSMIXER; do
+    for script in recalculate_nan_forecasts.py make_forecast.py fill_ml_gaps.py; do
+      SAPPHIRE_PREDICTION_MODE="$mode" SAPPHIRE_MODEL_TO_USE="$model" \
+        .venv/bin/python "$script" || exit
+    done
+  done
+done
 ```
 
-> **Note**: `SAPPHIRE_PREDICTION_MODE=BOTH` is handled by `run_locally.sh`,
-> which runs PENTAD then DECAD sequentially. Individual modules receive only
-> `PENTAD` or `DECAD`. Do not pass `BOTH` directly to machine_learning scripts
-> — they only accept `PENTAD` or `DECAD` and will raise an error otherwise.
-> (`linear_regression` and `postprocessing_forecasts` do handle `BOTH` natively.)
+Individual ML scripts accept only `PENTAD` or `DECAD`. Check the logged prediction
+mode and persisted API records for each horizon, not just process exit status.
+The model may use a canonical DECAD daily prediction internally. Crucially,
+`_write_ml_forecast_to_api` stores **day** records regardless of the requested
+mode; a log message ending in `(model, pentad)` does not prove that API pentad
+aggregates exist. Explicit PENTAD execution alone is therefore not a repair for
+missing period aggregates. On the 2026-11-17 local run, all nine direct PENTAD
+script invocations exited zero, but the API still had no pentad records for
+November 15–17; November 15 daily predictions remained null. Diagnose the
+failed issue date and period aggregation separately. Period outputs and postprocessing
+also depend on issue-date boundaries; running today does not automatically
+recover a missed past boundary. `daily` includes maintenance and schedule-gated
+long-term operational runs; `all` uses long-term **simulation**, not operational
+generation.
 
 Selective runs:
 
@@ -853,8 +878,8 @@ docker build -f ./apps/<module>/Dockerfile . 2>&1 | tee build.log
 | Run single app module | `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh <module>` |
 | Run single service | `cd apps && bash run_tests.sh service:<service>` |
 | Run with verbose | `cd apps/<module> && SAPPHIRE_TEST_ENV=True .venv/bin/pytest test*/ -v` |
-| **Full local pipeline (recommended)** | `SAPPHIRE_PREDICTION_MODE=BOTH ieasyhydroforecast_env_file_path=<path> bash apps/run_locally.sh all` |
-| **Full maintenance (recommended)** | `SAPPHIRE_PREDICTION_MODE=BOTH ieasyhydroforecast_env_file_path=<path> bash apps/run_locally.sh maintenance` |
+| Local operational/maintenance baseline | `ieasyhydroforecast_env_file_path=<path> bash apps/run_locally.sh daily` — also run explicit ML horizons below |
+| Explicit local ML horizons (required) | Run ML scripts directly with `PENTAD` and `DECAD` separately using the Stage 1b loop; the runner overrides even explicit PENTAD |
 | Dry-run validation | `bash apps/run_locally.sh --dry-run short-term` |
 
 ### Docker Commands
@@ -880,9 +905,111 @@ docker build -f ./apps/<module>/Dockerfile . 2>&1 | tee build.log
 
 ---
 
+## Recovering wholly failed historical ML issues
+
+Use the machine-learning virtual environment and the deployment's existing environment
+configuration. The recovery CLI previews by default. These dates are illustrative;
+select the actual issue dates explicitly before executing:
+
+```bash
+cd apps/machine_learning
+.venv/bin/python recover_failed_forecasts.py \
+  --issue-dates 2020-01-10 2020-01-15 --models TFT TIDE TSMIXER --configured-stations
+# Execute only after inspecting the preview; --stations accepts explicit configured codes.
+.venv/bin/python recover_failed_forecasts.py \
+  --issue-dates 2020-01-10 2020-01-15 --models TFT TIDE TSMIXER --configured-stations --execute
+```
+
+For explicit historical recovery, only wholly null flag-3 units accepted by
+`preview_recovery_candidates` are eligible. Latest-only automatic recovery also
+admits a wholly absent unit after a strict, successful API read confirms absence.
+Recovery validates all 11 computed daily targets and all quantiles, repeats eligibility
+immediately before writing, and verifies all five persisted values and flag 4 afterward.
+Healthy or newly protected rows are never deliberately replaced. Per-unit file locks
+coordinate these recovery processes; the API lacks compare-and-swap, so unrelated
+writers can still race the final eligibility check.
+
+Automatic latest-only recovery runs via `bin/run_latest_forecast_recovery.sh <env>`
+after Luigi daily maintenance, before long-horizon publication and frontend refresh.
+It captures one date, runs configured TFT/TIDE/TSMIXER producers sequentially, then
+always runs the dedicated period consumer, including after producer failure. Inspect
+the aggregate exit status: failure in any stage remains a failure after finalization.
+The dedicated path never invokes normal ML maintenance, historical gap filling,
+station initialization, normal postprocessing, or skill recalculation.
+
+Set `ML_FAILED_ISSUE_RECOVERY_ENABLED=false` to disable this path. Disabled ML/API
+and test mode also skip it. Unsupported configured models are diagnosed and skipped.
+Configuration is mounted read-only; intermediate state is shared between producers
+and the consumer. A private `.latest_forecast_recovery.lock` directory there prevents
+overlapping dedicated runs. After interruption, confirm its containers have stopped
+before removing a stale lock; this is not a lock against unrelated API writers.
+Nested use passes `--reuse-existing-tunnel` so the parent retains tunnel ownership.
+Standalone use owns its tunnel. Test with `SAPPHIRE_TEST_ENV=True bash apps/run_tests.sh pipeline`;
+wrapper regressions use fake Docker commands and make no API writes.
+
+An unavailable compute result remains `unrecoverable` and enters cooldown. The
+dedicated recovery invocation reports failure while still finalizing verified repairs;
+it does not rerun or roll back current operational forecasts. Inspect the model subprocess
+logs for the specific input or model failure. Invalid artifacts, eligibility read errors,
+and write/read-back failures remain errors and fail maintenance visibly.
+
+Private audit records and reusable computed artifacts live in
+`<ieasyforecast_intermediate_data_path>/ml_failed_issue_recovery`, overridable with
+`ML_FAILED_ISSUE_RECOVERY_AUDIT_DIR`. The directory must be outside any Git repository;
+these files contain operational identifiers and forecast values and must not be committed.
+Verified records carry `period_rebuild_pending` and per-horizon `pending_horizons` for
+postprocessing maintenance. A later retry can reconcile an uncertain previous write
+against its saved artifact without rewriting healthy rows, then enqueue period rebuilds.
+An interrupted, partially persisted write resumes only when its private audit has a
+durable `write_started` marker. Every already-written flag-4 row must exactly match
+the saved artifact; only remaining originally approved null flag-3 or missing targets
+are written after a fresh strict read. Changed healthy values, unknown or duplicate
+keys, flag-0 rows, and unowned mixed-flag units block resumption.
+For repaired latest issues, run `recover_latest_periods.py --forecast-date YYYY-MM-DD`
+in the postprocessing environment, using the same reference date as recovery. Ordinary
+postprocessing maintenance does not consume recovery audits. Older explicit historical
+repairs require a separately scoped period rebuild; the latest-only consumer deliberately
+leaves them alone. Skill recalculation remains a separate, explicitly selected workflow.
+
+Offline regression tests use synthetic data and mocked API calls:
+
+```bash
+cd apps
+SAPPHIRE_TEST_ENV=True bash run_tests.sh machine_learning
+```
+
+The execution tests cover changed eligibility, invalid compute output, partial or incorrect
+read-back, writer failures, restart reconciliation, locks, cooldowns, limits, cursor
+continuity, and disabled/test-mode gates.
+
 ## Related Documentation
 
 - [Deployment Guide](../deployment.md) - Server deployment procedures
 - [Development Guide](../development.md) - Module-specific development
 - [Module Issues](../plans/module_issues.md) - Known issues index
 - [UV Migration Plan](../plans/archive/uv_migration_plan_COMPLETED_2026-01-29.md) - Python 3.12 migration details (completed)
+
+### Local long-term simulation validation
+
+`run_locally.sh all`, `long-term`, and the bare `long_term_forecasting`
+target validate the configured simulation issue dates and horizon/lead pairs.
+The runner passes repeatable `--lt-simulation MODE:YEAR:MONTH_COUNT` arguments
+to `validate_pipeline.py`; the validator reads the same mode and member
+configuration without rewriting it. For example, `month_0:2024:1` checks the
+configured January 2024 issue, not the current day. Multiple modes/years and
+per-member `forecast_months` restrictions are respected. Invalid or empty
+expectations fail; missing expected forecasts remain failures.
+
+The final `all` check retains current-date short-term validation and the
+historical long-term simulation scope. All three long-term skill presence
+checks remain. Simulation presence checks establish that the expected
+issue/horizon/lead has rows; they do not prove per-station/member completeness
+or validate every historical output of maintenance postprocessing. Without
+`--lt-simulation`, operational date/scope selection is unchanged.
+
+Long-term quantile checks separate retired `EM`/`ENSEMBLE_MEAN` records from
+current products. Crossings in those legacy records are reported explicitly
+as `Legacy long-term EM quantile ordering` warnings; active-model crossings
+and all other data-quality failures remain failures. Legacy-only responses
+cannot satisfy active long-term forecast presence. Short-term EM checks stay
+strict. Validation never changes the historical records.
