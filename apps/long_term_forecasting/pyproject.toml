@@ -43,7 +43,7 @@ dependencies = [
     # HTTP
     "requests>=2.32.0",
     "aiohttp>=3.13.4",
-    "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk",
+    "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master",
     "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@4fd543e852f1eb0c834d8ab649a849a0a56d4e9b",
     # Local library dependency
     "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
@@ -56,6 +56,13 @@ dev = [
 ]
 
 [tool.uv]
+# Security floors for transitive networking dependencies.
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "urllib3>=2.8.0",
+    "aiohttp>=3.14.4",
+    "multidict>=6.9.1",
+]
 allow-insecure-host = []
 
 [[tool.uv.index]]

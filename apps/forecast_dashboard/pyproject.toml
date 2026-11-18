@@ -50,3 +50,12 @@ iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
 [tool.pytest.ini_options]
 pythonpath = [".."]
 testpaths = ["tests"]
+
+[tool.uv]
+# Security floors for transitive networking dependencies.
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "urllib3>=2.8.0",
+    "tornado>=6.6.1",
+    "anyio>=4.14.2",
+]

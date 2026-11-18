@@ -47,3 +47,11 @@ filterwarnings = [
     # luigi 3.6.0 uses deprecated datetime.utcfromtimestamp(); unfixed upstream
     "ignore:datetime.datetime.utcfromtimestamp:DeprecationWarning:luigi",
 ]
+
+[tool.uv]
+# Security floors for transitive networking dependencies.
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "urllib3>=2.8.0",
+    "tornado>=6.6.1",
+]
