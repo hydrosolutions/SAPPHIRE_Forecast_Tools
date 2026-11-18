@@ -49,6 +49,12 @@ import json, os, sys
 with open(os.environ["TEST_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\\n")
 args = sys.argv[1:]
+if "--handoff" in args:
+    from pathlib import Path
+    target = args[args.index("--handoff") + 1]
+    path = Path(os.environ["TEST_ROOT"] + target)
+    assert path.is_file(), "handoff must exist before container startup"
+    assert path.stat().st_size == 0, "fake producer must not receive old authorization"
 fail = os.environ.get("TEST_FAIL")
 sys.exit(7 if fail and any(fail == arg for arg in args) else 0)
 """)
@@ -157,3 +163,49 @@ def test_api_unset_default_and_case_insensitive_true_enable(tmp_path, setting):
     result, calls, _, _ = run_wrapper(tmp_path, settings=setting)
     assert result.returncode == 0
     assert len(calls) == 4
+
+
+@pytest.mark.parametrize("fail", ["", "recover_latest_forecasts.py", "recover_latest_long_term.py"])
+def test_lt_runs_independently_after_ml_disabled_and_finalizes_failure(tmp_path, fail):
+    result, calls, events, lock = run_wrapper(
+        tmp_path,
+        settings="ieasyhydroforecast_run_ML_models=false\nieasyhydroforecast_ml_long_term_supported_modes=month_0\n",
+        fail=fail,
+    )
+    assert result.returncode == int(bool(fail)), result.stderr
+    assert len(calls) == 2
+    assert "recover_latest_forecasts.py" in calls[0]
+    assert "recover_latest_long_term.py" in calls[1]
+    handoffs = [call[call.index("--handoff") + 1] for call in calls]
+    assert handoffs[0] == handoffs[1] and handoffs[0].startswith(
+        "/data/intermediate_data/.lt-recovery."
+    )
+    assert f"{tmp_path}/data/config:/data/config" in calls[0]  # LT config synchronization needs RW.
+    assert f"{tmp_path}/data/config:/data/config:ro" in calls[1]
+    assert not list((tmp_path / "data/intermediate_data").glob(".lt-recovery.*"))
+    assert not lock.exists() and events == ["date"]
+
+
+def test_lt_kill_switch_preserves_ml(tmp_path):
+    result, calls, _, _ = run_wrapper(
+        tmp_path,
+        settings="ieasyhydroforecast_ml_long_term_supported_modes=month_0\nLT_FAILED_ISSUE_RECOVERY_ENABLED=false\n",
+    )
+    assert result.returncode == 0 and len(calls) == 4
+
+
+@pytest.mark.parametrize("fail", ["", "TFT", "recover_latest_periods.py"])
+def test_both_enabled_share_date_and_lt_continues_after_ml_failure(tmp_path, fail):
+    result, calls, events, lock = run_wrapper(
+        tmp_path,
+        settings="ieasyhydroforecast_ml_long_term_supported_modes=month_0\n",
+        fail=fail,
+    )
+    assert result.returncode == int(bool(fail)), result.stderr
+    assert len(calls) == 6
+    assert [call[call.index("--models") + 1] for call in calls[:3]] == ["TFT", "TIDE", "TSMIXER"]
+    assert "recover_latest_periods.py" in calls[3]
+    assert "recover_latest_forecasts.py" in calls[4]
+    assert "recover_latest_long_term.py" in calls[5]
+    assert all(call[call.index("--forecast-date") + 1] == "2026-11-17" for call in calls)
+    assert events == ["date"] and not lock.exists()

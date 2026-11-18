@@ -14,17 +14,22 @@ if [ "$#" -eq 2 ]; then
 fi
 read_configuration "$1"
 FORECAST_DATE=$(date +%F) || exit 1
-case "${ieasyhydroforecast_run_ML_models:-false}" in
-    true|True|TRUE) ;; *) echo '| Latest recovery skipped: ML disabled.'; exit 0 ;;
-esac
+RUN_ML=false
+case "${ieasyhydroforecast_run_ML_models:-false}" in true|True|TRUE) RUN_ML=true ;; esac
+case "${ML_FAILED_ISSUE_RECOVERY_ENABLED:-true}" in false|False|FALSE) RUN_ML=false ;; esac
+RUN_LT=false
+if [ -n "${ieasyhydroforecast_ml_long_term_supported_modes:-}" ]; then
+    case "${LT_FAILED_ISSUE_RECOVERY_ENABLED:-true}" in true|True|TRUE) RUN_LT=true ;; esac
+fi
+if [ "$RUN_ML" = false ] && [ "$RUN_LT" = false ]; then
+    echo '| Latest recovery skipped: no enabled forecast recovery.'
+    exit 0
+fi
 API_ENABLED=$(printf '%s' "${SAPPHIRE_API_ENABLED-true}" | tr '[:upper:]' '[:lower:]')
 if [ "$API_ENABLED" != true ]; then
     echo '| Latest recovery skipped: API disabled.'
     exit 0
 fi
-case "${ML_FAILED_ISSUE_RECOVERY_ENABLED:-true}" in
-    false|False|FALSE) echo '| Latest recovery skipped: recovery disabled.'; exit 0 ;;
-esac
 case "${SAPPHIRE_TEST_ENV:-false}" in true|True|TRUE) echo '| Latest recovery skipped: test mode.'; exit 0 ;; esac
 
 # Match pipeline_docker.py's deployment-relative bind convention.
@@ -43,6 +48,7 @@ for key in ieasyforecast_configuration_path ieasyforecast_intermediate_data_path
     MOUNTS+=(-v "${host_path}:${bind_path}:${mode}")
     if [ "$key" = ieasyforecast_intermediate_data_path ]; then
         INTERMEDIATE_HOST=$host_path
+        INTERMEDIATE_CONTAINER=$bind_path
     fi
 done
 # A host lock shared by all dedicated invocations, independent of date/model.
@@ -55,6 +61,7 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     exit 1
 fi
 finish_recovery() {
+    [ -z "${LT_HANDOFF_HOST:-}" ] || rm -f "$LT_HANDOFF_HOST"
     [ "$REUSE_TUNNEL" = true ] || cleanup
     rmdir "$LOCK_DIR"
 }
@@ -75,6 +82,7 @@ if [ "$(uname -s)" = Darwin ] && [[ "$RECOVERY_API_URL" == *localhost* ]]; then
     DOCKER_ENV+=(-e "SAPPHIRE_API_URL=${RECOVERY_API_URL//localhost/host.docker.internal}")
 fi
 OVERALL_STATUS=0
+if [ "$RUN_ML" = true ]; then
 IFS=',' read -r -a MODELS <<< "${ieasyhydroforecast_available_ML_models:-TFT,TIDE,TSMIXER}"
 for MODEL in "${MODELS[@]}"; do
     MODEL=$(printf '%s' "$MODEL" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
@@ -96,4 +104,25 @@ docker run --rm --network host "${MOUNTS[@]}" "${DOCKER_ENV[@]}" \
     uv run recover_latest_periods.py --forecast-date "$FORECAST_DATE"
 STATUS=$?
 [ "$STATUS" -eq 0 ] || OVERALL_STATUS=1
+fi
+if [ "$RUN_LT" = true ]; then
+    # Create before image startup: an import/startup failure cannot reuse an
+    # older authorization file. Both containers see the same private file.
+    LT_HANDOFF_HOST=$(mktemp "$INTERMEDIATE_HOST/.lt-recovery.XXXXXX") || exit 1
+    LT_HANDOFF_CONTAINER="$INTERMEDIATE_CONTAINER/${LT_HANDOFF_HOST##*/}"
+    LT_MOUNTS=()
+    for mount in "${MOUNTS[@]}"; do
+        LT_MOUNTS+=("${mount%:ro}")
+    done
+    docker run --rm --network host "${LT_MOUNTS[@]}" "${DOCKER_ENV[@]}" \
+        "mabesa/sapphire-lt-forecasting:${ieasyhydroforecast_backend_docker_image_tag}" \
+        uv run recover_latest_forecasts.py --forecast-date "$FORECAST_DATE" --handoff "$LT_HANDOFF_CONTAINER"
+    STATUS=$?
+    [ "$STATUS" -eq 0 ] || OVERALL_STATUS=1
+    docker run --rm --network host "${MOUNTS[@]}" "${DOCKER_ENV[@]}" \
+        "mabesa/sapphire-postprocessing:${ieasyhydroforecast_backend_docker_image_tag}" \
+        uv run recover_latest_long_term.py --forecast-date "$FORECAST_DATE" --handoff "$LT_HANDOFF_CONTAINER"
+    STATUS=$?
+    [ "$STATUS" -eq 0 ] || OVERALL_STATUS=1
+fi
 exit "$OVERALL_STATUS"

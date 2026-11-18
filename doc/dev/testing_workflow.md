@@ -937,9 +937,10 @@ the aggregate exit status: failure in any stage remains a failure after finaliza
 The dedicated path never invokes normal ML maintenance, historical gap filling,
 station initialization, normal postprocessing, or skill recalculation.
 
-Set `ML_FAILED_ISSUE_RECOVERY_ENABLED=false` to disable this path. Disabled ML/API
-and test mode also skip it. Unsupported configured models are diagnosed and skipped.
-Configuration is mounted read-only; intermediate state is shared between producers
+Set `ML_FAILED_ISSUE_RECOVERY_ENABLED=false` to disable ML recovery independently
+of LT. Disabled ML skips ML recovery; disabled API or test mode skips both paths.
+Unsupported configured ML models are diagnosed and skipped. ML configuration is
+mounted read-only; intermediate state is shared between producers
 and the consumer. A private `.latest_forecast_recovery.lock` directory there prevents
 overlapping dedicated runs. After interruption, confirm its containers have stopped
 before removing a stale lock; this is not a lock against unrelated API writers.
@@ -981,6 +982,43 @@ SAPPHIRE_TEST_ENV=True bash run_tests.sh machine_learning
 The execution tests cover changed eligibility, invalid compute output, partial or incorrect
 read-back, writer failures, restart reconciliation, locks, cooldowns, limits, cursor
 continuity, and disabled/test-mode gates.
+
+### Automatic latest-only long-term recovery
+
+The same dedicated wrapper runs LT recovery after ML finalization when
+`ieasyhydroforecast_ml_long_term_supported_modes` is nonempty. Set
+`LT_FAILED_ISSUE_RECOVERY_ENABLED=false` to disable LT independently of ML.
+The calibration-only `monthly` mode is excluded. Each member uses its latest
+configured issue already due; missing declared mode files are errors, while valid
+independent modes can continue. The current/previous-month recovery window remains:
+older latest seasonal or quarterly issues are reported blocked, not backfilled.
+
+Only absent or wholly null flag-2 raw results are eligible. Healthy raw results,
+including rows with usable quantiles but no point value, are protected. Successful
+repairs retain their original issue, lead and validity dates and carry flag 1;
+every submitted result requires exact read-back. Existing observation metadata is
+preserved. These are retrospective reconstructions using current models and inputs.
+
+A fresh private handoff file under the intermediate directory authorizes only
+selected derived scopes. The wrapper creates it before starting the LT producer,
+then runs LT postprocessing even after producer failure and retains aggregate
+failure status. LT configuration is writable because loading synchronizes model
+settings; the same dedicated recovery lock serializes these invocations. Ordinary
+and manual writers do not share that lock; coordinate overlapping runs.
+
+No durable LT queue is introduced. A later invocation rediscovers healthy flag-1
+API results at still-current issues and retries the applicable derived outputs.
+It trusts current API state after an interrupted write rather than claiming to
+recover the lost computation's intended payload. Healthy colliding quarterly
+member rows remain protected; monthly-derived values can still feed ensembles in
+memory under the existing source-selection rules. Skill recalculation is separate.
+
+For diagnostics, the LT environment provides
+`recover_latest_forecasts.py --forecast-date YYYY-MM-DD --handoff PATH`; the PP
+environment provides `recover_latest_long_term.py` with the same arguments. These
+are real API-writing entry points, not previews. Prefer the wrapper, which owns
+the fresh handoff, lock, captured date and finalization. Do not reuse an old handoff.
+The existing operator-invoked dated recovery and ordinary maintenance are unchanged.
 
 ## Related Documentation
 

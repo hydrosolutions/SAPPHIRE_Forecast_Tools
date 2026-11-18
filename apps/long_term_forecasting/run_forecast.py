@@ -218,6 +218,7 @@ def run_single_model(
     offset_discharge: int,
     station_codes: list[str] | None = None,
     recovery_flag: int | None = None,
+    forecast_writer=None,
 ) -> dict[str, Any]:
     """
     Run a single forecast model and return the results.
@@ -414,7 +415,7 @@ def run_single_model(
     horizon_type = forecast_configs.get_horizon_type()
 
     # Save forecast (configured storage backend)
-    save_success = save_forecast(
+    save_success = (forecast_writer or save_forecast)(
         forecast_df=forecast,
         model_name=model_name,
         output_path=output_path,
