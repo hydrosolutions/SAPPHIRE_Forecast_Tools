@@ -568,6 +568,8 @@ def _classify_unit_for_recovery(
     api_model_type: str,
     code: str,
     rows: pd.DataFrame,
+    *,
+    allow_absent=False,
 ) -> dict:
     """Classify one (issue_date, model, code) unit for recovery eligibility.
 
@@ -616,8 +618,18 @@ def _classify_unit_for_recovery(
             "n_targets": len(replace_keys) + len(insert_keys),
         }
 
-    # Step 1: No rows at all → not a flag-3 case
-    if rows.empty:
+    # Step 1: Only the automatic opt-in admits strictly confirmed absence.
+    if len(rows) == 0:
+        if allow_absent:
+            result = _candidate(
+                [],
+                [
+                    ("day", str(code), api_model_type, issue_date_str, target)
+                    for target in _expected_targets(issue_date_str)
+                ],
+            )
+            result["reason"] = "strict read confirmed wholly absent unit"
+            return result
         return _skipped("no rows present for this unit; absent records are not flag-3")
 
     # Step 2: Identity validation — required columns must be present
@@ -817,6 +829,8 @@ def preview_recovery_candidates(
     models: list[str],
     station_codes: list[str],
     client_factory=None,
+    *,
+    allow_absent=False,
 ) -> dict:
     """Preview recovery eligibility for flag-3 wholly-failed units. Read-only.
 
@@ -1037,6 +1051,7 @@ def preview_recovery_candidates(
                         api_model_type=api_model_type,
                         code=code_str,
                         rows=rows,
+                        allow_absent=allow_absent,
                     )
                 except Exception as _clf_exc:
                     blocked.append(

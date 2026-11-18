@@ -26,7 +26,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -515,6 +515,125 @@ def run_tier1_short_term(
     return results
 
 
+def simulation_expectations(specifications: list[str]) -> list[tuple[date, str, int]]:
+    """Resolve explicit MODE:YEAR:MONTH_COUNT simulation inputs, without writes.
+
+    The simulator issues January through MONTH_COUNT on the configured issue
+    day. Members use that same day and their own forecast_months restrictions;
+    another allowed month cannot be within the execution gate's five days.
+    This is presence validation per issue/horizon/lead, not station completeness.
+    """
+    expectations = set()
+    supported = supported_long_term_modes()
+    root = Path(os.environ["ieasyhydroforecast_configuration_path"])
+    config_dir = root / os.environ["ieasyhydroforecast_ml_long_term_configuration"]
+    for specification in specifications:
+        mode, year_text, count_text = specification.split(":")
+        year, count = int(year_text), int(count_text)
+        if mode not in supported or not 1 <= count <= 12:
+            raise ValueError(f"Invalid simulation specification: {specification}")
+        config = json.loads((config_dir / f"{mode}.json").read_text())
+        issue_day = int(config["operational_issue_day"])
+        lead = int(config["operational_month_lead_time"])
+        horizon = config.get("horizon_type", "month")
+        if not 1 <= issue_day <= 31 or lead < 0 or horizon not in {"month", "quarter", "season"}:
+            raise ValueError(f"Invalid simulation schedule in {mode}")
+        scheduled_months = set()
+        for family, models in config["models_to_use"].items():
+            for model in models:
+                general_path = (
+                    root / config["model_folder"] / family / model / "general_config.json"
+                )
+                general = json.loads(general_path.read_text())
+                months = general.get("forecast_months", list(range(1, 13)))
+                if (
+                    not isinstance(months, list)
+                    or not months
+                    or any(type(m) is not int or not 1 <= m <= 12 for m in months)
+                ):
+                    raise ValueError(f"Invalid forecast_months for {mode}/{model}")
+                scheduled_months.update(months)
+        if not scheduled_months:
+            raise ValueError(f"No configured members for simulation {mode}")
+        for month in range(1, count + 1):
+            # Deliberately do not clamp: simulate_forecasts.py also rejects an
+            # impossible issue day rather than silently simulating another day.
+            issue = date(year, month, issue_day)
+            if month in scheduled_months:
+                expectations.add((issue, horizon, lead))
+    if not expectations:
+        raise ValueError("Simulation schedules no forecast outputs")
+    return sorted(expectations)
+
+
+def _legacy_long_term_em_mask(frame: pd.DataFrame) -> pd.Series:
+    """Recognize only retired long-term EM, leaving unknown model types strict."""
+    models = frame.get("model_type", pd.Series("", index=frame.index))
+    legacy = models.astype("string").str.strip().str.upper().isin({"EM", "ENSEMBLE_MEAN"})
+    if "horizon_type" in frame:
+        legacy &= frame["horizon_type"].isin({"month", "quarter", "season"})
+    return legacy
+
+
+def _require_active_long_term_forecasts(results: list[CheckResult]) -> None:
+    """Retired rows remain available for diagnostics, but cannot prove presence."""
+    for result in results:
+        if (
+            result.status == "PASS"
+            and result.name.startswith("Long-term forecasts")
+            and result.data is not None
+            and not result.data.empty
+            and _legacy_long_term_em_mask(result.data).all()
+        ):
+            result.status = "FAIL"
+            result.detail = "no active forecast records (only retired long-term EM)"
+
+
+def run_tier1_simulation(post_client, expectations) -> list[CheckResult]:
+    """Check only the exact long-term keys requested by the simulation."""
+    results = []
+    for issue, horizon, lead in expectations:
+        result = check_presence(
+            post_client,
+            "read_long_term_forecasts",
+            f"Long-term forecasts ({horizon} hv{lead}, issue {issue})",
+            module="long_term_forecasting",
+            horizon_type=horizon,
+            horizon_value=lead,
+            start_date=str(issue),
+            end_date=str(issue),
+        )
+        if result.status == "PASS":
+            frame = result.data
+            # Fail closed if a client/backend ignores the exact query filters.
+            try:
+                matches = (
+                    pd.to_datetime(frame["date"], errors="coerce").dt.date.eq(issue)
+                    & frame["horizon_type"].eq(horizon)
+                    & pd.to_numeric(frame["horizon_value"], errors="coerce").eq(lead)
+                )
+                if not matches.all():
+                    raise ValueError("response contains a different issue/horizon/lead")
+            except (KeyError, TypeError, ValueError) as exc:
+                result.status = "FAIL"
+                result.detail = f"Invalid simulation response: {exc}"
+        results.append(result)
+    # The existing LT pipeline recalculates all three skill horizons, even
+    # when the simulation generates only monthly forecasts. Retain those checks.
+    for horizon in ("month", "quarter", "season"):
+        results.append(
+            check_presence(
+                post_client,
+                "read_skill_metrics",
+                f"Long-term skill metrics ({horizon})",
+                module="postprocessing_forecasts",
+                horizon=horizon,
+            )
+        )
+    _require_active_long_term_forecasts(results)
+    return results
+
+
 def run_tier1_long_term(
     post_client,
     forecast_date: date,
@@ -625,6 +744,7 @@ def run_tier1_long_term(
             )
         )
 
+    _require_active_long_term_forecasts(results)
     return results
 
 
@@ -1130,8 +1250,25 @@ def run_tier2_long_term(
     """
     results: list[CheckResult] = []
 
-    # Long-term uses a wider quantile set
-    results.append(check_quantile_ordering(tier1_results, quantile_cols=LT_QUANTILE_COLS))
+    # Retired LT EM rows remain in storage. Audit their quantiles separately;
+    # never weaken active-product checks or change the shared short-term checker.
+    active_quantiles, legacy_quantiles = [], []
+    for result in tier1_results:
+        if result.data is None or result.data.empty:
+            active_quantiles.append(result)
+            continue
+        legacy = _legacy_long_term_em_mask(result.data)
+        active_quantiles.append(replace(result, data=result.data.loc[~legacy]))
+        if legacy.any():
+            legacy_quantiles.append(replace(result, data=result.data.loc[legacy]))
+    results.append(check_quantile_ordering(active_quantiles, quantile_cols=LT_QUANTILE_COLS))
+    if legacy_quantiles:
+        legacy_check = check_quantile_ordering(legacy_quantiles, quantile_cols=LT_QUANTILE_COLS)
+        if legacy_check.status == "FAIL":
+            legacy_check.name = "Legacy long-term EM quantile ordering"
+            legacy_check.status = "WARN"
+            legacy_check.detail += " in retired long-term EM records; historical data unchanged"
+            results.append(legacy_check)
     # Long-term discharge column is "q"
     results.append(
         check_discharge_non_negative(
@@ -1396,6 +1533,7 @@ def validate(
     output_json_path: str | None = None,
     phase: str | None = None,
     baseline_path: str | None = None,
+    lt_expectations: list[tuple[date, str, int]] | None = None,
 ) -> int:
     """Run all validation tiers and return exit code.
 
@@ -1476,7 +1614,11 @@ def validate(
 
     if target in ("long-term", "all"):
         if post_ready:
-            t1_lt = run_tier1_long_term(post_client, forecast_date)
+            t1_lt = (
+                run_tier1_simulation(post_client, lt_expectations)
+                if lt_expectations is not None
+                else run_tier1_long_term(post_client, forecast_date)
+            )
         else:
             t1_lt = []
         if module_filter:
@@ -1500,7 +1642,11 @@ def validate(
     # --- Tier 2: Data Correctness ---
     if tier1_results:
         # Split LT results from short-term results for separate routing
-        lt_results = [r for r in tier1_results if "month" in r.name.lower()]
+        lt_results = (
+            [r for r in tier1_results if r.name.startswith("Long-term")]
+            if lt_expectations is not None
+            else [r for r in tier1_results if "month" in r.name.lower()]
+        )
         if lt_results:
             t2_lt = run_tier2_long_term(lt_results)
             print_results("Tier 2: Data Correctness (long-term)", t2_lt)
@@ -1518,6 +1664,7 @@ def validate(
                     or "skill" in r.name.lower()
                 )
                 and "month" not in r.name.lower()
+                and not (lt_expectations is not None and r.name.startswith("Long-term"))
             ]
             t2 = run_tier2(horizon_results, horizon, module_filter, forecast_date)
             print_results("Tier 2: Data Correctness", t2)
@@ -1715,6 +1862,12 @@ def main(argv: list[str] | None = None) -> int:
         help="File path for the baseline JSON (required when --phase is set).",
     )
 
+    parser.add_argument(
+        "--lt-simulation",
+        action="append",
+        metavar="MODE:YEAR:MONTH_COUNT",
+        help="Validate this simulation's configured issue dates/horizon/lead (repeatable).",
+    )
     args = parser.parse_args(argv)
 
     # --baseline is required when --phase is set
@@ -1731,6 +1884,27 @@ def main(argv: list[str] | None = None) -> int:
             target = MODULE_DEFAULT_TARGET[args.module]
         else:
             target = "short-term"
+
+    lt_expectations = None
+    if args.lt_simulation:
+        if target not in {"long-term", "all"} or args.phase:
+            parser.error("--lt-simulation requires --target long-term/all and no --phase")
+        try:
+            lt_expectations = simulation_expectations(args.lt_simulation)
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            LongTermHorizonResolverError,
+        ) as exc:
+            print(f"[FAIL] Cannot resolve simulation expectations: {exc}")
+            return 1
+        print(
+            "Long-term simulation expectations: "
+            + ", ".join(f"{issue}:{horizon}:{lead}" for issue, horizon, lead in lt_expectations)
+        )
 
     forecast_date = args.forecast_date or date.today()
     horizons = resolve_horizons(args.horizon, target)
@@ -1763,6 +1937,7 @@ def main(argv: list[str] | None = None) -> int:
         output_json_path=args.output_json,
         phase=args.phase,
         baseline_path=args.baseline,
+        **({"lt_expectations": lt_expectations} if lt_expectations is not None else {}),
     )
 
 

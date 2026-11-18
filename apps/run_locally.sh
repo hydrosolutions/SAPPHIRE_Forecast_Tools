@@ -7,7 +7,27 @@
 # Runs SAPPHIRE forecast modules locally using each module's uv-based .venv,
 # following the correct production dependency order.
 #
-# Daily run (recommended — does everything):
+# LOCAL ML LIMITATION: BOTH does not provide both ML output horizons.
+# The current dispatcher forces ML to DECAD in daily, short-term, all,
+# maintenance, and even the bare machine_learning target. An explicit
+# PENTAD argument to this runner therefore does NOT invoke pentad ML.
+# Until dispatch is fixed, run ML scripts directly in each mode:
+#   export ieasyhydroforecast_env_file_path=/absolute/path/to/.env
+#   cd apps/machine_learning
+#   for mode in PENTAD DECAD; do
+#     for model in TFT TIDE TSMIXER; do
+#       for script in recalculate_nan_forecasts.py make_forecast.py fill_ml_gaps.py; do
+#         SAPPHIRE_PREDICTION_MODE="$mode" SAPPHIRE_MODEL_TO_USE="$model" \
+#           .venv/bin/python "$script" || exit
+#       done
+#     done
+#   done
+# Verify the logged prediction mode and API outputs, not just exit status.
+# ML API writes always store DAY rows, even in PENTAD mode. Explicit PENTAD
+# execution alone does not repair missing period aggregates.
+# These current-date runs do not recover missed historical issue dates.
+#
+# Daily run (baseline; also run explicit PENTAD ML as described above):
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh daily
 #
@@ -91,24 +111,11 @@
 #   Only that module's data is checked (Tier 1 + Tier 2).
 #   For standalone use: validate_pipeline.py --module <module_name>
 #
-# machine_learning mode resolution (bare target vs. maintenance/daily):
-#   The bare `machine_learning` target has no outer per-mode loop, so it
-#   resolves SAPPHIRE_PREDICTION_MODE itself, via resolve_ml_bare_target_modes:
-#   PENTAD or DECAD resolves to itself; BOTH resolves to (PENTAD DECAD), run
-#   in that order; unset/empty is an error (exit 1) naming
-#   SAPPHIRE_PREDICTION_MODE and its valid values -- there is no silent
-#   default here. `maintenance:machine_learning`, `all` and `maintenance`
-#   instead resolve the mode via their own outer per-mode loop before
-#   calling into machine_learning; those loops still default an unset mode
-#   to PENTAD with a WARN rather than erroring, so an operator moving
-#   between the bare target and these should not assume the two resolve a
-#   given SAPPHIRE_PREDICTION_MODE the same way. `daily` is different again:
-#   run_daily_pipeline ignores SAPPHIRE_PREDICTION_MODE for its own dispatch
-#   and always runs PENTAD then DECAD regardless of the incoming value (it
-#   only captures/restores the operator's original value around the loop,
-#   for emit_continue_on_error_hint's retry command) -- it neither defaults
-#   nor errors on an unset mode, because it never consults it in the first
-#   place.
+# machine_learning mode resolution:
+#   resolve_ml_bare_target_modes validates PENTAD/DECAD/BOTH, but the current
+#   dispatch then overrides the value to DECAD. Aggregate and maintenance
+#   targets also force DECAD. The direct-script workaround above is required
+#   for explicit local pentad ML output; BOTH is not a complete workflow.
 #
 # Prerequisites:
 #   - Bash 4.4+ (macOS ships 3.2; install via: brew install bash)
@@ -136,6 +143,9 @@ DRY_RUN=false
 # the abort site, not an inference from the target name -- used to gate the
 # continue-on-error hint.
 PIPELINE_ABORTED=false
+
+# Captured simulation inputs; reused by final all validation, never short-term.
+LT_SIMULATION_VALIDATION_ARGS=()
 
 # Invocation-time mode env var, captured before anything in main() (the
 # per-mode dispatch loops) can mutate/resolve it, so
@@ -841,6 +851,26 @@ run_long_term_forecasting() {
     # and exercises the same code path.
     local sim_years="${LT_SIMULATE_YEARS:-2024}"
     local sim_num_months="${LT_SIMULATE_NUM_MONTHS:-1}"
+    local simulation_modes=() simulation_mode simulation_year
+    if [ -n "${lt_forecast_mode:-}" ]; then
+        simulation_modes=("$lt_forecast_mode")
+    else
+        # Match the producer loop below: all shell whitespace, including newlines.
+        for simulation_mode in ${LT_SIMULATE_MODES:-0}; do
+            simulation_modes+=("month_${simulation_mode}")
+        done
+    fi
+    LT_SIMULATION_VALIDATION_ARGS=()
+    for simulation_mode in ${simulation_modes[@]+"${simulation_modes[@]}"}; do
+        for simulation_year in $sim_years; do
+            LT_SIMULATION_VALIDATION_ARGS+=(--lt-simulation "${simulation_mode}:${simulation_year}:${sim_num_months}")
+        done
+    done
+
+    # An empty explicit simulation must fail resolution, not fall back to today.
+    if [ ${#LT_SIMULATION_VALIDATION_ARGS[@]} -eq 0 ]; then
+        LT_SIMULATION_VALIDATION_ARGS=(--lt-simulation "")
+    fi
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting.log"
     > "$CURRENT_MODULE_LOG"
@@ -1496,8 +1526,12 @@ run_api_validation() {
 
     CURRENT_MODULE_LOG="${ERROR_DIR}/api_validation.log"
     > "$CURRENT_MODULE_LOG"
+    local validation_args=()
+    if [ "$target" = long-term ] || [ "$target" = all ]; then
+        validation_args=(${LT_SIMULATION_VALIDATION_ARGS[@]+"${LT_SIMULATION_VALIDATION_ARGS[@]}"})
+    fi
     run_in_venv postprocessing_forecasts ../validate_pipeline/validate_pipeline.py \
-        -- --target "$target"
+        -- --target "$target" ${validation_args[@]+"${validation_args[@]}"}
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
@@ -1548,9 +1582,12 @@ run_module_validation() {
     # SAPPHIRE_PREDICTION_MODE=BOTH, a FAIL from either mode's validation
     # previously killed run_locally.sh outright instead of producing a FAIL
     # row.)
-    local rc=0
+    local rc=0 validation_args=()
+    if [ "$module" = long_term_forecasting ]; then
+        validation_args=(${LT_SIMULATION_VALIDATION_ARGS[@]+"${LT_SIMULATION_VALIDATION_ARGS[@]}"})
+    fi
     run_in_venv postprocessing_forecasts ../validate_pipeline/validate_pipeline.py \
-        -- --module "$module" || rc=$?
+        -- --module "$module" ${validation_args[@]+"${validation_args[@]}"} || rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
@@ -2321,11 +2358,9 @@ Modules (for single-module operational runs):
   preprocessing_runoff    Process runoff data
   preprocessing_gateway   Quantile mapping, ERA5 extension, snow data
   linear_regression       Linear regression forecasts
-  machine_learning        ML forecasts (TFT, TIDE, TSMIXER). Resolves its own
-                          prediction mode(s) via resolve_ml_bare_target_modes;
-                          requires SAPPHIRE_PREDICTION_MODE to be set (see
-                          entry below) -- an unset/empty mode is an error,
-                          not a default.
+  machine_learning        ML forecasts (TFT, TIDE, TSMIXER). Requires a valid
+                          SAPPHIRE_PREDICTION_MODE, but currently overrides
+                          it to DECAD. See the direct-script workaround above.
   postprocessing_forecasts  Post-process forecast outputs
   long_term_forecasting   Long-term monthly forecasts
 
@@ -2334,30 +2369,21 @@ Flags:
   --dry-run               Validate environment and venvs without running
   --help                  Show this help message
 
+Known local ML limitation:
+  BOTH does not ensure pentad ML output. Even machine_learning with PENTAD
+  currently dispatches DECAD. Run the ML scripts directly for PENTAD and
+  DECAD separately; see this file's header and doc/dev/testing_workflow.md.
+
 Environment variables:
   ieasyhydroforecast_env_file_path   Path to .env config file (required)
   SAPPHIRE_PREDICTION_MODE           PENTAD, DECAD, or BOTH (short-term/maintenance).
-                                        Three targets resolve this differently, so check
-                                        which one you are running:
-                                          - bare `machine_learning`: resolved by
-                                            resolve_ml_bare_target_modes. PENTAD or DECAD
-                                            runs once for that horizon; BOTH runs PENTAD
-                                            then DECAD; unset/empty is a hard error (exit 1)
-                                            naming this variable and its valid values --
-                                            there is no default horizon for this target.
-                                          - `maintenance:machine_learning` / `all` /
-                                            `maintenance`: resolved by an outer per-mode
-                                            loop in run_locally.sh itself, which defaults
-                                            an unset mode to PENTAD (WARN) rather than
-                                            erroring.
-                                          - `daily`: ignores this variable for its own
-                                            dispatch -- run_daily_pipeline always runs
-                                            PENTAD then DECAD regardless of the incoming
-                                            value (it only captures/restores the
-                                            operator's original value around the loop,
-                                            for the --continue-on-error retry hint).
-                                          - every other module target: forwarded as-is to
-                                            the module's own venv invocation.
+                                        LR/postprocessing use the requested horizons.
+                                        ML dispatch currently forces DECAD for all
+                                        runner targets, including bare machine_learning.
+                                        Bare machine_learning rejects unset/empty or
+                                        invalid values before overriding the valid mode.
+                                        For PENTAD ML, invoke scripts directly as shown
+                                        in this file's header; do not rely on BOTH.
   lt_forecast_mode                   Specific month for long-term (e.g. month_3). MANDATORY
                                         (no default) for maintenance:long_term_forecasting.
   LT_RECOVERY_DATE                   ISO issue date (YYYY-MM-DD) for the ONE month

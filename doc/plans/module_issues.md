@@ -6,6 +6,10 @@ For the full workflow, see [README.md](README.md).
 
 ---
 
+## Cross-module recovery plan under review
+
+[Automatic recovery of failed short- and long-term forecasts](issues/review_gi_draft_automatic_forecast_recovery.md) — **Review: ML and LT implemented and reviewed; full tests, Docker and ordinary pipeline pass. Live recovery verified raw repairs and derived rebuilds while retaining failures for unresolved inputs/models.** Extends the ML-020 working-branch recovery path and existing dated long-term recovery into bounded daily maintenance; older gaps are manual-only. Covers minimal selective repair and verified downstream rebuilds; broader infrastructure work deferred. Existing general maintenance behavior is outside the new recovery-only guarantee, explicitly documented in the plan. No deployment authorized or completed by this planning task.
+
 ## Decisions Needed
 
 These are blocking decisions — work downstream cannot advance until they are resolved.
@@ -252,6 +256,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **LTF-016** | Stale monthly rows from pre-Feb-2026 hindcasts: offset windows (both orgs, mostly tjhm) and wrong January years (kghm GBT family). The producer is already fixed on trunk (`fdfb6ae1`, `99c5a552`); fix = verify deployed image, re-import from current CSVs and delete the stale member and ensemble rows, then the monthly recalc | **High** | Draft | [`high_prio_gi_draft_ltf_monthly_window_labels.md`](issues/high_prio_gi_draft_ltf_monthly_window_labels.md) | Data fix needs the service owner; re-importing raw tjhm CSVs would reintroduce the defect in prod |
 | **LTF-017** | `_add_climatological_quantile_bounds` takes the σ month from the raw `valid_from` (before post-processing) and leave-one-out from `today.year`, so GBT-family monthly Q25/Q75 use the wrong month's σ for many kghm month_1–3 issues and tjhm month_3 (Jul/Dec) — live since 2026-04-14 (LTF-005) | **High** | Draft | [`high_prio_gi_draft_ltf_climatological_bounds_raw_month.md`](issues/high_prio_gi_draft_ltf_climatological_bounds_raw_month.md) | Independent; one optional keyword parameter |
 | **LTF-019** | Some native calendar-quarter LR rows carry a NULL `q`/value in `long_forecasts` although the LT module's own quarter forecast CSV has a value for the same station/model/date/`valid_from` (17 tjhm native Q3-2026 LR_Base/LR_SM rows, dev DB); separately, after PP-064 removes rolling-window rows, 16 kghm Q2-2026 and 3 tjhm Q3-2026 calendar-window LR rows are stored with a null `q`, so those stations show no LR value for that quarter | **Medium** | Draft | [`mid_prio_gi_draft_ltf_null_native_quarter_lr_values.md`](issues/mid_prio_gi_draft_ltf_null_native_quarter_lr_values.md) | Found 2026-09-27, read-only dev-DB cross-check during the PP-064/FD-029 end-to-end review. Also observed (cross-reference PP-061, do not duplicate): the postprocessing writer hardcodes `flag=0` on quarter LR rows, rewriting ~3,970 kghm rows from flag 1 to 0 in a local run. Scope: trace where the value is lost (LT producer's API write vs. the importer vs. the postprocessing rewrite); root-cause first, fix plan after. |
+| **LTF-020** | Empty model output can fail during success-flag assignment instead of reporting no usable prediction | **Medium** | Draft | [`mid_prio_gi_draft_ltf_empty_feature_frame.md`](issues/mid_prio_gi_draft_ltf_empty_feature_frame.md) | Found during latest-only recovery verification; source/log inference needs a captured traceback. Deferred from the recovery patch. |
 
 ### Postprocessing Forecasts (`pp`)
 
