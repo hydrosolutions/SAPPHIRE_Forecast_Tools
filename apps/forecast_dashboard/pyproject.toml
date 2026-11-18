@@ -28,7 +28,7 @@ dependencies = [
     "ieasyreports @ git+https://github.com/hydrosolutions/ieasyreports.git@main",
     # Internal dependency
     "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
-    "pillow>=12.2.0",
+    "pillow>=13.0.0",
     "httpx==0.28.1",
 ]
 
