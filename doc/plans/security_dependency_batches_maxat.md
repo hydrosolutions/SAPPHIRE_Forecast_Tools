@@ -363,9 +363,12 @@ package), all Git revisions, pre-commit and platformdirs remain unchanged.
 
 The alert snapshot requires virtualenv 21.14.9, but that version has an
 [additional advisory fixed in 21.14.10](https://github.com/advisories/GHSA-4f8h-vr72-p32c).
-The selected virtualenv and filelock releases are non-yanked and list no
-vulnerabilities in their official PyPI metadata at verification time. Targeted
-resolution uses the first patched versions and required transitive minimums.
+The selected releases were non-yanked and their official PyPI metadata listed
+no vulnerabilities, but that check was insufficient: virtualenv 21.14.10 is
+affected by [GHSA-cx6f-vjhg-g3cc](https://github.com/pypa/virtualenv/security/advisories/GHSA-cx6f-vjhg-g3cc),
+published before this update. The initial audit missed this version-specific
+regression. Batch 6 below corrects the selection using the GitHub advisory
+catalog as well as release metadata.
 
 Validation uses an isolated core environment with the same Python 3.12.10
 as the previous batch. Frozen installation and fresh-cache pre-commit Python
@@ -442,3 +445,46 @@ warning messages as baseline for unavailable historical runoff and monthly
 discharge norms; those data-availability gaps remain outside this dependency
 patch. This batch follows merged core-tooling PR #545. Evidence is outside Git under
 `/tmp/sapphire-runoff-auth-*`.
+
+## Batch 6: virtualenv activation follow-up — Review
+
+Initially prepared from `origin/maxat_sapphire_2` at `428127b4` after PR #545,
+then rebased onto `4bf06c5c` after runoff PR #546 merged. This corrects the
+missed advisory described in Batch 4. The only
+package change is virtualenv 21.14.10 → 21.14.13, with the core manifest's
+security floor raised to match. All transitive versions, Git revisions and
+the complete 22-package production graph (including the core package) remain
+unchanged. No application logic or service files change.
+
+[GHSA-cx6f-vjhg-g3cc](https://github.com/pypa/virtualenv/security/advisories/GHSA-cx6f-vjhg-g3cc)
+affects versions >=21.14.9,<21.14.13: a caller-supplied activation prompt can
+execute command substitution when Bash prompt expansion is enabled later.
+21.14.13 is the minimum forward fix. The paginated GitHub global catalog
+returned 24 virtualenv advisories, the maintainer catalog returned 22, and
+version-specific queries found none affecting the candidate or the five
+retained transitives on 2026-11-19. Official release metadata declares the
+same dependency requirements as 21.14.10. These are advisory-snapshot findings,
+not a guarantee against future disclosures.
+
+Validation uses an isolated Python 3.12.10 core environment. Frozen installation
+and a fresh-cache local pre-commit Python hook passed. An offline, disposable
+interactive Bash probe reproduces the advisory with 21.14.10 and verifies that
+21.14.13 leaves the custom prompt literal without executing its harmless marker
+command after prompt expansion is re-enabled. No user shell configuration,
+credentials or deployment data were used. Evidence is outside Git under
+`/tmp/sapphire-virtualenv-*`. Full `run_tests.sh` passed 9,677 tests across all
+16 scopes, with exactly the same 12 owner-accepted skips and two existing
+expected failures as the preceding batch. Three Docker checks skipped in the
+initial restricted core run passed in the final full run with Docker access.
+Fresh independent read-only adversarial review found no actionable defect.
+After rebasing onto merged PR #546, the full suite passed again with the
+updated runoff environment: the same 9,677 passes, 12 accepted skips and two
+expected failures. The virtualenv manifest and lockfile are byte-identical
+to the candidate used for the activation and pre-commit probes; both the core
+and runoff lock consistency checks passed.
+
+No additional live pipeline or Docker image build was run for this
+optional development dependency: production dependencies, entry points,
+Docker configuration and data flow remain unchanged. The preceding runtime
+and runoff batches cover those paths; this follow-up exercises the affected
+tooling directly. Other shells, platforms and Python versions were not tested.
