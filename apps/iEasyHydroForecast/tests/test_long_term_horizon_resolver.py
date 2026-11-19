@@ -290,3 +290,101 @@ def test_operational_schedules_propagates_error_for_incomplete_mode(monkeypatch,
 
     with pytest.raises(resolver.LongTermHorizonResolverError, match="month_1"):
         resolver.operational_schedules()
+
+
+def test_monthly_batch_discovery_preserves_order_and_explicit_strictness(
+    monkeypatch, tmp_path, caplog
+):
+    modes = ["month_2", "month_0", "month_3", "month_1"] + [f"month_{i}" for i in range(4, 10)]
+    _set_long_term_env(monkeypatch, tmp_path, modes)
+    for i in range(4):
+        _write_config(
+            tmp_path,
+            f"month_{i}",
+            {
+                "operational_month_lead_time": i,
+                "operational_issue_day": 1,
+            },
+        )
+    assert resolver.available_monthly_batch_modes() == modes[:4]
+    assert resolver.supported_long_term_modes() == modes
+    for mode in modes[4:]:
+        assert mode in caplog.text
+        assert str(tmp_path / "config" / "long_term_configs" / f"{mode}.json") in caplog.text
+    with pytest.raises(FileNotFoundError, match="month_4"):
+        resolver.operational_schedule_for_mode("month_4")
+
+
+def test_monthly_batch_no_candidates_needs_no_directories(monkeypatch):
+    monkeypatch.setenv(resolver.SUPPORTED_MODES_ENV, "quarter,seasonal_april")
+    monkeypatch.delenv(resolver.CONFIG_ROOT_ENV, raising=False)
+    monkeypatch.delenv(resolver.LONG_TERM_CONFIG_DIR_ENV, raising=False)
+    assert resolver.available_monthly_batch_modes() == []
+
+
+@pytest.mark.parametrize(
+    "missing_env", [resolver.CONFIG_ROOT_ENV, resolver.LONG_TERM_CONFIG_DIR_ENV]
+)
+def test_monthly_batch_requires_directory_environment(monkeypatch, tmp_path, missing_env):
+    _set_long_term_env(monkeypatch, tmp_path, ["month_0"])
+    monkeypatch.delenv(missing_env)
+    with pytest.raises(resolver.LongTermHorizonResolverError, match=missing_env):
+        resolver.available_monthly_batch_modes()
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "missing_root",
+        "root_file",
+        "missing_directory",
+        "directory_file",
+        "all_absent",
+        "broken_link",
+        "directory_entry",
+        "permission",
+    ],
+)
+def test_monthly_batch_rejects_invalid_filesystem(monkeypatch, tmp_path, caplog, entry):
+    _set_long_term_env(monkeypatch, tmp_path, ["month_0", "month_1"])
+    root = tmp_path / "config"
+    directory = root / "long_term_configs"
+    if entry == "root_file":
+        root.write_text("file")
+    elif entry != "missing_root":
+        root.mkdir()
+        if entry == "directory_file":
+            directory.write_text("file")
+        elif entry != "missing_directory":
+            directory.mkdir()
+            if entry == "broken_link":
+                (directory / "month_0.json").symlink_to(directory / "absent.json")
+            elif entry == "directory_entry":
+                (directory / "month_0.json").mkdir()
+            elif entry == "permission":
+                original = resolver.Path.lstat
+
+                def denied(path, *args, **kwargs):
+                    if path.name == "month_0.json":
+                        raise PermissionError(str(path))
+                    return original(path, *args, **kwargs)
+
+                monkeypatch.setattr(resolver.Path, "lstat", denied)
+    expected = {
+        "missing_root": FileNotFoundError,
+        "root_file": NotADirectoryError,
+        "missing_directory": FileNotFoundError,
+        "directory_file": NotADirectoryError,
+        "all_absent": FileNotFoundError,
+        "broken_link": FileNotFoundError,
+        "directory_entry": resolver.LongTermHorizonResolverError,
+        "permission": PermissionError,
+    }[entry]
+    with pytest.raises(expected) as exc:
+        resolver.available_monthly_batch_modes()
+    assert str(root) in str(exc.value)
+    if entry in {"permission", "broken_link", "directory_entry"}:
+        assert str(directory / "month_0.json") in str(exc.value)
+        assert "Skipping" not in caplog.text
+    if entry == "all_absent":
+        assert "month_0" in str(exc.value) and "month_1" in str(exc.value)

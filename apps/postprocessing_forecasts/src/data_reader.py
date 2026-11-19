@@ -19,6 +19,7 @@ import pandas as pd
 from long_term_horizon_resolver import (
     LongTermHorizonResolverError,
     OperationalSchedule,
+    available_monthly_batch_modes,
     operational_schedule_for_mode,
     quarter_horizon_value,
     supported_long_term_modes,
@@ -192,7 +193,7 @@ def _operational_schedules_for_horizon_type(
     """
     modes = supported_long_term_modes()
     if horizon_type == "month":
-        relevant = [m for m in modes if _MONTH_MODE_NAME_RE.match(m)]
+        relevant = available_monthly_batch_modes()
     elif horizon_type == "quarter":
         relevant = [m for m in modes if m == "quarter"]
     elif horizon_type == "season":

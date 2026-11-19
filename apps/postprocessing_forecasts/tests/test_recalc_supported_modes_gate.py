@@ -233,3 +233,43 @@ class TestQuarterlyBlockGate:
         mocks["data_reader"].read_quarterly_forecasts.assert_called_once()
         # Flag OFF must not even consult the resolver.
         mocks["data_reader"]._operational_schedules_for_horizon_type.assert_not_called()
+
+
+@pytest.mark.parametrize("broken", [False, True])
+def test_optional_months_recalc_real_gate_and_reader(monkeypatch, tmp_path, broken):
+    from tests.test_lead_aware_empty_schedules import _optional_monthly_setup
+
+    reader, rows, directory = _optional_monthly_setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(reader, "_read_long_forecasts_api", lambda *a, **kw: rows)
+    monkeypatch.setenv("SAPPHIRE_PREDICTION_MODE", "MONTHLY")
+    monkeypatch.setenv("SAPPHIRE_SKILL_METRICS_START_YEAR", "2025")
+    monkeypatch.setenv("SAPPHIRE_RECALC_END_YEAR", "2025")
+    if broken:
+        (directory / "month_4.json").write_text("{")
+    with patch.dict(sys.modules, {}):
+        mocks = _setup_mocks(pd.DataFrame(), pd.DataFrame())
+        mocks[
+            "data_reader"
+        ]._operational_schedules_for_horizon_type = reader._operational_schedules_for_horizon_type
+        mocks["data_reader"].read_monthly_forecasts = reader.read_monthly_forecasts
+        mocks["data_reader"].read_skill_metrics.return_value = pd.DataFrame()
+
+        def score(obs, forecasts, timing):
+            assert set(forecasts.horizon_value) == {0, 1, 2, 3}
+            return forecasts.assign(n_pairs=5), forecasts, timing
+
+        mocks["skill_metrics"].calculate_monthly_skill_metrics.side_effect = score
+        mocks["file_writer"].save_monthly_forecast_data.return_value = None
+        module, spec = import_recalc_module()
+        spec.loader.exec_module(module)
+        module._read_station_codes = lambda *a: ["synthetic_site"]
+        if broken:
+            with pytest.raises(LongTermHorizonResolverError):
+                module.recalculate_skill_metrics()
+            mocks["file_writer"].save_monthly_skill_metrics.assert_not_called()
+        else:
+            with pytest.raises(SystemExit) as exc:
+                module.recalculate_skill_metrics()
+            assert exc.value.code == 0
+            saved = mocks["file_writer"].save_monthly_skill_metrics.call_args.args[0]
+            assert set(saved.horizon_value) == {0, 1, 2, 3}

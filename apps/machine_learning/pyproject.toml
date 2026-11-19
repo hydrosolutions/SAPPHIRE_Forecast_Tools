@@ -9,7 +9,7 @@ authors = [
 ]
 dependencies = [
     # Deep learning frameworks
-    "torch==2.11.0",
+    "torch==2.13.0",
     "darts==0.43.0",
     "pytorch-lightning>=2.6.0",
     # Potential evapotranspiration calculation
@@ -38,6 +38,9 @@ dev = [
 [tool.uv]
 # Security floors for transitive networking dependencies.
 constraint-dependencies = [
+    "fsspec>=2026.6.0",
+    "filelock>=4.2.1",
+    "setuptools>=84.1.0",
     "certifi>=2026.10.18",
     "urllib3>=2.8.0",
     "aiohttp>=3.14.4",

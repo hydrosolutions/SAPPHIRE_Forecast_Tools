@@ -628,6 +628,11 @@ run_in_venv() {
     for ev in ${extra_env[@]+"${extra_env[@]}"}; do
         env_cmd+=("$ev")
     done
+    # Torch 2.13 + LightGBM mixed OpenMP can crash natively on macOS.
+    # Remove when future runtimes pass saved-estimator/pipeline regression uncapped.
+    if [ "$module" = long_term_forecasting ] && [ "$(uname -s)" = Darwin ]; then
+        env_cmd+=("OMP_THREAD_LIMIT=1")
+    fi
 
     # Build tee targets: always the main log, plus per-module log if set
     local tee_targets=("$LOG_FILE")
@@ -2303,6 +2308,12 @@ print_summary() {
 print_usage() {
     cat <<'USAGE'
 Usage: bash apps/run_locally.sh [FLAGS] TARGET
+
+macOS long-term runtime:
+  Long-term Python children use OMP_THREAD_LIMIT=1 for the Torch 2.13 + LightGBM
+  mixed OpenMP native crash. Direct Python invocations need OMP_THREAD_LIMIT=1.
+  Remove the cap when future runtimes pass saved-estimator/pipeline regression
+  without it.
 
 Combined targets:
   daily                   Short-term daily run: PENTAD + DECAD + maintenance
