@@ -383,3 +383,62 @@ update: production dependencies, entry points, Docker configuration and data
 flow are unchanged. Those paths passed in merged PR #544; this batch adds
 validation of the changed tooling itself. Platform-specific behavior outside
 the tested Python 3.12 macOS environment was not independently exercised.
+
+## Batch 5: runoff Google Sheets authentication dependencies — Review
+
+Initially prepared from `origin/maxat_sapphire_2` at `8cc34e0a` while
+core-tooling PR #545 awaited review/merge. Rebased onto `428127b4` after that
+PR merged, preserving the agreed sequential PR order. Dependency changes are confined to `apps/preprocessing_runoff/pyproject.toml`
+and its `uv.lock`; this document records their validation.
+After rebasing, the full suite passed again with the merged core-tooling
+environment: 9,677 passed across 16 scopes, the same 12 accepted skips and
+two existing expected failures. The runoff manifest and lockfile remain
+byte-identical to the candidate used for the live and Docker checks below.
+Offline lock consistency and independent post-rebase review also passed.
+
+- oauthlib 3.3.1 → 4.0.1, with a matching minimum-version constraint.
+- pyasn1 0.6.4 → 0.6.5, with a matching minimum-version constraint.
+
+These packages enter through the optional `google-sheets` extra, which the
+runoff Docker image installs. Targeted resolution changes exactly these two
+package records: parent libraries, other versions, SDK/API-client Git pins
+and application code remain unchanged. Official PyPI version metadata lists
+both candidates as non-yanked, compatible with the declared Python range and
+without reported vulnerabilities at verification time. No shared-library
+release or source update is required for this tested resolution.
+
+Frozen installation uses an isolated Python 3.12.10 runoff environment.
+A temporary synthetic compatibility probe exercises the actual Google Sheets
+reader, real gspread service-account creation and verified JWT refresh,
+requests-oauthlib authorization-code/token parsing, and ASN.1/RSA key parsing
+and signature verification. Only HTTP transport is faked, with socket
+connections blocked. Baseline and candidate results match exactly. The same
+probe passes identically inside the rebuilt Linux image with networking
+removed. Evidence records interpreter/package versions and the probe hash;
+all generated credentials and synthetic data remain outside Git. The live
+development configuration disables Google Sheets, so these probes establish
+compatibility of the changed authentication stack, not live Google access.
+
+Affected runoff tests: 639 passed with two existing accepted fixture skips.
+The final isolated full suite passed all 16 scopes: 9,677 passed, the same
+12 accepted skips and two existing expected failures as the previous batch.
+An initial full-suite run overlapped the live pipeline in the same worktree:
+all 566 pipeline test bodies passed, but 104 teardown checks correctly detected
+the live run changing `apps/logs`. Rerunning the identical candidate in a
+separate validation worktree eliminated those errors; no tests or code were
+changed. Docker validation passed eight builds and eight smoke tests with the
+prescribed `--skip-ml` option. Fresh independent adversarial review found no
+defect; its request for explicit environment-version evidence was addressed
+and confirmed.
+
+Live `run_locally.sh all --continue-on-error` passed all eleven execution
+stages and all three API validations (exit 0, about 39 minutes), including
+LT simulation, operational postprocessing, skill recalculation and maintenance.
+The `all` target exercises DECAD ML under its documented dispatcher behavior.
+The subsequent explicit `maintenance:preprocessing_runoff` run also passed
+(exit 0, 14m 20s), including its long-horizon hydrograph sync. The development
+.env hash remained unchanged after both runs. Maintenance retained the same
+warning messages as baseline for unavailable historical runoff and monthly
+discharge norms; those data-availability gaps remain outside this dependency
+patch. This batch follows merged core-tooling PR #545. Evidence is outside Git under
+`/tmp/sapphire-runoff-auth-*`.

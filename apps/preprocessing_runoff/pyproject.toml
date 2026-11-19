@@ -46,6 +46,8 @@ constraint-dependencies = [
     "certifi>=2026.10.18",
     "urllib3>=2.8.0",
     "tornado>=6.6.1",
+    "oauthlib>=4.0.1",
+    "pyasn1>=0.6.5",
 ]
 # Allow git and local path dependencies
 allow-insecure-host = []
