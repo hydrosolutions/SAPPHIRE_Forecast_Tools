@@ -340,3 +340,46 @@ pipeline passed all eleven execution stages and all three API validations
 stages. The automatic macOS cap worked without a parent setting and the
 development .env hash was unchanged. These results supersede the earlier
 missing-month pipeline failures for this candidate. Owner authorized commit and PR after this validation.
+
+## Batch 4: core development tooling — Review
+
+Based on freshly fetched `origin/maxat_sapphire_2` at `8cc34e0a`, after merged
+runtime PR #544. Only the core module's manifest and lockfile change; no
+forecasting code, services or colleague repository changes are needed.
+
+| Package | Previous | Candidate |
+| --- | --- | --- |
+| virtualenv | 20.36.1 | 21.14.10 |
+| filelock | 3.20.3 | 4.2.1 |
+| distlib | 0.4.0 | 0.4.3 |
+| packaging | 25.0 | 26.3 |
+| python-discovery | absent | 1.6.1 |
+
+The manifest adds security floors for virtualenv and filelock. The other
+three changes satisfy virtualenv's new requirements; packaging is also used
+by pytest. All five belong to the optional development/test dependency graph.
+The complete 22-package production dependency graph (including the core
+package), all Git revisions, pre-commit and platformdirs remain unchanged.
+
+The alert snapshot requires virtualenv 21.14.9, but that version has an
+[additional advisory fixed in 21.14.10](https://github.com/advisories/GHSA-4f8h-vr72-p32c).
+The selected virtualenv and filelock releases are non-yanked and list no
+vulnerabilities in their official PyPI metadata at verification time. Targeted
+resolution uses the first patched versions and required transitive minimums.
+
+Validation uses an isolated core environment with the same Python 3.12.10
+as the previous batch. Frozen installation and fresh-cache pre-commit Python
+hook environment creation/execution passed. Full `run_tests.sh`: 9,677 passed
+across all 16 scopes, with exactly the same 12 owner-accepted skips and two
+existing expected failures as the previous batch. The first restricted run
+could not access Docker and skipped three additional container checks; those
+checks passed in the final full run with Docker access. Fresh independent
+adversarial review found no defects, and its documentation follow-up confirmed
+the recorded scope. Evidence is retained outside Git under
+`/tmp/sapphire-core-tooling-*` and `/tmp/sapphire-core-precommit-final.log`.
+
+No live pipeline or Docker build rerun was performed for this development-only
+update: production dependencies, entry points, Docker configuration and data
+flow are unchanged. Those paths passed in merged PR #544; this batch adds
+validation of the changed tooling itself. Platform-specific behavior outside
+the tested Python 3.12 macOS environment was not independently exercised.
