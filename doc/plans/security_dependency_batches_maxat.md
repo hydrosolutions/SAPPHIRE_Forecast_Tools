@@ -131,3 +131,52 @@ security batches and colleague-owned service alerts remain open. A fresh
 read-only independent review found no defects in the package scope, locks,
 constraints, compatibility tests or verification claims. Ready for a local
 commit; no push or deployment has occurred.
+
+## Batch 2: Pillow — isolated candidate, 2026-11-18
+
+Baseline: fetched `origin/maxat_sapphire_2` at `61d5db9f`, after merged
+recovery PR #541 and networking PR #542. Branch: `security/pillow-update`.
+The recovery execution notes remain in their separate worktree.
+
+Current repository Dependabot data lists 129 Pillow alert instances across
+43 advisories, affecting dashboard, machine-learning and long-term locks.
+Every advisory names 13.0.0 as the first patched version. The three candidate
+locks update Pillow 12.3.0 to 13.0.0 only; all other package versions and Git
+source revisions are unchanged. Dashboard/ML direct requirements and the LT
+transitive constraint enforce the security floor on future resolution.
+
+Primary sources: [PyPI 13.0.0 metadata](https://pypi.org/pypi/Pillow/13.0.0/json)
+and [Pillow 13.0.0 release notes](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html).
+Python 3.10 support and several deprecated image APIs were removed. The three
+apps require Python >=3.11; isolated validation uses 3.12. Source inspection
+found no direct repository use of the removed APIs. Font-rendering changes
+can affect glyph appearance, so this is not a claim of pixel-identical reports.
+
+A focused regression exercises the existing skill-inspection plotting function
+through Matplotlib PNG export and Pillow decode, checking dimensions, visible
+content and chart labels. All three isolated environments installed from frozen
+locks and report Pillow 13.0.0. Existing dashboard/runtime environments were
+left unchanged. Offline lock checks and whitespace checks passed. The full
+16-scope suite passed 9,630 tests, with the same 12 owner-accepted existing
+skips and two existing expected failures; the new PNG report regression passed.
+Candidate-lock Docker checks passed eight builds and eight smokes with the
+prescribed --skip-ml exclusion. All 129 alert instances were checked against
+the candidate locks; none remains in its reported vulnerable range. The required
+local `all --continue-on-error` run completed in 27m 30s: eight execution
+stages passed, three failed, and all three API validations passed (overall
+exit 1). The three failures were LT operational postprocessing, LT skill
+metrics and LT maintenance postprocessing; each raised FileNotFoundError
+for the intentionally absent month_4 configuration. The supported-mode list
+was left unchanged. Runoff, gateway, ML (DECAD), both LR/short-term PP passes
+and LT simulation passed. This is not a green end-to-end result; no Pillow
+compatibility failure was identified. The existing local ML horizon limitation
+still applies. On 2026-11-18 the owner explicitly accepted these three known
+configuration failures for this Pillow commit, with the supported-mode list
+unchanged. This exception does not turn the pipeline result into a pass or
+cover new failures. Fresh independent review
+found only a minor overstatement in the test name/docstring; these now name
+the encoding/decoding contract rather than curve preservation. Assertions
+were unchanged, the full dashboard scope passed again, and the reviewer
+confirmed the correction with no remaining material findings. Validation is
+accepted for commit with the stated existing-skip and configuration-failure
+exceptions. No Pillow PR or deployment has been performed.
