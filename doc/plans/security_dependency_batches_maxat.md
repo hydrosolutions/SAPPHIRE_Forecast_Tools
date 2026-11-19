@@ -488,3 +488,59 @@ optional development dependency: production dependencies, entry points,
 Docker configuration and data flow remain unchanged. The preceding runtime
 and runoff batches cover those paths; this follow-up exercises the affected
 tooling directly. Other shells, platforms and Python versions were not tested.
+
+## Batch 7: shared service dependency updates — Review
+
+Based on `origin/maxat_sapphire_2` at `0d585a83`, after merged PR #547.
+The owner authorized minor service dependency updates, with authentication
+packages reserved for a separate batch. This batch changes only dependency
+manifests, locks and requirements for the five services; no service logic,
+API contracts, schemas or migrations change.
+
+| Package | Previous lock versions | Candidate | Affected service locks |
+| --- | --- | --- | --- |
+| anyio | 4.12.1 / 4.13.0 | 4.14.2 | All five |
+| certifi | 2026.1.4 / 2026.2.25 | 2026.10.18 | All five |
+| Mako | 1.3.12 | 1.4.2 | Auth, user, preprocessing, postprocessing |
+| urllib3 | 2.7.0 | 2.8.0 | Preprocessing, postprocessing |
+
+These are minor updates, plus certifi's calendar-versioned certificate bundle.
+They address 25 alerts in the current snapshot. Exact-version GitHub global
+advisory queries found no matching advisories for the candidates on 2026-11-19.
+The declared Python requirements permit the services' Docker Python 3.11.
+
+Targeted resolution changes only the 16 intended package records across five
+locks. All unrelated package records remain identical. Security floors in
+`pyproject.toml` prevent resolution back to the vulnerable versions. Service
+Dockerfiles install `requirements.txt`, so those files pin the same candidates
+for runtime dependencies. Certifi is test-only in the user service and is not
+added to that service's production requirements. Existing unconstrained pip
+transitives remain unconstrained; Docker installations are checked separately
+and must not be described as identical to the uv test environments.
+
+Five isolated Python 3.12.10 frozen environments pass all 444 service tests,
+with no skips or failures. All five actual service Docker images build and
+pass isolated probes on Python 3.11.18: exact target versions and `pip check`,
+AnyIO socket success/refusal, HTTPX where installed, requests/urllib3 in the
+two processing services, certifi CA-bundle loading, and actual uvicorn
+`/health` requests. Four Alembic/Mako images generate and compile a temporary
+revision without connecting to a database. Probe containers use no external
+network, deployment configuration or data, and are removed afterward.
+Runtime inventories, image IDs and probe hashes are recorded with the evidence.
+These checks do not exercise PostgreSQL migrations/readiness or real outbound
+TLS trust compatibility. Fresh independent adversarial review found no
+introduced defect. Full `run_tests.sh` passed 9,677 tests across all 16 scopes,
+with exactly the same 12 owner-accepted skips and two expected failures as the
+preceding batch. The prescribed application Docker run passed eight builds
+and eight smoke tests with `--skip-ml`; these are separate from the five
+service-image checks above. `run_locally.sh all --continue-on-error` completed
+with exit 0: eleven execution stages and three API validations passed, zero
+failed, in about 40 minutes. This includes DECAD ML, short-term regression and
+postprocessing for both horizons, long-term simulation, and long-term
+operational/maintenance postprocessing and skill recalculation. It does not
+include explicit PENTAD ML. The private configuration hash remained unchanged;
+the macOS thread cap was applied by the runner without a parent setting.
+The pipeline uses existing remote development services; it does not exercise
+the candidate service images or prove complete forecast coverage.
+Private logs and synthetic probe artifacts are retained outside Git under
+`/tmp/sapphire-service-shared-*`.

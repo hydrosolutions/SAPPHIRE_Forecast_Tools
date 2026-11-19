@@ -34,3 +34,11 @@ markers = [
     "benchmark: performance benchmarks (deselect with '-m \"not benchmark\"')",
 ]
 addopts = "-v --tb=short --strict-markers"
+
+[tool.uv]
+constraint-dependencies = [
+    "anyio>=4.14.2",
+    "certifi>=2026.10.18",
+    "mako>=1.4.2",
+    "urllib3>=2.8.0",
+]
