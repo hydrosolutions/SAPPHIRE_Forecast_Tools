@@ -57,8 +57,10 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.uv]
-# Security floors for transitive networking dependencies.
+# Security floors for transitive dependencies.
 constraint-dependencies = [
     "certifi>=2026.10.18",
     "urllib3>=2.8.0",
+    "virtualenv>=21.14.10",
+    "filelock>=4.2.1",
 ]
