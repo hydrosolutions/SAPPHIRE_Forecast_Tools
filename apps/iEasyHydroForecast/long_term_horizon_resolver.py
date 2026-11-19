@@ -1,7 +1,10 @@
 """Resolve long-term forecast horizon values from deployment configuration."""
 
 import json
+import logging
 import os
+import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -53,6 +56,47 @@ def supported_long_term_modes() -> list[str]:
     """Return deployment-supported long-term modes from the environment."""
     raw_modes = _required_env(SUPPORTED_MODES_ENV)
     return [mode.strip() for mode in raw_modes.split(",") if mode.strip()]
+
+
+def available_monthly_batch_modes() -> list[str]:
+    """Discover declared monthly configs, skipping only absent top-level files.
+
+    Explicit mode lookup remains strict. Existing entries are passed to the
+    normal loader, which retains JSON and schedule-field validation.
+    """
+    candidates = [m for m in supported_long_term_modes() if re.fullmatch(r"month_\d+", m)]
+    if not candidates:
+        return []
+
+    root = Path(_required_env(CONFIG_ROOT_ENV))
+    directory = _long_term_config_path(candidates[0]).parent
+    for path in (root, directory):
+        if not stat.S_ISDIR(path.stat().st_mode):
+            raise NotADirectoryError(
+                f"Long-term configuration directory is not a directory: {path}"
+            )
+
+    available = []
+    for mode in candidates:
+        path = _long_term_config_path(mode)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            logging.getLogger(__name__).warning(
+                "Skipping unconfigured monthly batch mode '%s': %s", mode, path
+            )
+            continue
+        # stat follows links: dangling links must fail, never become optional.
+        if not stat.S_ISREG(path.stat().st_mode):
+            raise LongTermHorizonResolverError(
+                f"Long-term config '{mode}' is not a regular file: {path}"
+            )
+        available.append(mode)
+    if not available:
+        raise FileNotFoundError(
+            f"No declared monthly configs found in {directory}; candidates: {candidates}"
+        )
+    return available
 
 
 def seasonal_config_name(issue_month: int) -> str:

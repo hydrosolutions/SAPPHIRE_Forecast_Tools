@@ -10,6 +10,12 @@ the top, under a `## YYYY-MM-DD` heading.
 
 ---
 
+## 2026-11-19
+
+**LTF-021** moved to Review after scoped implementation and independent review. Full suite: 9,677 passed with existing accepted exceptions. Live all pipeline: eleven execution stages and three validations passed, including the formerly failing LT operational postprocessing, skills and maintenance. The private .env remained unchanged. Owner authorized commit and PR.
+
+**LTF-021** filed as Draft — plan only for absent optional monthly mode JSONs across LT operational postprocessing, skills and monthly gap-fill. Preserve supported declarations and strict explicit loaders; malformed existing configs, broken roots and all-declared-monthly-files-missing remain actionable failures. Independent review completed; numeric-validation behavior and valid empty horizons remain unchanged.
+
 ## 2026-09-09
 
 **LR-013** filed — `linear_regression.py` exits 0 having written nothing when

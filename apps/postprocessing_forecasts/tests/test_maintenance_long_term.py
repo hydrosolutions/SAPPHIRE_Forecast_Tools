@@ -2234,3 +2234,77 @@ class TestNoLongTermEmInEnsembleSets:
         assert len(ensemble_sets) >= 5
         for values in ensemble_sets:
             assert "EM" not in values, f"stray EM in ensemble set {sorted(values)}"
+
+
+@pytest.mark.parametrize("broken", [False, True])
+def test_optional_months_maintenance_real_reader(monkeypatch, tmp_path, broken):
+    from long_term_horizon_resolver import LongTermHorizonResolverError
+    from tests.test_lead_aware_empty_schedules import _optional_monthly_setup
+
+    reader, rows, directory = _optional_monthly_setup(monkeypatch, tmp_path)
+    api = MagicMock(return_value=rows)
+    monkeypatch.setattr(reader, "_read_long_forecasts_api", api)
+    monkeypatch.setenv("POSTPROCESSING_GAPFILL_WINDOW_MONTHS", "18")
+    if broken:
+        (directory / "month_4.json").write_text("{")
+    healthy = pd.DataFrame(
+        {
+            "code": ["synthetic_site"],
+            "year": [2025],
+            "month": [4],
+            "month_in_year": [4],
+            "model_short": ["Naive Mean"],
+            "horizon_value": [0],
+            "forecasted_discharge": [321.0],
+        }
+    )
+    gaps = pd.DataFrame(
+        {
+            "code": ["synthetic_site"] * 3,
+            "year": [2025] * 3,
+            "month": [4] * 3,
+            "model_short": ["Naive Mean"] * 3,
+            "horizon_value": [1, 2, 3],
+        }
+    )
+    dr, detector, calc, writer, pt = (MagicMock() for _ in range(5))
+    pt.TimingStats.return_value.summary.return_value = ([], 0)
+    dr.read_monthly_combined_forecasts.return_value = healthy
+    dr.read_monthly_forecasts = reader.read_monthly_forecasts
+    dr.read_skill_metrics.return_value = _make_skill()
+    dr.read_quarterly_combined_forecasts.return_value = pd.DataFrame()
+    detector.detect_missing_monthly_ensembles.return_value = gaps
+
+    def ensemble(forecasts, *args, **kwargs):
+        assert set(forecasts.horizon_value) == {0, 1, 2, 3}
+        return forecasts.assign(
+            model_short="Naive Mean", month_in_year=4, forecasted_discharge=111.0
+        )
+
+    calc.create_monthly_ensemble_forecasts.side_effect = ensemble
+    writer.save_monthly_forecast_data.return_value = None
+    with patch.dict(sys.modules, {}):
+        module = _import_module(
+            {
+                "sl": MagicMock(),
+                "data_reader": dr,
+                "gap_detector": detector,
+                "ensemble_calc": calc,
+                "file_writer": writer,
+                "pt": pt,
+            }
+        )
+        module._read_station_codes = lambda: ["synthetic_site"]
+        if broken:
+            with pytest.raises(LongTermHorizonResolverError):
+                module.postprocessing_maintenance_long_term()
+            writer.save_monthly_forecast_data.assert_not_called()
+        else:
+            with pytest.raises(SystemExit) as exc:
+                module.postprocessing_maintenance_long_term()
+            assert exc.value.code == 0
+            api.assert_called_once_with(["synthetic_site"], 2024, 2025)
+            saved = writer.save_monthly_forecast_data.call_args.args[0]
+            assert set(saved.horizon_value) == {0, 1, 2, 3}
+            assert saved.loc[saved.horizon_value == 0, "forecasted_discharge"].tolist() == [321.0]
+            assert detector.detect_missing_monthly_ensembles.call_args.args[1] == 18

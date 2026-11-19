@@ -419,3 +419,47 @@ class TestMonthlyEmptySchedulesFlagOffUnchanged:
         assert mock_api.call_args.args[1] == 2024  # read window not expanded
         assert not result.empty
         assert 999.0 in set(result["q50"].astype(float))
+
+
+def _optional_monthly_setup(monkeypatch, tmp_path):
+    """Real discovery/reader fixture shared by entrypoint regression harnesses."""
+    config_dir = tmp_path / "long_term"
+    config_dir.mkdir()
+    _set_long_term_env(monkeypatch, tmp_path, [f"month_{i}" for i in range(10)])
+    monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
+    for lead in range(4):
+        _write_mode_config(config_dir, f"month_{lead}", lead, 1)
+    rows = [
+        _month_row("synthetic_site", 2025, 4, f"2025-{4 - lead:02d}-01", horizon_value=lead)
+        for lead in range(4)
+    ]
+    return data_reader, pd.DataFrame(rows), config_dir
+
+
+def test_optional_monthly_schedules_use_real_discovery(monkeypatch, tmp_path, caplog):
+    reader, rows, _ = _optional_monthly_setup(monkeypatch, tmp_path)
+    assert list(reader._operational_schedules_for_horizon_type("month")) == [
+        f"month_{i}" for i in range(4)
+    ]
+    monkeypatch.setattr(reader, "_read_long_forecasts_api", lambda *a, **kw: rows)
+    result = reader.read_monthly_forecasts(["synthetic_site"], 2025, 2025)
+    assert set(result.horizon_value) == {0, 1, 2, 3}
+    assert "month_4" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{",
+        "[]",
+        "{}",
+        '{"operational_month_lead_time": "bad", "operational_issue_day": 1}',
+    ],
+)
+def test_optional_monthly_existing_configs_remain_strict(monkeypatch, tmp_path, payload):
+    reader, _, directory = _optional_monthly_setup(monkeypatch, tmp_path)
+    (directory / "month_4.json").write_text(payload)
+    from long_term_horizon_resolver import LongTermHorizonResolverError
+
+    with pytest.raises(LongTermHorizonResolverError):
+        reader._operational_schedules_for_horizon_type("month")

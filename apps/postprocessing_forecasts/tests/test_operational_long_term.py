@@ -464,3 +464,37 @@ def _clean_sys_modules():
         for k, v in saved.items():
             if v is not None:
                 sys.modules[k] = v
+
+
+@pytest.mark.parametrize("broken", [False, True])
+def test_optional_months_operational_real_reader(monkeypatch, tmp_path, broken):
+    from long_term_horizon_resolver import LongTermHorizonResolverError
+    from tests.test_lead_aware_empty_schedules import _optional_monthly_setup
+
+    reader, rows, directory = _optional_monthly_setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(reader, "_read_long_forecasts_api", lambda *a, **kw: rows)
+    if broken:
+        (directory / "month_4.json").write_text("{")
+    with _clean_sys_modules():
+        mocks = _setup_mocks()
+        mocks["data_reader"].read_latest_monthly_forecasts = (
+            lambda codes, **kw: reader.read_latest_monthly_forecasts(
+                codes, forecast_date=pd.Timestamp("2025-04-01").date()
+            )
+        )
+
+        def ensemble(forecasts, *args, **kwargs):
+            assert set(forecasts.horizon_value) == {0, 1, 2, 3}
+            return forecasts.assign(model_short="Naive Mean")
+
+        mocks["ensemble_calc"].create_monthly_ensemble_forecasts.side_effect = ensemble
+        if broken:
+            with pytest.raises(LongTermHorizonResolverError):
+                _run_entry_point(mocks, ["synthetic_site"])
+            mocks["file_writer"].save_monthly_forecast_data.assert_not_called()
+        else:
+            _, exit_info = _run_entry_point(mocks, ["synthetic_site"])
+            assert exit_info.value.code == 0
+            saved = mocks["file_writer"].save_monthly_forecast_data.call_args.args[0]
+            assert set(saved.horizon_value) == {0, 1, 2, 3}
+            assert set(saved.model_short) == {"Naive Mean"}
