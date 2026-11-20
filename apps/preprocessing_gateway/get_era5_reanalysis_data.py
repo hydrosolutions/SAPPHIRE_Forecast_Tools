@@ -110,14 +110,11 @@ def main():
     if not os.path.exists(OUTPUT_PATH_REANALYSIS):
         os.makedirs(OUTPUT_PATH_REANALYSIS, exist_ok=True)
 
-    Q_MAP_PARAM_PATH = os.path.join(
-        os.getenv("ieasyhydroforecast_models_and_scalers_path"),
-        os.getenv("ieasyhydroforecast_Q_MAP_PARAM_PATH"),
-    )
+    Q_MAP_PARAM_PATH = dg_utils.resolve_qmapping_parameter_path()
     # Test if the output path exists. Raise an error if it doesn't
-    if not os.path.exists(Q_MAP_PARAM_PATH):
+    if Q_MAP_PARAM_PATH is None or not os.path.exists(Q_MAP_PARAM_PATH):
         logger.warning(
-            f"Path {Q_MAP_PARAM_PATH} does not exist.\nParameters for quantile mapping of ERA5 and ECMWF ensemble forecast are not available.\nProducing weather data files that are not downscaled."
+            f"Quantile mapping parameter path is unset, blank, or unavailable: {Q_MAP_PARAM_PATH}.\nParameters for quantile mapping of ERA5 and ECMWF ensemble forecast are not available.\nProducing weather data files that are not downscaled."
         )
         perform_qmapping = False
     else:

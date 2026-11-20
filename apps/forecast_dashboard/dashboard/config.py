@@ -24,6 +24,7 @@ class DashboardConfig:
     display_ML_forecasts: bool
     snow_display_start_month: int
     snow_display_start_day: int
+    display_long_term_forecasts: bool | None = None
 
 
 def init_dashboard(pn) -> DashboardConfig:
@@ -62,6 +63,9 @@ def init_dashboard(pn) -> DashboardConfig:
         display_weather_data=display_weather,
         display_snow_data=display_snow,
         display_ML_forecasts=display_ml,
+        display_long_term_forecasts=os.getenv(
+            'ieasyhydroforecast_display_long_term_forecasts', str(display_ml)
+        ).lower() in ('true', 'yes', '1', 't', 'y'),
         snow_display_start_month=snow_month,
         snow_display_start_day=snow_day,
     )

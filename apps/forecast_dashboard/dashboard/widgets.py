@@ -90,9 +90,9 @@ def create_decad_selector(last_date):
 def create_horizon_selector(display_ML_forecasts: bool = True):
     """Create forecast horizon selection widget.
 
-    When display_ML_forecasts is False, only short-term horizons (pentad,
-    decade) are exposed; month and season are hidden because they require
-    ML-driven long-term forecasts.
+    The historically named display_ML_forecasts argument controls month/season
+    visibility. WidgetManager passes resolved long-term display configuration;
+    pentad and decade are always exposed.
     """
     horizon_types = {
         _("pentad"): "pentad",
@@ -759,7 +759,8 @@ def create_publish_horizon_multiselect(display_ML_forecasts: bool = True):
     """Create the multi-horizon selector for the Publish bulletin card.
 
     Mirrors create_horizon_selector's option set (pentad/decade always
-    available; month/season gated on display_ML_forecasts), but as a
+    available; month/season gated on the legacy-named display_ML_forecasts
+    argument, resolved by WidgetManager from long-term display configuration), as a
     CheckBoxGroup so more than one horizon can be selected at once.
     """
     horizon_types = {

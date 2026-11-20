@@ -793,14 +793,11 @@ def main():
     logger.debug(f"OUTPUT_PATH_DG: {OUTPUT_PATH_DG}")
     logger.debug(f"Path OUTPUT_PATH_DG is valid: {os.path.exists(OUTPUT_PATH_DG)}")
 
-    Q_MAP_PARAM_PATH = os.path.join(
-        os.getenv("ieasyhydroforecast_models_and_scalers_path"),
-        os.getenv("ieasyhydroforecast_Q_MAP_PARAM_PATH"),
-    )
+    Q_MAP_PARAM_PATH = dg_utils.resolve_qmapping_parameter_path()
     # Test if the output path exists. Raise an error if it doesn't
-    if not os.path.exists(Q_MAP_PARAM_PATH):
+    if Q_MAP_PARAM_PATH is None or not os.path.exists(Q_MAP_PARAM_PATH):
         logger.warning(
-            f"Path {Q_MAP_PARAM_PATH} does not exist.\nParameters for quantile mapping of ERA5 and ECMWF ensemble forecast are not available.\nProducing weather data files that are not downscaled."
+            f"Quantile mapping parameter path is unset, blank, or unavailable: {Q_MAP_PARAM_PATH}.\nParameters for quantile mapping of ERA5 and ECMWF ensemble forecast are not available.\nProducing weather data files that are not downscaled."
         )
         perform_qmapping = False
     else:
@@ -847,13 +844,15 @@ def main():
     # Read configuration for mapping gateway station codes to hydromet station
     # codes, if file is available:
     # Path to the configuration file
-    config_file = os.path.join(
-        os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyhydroforecast_config_file_data_gateway_name_twins"),
+    mapping_filename = os.getenv("ieasyhydroforecast_config_file_data_gateway_name_twins")
+    config_file = (
+        os.path.join(os.getenv("ieasyforecast_configuration_path"), mapping_filename)
+        if mapping_filename and mapping_filename.strip()
+        else None
     )
     logger.debug(f"Data gateway name mapping configuration file: {config_file}")
     # If the file is present, read the configuration
-    if os.path.exists(config_file):
+    if config_file is not None and os.path.exists(config_file):
         # Read the configuration file
         with open(config_file) as f:
             config = json.load(f)

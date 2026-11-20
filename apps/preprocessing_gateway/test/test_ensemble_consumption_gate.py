@@ -1216,3 +1216,119 @@ class TestPerHruExceptHandling:
         assert "written=0" in summary_lines[0]
         assert "failed=0" in summary_lines[0]
         assert HRU in summary_lines[0]
+
+
+@pytest.mark.parametrize("script", ["operational", "reanalysis"])
+@pytest.mark.parametrize("parameter_path", [None, "", "   "])
+@pytest.mark.parametrize("models_root_present", [False, True])
+def test_optional_qmapping_keeps_raw_outputs(
+    gate_env, monkeypatch, script, parameter_path, models_root_present
+):
+    """Both entry points retain raw P/T without requiring a models root."""
+    import get_era5_reanalysis_data as reanalysis
+
+    if parameter_path is None:
+        monkeypatch.delenv("ieasyhydroforecast_Q_MAP_PARAM_PATH")
+    else:
+        monkeypatch.setenv("ieasyhydroforecast_Q_MAP_PARAM_PATH", parameter_path)
+    if not models_root_present:
+        monkeypatch.delenv("ieasyhydroforecast_models_and_scalers_path")
+    monkeypatch.setenv("ieasyhydroforecast_OUTPUT_PATH_REANALYSIS", "reanalysis")
+    mock_dg = _make_mock_dg(gate_env["dg_dir"])
+    mock_dg.era5_land.get_era5_land.side_effect = (
+        lambda *args, **kwargs: mock_dg.operational.get_control_spinup_and_forecast()
+    )
+    with (
+        _run_main(mock_dg),
+        patch.object(
+            reanalysis.sapphire_dg_client.client, "SapphireDGClient", return_value=mock_dg
+        ),
+        patch.object(qm.dg_utils, "do_quantile_mapping") as mapping,
+        patch.object(qm, "_write_meteo_to_api", return_value=False) as publication,
+    ):
+        if script == "operational":
+            with pytest.raises(SystemExit) as result:
+                qm.main()
+            assert result.value.code == 0
+            output_dir, suffix = gate_env["cm_dir"], "control_member"
+            assert publication.call_count == 2
+        else:
+            reanalysis.main()
+            output_dir, suffix = gate_env["intermediate"] / "reanalysis", "reanalysis"
+        mapping.assert_not_called()
+    for variable, expected in [("P", 2.0), ("T", 5.0)]:
+        output = pd.read_csv(output_dir / f"{HRU}_{variable}_{suffix}.csv")
+        assert output[variable].tolist() == [expected]
+
+
+@pytest.mark.parametrize("script", ["operational", "reanalysis"])
+def test_configured_qmapping_still_invoked(gate_env_qmapping, monkeypatch, script):
+    import get_era5_reanalysis_data as reanalysis
+
+    monkeypatch.setenv("ieasyhydroforecast_OUTPUT_PATH_REANALYSIS", "reanalysis")
+    mock_dg = _make_mock_dg(gate_env_qmapping["dg_dir"])
+    mock_dg.era5_land.get_era5_land.side_effect = (
+        lambda *args, **kwargs: mock_dg.operational.get_control_spinup_and_forecast()
+    )
+    with (
+        _run_main(mock_dg),
+        patch.object(
+            reanalysis.sapphire_dg_client.client, "SapphireDGClient", return_value=mock_dg
+        ),
+        patch.object(
+            qm.dg_utils, "do_quantile_mapping", wraps=qm.dg_utils.do_quantile_mapping
+        ) as mapping,
+    ):
+        if script == "operational":
+            with pytest.raises(SystemExit) as result:
+                qm.main()
+            assert result.value.code == 0
+        else:
+            reanalysis.main()
+        mapping.assert_called_once()
+
+
+@pytest.mark.parametrize("script", ["operational", "reanalysis"])
+def test_disabled_qmapping_does_not_hide_download_failure(gate_env, monkeypatch, script):
+    import get_era5_reanalysis_data as reanalysis
+
+    monkeypatch.delenv("ieasyhydroforecast_Q_MAP_PARAM_PATH")
+    monkeypatch.delenv("ieasyhydroforecast_models_and_scalers_path")
+    monkeypatch.setenv("ieasyhydroforecast_OUTPUT_PATH_REANALYSIS", "reanalysis")
+    mock_dg = _make_mock_dg(gate_env["dg_dir"])
+    mock_dg.operational.get_control_spinup_and_forecast.side_effect = ValueError("download failed")
+    mock_dg.era5_land.get_era5_land.side_effect = ValueError("download failed")
+    with (
+        _run_main(mock_dg),
+        patch.object(
+            reanalysis.sapphire_dg_client.client, "SapphireDGClient", return_value=mock_dg
+        ),
+        pytest.raises(SystemExit) as result,
+    ):
+        (qm if script == "operational" else reanalysis).main()
+    assert result.value.code != 0
+
+
+@pytest.mark.parametrize("mapping_filename", [None, "", "   "])
+def test_optional_name_twins_keeps_raw_publication(gate_env, monkeypatch, mapping_filename):
+    monkeypatch.delenv("ieasyhydroforecast_Q_MAP_PARAM_PATH")
+    monkeypatch.delenv("ieasyhydroforecast_models_and_scalers_path")
+    monkeypatch.delenv("ieasyforecast_configuration_path")
+    variable = "ieasyhydroforecast_config_file_data_gateway_name_twins"
+    if mapping_filename is None:
+        monkeypatch.delenv(variable)
+    else:
+        monkeypatch.setenv(variable, mapping_filename)
+    with (
+        _run_main(_make_mock_dg(gate_env["dg_dir"])),
+        patch.object(qm, "_write_meteo_to_api", return_value=False) as publication,
+        pytest.raises(SystemExit) as result,
+    ):
+        qm.main()
+    assert result.value.code == 0
+    assert publication.call_count == 2
+    for call, variable, expected in zip(
+        publication.call_args_list, ["P", "T"], [2.0, 5.0], strict=False
+    ):
+        assert call.args[0][variable].tolist() == [expected]
+        assert call.args[0]["code"].tolist() == [HRU]

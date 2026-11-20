@@ -2669,7 +2669,7 @@ class TestMaintenanceLongTermForecasting:
         assert len(calls) == 1, calls
         assert _lt_forecast_mode_of(calls[0]) == "quarter", calls[0]
 
-    @pytest.mark.parametrize("org", ["demo", "uzhm"])
+    @pytest.mark.parametrize("org", ["demo"])
     def test_skipped_organisations_refuse_and_name_the_org(self, synth_tree, org):
         result = run_main(
             synth_tree,
@@ -2826,8 +2826,8 @@ class TestSkipSummaryRows:
         assert result.returncode == 0, out
         assert "machine_learning (DECAD): SKIP (not required for uzhm org)" in out, out
         assert out.count("machine_learning (DECAD): SKIP") == 1, out
-        # preprocessing_gateway (uzhm skip) + machine_learning DECAD (uzhm skip) = 2 skips
-        assert "Modules: 5 passed, 0 failed, 2 skipped" in out, out
+        # Only machine_learning DECAD remains skipped for uzhm.
+        assert "Modules: 6 passed, 0 failed, 1 skipped" in out, out
         assert not any("module=machine_learning" in ln for ln in synth_tree.calls()), (
             synth_tree.calls()
         )
@@ -3027,8 +3027,7 @@ def _writer_calls(tree: SynthTree) -> list[str]:
     return [
         ln
         for ln in tree.calls()
-        if "module=preprocessing_runoff" in ln
-        and "script=sync_long_horizon_hydrograph.py" in ln
+        if "module=preprocessing_runoff" in ln and "script=sync_long_horizon_hydrograph.py" in ln
     ]
 
 
@@ -3129,9 +3128,7 @@ class TestLongTermOperationalPublicationWiring:
         out = result.stdout + result.stderr
         assert result.returncode == 0, out
         calls = _writer_calls(synth_tree)
-        assert calls, (
-            "writer must be called even on a no-active-mode day; output:\n" + out
-        )
+        assert calls, "writer must be called even on a no-active-mode day; output:\n" + out
         # The no-active-mode skip row must still appear.
         assert "long_term_forecasting (operational)" in out, (
             "long_term_forecasting (operational) skip row must still appear"
@@ -3144,9 +3141,7 @@ class TestLongTermOperationalPublicationWiring:
             "preprocessing_runoff",
             'if [ "$script" = "preprocessing_runoff.py" ]; then exit 1; fi',
         )
-        result = run_main(
-            synth_tree, "long-term-operational", continue_on_error=continue_on_error
-        )
+        result = run_main(synth_tree, "long-term-operational", continue_on_error=continue_on_error)
         assert result.returncode != 0
         calls = _writer_calls(synth_tree)
         assert not calls, (
@@ -3174,9 +3169,7 @@ class TestLongTermOperationalPublicationWiring:
         out = result.stdout + result.stderr
         assert result.returncode == 0, out
         # Neither runoff nor the writer may have been called.
-        assert not any(
-            "module=preprocessing_runoff" in ln for ln in synth_tree.calls()
-        ), (
+        assert not any("module=preprocessing_runoff" in ln for ln in synth_tree.calls()), (
             "runoff must not be called when the org gate skips long-term-operational"
         )
         assert not _writer_calls(synth_tree), (
@@ -3238,23 +3231,17 @@ class TestLongTermOperationalPublicationWiring:
         out = result.stdout + result.stderr
 
         if expect_nonzero_exit:
-            assert result.returncode != 0, (
-                f"lt_rc={lt_rc}: expected nonzero exit; output:\n{out}"
-            )
+            assert result.returncode != 0, f"lt_rc={lt_rc}: expected nonzero exit; output:\n{out}"
         else:
-            assert result.returncode == 0, (
-                f"lt_rc={lt_rc}: expected zero exit; output:\n{out}"
-            )
+            assert result.returncode == 0, f"lt_rc={lt_rc}: expected zero exit; output:\n{out}"
 
         if expect_long_horizon_fail_row:
             assert f"{_LONG_HORIZON_ROW}: FAIL" in out, (
-                f"lt_rc={lt_rc}: expected a FAIL row for '{_LONG_HORIZON_ROW}'; "
-                f"output:\n{out}"
+                f"lt_rc={lt_rc}: expected a FAIL row for '{_LONG_HORIZON_ROW}'; output:\n{out}"
             )
         else:
             assert _LONG_HORIZON_ROW not in out, (
-                f"lt_rc={lt_rc}: must not record any row for '{_LONG_HORIZON_ROW}'; "
-                f"output:\n{out}"
+                f"lt_rc={lt_rc}: must not record any row for '{_LONG_HORIZON_ROW}'; output:\n{out}"
             )
 
     def test_exit6_no_duplicate_failure_row(self, synth_tree):
@@ -3294,8 +3281,7 @@ class TestLongTermOperationalPublicationWiring:
 
         assert result.returncode != 0
         assert f"{_LONG_HORIZON_ROW}: FAIL" in out, (
-            "a FAIL row for the long-horizon sync must appear on fatal exit 1; "
-            f"output:\n{out}"
+            f"a FAIL row for the long-horizon sync must appear on fatal exit 1; output:\n{out}"
         )
         assert "MODULE ERROR DETAILS" in out, out
         details = out.split("MODULE ERROR DETAILS", 1)[1]
@@ -3330,9 +3316,7 @@ class TestLongTermOperationalPublicationWiring:
         result = run_main(synth_tree, "long-term-operational", continue_on_error=True)
         out = result.stdout + result.stderr
 
-        assert result.returncode != 0, (
-            "--continue-on-error must not mask a fatal publication exit"
-        )
+        assert result.returncode != 0, "--continue-on-error must not mask a fatal publication exit"
         assert f"{_LONG_HORIZON_ROW}: FAIL" in out, (
             "FAIL row must still be recorded under --continue-on-error; output:\n" + out
         )

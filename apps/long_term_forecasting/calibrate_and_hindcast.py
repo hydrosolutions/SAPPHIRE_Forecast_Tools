@@ -21,6 +21,7 @@ import pandas as pd
 from __init__ import SAPPHIRE_API_AVAILABLE
 from config_forecast import ForecastConfig
 from data_interface import BasePredictorDataInterface, DataInterface, DataInterfaceDB
+from dotenv import dotenv_values
 
 # Import forecast models
 from lt_utils import create_model_instance, save_forecast
@@ -43,6 +44,38 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 from __init__ import logger
+
+
+def _ensure_calibration_allowed(env_file_path=None):
+    """Reject Uzhm maintenance before reading configuration or constructing models.
+
+    dotenv preserves inherited values. Check the selected file too so an inherited
+    organization cannot enable retraining for a Uzhm deployment. This does not
+    load environment variables or affect operational LR coefficient fitting.
+    An explicit ieasyhydroforecast_lt_allow_calibration setting permits maintenance
+    only for true/1/yes/on (case and whitespace ignored). Any other explicit value
+    denies it, and denial in either the inherited environment or selected file wins.
+    Absence preserves existing behavior; Uzhm remains prohibited even with true.
+    """
+    organizations = [os.getenv("ieasyhydroforecast_organization", "")]
+    policy_key = "ieasyhydroforecast_lt_allow_calibration"
+    policies = [os.environ[policy_key]] if policy_key in os.environ else []
+    env_file_path = env_file_path or os.getenv("ieasyhydroforecast_env_file_path")
+    if env_file_path:
+        file_values = dotenv_values(env_file_path)
+        organizations.append(file_values.get("ieasyhydroforecast_organization") or "")
+        if policy_key in file_values:
+            policies.append(file_values[policy_key] or "")
+    if any(policy.strip().lower() not in {"true", "1", "yes", "on"} for policy in policies):
+        raise PermissionError(
+            "Long-term calibration and hyperparameter tuning are prohibited by "
+            "ieasyhydroforecast_lt_allow_calibration; preserve the deployed model parameters."
+        )
+    if any(organization.strip().lower() == "uzhm" for organization in organizations):
+        raise PermissionError(
+            "Long-term calibration and hyperparameter tuning are prohibited for Uzhm; "
+            "preserve the deployed model parameters."
+        )
 
 
 def _read_station_codes():
@@ -116,6 +149,8 @@ def tune_hyperparameters_model(
     Returns:
         Tuple[bool, str]: A tuple containing a boolean indicating success and a message.
     """
+    _ensure_calibration_allowed()
+
     # Load configurations
     configs = forecast_configs.get_model_specific_config(model_name=model_name)
     model_type = configs["general_config"]["model_type"]
@@ -185,6 +220,8 @@ def calibrate_model(
     """
     Run a single calibration model.
     """
+
+    _ensure_calibration_allowed()
 
     # Load configurations
     configs = forecast_configs.get_model_specific_config(model_name=model_name)
@@ -303,7 +340,8 @@ def calibrate_and_hindcast(
         raise ValueError("If recalibrate_all is False, models_to_run must be specified.")
 
     # Setup Environment
-    sl.load_environment()
+    env_file_path = sl.load_environment()
+    _ensure_calibration_allowed(env_file_path)
     station_codes = _read_station_codes()
 
     # Now we setup the configurations

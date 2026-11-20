@@ -48,6 +48,11 @@ class WidgetManager:
         self._dm = dm
         self._cfg = cfg
 
+        # Legacy configurations infer long-term visibility from the ML display flag.
+        display_long_term = getattr(cfg, "display_long_term_forecasts", None)
+        if display_long_term is None:
+            display_long_term = cfg.display_ML_forecasts
+
         # === SIDEBAR WIDGETS ===
         # ── Invisible ───────────────────────────────────────────────────────
         self.date_picker = widgets.create_date_picker(dm.forecasts_all)
@@ -58,7 +63,7 @@ class WidgetManager:
         self.station_card = widgets.create_station_card(self.station_selector)
 
         # ── Horizon ─────────────────────────────────────────────────────────
-        self.horizon_selector = widgets.create_horizon_selector(self._cfg.display_ML_forecasts)
+        self.horizon_selector = widgets.create_horizon_selector(display_long_term)
         self.horizon_card = widgets.create_horizon_card(self.horizon_selector, width)
 
         # ── Invisible ───────────────────────────────────────────────────────
@@ -180,7 +185,7 @@ class WidgetManager:
 
         # ── Publish bulletin ─────────────────────────────────────────────────
         self.publish_horizon_multiselect = widgets.create_publish_horizon_multiselect(
-            self._cfg.display_ML_forecasts
+            display_long_term
         )
         self.publish_station_multiselect = widgets.create_publish_station_multiselect(
             station_dict

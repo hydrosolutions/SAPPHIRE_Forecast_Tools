@@ -26,6 +26,9 @@ elif [ "$ieasyhydroforecast_organization" = "tjhm" ]; then
       docker pull mabesa/sapphire-prepgateway:$TAG
       docker pull mabesa/sapphire-ml:$TAG
       docker pull mabesa/sapphire-lt-forecasting:$TAG
+elif [ "$ieasyhydroforecast_organization" = "uzhm" ]; then
+      docker pull mabesa/sapphire-prepgateway:$TAG
+      docker pull mabesa/sapphire-lt-forecasting:$TAG
 else
       echo "No further images to pull for this organization"
 fi

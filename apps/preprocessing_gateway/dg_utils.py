@@ -21,6 +21,14 @@ except ImportError:
     SapphireAPIError = Exception
 
 
+def resolve_qmapping_parameter_path():
+    """Return None when mapping is disabled; preserve configured path resolution."""
+    parameter_path = os.getenv("ieasyhydroforecast_Q_MAP_PARAM_PATH")
+    if not parameter_path or not parameter_path.strip():
+        return None
+    return os.path.join(os.getenv("ieasyhydroforecast_models_and_scalers_path"), parameter_path)
+
+
 class SnowPreservationReadError(RuntimeError):
     """A preservation read that guards a destructive snow write failed.
 

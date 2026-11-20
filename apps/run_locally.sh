@@ -222,7 +222,7 @@ MAINTENANCE_MODULES=(
 # then falls back to extracting ieasyhydroforecast_organization from the .env file.
 ORG=""
 DEMO_SKIP_MODULES=(preprocessing_gateway machine_learning long_term_forecasting)
-UZHM_SKIP_MODULES=(preprocessing_gateway machine_learning long_term_forecasting)
+UZHM_SKIP_MODULES=(machine_learning)
 
 # Colors
 RED='\033[0;31m'
@@ -2413,7 +2413,8 @@ Environment variables:
                                         hydrograph rows in maintenance:preprocessing_runoff.
                                         Defaults to the current calendar year.
   ieasyhydroforecast_organization        Organization name (demo, kghm, tjhm, uzhm).
-                                          Demo/uzhm skip: preprocessing_gateway, machine_learning, long_term_forecasting.
+                                          Demo skips: preprocessing_gateway, machine_learning, long_term_forecasting.
+                                          Uzhm skips: machine_learning.
   ieasyhydroforecast_START_DATE        Hindcast start date for initialize target (YYYY-MM-DD)
   SAPPHIRE_SKILL_LEAD_AWARE               Lead-aware long-term operational selection: per-lead
                                             skill metrics & ensembles, config-driven issuance
