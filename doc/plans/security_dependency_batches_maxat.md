@@ -592,3 +592,50 @@ complete forecast coverage. The new service-image checks above exercise the
 candidate dependencies directly. Private evidence is outside Git under
 `/tmp/sapphire-service-auth-rebased-*` and the earlier
 `/tmp/sapphire-service-app-source-proof.json`.
+
+## Batch 9: cryptography 50 — Review
+
+Prepared from `origin/maxat_sapphire_2` at `763e6d46` after PR #549 merged.
+The owner authorized the bump and PR after compatibility testing. The
+candidate changes only auth's manifest constraint, lock and requirements:
+cryptography 49.0.0 → 50.0.0, with python-jose 3.5.0 unchanged. All other lock
+package records are identical. No service logic, API, schema or migration
+changes; this update has not been deployed.
+
+On 2026-11-20, frozen installation and the auth `run_tests.sh` scope passed
+25 tests, zero skips. Eight comparative probe runs passed 135 checks each
+(1,080 repeated checks across runtimes, not 1,080 distinct tests). These use
+actual auth token helpers and explicitly verify the cryptography backend for
+HS256/384/512, RS256/384/512 and ES256/384/512. Access/refresh claims, tampering,
+wrong keys, expiry, unsigned tokens, algorithm mismatch and malformed tokens
+were checked. Generated valid RSA/EC PEM and DER keys roundtrip successfully.
+Tokens minted on version 49 validate on version 50 and vice versa, including
+Linux-issued version-50 tokens validated by the local version-49 runtime.
+
+The local environments use Python 3.12.10. The actual auth Dockerfile builds
+successfully with Python 3.11.18, cryptography 50.0.0 and python-jose 3.5.0;
+its isolated container passes `pip check` and an actual uvicorn `/health`
+request. Runtime inventory, image ID and probe hash are retained outside Git
+under `/tmp/sapphire-crypto50-*`. Containers use no external network or
+operational configuration, and bypass the normal migration command.
+
+Fresh independent adversarial review found no introduced defect. These are
+synthetic-key checks, not verification of deployed keys or live authentication
+against the user service/PostgreSQL. Existing endpoint tests cover login,
+registration, refresh and logout with mocked upstream user calls and some
+refresh verification. Cryptography 50 intentionally rejects certain malformed
+DER key encodings previously accepted by 49; there is no evidence here that
+such keys are deployed. See the [upstream changelog](https://cryptography.io/en/50.0.0/changelog/#v50-0-0).
+The separate python-jose advisory remains outside this update.
+
+Application sources remain identical to Batch 7's tested graph. No new live
+forecast pipeline run is claimed: that run uses existing remote services and
+would not exercise this candidate auth image. Candidate service tests and
+image probes above directly exercise the changed dependency.
+
+The full `SAPPHIRE_TEST_ENV=True bash run_tests.sh` completed with exit 0:
+9,677 passed across all 16 scopes, with exactly the same 12 owner-accepted
+skips and two expected failures as the merged baseline. Exception test IDs
+were compared, not just totals. The affected auth scope has zero skips.
+Synthetic key/token fixture files were deleted after review; aggregate
+reports and probe scripts remain outside Git.
