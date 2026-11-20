@@ -9,7 +9,7 @@ passlib==1.7.4
 bcrypt==4.0.1
 python-jose[cryptography]==3.5.0
 python-multipart==0.0.32
-cryptography==49.0.0
+cryptography==50.0.0
 httpx==0.28.0
 email-validator==2.3.0
 alembic==1.17.0
