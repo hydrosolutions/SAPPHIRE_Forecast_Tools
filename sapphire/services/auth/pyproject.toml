@@ -36,6 +36,8 @@ asyncio_mode = "auto"
 
 [tool.uv]
 constraint-dependencies = [
+    "dnspython>=2.9.2",
+    "pyasn1>=0.6.5",
     "anyio>=4.14.2",
     "certifi>=2026.10.18",
     "mako>=1.4.2",

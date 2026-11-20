@@ -544,3 +544,51 @@ The pipeline uses existing remote development services; it does not exercise
 the candidate service images or prove complete forecast coverage.
 Private logs and synthetic probe artifacts are retained outside Git under
 `/tmp/sapphire-service-shared-*`.
+
+## Batch 8: service authentication dependencies — Review
+
+Prepared from `origin/maxat_sapphire_2` at `0d585a83`, then rebased onto
+`9b8360b4` after shared dependency PR #548 merged. The combined environments
+and service images were reverified on 2026-11-20.
+
+- dnspython 2.8.0 → 2.9.2 in auth and user.
+- pyasn1 0.6.3 → 0.6.5 in auth.
+
+This addresses 11 alerts in the audit snapshot. Exact candidate versions
+returned no matching GitHub global advisories when rechecked on 2026-11-20.
+dnspython's base package supports Docker Python 3.11; no DNSSEC extra is added.
+Cryptography 49.0.0, python-jose 3.5.0 and all unrelated package records remain
+unchanged from the merged base, including the shared dependency fixes.
+Only six dependency files change: each service's manifest, lock and
+requirements. uv floors and exact Docker requirements pins cover both
+installation paths. No API, service logic, schema or migration changes.
+
+After rebasing, narrow uv resolution, lock consistency checks and frozen
+installs passed in isolated Python 3.12.10 environments. Auth/user tests
+passed 25 and 41 tests respectively, with zero skips or failures. The full
+repository suite passed again: 9,677 tests across 16 scopes, with exactly the
+same 12 owner-accepted skips and two expected failures as before the rebase.
+
+Compatibility probes were repeated against the merged baseline and candidate
+on Python 3.12.10 and against both rebuilt Python 3.11.18 service images.
+All six runs passed: DNS packet roundtrip and real UDP/TCP resolver success,
+NXDOMAIN, refusal and timeout using loopback-only servers; auth additionally
+exercised generated RSA DER/PEM roundtrips via pyasn1/rsa, signatures, tamper
+rejection and jose RS256. Both images passed `pip check` and actual uvicorn
+`/health` requests. Package inventories, image IDs and the probe hash are
+recorded with the evidence. Containers used no external network or deployment
+data and were removed afterward. These checks do not test live DNS providers,
+PostgreSQL migrations or database readiness. Existing pip transitives resolve
+independently from the uv locks. Fresh independent adversarial review found
+no actionable defect.
+
+The 681 tracked application files remain identical to Batch 7's validation
+sources. Its eight passing application Docker builds/smokes and successful
+local pipeline run apply to this unchanged application graph; neither was
+rerun for this rebase. That pipeline passed eleven execution stages and three
+API validations, including DECAD ML but not explicit PENTAD ML. It used
+unchanged remote services and cannot validate these service patches or prove
+complete forecast coverage. The new service-image checks above exercise the
+candidate dependencies directly. Private evidence is outside Git under
+`/tmp/sapphire-service-auth-rebased-*` and the earlier
+`/tmp/sapphire-service-app-source-proof.json`.
