@@ -33,6 +33,7 @@ from src.model_names import (
     QUARTERLY_DERIVED_MODELS,
     canonical_model_short_series,
 )
+from src.point_forecast import fill_forecasted_discharge
 from src.postprocessing_tools import count_quantile_crossings
 
 logger = logging.getLogger(__name__)
@@ -1568,7 +1569,7 @@ def read_latest_monthly_forecasts(
 
     Returns:
         DataFrame with columns: code, year, month, month_in_year,
-        model_short, forecasted_discharge (=q50), q05-q95,
+        model_short, forecasted_discharge (q, with q50 fallback), q05-q95,
         valid_from, valid_to, date, flag.
         Empty DataFrame if no data.
     """
@@ -1625,9 +1626,8 @@ def read_latest_monthly_forecasts(
     if "month_in_year" not in df.columns and "month" in df.columns:
         df["month_in_year"] = df["month"]
 
-    # Add forecasted_discharge from q50 if missing
-    if "forecasted_discharge" not in df.columns and "q50" in df.columns:
-        df["forecasted_discharge"] = df["q50"].astype(float)
+    # Fill missing point forecasts; q is authoritative, q50 is fallback.
+    df = fill_forecasted_discharge(df)
 
     # Filter to the latest (year, month) based on valid_from
     vf = pd.to_datetime(df["valid_from"], errors="coerce")
@@ -1777,19 +1777,21 @@ def _normalize_monthly_combined_forecasts(
     normalization, then adds month_in_year and
     forecasted_discharge if absent.
     """
-    df = _normalize_monthly_forecasts(df)
+    # Recovery must distinguish genuine month_0 from missing/invalid leads.
+    # Keep the historical base normalizer's sentinel policy out of this snapshot.
+    original_lead = df.get("horizon_value")
+    df = _normalize_monthly_forecasts(df.drop(columns=["horizon_value"], errors="ignore"))
+    if original_lead is not None:
+        df["horizon_value"] = pd.to_numeric(original_lead, errors="coerce")
 
     # Add month_in_year (needed by gap detector)
     if "month_in_year" not in df.columns and "month" in df.columns:
         df["month_in_year"] = df["month"]
 
-    # Add forecasted_discharge from q50 (needed for merge-back)
-    if "forecasted_discharge" not in df.columns and "q50" in df.columns:
-        df["forecasted_discharge"] = df["q50"].astype(float)
+    # Fill missing point forecasts; q is authoritative, q50 is fallback.
+    df = fill_forecasted_discharge(df)
 
-    # Drop API-only columns not needed internally. Preserve
-    # horizon_value so the lead carries through merge-back and skill
-    # recalc (the base normalizer already fillna(0).astype(int)s it).
+    # Drop API-only columns; preserve numeric/null leads for recovery validation.
     drop_cols = ["id", "horizon_type", "model_type_description"]
     df = df.drop(
         columns=[c for c in drop_cols if c in df.columns],
@@ -4960,12 +4962,13 @@ def _normalize_combined_forecasts(
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    # Add forecasted_discharge from q/q50
-    if "forecasted_discharge" not in df.columns:
-        if "q" in df.columns:
-            df["forecasted_discharge"] = pd.to_numeric(df["q"], errors="coerce")
-        elif "q50" in df.columns:
-            df["forecasted_discharge"] = df["q50"].astype(float)
+    # Fill missing point forecasts; q is authoritative, q50 is fallback.
+    point_inputs = df.copy()
+    if "q" in point_inputs.columns:
+        point_inputs["q"] = pd.to_numeric(point_inputs["q"], errors="coerce")
+    resolved = fill_forecasted_discharge(point_inputs)
+    if "forecasted_discharge" in resolved.columns:
+        df["forecasted_discharge"] = resolved["forecasted_discharge"]
 
     # Drop API-only columns
     drop_cols = [

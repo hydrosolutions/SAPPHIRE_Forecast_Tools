@@ -232,144 +232,128 @@ def detect_stale_quantiles(
     return stale.reset_index(drop=True)
 
 
+def normalize_monthly_issue_dates(values: pd.Series) -> pd.Series:
+    """Parse local calendar issue dates without inventing dates for missing values."""
+
+    from src.aggregation import local_calendar_date
+
+    # Numeric API values are not issue dates (Timestamp would treat them as epochs).
+    return local_calendar_date(values.mask(values.map(pd.api.types.is_number)))
+
+
+def select_latest_monthly_issues(
+    combined_forecasts: pd.DataFrame,
+    lookback_months: int = 3,
+    *,
+    forecast_date: _dt.date,
+    configured_leads: set[int],
+) -> pd.DataFrame:
+    """Keep each configured lead's latest raw issue, globally across targets/stations.
+
+    Lookback bounds issue dates relative to the captured forecast date, not target
+    months: a month_0 issue remains eligible alongside month_3 from the same run.
+    Ensemble rows never choose the issue; they only accompany selected raw keys.
+    """
+    required = {"year", "month", "code", "horizon_value", "date", "model_short"}
+    columns = [
+        *combined_forecasts.columns,
+        *sorted(required.difference(combined_forecasts.columns)),
+    ]
+    empty = combined_forecasts.reindex(columns=columns).iloc[:0].copy()
+    if combined_forecasts.empty:
+        return empty
+    if not required.issubset(combined_forecasts.columns):
+        logger.warning(
+            "Monthly recovery missing required columns: %s",
+            required - set(combined_forecasts.columns),
+        )
+        return empty
+    df = combined_forecasts.copy()
+    df["date"] = normalize_monthly_issue_dates(df["date"])
+    end = pd.Timestamp(forecast_date).normalize()
+    start = end - pd.DateOffset(months=lookback_months)
+    date_ok = df["date"].between(start, end)
+    for col in ("year", "month", "horizon_value"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    lead_ok = df["horizon_value"].isin(configured_leads)
+    target_ok = (
+        df["year"].between(1, 9999)
+        & df["year"].mod(1).eq(0)
+        & df["month"].between(1, 12)
+        & df["month"].mod(1).eq(0)
+        & df["code"].notna()
+        & df["model_short"].notna()
+    )
+    logger.info(
+        "Monthly recovery exclusions: invalid/missing/out-of-window issue dates=%d, "
+        "invalid/missing/unconfigured leads=%d, invalid target/identity=%d",
+        int((~date_ok).sum()),
+        int((~lead_ok).sum()),
+        int((~target_ok).sum()),
+    )
+    df = df[date_ok & lead_ok & target_ok].copy()
+    if df.empty:
+        return empty
+    for col in ("year", "month", "horizon_value"):
+        df[col] = df[col].astype(int)
+    df["code"] = df["code"].astype(str)
+    raw = df[~df["model_short"].isin({"EM", "Naive Mean", "Skilled Mean"})]
+    latest = raw.groupby("horizon_value")["date"].max().rename("date").reset_index()
+    return df.merge(latest, on=["horizon_value", "date"], how="inner")
+
+
 def detect_missing_monthly_ensembles(
     combined_forecasts: pd.DataFrame,
     lookback_months: int = 3,
     ensemble_models: set[str] | None = None,
+    *,
+    forecast_date: _dt.date,
+    configured_leads: set[int],
 ) -> pd.DataFrame:
-    """Find (year, month, code, model_short) tuples missing ensembles.
+    """Find missing finite ensembles at the latest raw issue per configured lead.
 
-    Args:
-        combined_forecasts: DataFrame with [year, month, code,
-            model_short, ...] from the monthly combined CSV.
-        lookback_months: Months to scan back from most recent.
-        ensemble_models: Set of ensemble model_short values to check.
-            Defaults to ``{'EM'}`` for backward compatibility.
-
-    Returns:
-        DataFrame with [year, month, code, model_short] tuples
-        needing gap-fill. Empty DataFrame if no gaps found.
+    Identity includes station, target month, lead, issue date, and ensemble type,
+    independently of SAPPHIRE_SKILL_LEAD_AWARE. Zero is a valid point forecast;
+    absent quantiles alone do not require recovery.
     """
+    from src.point_forecast import fill_forecasted_discharge
+
     if ensemble_models is None:
-        ensemble_models = {"EM"}
-
-    # Under SAPPHIRE_SKILL_LEAD_AWARE, detect gaps per-lead -- mirrors the
-    # quarterly detector's horizon_value key -- instead of conflating
-    # distinct horizon_value leads into one (year, month, code) grain, so a
-    # missing ensemble at a specific lead is detected even when another lead
-    # is present for the same target month. Flag OFF, or horizon_value absent
-    # from the input, is unchanged.
-    lead_aware = skill_lead_aware_enabled() and (
-        not combined_forecasts.empty and "horizon_value" in combined_forecasts.columns
-    )
-
-    key_cols = ["year", "month", "code"]
-    if lead_aware:
-        key_cols = [*key_cols, "horizon_value"]
+        ensemble_models = {"Skilled Mean", "Naive Mean"}
+    key_cols = ["year", "month", "code", "horizon_value", "date"]
     cols = [*key_cols, "model_short"]
     empty = pd.DataFrame(columns=cols)
-
-    if combined_forecasts.empty:
-        return empty
-
-    required = set(key_cols) | {"model_short"}
-    if not required.issubset(combined_forecasts.columns):
-        logger.warning(
-            "Monthly combined forecasts missing required columns: %s",
-            required - set(combined_forecasts.columns),
-        )
-        return empty
-
-    df = combined_forecasts.copy()
-    df["year"] = pd.to_numeric(df["year"], errors="coerce")
-    df["month"] = pd.to_numeric(df["month"], errors="coerce")
-    numeric_cols = ["year", "month"]
-    if lead_aware:
-        # Legacy rows with a NULL/non-numeric horizon_value cannot be keyed
-        # to a real lead. Manufacturing an "unknown-lead" sentinel gap only
-        # yields a PHANTOM gap that downstream maintenance -- which
-        # regenerates ensembles at REAL leads (0/1/...) -- can never fill,
-        # so it would recur every run. Instead, EXCLUDE such rows from the
-        # lead-aware gap universe, but emit a WARNING naming the count so
-        # they are surfaced (not silently dropped). (Monthly rows normally
-        # arrive with horizon_value already coerced to a clean int upstream
-        # by _normalize_monthly_forecasts; this mirrors the quarterly
-        # detector for parity/robustness.)
-        df["horizon_value"] = pd.to_numeric(df["horizon_value"], errors="coerce")
-        null_lead_count = int(df["horizon_value"].isna().sum())
-        if null_lead_count:
-            logger.warning(
-                "%d legacy NULL-lead month rows skipped from lead-aware "
-                "gap detection -- need migration",
-                null_lead_count,
-            )
-        numeric_cols = [*numeric_cols, "horizon_value"]
-    df = df.dropna(subset=numeric_cols)
-    for col in numeric_cols:
-        df[col] = df[col].astype(int)
-
-    if df.empty:
-        return empty
-
-    # Determine the most recent (year, month)
-    max_year = df["year"].max()
-    max_month = df[df["year"] == max_year]["month"].max()
-
-    # Build list of recent (year, month) tuples within lookback
-    recent_periods = []
-    y, m = int(max_year), int(max_month)
-    for _ in range(lookback_months):
-        recent_periods.append((y, m))
-        m -= 1
-        if m < 1:
-            m = 12
-            y -= 1
-
-    # Filter to recent periods
-    recent = df[
-        df.apply(
-            lambda r: (r["year"], r["month"]) in recent_periods,
-            axis=1,
-        )
-    ]
-
+    recent = select_latest_monthly_issues(
+        combined_forecasts,
+        lookback_months,
+        forecast_date=forecast_date,
+        configured_leads=configured_leads,
+    )
     if recent.empty:
         return empty
-
-    # Find all key-grain pairs with any forecasts
-    all_pairs = recent[key_cols].drop_duplicates()
-
-    # Check each ensemble model
+    raw = recent[~recent["model_short"].isin({"EM", "Naive Mean", "Skilled Mean"})]
+    all_pairs = raw[key_cols].drop_duplicates()
+    present = fill_forecasted_discharge(recent[recent["model_short"].isin(ensemble_models)])
+    points = pd.to_numeric(
+        present.get("forecasted_discharge", pd.Series(index=present.index, dtype=float)),
+        errors="coerce",
+    )
+    present = present.loc[points.astype(float).map(math.isfinite).astype(bool)]
     missing_parts = []
     for model in sorted(ensemble_models):
-        model_pairs = recent[recent["model_short"] == model][key_cols].drop_duplicates()
-
-        merged = all_pairs.merge(
-            model_pairs,
-            on=key_cols,
-            how="left",
-            indicator=True,
-        )
+        model_pairs = present[present["model_short"] == model][key_cols].drop_duplicates()
+        merged = all_pairs.merge(model_pairs, on=key_cols, how="left", indicator=True)
         gaps = merged[merged["_merge"] == "left_only"][key_cols].copy()
         if not gaps.empty:
             gaps["model_short"] = model
             missing_parts.append(gaps)
-
         logger.info(
-            "Monthly gap detection (%s): %d total pairs, %d present, %d missing",
+            "Monthly gap detection (%s): %d total keys, %d missing",
             model,
             len(all_pairs),
-            len(model_pairs),
             len(gaps),
         )
-
-    if not missing_parts:
-        return empty
-
-    return pd.concat(
-        missing_parts,
-        ignore_index=True,
-    )[cols]
+    return pd.concat(missing_parts, ignore_index=True)[cols] if missing_parts else empty
 
 
 def detect_missing_quarterly_ensembles(

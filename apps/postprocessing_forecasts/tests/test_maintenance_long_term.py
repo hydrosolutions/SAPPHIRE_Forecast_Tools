@@ -1,10 +1,11 @@
 """Tests for postprocessing_maintenance_long_term.py entry point.
 
 Exercises the monthly gap-fill pipeline:
-  read combined -> detect gaps -> read skill & forecasts ->
-  create ensembles -> merge/dedup -> save
+  read combined snapshot -> detect exact issue gaps -> read skills ->
+  create ensembles -> write only missing rows
 """
 
+import datetime as dt
 import importlib.util
 import os
 import sys
@@ -41,9 +42,22 @@ def _load_real_model_names():
 # -- helpers ---------------------------------------------------------
 
 
+def _monthly_identity(frame):
+    """Supply explicit issue/lead metadata in monthly wiring fixtures."""
+    frame = frame.copy()
+    if "month" in frame and "year" in frame:
+        if "horizon_value" not in frame:
+            frame["horizon_value"] = 0
+        else:
+            frame["horizon_value"] = frame["horizon_value"].fillna(0)
+        dates = pd.to_datetime(dict(year=frame["year"], month=frame["month"], day=1))
+        frame["date"] = pd.to_datetime(frame["date"]).fillna(dates) if "date" in frame else dates
+    return frame
+
+
 def _make_combined(rows):
     """Build a combined-forecasts DataFrame from a list of dicts."""
-    return pd.DataFrame(rows)
+    return _monthly_identity(pd.DataFrame(rows))
 
 
 def _make_gaps(tuples):
@@ -56,9 +70,11 @@ def _make_gaps(tuples):
         return pd.DataFrame(columns=["year", "month", "code", "model_short"])
     if len(tuples[0]) == 3:
         tuples = [(y, m, c, "Naive Mean") for y, m, c in tuples]
-    return pd.DataFrame(
-        tuples,
-        columns=["year", "month", "code", "model_short"],
+    return _monthly_identity(
+        pd.DataFrame(
+            tuples,
+            columns=["year", "month", "code", "model_short"],
+        )
     )
 
 
@@ -69,7 +85,7 @@ def _make_forecasts(rows):
         df["month_in_year"] = df["month"]
     if "forecasted_discharge" not in df.columns and "q50" in df.columns:
         df["forecasted_discharge"] = df["q50"].astype(float)
-    return df
+    return _monthly_identity(df)
 
 
 def _make_skill():
@@ -117,6 +133,23 @@ def _import_module(mocks_dict):
     mock_ensemble_calc = mocks_dict.get("ensemble_calc", MagicMock())
     mock_gap_detector = mocks_dict.get("gap_detector", MagicMock())
     mock_file_writer = mocks_dict.get("file_writer", MagicMock())
+    mock_api_writer = mocks_dict.get("api_writer", MagicMock())
+    mock_api_writer._write_monthly_ensemble_to_api.return_value = True
+    for method in (
+        mock_data_reader.read_monthly_combined_forecasts,
+        mock_gap_detector.detect_missing_monthly_ensembles,
+        mock_ensemble_calc.create_monthly_ensemble_forecasts,
+    ):
+        if isinstance(getattr(method, "return_value", None), pd.DataFrame):
+            method.return_value = _monthly_identity(method.return_value)
+    mock_gap_detector.select_latest_monthly_issues.side_effect = (
+        lambda frame, *args, **kwargs: frame.copy()
+    )
+    point_spec = importlib.util.spec_from_file_location(
+        "maintenance_test_points", os.path.join(SCRIPT_DIR, "src", "point_forecast.py")
+    )
+    real_points = importlib.util.module_from_spec(point_spec)
+    point_spec.loader.exec_module(real_points)
 
     _default_empty_quarterly_readers(mock_data_reader)
 
@@ -132,12 +165,16 @@ def _import_module(mocks_dict):
     mock_src.gap_detector = mock_gap_detector
     mock_src.file_writer = mock_file_writer
     mock_src.model_names = real_model_names
+    mock_src.point_forecast = real_points
+    mock_src.api_writer = mock_api_writer
 
     sys.modules["setup_library"] = mock_sl
     sys.modules["src"] = mock_src
     sys.modules["src.postprocessing_tools"] = mock_pt
     sys.modules["src.data_reader"] = mock_data_reader
     sys.modules["src.model_names"] = real_model_names
+    sys.modules["src.point_forecast"] = real_points
+    sys.modules["src.api_writer"] = mock_api_writer
     sys.modules["src.ensemble_calculator"] = mock_ensemble_calc
     sys.modules["src.gap_detector"] = mock_gap_detector
     sys.modules["src.file_writer"] = mock_file_writer
@@ -149,6 +186,10 @@ def _import_module(mocks_dict):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module._supported_seasonal_issue_leads = MagicMock(return_value=[])
+    module.available_monthly_batch_modes = MagicMock(return_value=["month_0", "month_1"])
+    module.operational_lead_for_mode = MagicMock(
+        side_effect=lambda mode: int(mode.rsplit("_", 1)[1])
+    )
     return module
 
 
@@ -341,6 +382,8 @@ class TestMaintenanceLongTerm:
                 "Skilled Mean",
                 "Naive Mean",
             }
+            assert call_args.kwargs["configured_leads"] == {0, 1}
+            assert isinstance(call_args.kwargs["forecast_date"], dt.date)
             # No skill read, no ensemble creation
             mock_data_reader.read_skill_metrics.assert_not_called()
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_not_called()
@@ -355,7 +398,7 @@ class TestMaintenanceLongTerm:
         ensemble_result,
         skill_stats,
     ):
-        """Full pipeline: gaps -> ensembles -> merge -> save -> exit 0."""
+        """Full pipeline uses one snapshot and writes only missing ensembles."""
         mock_sl = MagicMock()
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
@@ -370,7 +413,6 @@ class TestMaintenanceLongTerm:
         mock_data_reader.read_skill_metrics.return_value = skill_stats
         mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
-        mock_file_writer.save_monthly_forecast_data.return_value = None
 
         with patch.dict(sys.modules, {}):
             module = _import_module(
@@ -396,19 +438,14 @@ class TestMaintenanceLongTerm:
             mock_data_reader.read_skill_metrics.assert_called_once_with(
                 "month", codes=["10001", "10002"]
             )
-            mock_data_reader.read_monthly_forecasts.assert_called_once_with(
-                ["10001", "10002"],
-                2025,
-                2025,
-            )
+            mock_data_reader.read_monthly_forecasts.assert_not_called()
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_called_once()
-            # save_monthly_forecast_data receives a merged DataFrame
-            mock_file_writer.save_monthly_forecast_data.assert_called_once()
-            saved_df = mock_file_writer.save_monthly_forecast_data.call_args[0][0]
-            # Merged result should contain original rows + Naive Mean row
-            assert len(saved_df) >= 3, (
-                f"Expected at least 3 rows (2 base + 1 Naive Mean), got {len(saved_df)}"
-            )
+            # Only the missing ensemble is sent to the API.
+            module.api_writer._write_monthly_ensemble_to_api.assert_called_once()
+            saved_df = module.api_writer._write_monthly_ensemble_to_api.call_args[0][0]
+            assert len(saved_df) == 1
+            assert set(saved_df["model_short"]) == {"Naive Mean"}
+            mock_file_writer.save_monthly_forecast_data.assert_not_called()
             em_rows = saved_df[saved_df["model_short"] == "Naive Mean"]
             assert len(em_rows) == 1
             assert em_rows.iloc[0]["forecasted_discharge"] == 105.0
@@ -435,7 +472,6 @@ class TestMaintenanceLongTerm:
         mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
         mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
         mock_data_reader.read_quarterly_combined_forecasts.return_value = pd.DataFrame()
-        mock_file_writer.save_monthly_forecast_data.return_value = None
         mock_file_writer.save_seasonal_forecast_data.return_value = None
 
         seasonal_combined_by_lead = {
@@ -594,7 +630,6 @@ class TestMaintenanceLongTerm:
         mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
         mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
-        mock_file_writer.save_monthly_forecast_data.return_value = None
         mock_file_writer.save_quarterly_forecast_data.return_value = None
 
         # Two existing quarterly rows for the SAME (year, quarter, code,
@@ -729,7 +764,6 @@ class TestMaintenanceLongTerm:
         mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
         mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
-        mock_file_writer.save_monthly_forecast_data.return_value = None
         mock_file_writer.save_quarterly_forecast_data.return_value = None
 
         # Existing lead-0 Naive Mean (NOT a gap) with a distinctive
@@ -840,16 +874,7 @@ class TestMaintenanceLongTerm:
 
     @pytest.mark.parametrize("flag_on", [True, False])
     def test_monthly_gap_fill_only_writes_gap_leads(self, monkeypatch, flag_on):
-        """M1 P5b: under the flag, the freshly-generated MONTHLY ensemble
-
-        rows are filtered to the ACTUAL missing per-lead gap keys before
-        merge, so a NON-gap lead's existing ensemble row is not overwritten
-        (keep="last") by a regenerated row for a lead that was never a gap.
-        The gap-filled Naive Mean is stamped at the lead it was detected missing
-        (lead 1) and survives merge-back without collapsing the existing
-        lead-0 Naive Mean. Flag OFF keeps today's (period-key) behavior, under which
-        the non-gap lead-0 Naive Mean IS overwritten.
-        """
+        """Only actual missing lead/date rows are written, with either flag state."""
         if flag_on:
             monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
         else:
@@ -876,27 +901,16 @@ class TestMaintenanceLongTerm:
                 "month_in_year": [1, 1, 1],
             }
         )
-        # ONLY the lead-1 Naive Mean is reported missing.
-        if flag_on:
-            gaps = pd.DataFrame(
-                {
-                    "year": [2025],
-                    "month": [1],
-                    "code": ["19999"],
-                    "model_short": ["Naive Mean"],
-                    "horizon_value": [1],
-                }
-            )
-        else:
-            # Flag OFF: real detector emits period-only gaps (no lead col).
-            gaps = pd.DataFrame(
-                {
-                    "year": [2025],
-                    "month": [1],
-                    "code": ["19999"],
-                    "model_short": ["Naive Mean"],
-                }
-            )
+        # Exact lead identity applies with either flag state.
+        gaps = pd.DataFrame(
+            {
+                "year": [2025],
+                "month": [1],
+                "code": [combined.code.iloc[0]],
+                "model_short": ["Naive Mean"],
+                "horizon_value": [1],
+            }
+        )
         forecasts = pd.DataFrame(
             {
                 "year": [2025, 2025],
@@ -937,7 +951,6 @@ class TestMaintenanceLongTerm:
         mock_data_reader.read_monthly_forecasts.return_value = forecasts
         mock_data_reader.read_skill_metrics.return_value = _make_skill()
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = joint
-        mock_file_writer.save_monthly_forecast_data.return_value = None
         # Quarterly + seasonal paths are no-ops for this monthly-focused test.
         mock_data_reader.read_quarterly_combined_forecasts.return_value = pd.DataFrame()
 
@@ -959,31 +972,18 @@ class TestMaintenanceLongTerm:
 
             assert exc_info.value.code == 0
 
-            mock_file_writer.save_monthly_forecast_data.assert_called_once()
-            saved = mock_file_writer.save_monthly_forecast_data.call_args.args[0]
+            module.api_writer._write_monthly_ensemble_to_api.assert_called_once()
+            saved = module.api_writer._write_monthly_ensemble_to_api.call_args.args[0]
             em_rows = saved[saved["model_short"] == "Naive Mean"]
 
-            if flag_on:
-                # Both leads present; the gap-filled Naive Mean is stamped lead 1
-                # (discharge 111), and the NON-gap lead-0 Naive Mean keeps its
-                # ORIGINAL discharge (100), NOT the regenerated 999.
-                assert set(em_rows["horizon_value"]) == {0, 1}
-                lead0 = em_rows[em_rows["horizon_value"] == 0]
-                lead1 = em_rows[em_rows["horizon_value"] == 1]
-                assert len(lead0) == 1
-                assert float(lead0.iloc[0]["forecasted_discharge"]) == 100.0
-                assert len(lead1) == 1
-                assert float(lead1.iloc[0]["forecasted_discharge"]) == 111.0
-            else:
-                # Flag OFF: today's behavior -- period-only gap filter keeps
-                # BOTH regenerated Naive Mean rows, so the non-gap lead-0 Naive Mean IS
-                # overwritten (keep="last") to 999.
-                lead0 = em_rows[em_rows["horizon_value"] == 0]
-                lead1 = em_rows[em_rows["horizon_value"] == 1]
-                assert len(lead0) == 1
-                assert float(lead0.iloc[0]["forecasted_discharge"]) == 999.0
-                assert len(lead1) == 1
-                assert float(lead1.iloc[0]["forecasted_discharge"]) == 111.0
+            assert len(em_rows) == 1
+            assert em_rows.iloc[0]["horizon_value"] == 1
+            assert em_rows.iloc[0]["forecasted_discharge"] == 111.0
+            # The complete lead-0 row remains stored and is not rewritten.
+            assert combined.loc[
+                combined.model_short == "Naive Mean", "forecasted_discharge"
+            ].tolist() == [100.0]
+            mock_file_writer.save_monthly_forecast_data.assert_not_called()
 
     def test_deduplication_works(
         self,
@@ -991,8 +991,8 @@ class TestMaintenanceLongTerm:
         forecasts_for_gaps,
         skill_stats,
     ):
-        """Existing Naive Mean rows are replaced (not duplicated) during merge."""
-        # Combined already has an old Naive Mean row with discharge=99.0
+        """A missing-point latest ensemble is repaired without replaying stored rows."""
+        # Combined has a latest Naive Mean row with a missing point.
         combined = _make_combined(
             [
                 {
@@ -1008,7 +1008,7 @@ class TestMaintenanceLongTerm:
                     "month": 1,
                     "code": "10001",
                     "model_short": "Naive Mean",
-                    "forecasted_discharge": 99.0,
+                    "forecasted_discharge": None,
                     "month_in_year": 1,
                 },
             ]
@@ -1053,7 +1053,6 @@ class TestMaintenanceLongTerm:
         mock_data_reader.read_skill_metrics.return_value = skill_stats
         mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_output
-        mock_file_writer.save_monthly_forecast_data.return_value = None
 
         with patch.dict(sys.modules, {}):
             module = _import_module(
@@ -1073,14 +1072,14 @@ class TestMaintenanceLongTerm:
 
             assert exc_info.value.code == 0
 
-            saved_df = mock_file_writer.save_monthly_forecast_data.call_args[0][0]
+            saved_df = module.api_writer._write_monthly_ensemble_to_api.call_args[0][0]
             em_rows = saved_df[saved_df["model_short"] == "Naive Mean"]
-            # Dedup keeps='last' so the new Naive Mean row (105.0) wins
+            # Only the repair is written; stored raw members are not replayed.
             assert len(em_rows) == 1, (
-                f"Expected exactly 1 Naive Mean row after dedup, got {len(em_rows)}"
+                f"Expected exactly 1 repaired Naive Mean row, got {len(em_rows)}"
             )
             assert em_rows.iloc[0]["forecasted_discharge"] == 105.0, (
-                "New Naive Mean value should overwrite old one"
+                "Missing Naive Mean point should be repaired"
             )
 
     def test_audit_trail_logged(
@@ -1106,7 +1105,6 @@ class TestMaintenanceLongTerm:
         mock_data_reader.read_skill_metrics.return_value = skill_stats
         mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
-        mock_file_writer.save_monthly_forecast_data.return_value = None
 
         with patch.dict(sys.modules, {}):
             module = _import_module(
@@ -1146,7 +1144,7 @@ class TestMaintenanceLongTerm:
             # Check AUDIT summary line
             audit_msgs = [m for m in messages if "AUDIT" in m]
             assert len(audit_msgs) >= 1, "Expected at least one AUDIT log entry"
-            assert "monthly ensemble gaps" in audit_msgs[0]
+            assert "monthly ensemble gap candidates" in audit_msgs[0]
             assert "lookback=3" in audit_msgs[0]
 
             # Check per-gap detail lines
@@ -1243,7 +1241,7 @@ class TestMaintenanceLongTerm:
         gap_tuples,
         skill_stats,
     ):
-        """No forecast data for gap years -> monthly block does not complete.
+        """No raw forecast members in the snapshot -> monthly block does not complete.
 
         Quarterly gap-fill still runs (finds nothing), and the script
         exits 0 right after -- before seasonal.
@@ -1255,7 +1253,9 @@ class TestMaintenanceLongTerm:
         mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
-        mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
+        mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models.assign(
+            model_short="Naive Mean"
+        )
         mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
         mock_data_reader.read_skill_metrics.return_value = skill_stats
         mock_data_reader.read_monthly_forecasts.return_value = pd.DataFrame()
@@ -1276,11 +1276,7 @@ class TestMaintenanceLongTerm:
                 module.postprocessing_maintenance_long_term()
 
             assert exc_info.value.code == 0
-            mock_data_reader.read_monthly_forecasts.assert_called_once_with(
-                ["10001", "10002"],
-                2025,
-                2025,
-            )
+            mock_data_reader.read_monthly_forecasts.assert_not_called()
             mock_ensemble_calc.create_monthly_ensemble_forecasts.assert_not_called()
             mock_file_writer.save_quarterly_forecast_data.assert_not_called()
             mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
@@ -1323,7 +1319,7 @@ class TestMaintenanceLongTerm:
         mock_file_writer = MagicMock()
 
         mock_sl.load_environment.return_value = None
-        mock_data_reader.read_monthly_combined_forecasts.return_value = combined_with_models
+        mock_data_reader.read_monthly_combined_forecasts.return_value = non_matching_forecasts
         mock_gap_detector.detect_missing_monthly_ensembles.return_value = gap_tuples
         mock_data_reader.read_skill_metrics.return_value = skill_stats
         mock_data_reader.read_monthly_forecasts.return_value = non_matching_forecasts
@@ -1396,7 +1392,7 @@ class TestMaintenanceLongTerm:
                 module.postprocessing_maintenance_long_term()
 
             assert exc_info.value.code == 0
-            mock_file_writer.save_monthly_forecast_data.assert_not_called()
+            module.api_writer._write_monthly_ensemble_to_api.assert_not_called()
             mock_file_writer.save_quarterly_forecast_data.assert_not_called()
             mock_data_reader.read_seasonal_combined_forecasts.assert_not_called()
 
@@ -1408,7 +1404,7 @@ class TestMaintenanceLongTerm:
         ensemble_result,
         skill_stats,
     ):
-        """save_monthly_forecast_data returning error string -> exit 1."""
+        """The monthly API writer returning False must cause exit 1."""
         mock_sl = MagicMock()
         mock_data_reader = MagicMock()
         mock_gap_detector = MagicMock()
@@ -1423,7 +1419,6 @@ class TestMaintenanceLongTerm:
         mock_data_reader.read_skill_metrics.return_value = skill_stats
         mock_data_reader.read_monthly_forecasts.return_value = forecasts_for_gaps
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_result
-        mock_file_writer.save_monthly_forecast_data.return_value = "Error: disk full"
 
         with patch.dict(sys.modules, {}):
             module = _import_module(
@@ -1436,6 +1431,7 @@ class TestMaintenanceLongTerm:
                     "pt": mock_pt,
                 }
             )
+            module.api_writer._write_monthly_ensemble_to_api.return_value = False
             module._read_station_codes = MagicMock(return_value=["10001", "10002"])
 
             with pytest.raises(SystemExit) as exc_info:
@@ -1540,7 +1536,6 @@ class TestMaintenanceLongTerm:
         mock_data_reader.read_skill_metrics.return_value = skill_stats
         mock_data_reader.read_monthly_forecasts.return_value = forecasts
         mock_ensemble_calc.create_monthly_ensemble_forecasts.return_value = ensemble_output
-        mock_file_writer.save_monthly_forecast_data.return_value = None
 
         with patch.dict(sys.modules, {}):
             module = _import_module(
@@ -1560,7 +1555,7 @@ class TestMaintenanceLongTerm:
 
             assert exc_info.value.code == 0
 
-            saved_df = mock_file_writer.save_monthly_forecast_data.call_args[0][0]
+            saved_df = module.api_writer._write_monthly_ensemble_to_api.call_args[0][0]
             em_saved = saved_df[saved_df["model_short"] == "Naive Mean"]
             assert len(em_saved) == 2, (
                 f"Expected 2 Naive Mean rows (one per station), got {len(em_saved)}"
@@ -2218,6 +2213,19 @@ class TestNoLongTermEmInEnsembleSets:
         with open(path) as handle:
             tree = ast.parse(handle.read())
 
+        # The raw-member exclusion mask legitimately names historical EM.
+        # It must not be confused with a requested ensemble output set.
+        raw_exclusion_sets = {
+            id(node.operand.args[0])
+            for node in ast.walk(tree)
+            if isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, ast.Invert)
+            and isinstance(node.operand, ast.Call)
+            and isinstance(node.operand.func, ast.Attribute)
+            and node.operand.func.attr == "isin"
+            and node.operand.args
+            and isinstance(node.operand.args[0], ast.Set)
+        }
         ensemble_sets = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Set):
@@ -2226,7 +2234,7 @@ class TestNoLongTermEmInEnsembleSets:
                     for el in node.elts
                     if isinstance(el, ast.Constant) and isinstance(el.value, str)
                 }
-                if values & {"Naive Mean", "Skilled Mean"}:
+                if values & {"Naive Mean", "Skilled Mean"} and id(node) not in raw_exclusion_sets:
                     ensemble_sets.append(values)
 
         # monthly gap call, monthly filter, quarterly filter, seasonal gap call,
@@ -2238,51 +2246,43 @@ class TestNoLongTermEmInEnsembleSets:
 
 @pytest.mark.parametrize("broken", [False, True])
 def test_optional_months_maintenance_real_reader(monkeypatch, tmp_path, broken):
-    from long_term_horizon_resolver import LongTermHorizonResolverError
+    from long_term_horizon_resolver import (
+        LongTermHorizonResolverError,
+        available_monthly_batch_modes,
+        operational_lead_for_mode,
+    )
     from tests.test_lead_aware_empty_schedules import _optional_monthly_setup
 
     reader, rows, directory = _optional_monthly_setup(monkeypatch, tmp_path)
-    api = MagicMock(return_value=rows)
-    monkeypatch.setattr(reader, "_read_long_forecasts_api", api)
-    monkeypatch.setenv("POSTPROCESSING_GAPFILL_WINDOW_MONTHS", "18")
+    rows = rows.copy()
+    rows["code"] = "SYNTHETIC_A"
     if broken:
         (directory / "month_4.json").write_text("{")
-    healthy = pd.DataFrame(
-        {
-            "code": ["synthetic_site"],
-            "year": [2025],
-            "month": [4],
-            "month_in_year": [4],
-            "model_short": ["Naive Mean"],
-            "horizon_value": [0],
-            "forecasted_discharge": [321.0],
-        }
+    snapshot = reader._normalize_monthly_combined_forecasts(rows)
+    snapshot["date"] = pd.to_datetime(snapshot["date"])
+    healthy = snapshot[snapshot.horizon_value == 0].assign(
+        model_short="Naive Mean", forecasted_discharge=321.0
     )
-    gaps = pd.DataFrame(
-        {
-            "code": ["synthetic_site"] * 3,
-            "year": [2025] * 3,
-            "month": [4] * 3,
-            "model_short": ["Naive Mean"] * 3,
-            "horizon_value": [1, 2, 3],
-        }
-    )
+    snapshot = pd.concat([snapshot, healthy], ignore_index=True)
+    gaps = snapshot[snapshot.horizon_value.isin([1, 2, 3])][
+        ["code", "year", "month", "horizon_value", "date"]
+    ].assign(model_short="Naive Mean")
     dr, detector, calc, writer, pt = (MagicMock() for _ in range(5))
     pt.TimingStats.return_value.summary.return_value = ([], 0)
-    dr.read_monthly_combined_forecasts.return_value = healthy
-    dr.read_monthly_forecasts = reader.read_monthly_forecasts
+    read_api = MagicMock(return_value=snapshot)
+    monkeypatch.setattr(reader, "_read_monthly_combined_forecasts_api", read_api)
+    dr.read_monthly_combined_forecasts = reader.read_monthly_combined_forecasts
     dr.read_skill_metrics.return_value = _make_skill()
     dr.read_quarterly_combined_forecasts.return_value = pd.DataFrame()
     detector.detect_missing_monthly_ensembles.return_value = gaps
 
     def ensemble(forecasts, *args, **kwargs):
-        assert set(forecasts.horizon_value) == {0, 1, 2, 3}
+        assert set(forecasts.horizon_value) == {1, 2, 3}
         return forecasts.assign(
             model_short="Naive Mean", month_in_year=4, forecasted_discharge=111.0
         )
 
     calc.create_monthly_ensemble_forecasts.side_effect = ensemble
-    writer.save_monthly_forecast_data.return_value = None
     with patch.dict(sys.modules, {}):
         module = _import_module(
             {
@@ -2294,17 +2294,26 @@ def test_optional_months_maintenance_real_reader(monkeypatch, tmp_path, broken):
                 "pt": pt,
             }
         )
-        module._read_station_codes = lambda: ["synthetic_site"]
+        module.available_monthly_batch_modes = available_monthly_batch_modes
+        module.operational_lead_for_mode = operational_lead_for_mode
         if broken:
             with pytest.raises(LongTermHorizonResolverError):
-                module.postprocessing_maintenance_long_term()
-            writer.save_monthly_forecast_data.assert_not_called()
+                module._run_monthly_gap_fill(
+                    ["SYNTHETIC_A"], 18, [], forecast_date=dt.date(2025, 4, 30)
+                )
+            module.api_writer._write_monthly_ensemble_to_api.assert_not_called()
         else:
-            with pytest.raises(SystemExit) as exc:
-                module.postprocessing_maintenance_long_term()
-            assert exc.value.code == 0
-            api.assert_called_once_with(["synthetic_site"], 2024, 2025)
-            saved = writer.save_monthly_forecast_data.call_args.args[0]
-            assert set(saved.horizon_value) == {0, 1, 2, 3}
-            assert saved.loc[saved.horizon_value == 0, "forecasted_discharge"].tolist() == [321.0]
+            completed, _ = module._run_monthly_gap_fill(
+                ["SYNTHETIC_A"], 18, [], forecast_date=dt.date(2025, 4, 30)
+            )
+            assert completed
+            read_api.assert_called_once_with(["SYNTHETIC_A"])
+            dr.read_monthly_forecasts.assert_not_called()
+            saved = module.api_writer._write_monthly_ensemble_to_api.call_args.args[0]
+            assert set(saved.horizon_value) == {1, 2, 3}
+            assert set(saved.forecasted_discharge) == {111.0}
+            assert healthy.forecasted_discharge.tolist() == [321.0]
+            assert detector.detect_missing_monthly_ensembles.call_args.kwargs[
+                "configured_leads"
+            ] == {0, 1, 2, 3}
             assert detector.detect_missing_monthly_ensembles.call_args.args[1] == 18

@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 
 import pandas as pd
+from src.point_forecast import fill_forecasted_discharge
 
 logger = logging.getLogger(__name__)
 
@@ -255,12 +256,8 @@ def log_most_recent_forecasts_monthly(modelled_data):
         return pd.DataFrame()
 
     # Pivot: rows=code, columns=model_short, values=forecasted_discharge
-    # joint_forecasts may have q50 (from API) or forecasted_discharge
-    # (from EM calculation); use whichever is available.
-    value_col = "forecasted_discharge"
-    if value_col not in recent.columns and "q50" in recent.columns:
-        recent = recent.copy()
-        recent["forecasted_discharge"] = recent["q50"]
+    # Preserve derived points and fill missing raw points from q/q50.
+    recent = fill_forecasted_discharge(recent)
     pivoted = pd.pivot_table(
         recent,
         values="forecasted_discharge",
