@@ -339,295 +339,225 @@ class TestReadCombinedForecasts:
 # ---------------------------------------------------------------------------
 
 
+def _monthly_frame(models, *, codes=None, months=None, years=None, leads=None, dates=None):
+    count = len(models)
+    return pd.DataFrame(
+        {
+            "year": years or [2024] * count,
+            "month": months or [6] * count,
+            "code": codes or ["SYNTHETIC_A"] * count,
+            "model_short": models,
+            "horizon_value": leads or [0] * count,
+            "date": dates or ["2024-06-25"] * count,
+            "forecasted_discharge": [100.0] * count,
+        }
+    )
+
+
 class TestDetectMissingMonthlyEnsembles:
     def test_no_gaps(self):
-        """All (year, month, code) tuples have EM — no gaps."""
-        df = pd.DataFrame(
-            {
-                "year": [2024, 2024, 2024],
-                "month": [6, 6, 6],
-                "code": ["10001"] * 3,
-                "model_short": ["LR", "TFT", "EM"],
-            }
+        df = _monthly_frame(["LR", "TFT", "EM"])
+        result = detect_missing_monthly_ensembles(
+            df, ensemble_models={"EM"}, forecast_date=dt.date(2024, 6, 30), configured_leads={0}
         )
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
         assert result.empty
         assert list(result.columns) == [
             "year",
             "month",
             "code",
+            "horizon_value",
+            "date",
             "model_short",
         ]
 
     def test_missing_em(self):
-        """One (year, month, code) has LR+TFT but no EM."""
-        df = pd.DataFrame(
-            {
-                "year": [2024, 2024],
-                "month": [6, 6],
-                "code": ["10001"] * 2,
-                "model_short": ["LR", "TFT"],
-            }
+        df = _monthly_frame(["LR", "TFT"])
+        result = detect_missing_monthly_ensembles(
+            df, ensemble_models={"EM"}, forecast_date=dt.date(2024, 6, 30), configured_leads={0}
         )
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
         assert len(result) == 1
-        assert result.iloc[0]["code"] == "10001"
-        assert result.iloc[0]["year"] == 2024
-        assert result.iloc[0]["month"] == 6
-        assert result.iloc[0]["model_short"] == "EM"
+        row = result.iloc[0]
+        assert (row.code, row.year, row.month, row.model_short, row.horizon_value, row.date) == (
+            "SYNTHETIC_A",
+            2024,
+            6,
+            "EM",
+            0,
+            pd.Timestamp("2024-06-25"),
+        )
 
     def test_lookback_window(self):
-        """Only months within lookback window are checked."""
-        df = pd.DataFrame(
-            {
-                "year": [2024, 2024, 2024, 2024],
-                "month": [1, 1, 6, 6],
-                "code": ["10001"] * 4,
-                "model_short": ["LR", "TFT", "LR", "TFT"],
-            }
+        """Bound raw issue dates, rather than target months, by run date."""
+        df = _monthly_frame(
+            ["LR", "TFT", "LR", "TFT"],
+            months=[1, 1, 6, 6],
+            leads=[0, 0, 1, 1],
+            dates=["2024-01-25"] * 2 + ["2024-06-25"] * 2,
         )
-        # lookback=2 from max (2024, 6) => checks (2024, 6) and (2024, 5)
-        # Only (2024, 6) has data and is missing EM
-        result = detect_missing_monthly_ensembles(df, lookback_months=2)
+        result = detect_missing_monthly_ensembles(
+            df,
+            lookback_months=2,
+            ensemble_models={"EM"},
+            forecast_date=dt.date(2024, 6, 30),
+            configured_leads={0, 1},
+        )
         assert len(result) == 1
-        assert result.iloc[0]["month"] == 6
+        assert result.iloc[0].month == 6
+        assert result.iloc[0].horizon_value == 1
 
     def test_multi_code_gaps(self):
-        """Gaps detected independently per code."""
-        df = pd.DataFrame(
-            {
-                "year": [2024] * 5,
-                "month": [6] * 5,
-                "code": ["10001", "10001", "10001", "10002", "10002"],
-                "model_short": ["LR", "TFT", "EM", "LR", "TFT"],
-            }
+        df = _monthly_frame(
+            ["LR", "TFT", "EM", "LR", "TFT"], codes=["SYNTHETIC_A"] * 3 + ["SYNTHETIC_B"] * 2
         )
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
+        result = detect_missing_monthly_ensembles(
+            df, ensemble_models={"EM"}, forecast_date=dt.date(2024, 6, 30), configured_leads={0}
+        )
         assert len(result) == 1
-        assert result.iloc[0]["code"] == "10002"
+        assert result.iloc[0].code == "SYNTHETIC_B"
 
     def test_empty_input(self):
-        """Empty input returns empty DataFrame."""
-        df = pd.DataFrame(columns=["year", "month", "code", "model_short"])
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
+        result = detect_missing_monthly_ensembles(
+            pd.DataFrame(), forecast_date=dt.date(2024, 6, 30), configured_leads={0}
+        )
         assert result.empty
         assert list(result.columns) == [
             "year",
             "month",
             "code",
+            "horizon_value",
+            "date",
             "model_short",
         ]
 
     def test_year_boundary_lookback(self):
-        """Lookback crosses year boundary: Dec 2023 → Oct 2023."""
-        df = pd.DataFrame(
-            {
-                "year": [2024, 2024, 2023, 2023],
-                "month": [1, 1, 12, 12],
-                "code": ["10001"] * 4,
-                "model_short": ["LR", "TFT", "LR", "TFT"],
-            }
+        """Separate configured leads can retain latest issues across a year boundary."""
+        df = _monthly_frame(
+            ["LR", "TFT", "LR", "TFT"],
+            years=[2024, 2024, 2023, 2023],
+            months=[1, 1, 12, 12],
+            leads=[0, 0, 1, 1],
+            dates=["2024-01-25"] * 2 + ["2023-12-25"] * 2,
         )
-        # lookback=3 from (2024, 1) => (2024, 1), (2023, 12), (2023, 11)
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
-        # Both (2024, 1) and (2023, 12) have data, both missing EM
+        result = detect_missing_monthly_ensembles(
+            df,
+            lookback_months=3,
+            ensemble_models={"EM"},
+            forecast_date=dt.date(2024, 1, 31),
+            configured_leads={0, 1},
+        )
         assert len(result) == 2
+        assert set(result.horizon_value) == {0, 1}
+        assert set(result.date) == {pd.Timestamp("2024-01-25"), pd.Timestamp("2023-12-25")}
 
     def test_missing_required_columns_returns_empty(self):
-        """DataFrame missing required columns returns empty result."""
-        df = pd.DataFrame(
-            {
-                "year": [2024],
-                "month": [6],
-                # 'code' and 'model_short' are missing
-            }
+        result = detect_missing_monthly_ensembles(
+            pd.DataFrame({"year": [2024], "month": [6]}),
+            forecast_date=dt.date(2024, 6, 30),
+            configured_leads={0},
         )
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
         assert result.empty
         assert list(result.columns) == [
             "year",
             "month",
             "code",
+            "horizon_value",
+            "date",
             "model_short",
         ]
 
     def test_non_numeric_year_month_handled(self):
-        """String year/month values are coerced to numeric."""
-        df = pd.DataFrame(
-            {
-                "year": ["2024", "2024"],
-                "month": ["6", "6"],
-                "code": ["10001"] * 2,
-                "model_short": ["LR", "TFT"],
-            }
+        df = _monthly_frame(["LR", "TFT"], years=["2024"] * 2, months=["6"] * 2)
+        result = detect_missing_monthly_ensembles(
+            df, ensemble_models={"EM"}, forecast_date=dt.date(2024, 6, 30), configured_leads={0}
         )
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
         assert len(result) == 1
-        assert result.iloc[0]["code"] == "10001"
+        assert result.iloc[0].code == "SYNTHETIC_A"
+        assert result.iloc[0].year == 2024
+        assert result.iloc[0].month == 6
 
     def test_detects_missing_skilled_mean(self):
-        """Data has EM but not Skilled Mean; gap reported."""
-        df = pd.DataFrame(
-            {
-                "year": [2024, 2024, 2024],
-                "month": [6, 6, 6],
-                "code": ["10001"] * 3,
-                "model_short": ["LR", "TFT", "EM"],
-            }
-        )
+        df = _monthly_frame(["LR", "TFT", "EM"])
         result = detect_missing_monthly_ensembles(
             df,
-            lookback_months=3,
             ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
+            forecast_date=dt.date(2024, 6, 30),
+            configured_leads={0},
         )
         assert len(result) == 2
-        assert set(result["model_short"]) == {
-            "Naive Mean",
-            "Skilled Mean",
-        }
+        assert set(result.model_short) == {"Naive Mean", "Skilled Mean"}
 
     def test_all_three_present_no_gaps(self):
-        """EM, Skilled Mean, and Naive Mean all present — no gaps."""
-        df = pd.DataFrame(
-            {
-                "year": [2024] * 5,
-                "month": [6] * 5,
-                "code": ["10001"] * 5,
-                "model_short": [
-                    "LR",
-                    "TFT",
-                    "EM",
-                    "Skilled Mean",
-                    "Naive Mean",
-                ],
-            }
-        )
+        df = _monthly_frame(["LR", "TFT", "EM", "Skilled Mean", "Naive Mean"])
         result = detect_missing_monthly_ensembles(
             df,
-            lookback_months=3,
             ensemble_models={"EM", "Skilled Mean", "Naive Mean"},
+            forecast_date=dt.date(2024, 6, 30),
+            configured_leads={0},
         )
         assert result.empty
 
-    def test_monthly_default_checks_em_only(self):
-        """Without ensemble_models param, only EM gaps returned."""
-        df = pd.DataFrame(
-            {
-                "year": [2024, 2024],
-                "month": [6, 6],
-                "code": ["10001"] * 2,
-                "model_short": ["LR", "TFT"],
-            }
+    def test_monthly_default_checks_current_monthly_products(self):
+        df = _monthly_frame(["LR", "TFT"])
+        result = detect_missing_monthly_ensembles(
+            df, forecast_date=dt.date(2024, 6, 30), configured_leads={0}
         )
-        result = detect_missing_monthly_ensembles(df, lookback_months=3)
-        assert len(result) == 1
-        assert result.iloc[0]["model_short"] == "EM"
+        assert len(result) == 2
+        assert set(result.model_short) == {"Naive Mean", "Skilled Mean"}
 
 
 class TestDetectMissingMonthlyEnsemblesLeadAware:
-    """M1 P5b: under SAPPHIRE_SKILL_LEAD_AWARE the MONTHLY detector keys on
+    """Latest-issue monthly recovery uses exact lead keys with either flag state."""
 
-    horizon_value (mirroring the quarterly detector) so a missing ensemble
-    at one lead is detected even when another lead is present for the same
-    target month. Flag OFF, or horizon_value absent, is unchanged.
-    """
-
-    def test_flag_on_detects_per_lead_gap(self, monkeypatch):
-        """EM present at lead 0 but MISSING at lead 1 -> lead-1 EM is a gap."""
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        combined = pd.DataFrame(
-            {
-                "year": [2025, 2025, 2025, 2025, 2025],
-                "month": [1, 1, 1, 1, 1],
-                "code": ["19999"] * 5,
-                "model_short": ["LR_Base", "LR_SM", "EM", "LR_Base", "LR_SM"],
-                "horizon_value": [0, 0, 0, 1, 1],
-                "forecasted_discharge": [100.0, 110.0, 105.0, 90.0, 95.0],
-            }
+    @pytest.mark.parametrize("flag_on", [True, False])
+    def test_detects_per_lead_gap(self, monkeypatch, flag_on):
+        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", str(flag_on).lower())
+        combined = _monthly_frame(
+            ["LR_Base", "LR_SM", "EM", "LR_Base", "LR_SM"], leads=[0, 0, 0, 1, 1]
         )
-        gaps = detect_missing_monthly_ensembles(combined, lookback_months=3, ensemble_models={"EM"})
+        gaps = detect_missing_monthly_ensembles(
+            combined,
+            ensemble_models={"EM"},
+            forecast_date=dt.date(2024, 6, 30),
+            configured_leads={0, 1},
+        )
         assert len(gaps) == 1
-        assert gaps.iloc[0]["model_short"] == "EM"
-        assert int(gaps.iloc[0]["horizon_value"]) == 1
-        assert int(gaps.iloc[0]["month"]) == 1
-        assert str(gaps.iloc[0]["code"]) == "19999"
+        assert (gaps.iloc[0].model_short, gaps.iloc[0].horizon_value, gaps.iloc[0].code) == (
+            "EM",
+            1,
+            "SYNTHETIC_A",
+        )
 
-    def test_flag_off_conflates_leads(self, monkeypatch):
-        """Companion: flag OFF keeps today's behavior -- the lead-0 EM
-
-        satisfies the (year, month, code) grain for BOTH leads, so no gap
-        is detected (leads conflated).
-        """
+    def test_flag_off_retains_both_missing_leads(self, monkeypatch):
         monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
-        combined = pd.DataFrame(
-            {
-                "year": [2025, 2025, 2025, 2025, 2025],
-                "month": [1, 1, 1, 1, 1],
-                "code": ["19999"] * 5,
-                "model_short": ["LR_Base", "LR_SM", "EM", "LR_Base", "LR_SM"],
-                "horizon_value": [0, 0, 0, 1, 1],
-                "forecasted_discharge": [100.0, 110.0, 105.0, 90.0, 95.0],
-            }
+        combined = _monthly_frame(
+            ["LR_Base", "LR_SM", "LR_Base", "EM"],
+            leads=[0, 1, 0, 0],
+            codes=["SYNTHETIC_A", "SYNTHETIC_A", "SYNTHETIC_B", "SYNTHETIC_B"],
         )
-        gaps = detect_missing_monthly_ensembles(combined, lookback_months=3, ensemble_models={"EM"})
-        assert gaps.empty
-        # Flag OFF: legacy period-only grain, no horizon_value column emitted.
-        assert list(gaps.columns) == ["year", "month", "code", "model_short"]
-
-    def test_flag_off_byte_identity_representative_input(self, monkeypatch):
-        """Flag OFF byte-identity: output equals the legacy period-only
-
-        result on a representative multi-lead input (columns, values, order).
-        """
-        monkeypatch.delenv("SAPPHIRE_SKILL_LEAD_AWARE", raising=False)
-        combined = pd.DataFrame(
-            {
-                "year": [2025, 2025, 2025, 2025],
-                "month": [2, 2, 2, 2],
-                "code": ["19999", "19999", "18888", "18888"],
-                "model_short": ["LR_Base", "LR_SM", "LR_Base", "EM"],
-                "horizon_value": [0, 1, 0, 0],
-                "forecasted_discharge": [100.0, 90.0, 80.0, 82.0],
-            }
+        gaps = detect_missing_monthly_ensembles(
+            combined,
+            ensemble_models={"EM"},
+            forecast_date=dt.date(2024, 6, 30),
+            configured_leads={0, 1},
         )
-        gaps = detect_missing_monthly_ensembles(combined, lookback_months=3, ensemble_models={"EM"})
-        expected = pd.DataFrame(
-            {
-                "year": [2025],
-                "month": [2],
-                "code": ["19999"],
-                "model_short": ["EM"],
-            }
-        )
-        pd.testing.assert_frame_equal(gaps.reset_index(drop=True), expected, check_dtype=False)
+        assert len(gaps) == 2
+        assert set(zip(gaps.code, gaps.horizon_value, strict=True)) == {
+            ("SYNTHETIC_A", 0),
+            ("SYNTHETIC_A", 1),
+        }
+        assert set(gaps.date) == {pd.Timestamp("2024-06-25")}
 
-    def test_flag_on_null_lead_row_skipped_with_warning(self, monkeypatch, caplog):
-        """Parity with the quarterly detector: a legacy NULL-lead row is
-
-        EXCLUDED from the lead-aware gap universe (no phantom gap) and a
-        WARNING naming the skipped count is emitted.
-        """
-        monkeypatch.setenv("SAPPHIRE_SKILL_LEAD_AWARE", "true")
-        combined = pd.DataFrame(
-            {
-                "year": [2025, 2025, 2025],
-                "month": [1, 1, 1],
-                "code": ["19999", "19999", "19999"],
-                "model_short": ["LR_Base", "LR_Base", "EM"],
-                "horizon_value": [None, 0, 0],
-                "forecasted_discharge": [100.0, 100.0, 100.0],
-            }
-        )
-        with caplog.at_level(logging.WARNING):
+    def test_null_lead_row_excluded_with_diagnostic(self, caplog):
+        combined = _monthly_frame(["LR_Base", "LR_Base", "EM"], leads=[None, 0, 0])
+        with caplog.at_level(logging.INFO):
             gaps = detect_missing_monthly_ensembles(
-                combined, lookback_months=3, ensemble_models={"EM"}
+                combined,
+                ensemble_models={"EM"},
+                forecast_date=dt.date(2024, 6, 30),
+                configured_leads={0},
             )
-        # hv=0 has its EM; the NULL-lead row is excluded (no phantom gap).
         assert gaps.empty
-        assert (gaps["horizon_value"] >= 0).all()
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warnings, "expected a WARNING for the skipped NULL-lead row"
-        assert any("1" in r.getMessage() for r in warnings)
+        assert any("invalid/missing/unconfigured leads=1" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

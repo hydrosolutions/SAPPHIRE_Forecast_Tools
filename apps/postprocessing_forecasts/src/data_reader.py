@@ -1777,7 +1777,12 @@ def _normalize_monthly_combined_forecasts(
     normalization, then adds month_in_year and
     forecasted_discharge if absent.
     """
-    df = _normalize_monthly_forecasts(df)
+    # Recovery must distinguish genuine month_0 from missing/invalid leads.
+    # Keep the historical base normalizer's sentinel policy out of this snapshot.
+    original_lead = df.get("horizon_value")
+    df = _normalize_monthly_forecasts(df.drop(columns=["horizon_value"], errors="ignore"))
+    if original_lead is not None:
+        df["horizon_value"] = pd.to_numeric(original_lead, errors="coerce")
 
     # Add month_in_year (needed by gap detector)
     if "month_in_year" not in df.columns and "month" in df.columns:
@@ -1786,9 +1791,7 @@ def _normalize_monthly_combined_forecasts(
     # Fill missing point forecasts; q is authoritative, q50 is fallback.
     df = fill_forecasted_discharge(df)
 
-    # Drop API-only columns not needed internally. Preserve
-    # horizon_value so the lead carries through merge-back and skill
-    # recalc (the base normalizer already fillna(0).astype(int)s it).
+    # Drop API-only columns; preserve numeric/null leads for recovery validation.
     drop_cols = ["id", "horizon_type", "model_type_description"]
     df = df.drop(
         columns=[c for c in drop_cols if c in df.columns],

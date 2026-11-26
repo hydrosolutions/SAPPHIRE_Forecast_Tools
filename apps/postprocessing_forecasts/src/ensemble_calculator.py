@@ -432,9 +432,8 @@ def create_monthly_ensemble_forecasts(
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
 
-    # Build groupby keys — include horizon_value when available (PP-032).
-    # Missing for CSV-sourced data or the maintenance path.
-    group_cols = ["year", "month", "code"]
+    # Keep issuances separate; raw input dates remain untouched in joint.
+    group_cols = ["year", "month", "code", "date"]
     if "horizon_value" in forecasts.columns:
         group_cols.append("horizon_value")
 
@@ -489,7 +488,7 @@ def _add_skilled_mean_monthly(
     from src.skill_metrics import _append_to_joint
 
     if group_cols is None:
-        group_cols = ["year", "month", "code"]
+        group_cols = ["year", "month", "code", "date"]
 
     filtered = skill_filtered[~skill_filtered["model_short"].isin(baselines)].copy()
     if filtered.empty:
@@ -520,7 +519,13 @@ def _add_skilled_mean_monthly(
         on=key_cols,
         how="inner",
     )
-    pool = pool.dropna(subset=["forecasted_discharge"]).copy()
+    from src.gap_detector import normalize_monthly_issue_dates
+
+    pool["date"] = normalize_monthly_issue_dates(
+        pool.get("date", pd.Series(pd.NaT, index=pool.index))
+    )
+    pool = pool.dropna(subset=["date", "forecasted_discharge"]).copy()
+    pool = pool[np.isfinite(pool["forecasted_discharge"].astype(float))].copy()
     if pool.empty:
         return joint
 
@@ -551,10 +556,8 @@ def _add_skilled_mean_monthly(
                 lambda x, _c=qcol: _weighted_mean(x, _c),
             )
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
-            # "first" for date: assumes all models in a
-            # (year, month, code, horizon_value) group share
-            # the same issue date (single pipeline invocation).
+        if dcol in pool.columns and dcol not in group_cols:
+            # Issue date is already a group key; retain target bounds.
             sm_agg[dcol] = (dcol, "first")
 
     sm_avg = (
@@ -589,10 +592,16 @@ def _add_naive_mean_monthly(
     from src.skill_metrics import _append_to_joint
 
     if group_cols is None:
-        group_cols = ["year", "month", "code"]
+        group_cols = ["year", "month", "code", "date"]
 
     pool = joint[~joint["model_short"].isin(baselines)].copy()
-    pool = pool.dropna(subset=["forecasted_discharge"]).copy()
+    from src.gap_detector import normalize_monthly_issue_dates
+
+    pool["date"] = normalize_monthly_issue_dates(
+        pool.get("date", pd.Series(pd.NaT, index=pool.index))
+    )
+    pool = pool.dropna(subset=["date", "forecasted_discharge"]).copy()
+    pool = pool[np.isfinite(pool["forecasted_discharge"].astype(float))].copy()
     if pool.empty:
         return joint
 
@@ -605,10 +614,8 @@ def _add_naive_mean_monthly(
         if qcol in pool.columns:
             naive_agg[qcol] = "mean"
     for dcol in ("valid_from", "valid_to", "date"):
-        if dcol in pool.columns:
-            # "first" for date: assumes all models in a
-            # (year, month, code, horizon_value) group share
-            # the same issue date (single pipeline invocation).
+        if dcol in pool.columns and dcol not in group_cols:
+            # Issue date is already a group key; retain target bounds.
             naive_agg[dcol] = "first"
 
     naive_avg = pool.groupby(group_cols).agg(naive_agg).reset_index()

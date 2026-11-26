@@ -1525,346 +1525,136 @@ class TestOperationalLongTermIntegration:
 # TestMaintenanceLongTermIntegration
 # ===================================================================
 class TestMaintenanceLongTermIntegration:
-    """postprocessing_maintenance_long_term.py with real CSV I/O.
+    """Real detection, stored skill reading and builders; API snapshot/write boundaries."""
 
-    Mock boundary: read_monthly_forecasts (API read).
-    Real: combined CSV read, gap detection, skill CSV read, ensemble
-    creation, merge, CSV write.
-    """
-
-    def test_gaps_detected_and_filled(
-        self,
-        monthly_integration_env,
-    ):
-        """Month 1/2026 has models but no ensembles → gap-fill creates Naive Mean + Skilled Mean (no EM)."""
-        tmp_path, data_dir = monthly_integration_env
-
-        _seed_monthly_skill_csv(data_dir)
-
-        # Combined CSV: month 12/2025 WITH ensembles, month 1/2026 WITHOUT
-        _make_monthly_combined_csv(
-            data_dir,
-            year_months=[(2025, 12), (2026, 1)],
-            include_ensemble_months=[(2025, 12)],
-        )
-
-        gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
-
-        with patch.dict(
-            os.environ,
-            {"POSTPROCESSING_GAPFILL_WINDOW_MONTHS": "3"},
-        ):
-            with patch.dict(sys.modules, {}):
-                _setup_modules_with_real_io()
-                from src import data_reader as dr
-
-                with patch.object(
-                    dr,
-                    "read_monthly_forecasts",
-                    return_value=gap_forecasts,
-                ):
-                    module, spec = _import_maintenance_lt()
-                    with patch("os.getcwd", return_value=str(tmp_path)):
-                        spec.loader.exec_module(module)
-
-                        with pytest.raises(SystemExit) as exc_info:
-                            module.postprocessing_maintenance_long_term()
-
-                    assert exc_info.value.code == 0
-
-        output = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
-        assert not output.empty
-
-        # No EM is ever created by the gap-fill.
-        assert output[output["model_short"] == "EM"].empty
-
-        # Naive Mean now exists for month 1/2026
-        em_m1 = output[
-            (output["model_short"] == "Naive Mean")
-            & (output["month"].astype(int) == 1)
-            & (output["year"].astype(int) == 2026)
-        ]
-        em_m1_codes = set(em_m1["code"].astype(str))
-        assert "99001" in em_m1_codes, "99001 should get Naive Mean after gap-fill"
-        assert "99002" in em_m1_codes, "99002 should get Naive Mean after gap-fill"
-
-        # Spot-check Naive Mean discharge
-        em_99001 = em_m1[em_m1["code"].astype(str) == "99001"]
-        assert len(em_99001) == 1
-        expected = np.mean([_fc("99001", 2026, m) for m in MODELS])
-        assert em_99001["forecasted_discharge"].iloc[0] == pytest.approx(
-            expected,
-            abs=0.01,
-        )
-
-    def test_no_gaps_exits_cleanly(
-        self,
-        monthly_integration_env,
-    ):
-        """All recent months have Naive Mean + Skilled Mean (no EM) → no gaps, exits 0."""
-        tmp_path, data_dir = monthly_integration_env
-
-        _seed_monthly_skill_csv(data_dir)
-        _make_monthly_combined_csv(
-            data_dir,
-            year_months=[(2025, 12), (2026, 1)],
-            include_ensemble_months=[(2025, 12), (2026, 1)],
-        )
-
-        with patch.dict(
-            os.environ,
-            {"POSTPROCESSING_GAPFILL_WINDOW_MONTHS": "3"},
-        ):
-            with patch.dict(sys.modules, {}):
-                _setup_modules_with_real_io()
-                from src import data_reader as dr
-
-                with patch.object(
-                    dr,
-                    "read_monthly_forecasts",
-                    return_value=pd.DataFrame(),
-                ):
-                    module, spec = _import_maintenance_lt()
-                    with patch("os.getcwd", return_value=str(tmp_path)):
-                        spec.loader.exec_module(module)
-
-                        with pytest.raises(SystemExit) as exc_info:
-                            module.postprocessing_maintenance_long_term()
-
-                    assert exc_info.value.code == 0
-
-    def test_no_em_gap_reported_when_outputs_are_naive_and_skilled_only(
-        self,
-        monthly_integration_env,
-    ):
-        """PP-072 P3 regression: the gap detector must not report a permanent EM gap.
-
-        Every recent month carries Naive Mean + Skilled Mean and NO EM row. The
-        real gap detector runs; it must find nothing to fill, leave the combined
-        CSV untouched and never ask the API for gap forecasts.
-        """
-        tmp_path, data_dir = monthly_integration_env
-
-        _seed_monthly_skill_csv(data_dir)
-        _make_monthly_combined_csv(
-            data_dir,
-            year_months=[(2025, 12), (2026, 1)],
-            include_ensemble_months=[(2025, 12), (2026, 1)],
-        )
-
-        with patch.dict(
-            os.environ,
-            {"POSTPROCESSING_GAPFILL_WINDOW_MONTHS": "3"},
-        ):
-            with patch.dict(sys.modules, {}):
-                _setup_modules_with_real_io()
-                from src import data_reader as dr
-
-                with patch.object(
-                    dr,
-                    "read_monthly_forecasts",
-                    return_value=pd.DataFrame(),
-                ) as mock_read_fc:
-                    module, spec = _import_maintenance_lt()
-                    with patch("os.getcwd", return_value=str(tmp_path)):
-                        spec.loader.exec_module(module)
-
-                        with pytest.raises(SystemExit) as exc_info:
-                            module.postprocessing_maintenance_long_term()
-
-                    assert exc_info.value.code == 0
-
-        # No gap detected -> the gap-fill never asked the API for forecasts.
-        mock_read_fc.assert_not_called()
-        assert "EM" not in set(
-            _read_output_csv(data_dir, "combined_forecasts_monthly.csv")["model_short"]
-        )
-
-    def test_missing_combined_csv_exits_cleanly(
-        self,
-        monthly_integration_env,
-    ):
-        """No combined CSV file → exits 0 gracefully."""
-        tmp_path, data_dir = monthly_integration_env
-
+    def _run_snapshot(self, tmp_path, snapshot):
+        snapshot = snapshot.copy(deep=True)
+        snapshot["horizon_value"] = 0
+        original = snapshot.copy(deep=True)
         with patch.dict(sys.modules, {}):
             _setup_modules_with_real_io()
-            module, spec = _import_maintenance_lt()
-            with patch("os.getcwd", return_value=str(tmp_path)):
-                spec.loader.exec_module(module)
+            from src import api_writer, data_reader
 
-                with pytest.raises(SystemExit) as exc_info:
-                    module.postprocessing_maintenance_long_term()
-
-            assert exc_info.value.code == 0
-
-    def test_history_preserved_after_gap_fill(
-        self,
-        monthly_integration_env,
-    ):
-        """Existing rows (models + ensembles) survive the merge."""
-        tmp_path, data_dir = monthly_integration_env
-
-        _seed_monthly_skill_csv(data_dir)
-        _make_monthly_combined_csv(
-            data_dir,
-            year_months=[(2025, 11), (2025, 12), (2026, 1)],
-            include_ensemble_months=[(2025, 11), (2025, 12)],
-        )
-
-        gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
-
-        with patch.dict(
-            os.environ,
-            {"POSTPROCESSING_GAPFILL_WINDOW_MONTHS": "3"},
-        ):
-            with patch.dict(sys.modules, {}):
-                _setup_modules_with_real_io()
-                from src import data_reader as dr
-
-                with patch.object(
-                    dr,
-                    "read_monthly_forecasts",
-                    return_value=gap_forecasts,
-                ):
-                    module, spec = _import_maintenance_lt()
-                    with patch("os.getcwd", return_value=str(tmp_path)):
-                        spec.loader.exec_module(module)
-
+            with (
+                patch.object(
+                    data_reader, "read_monthly_combined_forecasts", return_value=snapshot
+                ) as read_snapshot,
+                patch.object(data_reader, "read_monthly_forecasts") as reread,
+                patch.object(
+                    api_writer, "_write_monthly_ensemble_to_api", return_value=True
+                ) as write,
+            ):
+                module, spec = _import_maintenance_lt()
+                with patch("os.getcwd", return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+                    module.available_monthly_batch_modes = MagicMock(return_value=["month_0"])
+                    module.operational_lead_for_mode = MagicMock(return_value=0)
+                    clock = MagicMock()
+                    clock.date.today.return_value = date(2026, 1, 31)
+                    with patch.object(module, "dt", clock):
                         with pytest.raises(SystemExit) as exc_info:
                             module.postprocessing_maintenance_long_term()
-
                     assert exc_info.value.code == 0
+                read_snapshot.assert_called_once()
+                reread.assert_not_called()
+                pd.testing.assert_frame_equal(snapshot, original)
+                if write.called:
+                    write.assert_called_once()
+                    output = write.call_args.args[0].copy()
+                    assert set(output.model_short) <= {"Naive Mean", "Skilled Mean"}
+                    assert set(output.horizon_value) == {0}
+                    assert set(pd.to_datetime(output.date)) == {pd.Timestamp("2026-01-01")}
+                    return output
+                return pd.DataFrame(columns=[*snapshot.columns])
 
-        output = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
-
-        # Nov 2025 model rows preserved (3 stations × 3 models = 9)
-        m11_models = output[
-            (output["year"].astype(int) == 2025)
-            & (output["month"].astype(int) == 11)
-            & (
-                ~output["model_short"].isin(
-                    [
-                        "EM",
-                        "Naive Mean",
-                        "Skilled Mean",
-                    ]
-                )
-            )
-        ]
-        assert len(m11_models) == 9, f"9 model rows for Nov 2025, got {len(m11_models)}"
-
-        # Dec 2025 Naive Mean rows preserved (3 stations)
-        em_m12 = output[
-            (output["model_short"] == "Naive Mean")
-            & (output["year"].astype(int) == 2025)
-            & (output["month"].astype(int) == 12)
-        ]
-        assert len(em_m12) == 3, f"3 Naive Mean rows for Dec 2025, got {len(em_m12)}"
-
-    def test_partial_ensemble_coverage_fills_only_missing(
-        self,
-        monthly_integration_env,
-    ):
-        """99001 already has Naive Mean (not refilled); 99002/99003 get a new one.
-
-        Gap detector flags (year, month, code, model_short) tuples whose
-        ensemble row is absent. Existing ensemble rows are preserved as-is,
-        and no EM row is ever produced (PP-072 P3).
-        """
+    def test_gaps_detected_and_filled(self, monthly_integration_env):
+        """Latest issue produces current monthly products from stored raw members."""
         tmp_path, data_dir = monthly_integration_env
-
         _seed_monthly_skill_csv(data_dir)
-
-        # Combined CSV: 99001 has a Naive Mean, 99002/99003 don't
-        rows = []
-        for station in STATIONS:
-            for model in MODELS:
-                q50 = _fc(station, 2026, model)
-                rows.append(
-                    {
-                        "code": station,
-                        "year": 2026,
-                        "month": 1,
-                        "month_in_year": 1,
-                        "model_short": model,
-                        "forecasted_discharge": q50,
-                        "q50": q50,
-                        "valid_from": "2026-01-01",
-                        "valid_to": "2026-01-28",
-                        "date": "2026-01-01",
-                        "flag": 0,
-                    }
-                )
-        # Naive Mean exists only for 99001
-        rows.append(
-            {
-                "code": "99001",
-                "year": 2026,
-                "month": 1,
-                "month_in_year": 1,
-                "model_short": "Naive Mean",
-                "forecasted_discharge": 42.0,
-                "q50": 42.0,
-                "valid_from": "2026-01-01",
-                "valid_to": "2026-01-28",
-                "date": "2026-01-01",
-                "flag": 0,
-                "composition": "GBT, LR_Base, MC_ALD",
-            }
+        snapshot = _make_monthly_combined_csv(data_dir, [(2025, 12), (2026, 1)], [(2025, 12)])
+        output = self._run_snapshot(tmp_path, snapshot)
+        assert not output.empty
+        assert output[output.model_short == "EM"].empty
+        assert set(zip(output.year, output.month, strict=True)) == {(2026, 1)}
+        naive = output[output.model_short == "Naive Mean"]
+        assert set(naive.code) == set(STATIONS)
+        assert set(output[output.model_short == "Skilled Mean"].code) == set(STATIONS)
+        row = naive[naive.code == STATIONS[0]]
+        assert len(row) == 1
+        assert row.forecasted_discharge.iloc[0] == pytest.approx(
+            np.mean([_fc(STATIONS[0], 2026, m) for m in MODELS]), abs=0.01
         )
-        pd.DataFrame(rows).to_csv(
-            os.path.join(data_dir, "combined_forecasts_monthly.csv"),
-            index=False,
+        assert row.composition.iloc[0] == ", ".join(sorted(MODELS))
+
+    def test_no_gaps_exits_cleanly(self, monthly_integration_env):
+        tmp_path, data_dir = monthly_integration_env
+        _seed_monthly_skill_csv(data_dir)
+        snapshot = _make_monthly_combined_csv(
+            data_dir, [(2025, 12), (2026, 1)], [(2025, 12), (2026, 1)]
+        )
+        assert self._run_snapshot(tmp_path, snapshot).empty
+
+    def test_no_em_gap_reported_when_outputs_are_naive_and_skilled_only(
+        self, monthly_integration_env
+    ):
+        """Current products satisfy the latest issue without a permanent EM gap."""
+        tmp_path, data_dir = monthly_integration_env
+        _seed_monthly_skill_csv(data_dir)
+        snapshot = _make_monthly_combined_csv(
+            data_dir, [(2025, 12), (2026, 1)], [(2025, 12), (2026, 1)]
+        )
+        assert "EM" not in set(snapshot.model_short)
+        from pathlib import Path
+
+        original_csv = Path(data_dir, "combined_forecasts_monthly.csv").read_bytes()
+        assert self._run_snapshot(tmp_path, snapshot).empty
+        assert Path(data_dir, "combined_forecasts_monthly.csv").read_bytes() == original_csv
+
+    def test_missing_combined_csv_exits_cleanly(self, monthly_integration_env):
+        """An empty API snapshot exits without generation or writes."""
+        tmp_path, _ = monthly_integration_env
+        snapshot = pd.DataFrame(columns=["year", "month", "date", "code", "model_short"])
+        assert self._run_snapshot(tmp_path, snapshot).empty
+
+    def test_history_preserved_after_gap_fill(self, monthly_integration_env):
+        """Historical raw and ensemble rows are neither rewritten nor removed."""
+        tmp_path, data_dir = monthly_integration_env
+        _seed_monthly_skill_csv(data_dir)
+        snapshot = _make_monthly_combined_csv(
+            data_dir, [(2025, 11), (2025, 12), (2026, 1)], [(2025, 11), (2025, 12)]
+        )
+        from pathlib import Path
+
+        original_csv = Path(data_dir, "combined_forecasts_monthly.csv").read_bytes()
+        output = self._run_snapshot(tmp_path, snapshot)
+        assert not output.empty
+        assert set(zip(output.year, output.month, strict=True)) == {(2026, 1)}
+        assert Path(data_dir, "combined_forecasts_monthly.csv").read_bytes() == original_csv
+        historical = snapshot[snapshot.year == 2025]
+        assert len(historical[(historical.month == 11) & historical.model_short.isin(MODELS)]) == 9
+        assert (
+            len(historical[(historical.month == 12) & (historical.model_short == "Naive Mean")])
+            == 3
         )
 
-        gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
-
-        with patch.dict(
-            os.environ,
-            {"POSTPROCESSING_GAPFILL_WINDOW_MONTHS": "3"},
-        ):
-            with patch.dict(sys.modules, {}):
-                _setup_modules_with_real_io()
-                from src import data_reader as dr
-
-                with patch.object(
-                    dr,
-                    "read_monthly_forecasts",
-                    return_value=gap_forecasts,
-                ):
-                    module, spec = _import_maintenance_lt()
-                    with patch("os.getcwd", return_value=str(tmp_path)):
-                        spec.loader.exec_module(module)
-
-                        with pytest.raises(SystemExit) as exc_info:
-                            module.postprocessing_maintenance_long_term()
-
-                    assert exc_info.value.code == 0
-
-        output = _read_output_csv(data_dir, "combined_forecasts_monthly.csv")
-
-        assert output[output["model_short"] == "EM"].empty, "No EM must be produced"
-
-        # 99001 Naive Mean preserved (value=42.0, not recalculated)
-        em_99001 = output[
-            (output["model_short"] == "Naive Mean")
-            & (output["code"].astype(str) == "99001")
-            & (output["year"].astype(int) == 2026)
+    def test_partial_ensemble_coverage_fills_only_missing(self, monthly_integration_env):
+        """An existing latest ensemble is preserved while other missing keys are written."""
+        tmp_path, data_dir = monthly_integration_env
+        _seed_monthly_skill_csv(data_dir)
+        snapshot = _make_monthly_combined_csv(data_dir, [(2026, 1)], [(2026, 1)])
+        existing = (snapshot.code == STATIONS[0]) & (snapshot.model_short == "Naive Mean")
+        snapshot.loc[existing, "forecasted_discharge"] = 42.0
+        snapshot.loc[existing, "q50"] = 42.0
+        snapshot = snapshot[snapshot.model_short.isin(MODELS) | existing].copy()
+        output = self._run_snapshot(tmp_path, snapshot)
+        naive = output[output.model_short == "Naive Mean"]
+        assert set(naive.code) == set(STATIONS[1:])
+        assert snapshot.loc[existing.reindex(snapshot.index), "forecasted_discharge"].tolist() == [
+            42.0
         ]
-        assert len(em_99001) == 1
-        assert em_99001["forecasted_discharge"].iloc[0] == pytest.approx(
-            42.0,
-            abs=0.01,
-        ), "99001 Naive Mean should be preserved (not refilled)"
-
-        # 99002 and 99003 now have Naive Mean (gap was filled): mean of all 3 models
         for code in ("99002", "99003"):
-            nm = output[
-                (output["model_short"] == "Naive Mean")
-                & (output["code"].astype(str) == code)
-                & (output["year"].astype(int) == 2026)
-            ]
-            assert len(nm) == 1, f"{code} should get Naive Mean after gap-fill"
-            expected = np.mean([_fc(code, 2026, m) for m in MODELS])
-            assert nm["forecasted_discharge"].iloc[0] == pytest.approx(expected, abs=0.01)
+            row = naive[naive.code == code]
+            assert len(row) == 1
+            assert row.forecasted_discharge.iloc[0] == pytest.approx(
+                np.mean([_fc(code, 2026, m) for m in MODELS]), abs=0.01
+            )

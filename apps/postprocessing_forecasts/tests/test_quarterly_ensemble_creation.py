@@ -571,6 +571,7 @@ class TestMonthlyEnsembleRegression:
                 "year": [2025, 2025],
                 "month": [1, 1],
                 "month_in_year": [1, 1],
+                "date": ["2025-01-01", "2025-01-01"],
                 "model_short": ["LR_Base", "LR_SM"],
                 "forecasted_discharge": [100.0, 120.0],
                 "q05": [80.0, 90.0],

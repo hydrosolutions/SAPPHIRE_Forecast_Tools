@@ -34,7 +34,7 @@ recalculation, operational postprocessing, and maintenance all passed with the
 candidate image; maintenance created finite monthly ensembles. Latest-issue
 recovery remains incomplete: readback retained earlier issue dates where raw
 members contain multiple issue dates for the same target and lead. Track this
-separate date-selection decision in [PP-076](high_prio_gi_draft_pp_monthly_maintenance_mixed_issue_dates.md).
+separate date-selection decision in [PP-076](review_gi_draft_pp_monthly_maintenance_mixed_issue_dates.md).
 Keep PP-057 In Progress while its broader inventory and this follow-up remain open.
 
 ## The drift, in three lines of code
