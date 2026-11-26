@@ -11,8 +11,10 @@ needed (EM stays a valid enum, `sapphire/services/postprocessing/app/models.py:3
   **Surface C (gap-detector trap)** and **stale-tombstone** sections; do not re-derive them.
 - **Reverses** their explicit statements that short-term EM "NSE ≥ 0.8 gate must stay"
   (PP-059:158, PP-058:118). The current code is NSE ≥ 0 since `740ee9bb`; this plan moves it to the
-  Skilled-Mean rule below. PP-059 is sequenced after PP-057 as an evidence dependency — confirm that
-  ordering still holds.
+  Skilled-Mean rule below. **2026-11-26 dependency update:** PP-057's active long-term
+  point fallback fix merged in [PR #551](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/pull/551),
+  clearing that implementation dependency. Its broader inventory remains deferred;
+  this does not change PP-072's own acceptance evidence or deployment status.
 
 ## Decision (owner, 2026-11-11)
 
