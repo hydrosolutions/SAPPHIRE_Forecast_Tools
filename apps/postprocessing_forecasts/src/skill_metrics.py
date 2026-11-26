@@ -17,6 +17,7 @@ from src.model_names import (
     AGGREGATED_ENSEMBLE_MODELS,
     canonical_model_short_series,
 )
+from src.point_forecast import _resolve_forecasted_discharge
 from src.postprocessing_tools import enforce_quantile_monotonicity
 
 logger = logging.getLogger(__name__)
@@ -1455,25 +1456,6 @@ _ENSEMBLE_JOINT_COLS = (
     + _QUANTILE_COLS
     + ["valid_from", "valid_to", "date", "flag", "horizon_value"]
 )
-
-
-def _resolve_forecasted_discharge(df: pd.DataFrame) -> pd.Series | None:
-    """Resolve the point forecast column from q or q50.
-
-    Priority: q first (authoritative point forecast from the model),
-    q50 as fallback (median quantile, rarely populated).
-
-    Returns None if neither column is available.
-    """
-    has_q = "q" in df.columns
-    has_q50 = "q50" in df.columns
-    if has_q and has_q50:
-        return df["q"].fillna(df["q50"]).astype(float)
-    elif has_q:
-        return df["q"].astype(float)
-    elif has_q50:
-        return df["q50"].astype(float)
-    return None
 
 
 def _append_to_joint(

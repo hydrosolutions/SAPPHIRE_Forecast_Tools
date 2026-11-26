@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from skill_lead_aware_flag import skill_lead_aware_enabled
 from src.model_names import canonical_model_short_series
+from src.point_forecast import fill_forecasted_discharge
 from src.postprocessing_tools import enforce_quantile_monotonicity, forecast_target_date
 
 logger = logging.getLogger(__name__)
@@ -425,10 +426,8 @@ def create_monthly_ensemble_forecasts(
         forecasts = forecasts.copy()
         forecasts["month_in_year"] = forecasts["month"]
 
-    # Ensure forecasted_discharge exists (may be q50 from API)
-    if "forecasted_discharge" not in forecasts.columns and "q50" in forecasts.columns:
-        forecasts = forecasts.copy()
-        forecasts["forecasted_discharge"] = forecasts["q50"].astype(float)
+    # Fill missing points without changing existing derived values or quantiles.
+    forecasts = fill_forecasted_discharge(forecasts)
 
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}
@@ -732,10 +731,8 @@ def _create_aggregated_ensemble_forecasts(
         logger.warning("Empty skill metrics — returning forecasts without ensembles")
         return forecasts.copy()
 
-    # Ensure forecasted_discharge exists (may be q50 from API)
-    if "forecasted_discharge" not in forecasts.columns and "q50" in forecasts.columns:
-        forecasts = forecasts.copy()
-        forecasts["forecasted_discharge"] = forecasts["q50"].astype(float)
+    # Fill missing points without changing existing derived values or quantiles.
+    forecasts = fill_forecasted_discharge(forecasts)
 
     joint = forecasts.copy()
     baselines = {"EM", "Naive Mean", "Skilled Mean"}

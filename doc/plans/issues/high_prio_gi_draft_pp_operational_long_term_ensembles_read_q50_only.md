@@ -1,6 +1,6 @@
 ## Operational long-term ensembles read `q50` only, but the long-term models write `q` — EM / Naive Mean / Skilled Mean silently cannot form (PP-057)
 
-**Status**: Draft (2026-08-17)
+**Status**: In Progress (2026-11-26)
 **Module**: `apps/postprocessing_forecasts` (`src/data_reader.py`, `src/ensemble_calculator.py`)
 **Priority**: **High** — the operational and maintenance long-term ensemble path produces
 **nothing** on a deployment whose long-term models write the point forecast to `q` without
@@ -12,6 +12,30 @@ out-of-loop `codex exec` cross-check; **confirmed against live data and code in 
 INFRA-026 (why no automated check catches it).
 
 ---
+
+## Implementation note — 2026-11-26
+
+The active long-term readers/normalizers, monthly and quarter/season builders,
+monthly display pivot, and maintenance point coercion are patched and independently
+reviewed with no blockers. The historical resolver moved unchanged to
+`src/point_forecast.py` and remains available from `src/skill_metrics.py`.
+`q` stays authoritative with per-row `q50` fallback; existing nonnull derived
+points and quantile columns are preserved. Quarter/season normalization retains
+its existing malformed-`q` coercion policy.
+
+The older ten-site inventory below is historical, not authorization to change
+unrelated short-term or aggregation policies. The legacy monthly-to-quarter
+helper and complete-quarter policy remain untouched; this note does not close
+the broader inventory.
+
+Validation: affected suite **3269 passed, 1 existing xfail, zero skips**;
+**25 new focused regressions passed**; Docker smoke passed. Live monthly skill
+recalculation, operational postprocessing, and maintenance all passed with the
+candidate image; maintenance created finite monthly ensembles. Latest-issue
+recovery remains incomplete: readback retained earlier issue dates where raw
+members contain multiple issue dates for the same target and lead. Track this
+separate date-selection decision in [PP-076](high_prio_gi_draft_pp_monthly_maintenance_mixed_issue_dates.md).
+Keep PP-057 In Progress while its broader inventory and this follow-up remain open.
 
 ## The drift, in three lines of code
 

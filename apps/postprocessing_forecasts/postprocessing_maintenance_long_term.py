@@ -37,6 +37,7 @@ from src.model_names import (
     QUARTERLY_DERIVED_MODELS,
     canonical_model_short_series,
 )
+from src.point_forecast import fill_forecasted_discharge
 from src.postprocessing_tools import TimingStats, timer
 
 # region Logging
@@ -194,8 +195,7 @@ def _run_monthly_gap_fill(
     # Ensure month_in_year and forecasted_discharge exist
     if "month_in_year" not in filtered.columns and "month" in filtered.columns:
         filtered["month_in_year"] = filtered["month"]
-    if "forecasted_discharge" not in filtered.columns and "q50" in filtered.columns:
-        filtered["forecasted_discharge"] = filtered["q50"].astype(float)
+    filtered = fill_forecasted_discharge(filtered)
 
     # 5. Create ensemble forecasts for gap periods
     with timer(timing_stats, "creating monthly gap-fill ensembles"):
