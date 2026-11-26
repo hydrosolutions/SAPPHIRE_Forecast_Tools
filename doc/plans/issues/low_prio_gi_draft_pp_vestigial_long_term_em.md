@@ -1,5 +1,11 @@
 > **Superseded by PP-072** (2026-11-12): see [`mid_prio_gi_draft_pp_em_skilled_mean_consolidation.md`](mid_prio_gi_draft_pp_em_skilled_mean_consolidation.md). Long-term EM was removed in PP-072 P3; the text below is kept for history and is not rewritten.
 
+> **Dependency update (2026-11-26):** PP-057's active long-term point fallback
+> fix merged in [PR #551](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/pull/551).
+> The ordering statements below are historical. Only its
+> [broader inventory audit](low_prio_gi_draft_pp_point_resolution_remaining_inventory.md)
+> remains deferred; this superseded draft is not reopened.
+
 ## Long-term EM is vestigial — Skilled Mean is the intended aggregate; decide whether monthly EM should still be produced (PP-058)
 
 **Status**: Draft (2026-08-18)

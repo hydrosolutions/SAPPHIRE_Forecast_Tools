@@ -10,6 +10,12 @@ the top, under a `## YYYY-MM-DD` heading.
 
 ---
 
+## 2026-11-26
+
+**PP-076** marked Complete and archived after the owner confirmed [PR #551](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/pull/551) merged into `maxat_sapphire_2` (`d614313e`). Latest-issue monthly maintenance, including month_0, passed live validation and wrote two missing ensemble rows without reducing existing finite coverage. Full tests, independent review and Docker smoke passed; the daily pipeline passed 18 execution stages, with seven additional explicit short-term checks. Known INFRA-027 boundary-validator failures and unfillable input/skill gaps remain documented; merge is not deployment.
+
+**PP-057** active long-term point fallback fix recorded as merged in the same PR. The draft is renamed and narrowed to a low-priority deferred audit of the historical inventory, rather than retaining the resolved production defect as In Progress. The broader inventory, legacy monthly-to-quarter helper and unrelated short-term/aggregation policies are not marked fixed. Links and the issue index now distinguish completed work from deferred scope.
+
 ## 2026-11-19
 
 **LTF-021** moved to Review after scoped implementation and independent review. Full suite: 9,677 passed with existing accepted exceptions. Live all pipeline: eleven execution stages and three validations passed, including the formerly failing LT operational postprocessing, skills and maintenance. The private .env remained unchanged. Owner authorized commit and PR.

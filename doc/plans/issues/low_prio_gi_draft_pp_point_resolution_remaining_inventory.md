@@ -1,41 +1,54 @@
-## Operational long-term ensembles read `q50` only, but the long-term models write `q` — EM / Naive Mean / Skilled Mean silently cannot form (PP-057)
+## Deferred point-resolution inventory after the merged long-term fallback fix (PP-057)
 
-**Status**: In Progress (2026-11-26)
-**Module**: `apps/postprocessing_forecasts` (`src/data_reader.py`, `src/ensemble_calculator.py`)
-**Priority**: **High** — the operational and maintenance long-term ensemble path produces
-**nothing** on a deployment whose long-term models write the point forecast to `q` without
-`q50`. That is what the long-term writer does by design, so this is not an edge case.
-**Labels**: `postprocessing_forecasts`, `long-term`, `ensembles`, `implementation-drift`
-**Found**: 2026-08-17, local tjhm review on trunk `f4034e52`. Hypothesis raised by an
-out-of-loop `codex exec` cross-check; **confirmed against live data and code in this session**.
-**Related**: PP-045 (different mechanism, same symptom class — absent ensembles).
-INFRA-026 (why no automated check catches it).
+**Status**: Draft — remaining audit deferred (2026-11-26)
+**Module**: `apps/postprocessing_forecasts`
+**Priority**: Low — the original high-priority operational defect is resolved;
+only the broader, unimplemented inventory remains open.
+**Merged fix**: [PR #551](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/pull/551),
+merged into `maxat_sapphire_2` on 2026-11-26 (`d614313e`).
+**Related**: [PP-076 — complete](archive/review_gi_draft_pp_monthly_maintenance_mixed_issue_dates.md),
+PP-045, INFRA-026.
 
----
-
-## Implementation note — 2026-11-26
+## Completed scope
 
 The active long-term readers/normalizers, monthly and quarter/season builders,
-monthly display pivot, and maintenance point coercion are patched and independently
-reviewed with no blockers. The historical resolver moved unchanged to
-`src/point_forecast.py` and remains available from `src/skill_metrics.py`.
-`q` stays authoritative with per-row `q50` fallback; existing nonnull derived
-points and quantile columns are preserved. Quarter/season normalization retains
-its existing malformed-`q` coercion policy.
+monthly display pivot, and maintenance point coercion now use the shared
+`src/point_forecast.py` resolver. `q` remains authoritative with per-row `q50`
+fallback; existing nonnull derived points and quantile columns are preserved.
+The historical resolver remains available from `src/skill_metrics.py` without
+changing its semantics. Quarter/season normalization retains its malformed-`q`
+coercion policy. PP-076, merged in the same PR, resolves the separate monthly
+maintenance issue-date selection problem; it is no longer an open dependency.
 
-The older ten-site inventory below is historical, not authorization to change
-unrelated short-term or aggregation policies. The legacy monthly-to-quarter
-helper and complete-quarter policy remain untouched; this note does not close
-the broader inventory.
+Validation included 25 focused point-fallback regressions, the final affected
+suite (3,303 passed, zero skips, one existing xfail), full repository tests
+(9,736 passed, 12 previously accepted skips, two existing xfails), independent
+review, and Docker smoke. The full development daily run passed all 18 execution
+stages, including 27 scheduled long-term model executions, monthly skills, and
+operational/maintenance postprocessing. Monthly maintenance wrote two missing
+ensemble rows; readback preserved existing finite counts and month_0 coverage.
+Boundary-date validation still reports the separately tracked INFRA-027 LR
+endpoint mismatch; this is not an entirely green data-health validation.
 
-Validation: affected suite **3269 passed, 1 existing xfail, zero skips**;
-**25 new focused regressions passed**; Docker smoke passed. Live monthly skill
-recalculation, operational postprocessing, and maintenance all passed with the
-candidate image; maintenance created finite monthly ensembles. Latest-issue
-recovery remains incomplete: readback retained earlier issue dates where raw
-members contain multiple issue dates for the same target and lead. Track this
-separate date-selection decision in [PP-076](review_gi_draft_pp_monthly_maintenance_mixed_issue_dates.md).
-Keep PP-057 In Progress while its broader inventory and this follow-up remain open.
+## Remaining scope — deferred audit only
+
+- Reconcile the historical ten-site inventory below against current code before
+  proposing any further change. It is not evidence that ten defects remain.
+- Check the legacy `aggregate_monthly_fc_to_quarterly` helper and any remaining
+  coercion sites for the actual frame semantics and reachability. The merged PR
+  did not change this helper or the complete-quarter policy.
+- Do not blanket-apply long-term point semantics to short-term frames. Any
+  demonstrated residual defect needs its own minimal proposal and regression
+  evidence; no further implementation is approved by this cleanup.
+
+The historical replay goals below were not all exercised and are not claimed as
+complete. No server deployment or default-image promotion is implied by the merge.
+
+## Historical findings and proposed broader scope
+
+The material below records the pre-fix diagnosis and earlier acceptance proposals.
+Its code line numbers and present-tense descriptions are historical; the completed
+scope and deferred audit above describe the current status.
 
 ## The drift, in three lines of code
 

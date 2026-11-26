@@ -1,15 +1,36 @@
 ## Monthly maintenance mixes issue dates and can miss latest-issue gaps (PP-076)
 
-**Status**: Review (2026-11-26)
+**Status**: Complete (2026-11-26)
 **Priority**: High
 **Module**: `apps/postprocessing_forecasts`
-**Related**: [PP-057](high_prio_gi_draft_pp_operational_long_term_ensembles_read_q50_only.md)
+**Related**: [PP-057 — deferred inventory](../low_prio_gi_draft_pp_point_resolution_remaining_inventory.md)
 
 PP-057 restored finite monthly ensemble creation. Readback then exposed a separate
 issue: monthly builders grouped different issuances together and retained
 `date:first`; maintenance gaps omitted issue date, letting older ensembles conceal
 missing latest rows. The former target-month lookback could also exclude month_0
 when month_3 was present.
+
+### Completion — PR #551 merged
+
+[PR #551](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/pull/551)
+merged into `maxat_sapphire_2` on 2026-11-26 (`d614313e`). The owner confirmed the
+merge; review is complete.
+
+The full development `run_locally.sh daily --continue-on-error` run passed all
+18 execution stages. All 27 scheduled long-term model executions succeeded,
+including MC_ALD in each mode; monthly skills and both long-term postprocessing
+modes passed. An explicit PENTAD ML and dated short-term postprocessing follow-up
+passed seven further steps. Monthly maintenance wrote two missing ensemble rows,
+preserved existing finite coverage, and retained month_0's separate latest issue.
+Sixty-five latest candidates remained unfillable with current members/skills and
+were reported, not silently filled from older issues.
+
+The current-date API validator reported 29 passes, seven warnings and ten skips.
+Boundary-date checks reproduced the known INFRA-027 LR endpoint mismatch, despite
+LR rows being present at the correct endpoint. These limitations remain separate
+from this completed fix. The merge does not represent a server deployment or
+default-image promotion.
 
 ### Approved scope and dependencies
 
@@ -70,4 +91,5 @@ and a clean-context Docker build/smoke test passed; complete monthly rows were n
 rewritten. Fresh independent review found no blockers. A remote read-only preview
 confirmed latest-issue recovery across configured monthly leads, with forecast
 writes and diagnostic CSV export blocked. No server forecast writes or default
-image promotion occurred. Awaiting user review; deployment remains separate.
+image promotion occurred during that preview. Review is now complete; deployment
+remains separate.
